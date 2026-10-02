@@ -7,7 +7,7 @@ This is an MVP spike. All the art is procedural, built from primitives, so the g
 ## What's in the game
 
 - **Production-chain economy.** You start with a Command Center, one Mining Truck and a little raw ore. Trucks mine four ore types (iron, copper, crystal, uranium) into a team stockpile. Converter buildings refine ore into steel, copper, circuits, lenses, plasma and composite, and higher tiers cost those materials. Every building produces something. The full hierarchy is in [docs/TECH_TREE.md](docs/TECH_TREE.md).
-- **16 structures and 14 units.** The range runs from riflemen, medics, light tanks and repair trucks to artillery, laser tanks, laser towers, SAM sites, gunships and stealth bombers.
+- **16 structures and 23 units.** The range runs from riflemen, medics, engineers, snipers, commandos, APCs, mine layers and repair trucks to artillery, flak tracks, mammoth tanks, transport choppers, laser tanks, laser towers, SAM sites, gunships and stealth bombers.
 - **Territory.** You can only build within 6 tiles of your own structures. Outpost Trucks deploy into forward bases that claim remote ore fields.
 - **Fog of war.** The map starts black. Bases reveal a radius around themselves, units and trucks reveal what they pass, and radar domes reveal a wide area and detect stealth aircraft.
 - **Combat:** A* pathfinding, aircraft that ignore terrain, weapons that can or can't hit air, splash damage, projectiles, beams and artillery arcs.
@@ -37,7 +37,7 @@ open unity/Build/Pez.app --args -team0 human -team1 ai -autostart
 Controls:
 
 - **Selecting:** left-click or drag-box to select. Ctrl+A selects all combat units.
-- **Orders:** right-click to move, attack or set a rally point. With Repair Trucks or Medics selected, right-clicking a damaged friendly unit or building repairs or heals it. Right-clicking ore with trucks selected assigns them that ore type. F then right-click attack-moves. G deploys an Outpost Truck. X stops, Del sells.
+- **Orders:** right-click to move, attack or set a rally point. With Repair Trucks or Medics selected, right-clicking a damaged friendly unit or building repairs or heals it. Right-clicking ore with trucks selected assigns them that ore type. F then right-click attack-moves. G deploys an Outpost Truck. Right-click your own APC or chopper with infantry selected to board it, and U to unload. Right-click an enemy building with engineers to capture it. M then right-click lays mines (Shift for 5). X stops, Del sells.
 - **Camera:** WASD, arrow keys or the screen edge to pan, middle-drag to grab, Q/E to rotate, mouse wheel to zoom. Click the minimap to jump.
 
 ## Battle of the LLMs
@@ -80,7 +80,7 @@ Then tell Claude something like "you're Red in Pez, crush me". You can also coac
 | `get_rules` | stats, costs, prerequisites, command reference |
 | `get_state` | your stockpile with rates, power, converter status, queues, what you can build and its cost, structures and units with ids, visible enemies, explored ore fields by type, events since the last call |
 | `get_map` | ASCII map from your team's view, with fog |
-| `command` | a batch of commands: `build`, `train`, `move`, `attack_move`, `attack`, `stop`, `harvest` (optionally by `ore` type), `deploy`, `repair`/`heal`, `rally`, `sell`, `cancel`, `say` |
+| `command` | a batch of commands: `build`, `train`, `move`, `attack_move`, `attack`, `stop`, `harvest` (optionally by `ore` type), `deploy`, `repair`/`heal`, `load`/`unload`, `capture`, `lay_mines`, `rally`, `sell`, `cancel`, `say` |
 | `wait` | lets the game run up to 1–30 seconds, then returns the new state; returns early if a priority alert fires |
 
 ### Commander's orders

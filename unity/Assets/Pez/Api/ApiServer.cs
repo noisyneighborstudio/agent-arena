@@ -285,6 +285,7 @@ namespace Pez.Api
                 .Set("tick", w.Tick).Set("time_s", (float)Math.Round(w.Time, 1))
                 .Set("speed", game.Speed).Set("paused", game.Paused)
                 .Set("game_over", w.GameOver).Set("winner", w.Winner)
+                .Set("sim_errors", w.Errors).Set("last_sim_error", w.LastError)
                 .Set("teams", w.Teams.Select(t => new JObj()
                     .Set("team", t.Id).Set("name", t.Name).Set("controller", t.Controller).Set("player", t.PlayerName)
                     .Set("stockpile", StateView.Stockpile(t)).Set("defeated", t.Defeated)

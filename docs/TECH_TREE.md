@@ -58,18 +58,27 @@ The Command Center builds every structure. A new structure must be placed within
 | Rifleman | 40 steel | barracks | cheap anti-infantry, weak AA |
 | Rocket Soldier | 80 steel, 30 copper | barracks | anti-armor, anti-air |
 | Medic | 60 steel, 20 copper | barracks | heals infantry for free (15 HP/s); auto-heals nearby wounded |
+| Engineer | 120 steel | barracks | captures an enemy structure below 50% HP (used up) |
+| Sniper | 120 steel, 20 lenses | barracks, optics_lab | range 9, one-shots infantry, useless vs armor |
+| Commando | 300 steel, 50 circuits | barracks, electronics_plant | C4 levels structures, wrecks vehicles; can't fight infantry |
 | Laser Trooper | 80 steel, 30 lenses | barracks, optics_lab | elite infantry, hits air |
 | Scout Buggy | 100 steel, 20 copper | factory | fast, long sight |
 | Light Tank | 200 steel, 40 copper | factory | all-rounder |
+| APC | 250 steel, 40 copper | factory | carries 5 infantry, machine gun |
+| Recon Drone | 120 steel, 30 circuits | factory, electronics_plant | fast unarmed flying scout, sight 12 |
+| Flak Track | 250 steel, 40 circuits | factory, electronics_plant | mobile anti-air with splash; can't hit ground |
+| Mine Layer | 250 steel, 50 copper | factory, electronics_plant | lays hidden mines (30 steel each) |
 | Repair Truck | 180 steel, 60 copper | factory | repairs vehicles, aircraft and structures (30 HP/s, 1 steel per 10 HP); auto-repairs nearby damage |
 | Outpost Truck | 400 steel, 100 copper, 50 circuits | factory, electronics_plant | deploys into an Outpost |
 | Heavy Tank | 400 steel, 80 circuits | factory, electronics_plant | armor, splash |
 | Artillery | 300 steel, 100 circuits | factory, electronics_plant | range 11, splash, fragile |
 | Laser Tank | 350 steel, 60 lenses, 40 plasma, 60 circuits | factory, optics_lab, enrichment_plant | beam weapon, hits air |
+| Mammoth Tank | 800 steel, 200 circuits, 40 plasma | factory, enrichment_plant | super-heavy, hits ground and air, self-repairs to 50% |
 | Gunship | 300 steel, 120 circuits, 30 plasma | airfield | flies, rockets vs ground and air |
+| Transport Chopper | 300 steel, 80 circuits | airfield | flies 6 infantry over terrain |
 | Stealth Bomber | 300 composite, 150 circuits, 80 plasma | airfield, composite_foundry | flies, invisible unless within 3 tiles of an enemy or inside an enemy radar's range; devastating against structures |
 
-Cannons, artillery and bombs can't hit aircraft. Rockets, lasers, SAMs and gunships can. Rifles can too, but weakly.
+Mines are hidden unless an enemy is within 1.5 tiles or inside its radar range, and they explode under enemy ground units. Cannons, artillery and bombs can't hit aircraft. Rockets, lasers, SAMs and gunships can. Rifles can too, but weakly.
 
 ## Strategy
 

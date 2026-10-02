@@ -110,18 +110,19 @@ server.registerTool(
 const Command = z
   .object({
     type: z
-      .enum(["build", "train", "move", "attack_move", "attack", "stop", "harvest", "deploy", "repair", "heal", "rally", "sell", "cancel", "say"])
+      .enum(["build", "train", "move", "attack_move", "attack", "stop", "harvest", "deploy", "repair", "heal", "load", "unload", "capture", "lay_mines", "rally", "sell", "cancel", "say"])
       .describe("Command type"),
     structure: z.string().optional().describe("build: structure key, e.g. power_plant"),
     unit: z.string().optional().describe("train/cancel: unit key, e.g. light_tank"),
-    count: z.number().int().min(1).max(10).optional().describe("train: how many"),
+    count: z.number().int().min(1).max(10).optional().describe("train: how many; lay_mines: how many mines (max 8)"),
     units: z
       .union([z.array(z.number().int()), z.enum(["all", "idle"])])
       .optional()
       .describe("unit ids, or 'all' / 'idle' for your combat units"),
     x: z.number().optional().describe("tile x"),
     y: z.number().optional().describe("tile y"),
-    target: z.number().int().optional().describe("attack: enemy entity id; repair/heal: your damaged unit/structure id"),
+    target: z.number().int().optional().describe("attack/capture: enemy entity id; repair/heal: your damaged unit/structure id"),
+    transport: z.number().int().optional().describe("load: id of your apc or transport_chopper"),
     ore: z.enum(["iron_ore", "copper_ore", "crystal", "uranium", "any"]).optional().describe("harvest: which ore type the trucks should mine"),
     structure_id: z.number().int().optional().describe("rally/sell: your structure id"),
     text: z.string().optional().describe("say: chat message shown on screen to everyone"),
@@ -135,7 +136,7 @@ server.registerTool(
       "Issue one or more commands to your team in a single call. Each returns ok/error. Examples: " +
       '{"type":"build","structure":"power_plant"} (auto-placed), {"type":"train","unit":"light_tank","count":3}, ' +
       '{"type":"attack_move","units":"idle","x":50,"y":50}, {"type":"attack","units":[12,13],"target":40}, ' +
-      '{"type":"harvest","units":[3],"ore":"crystal"}, {"type":"deploy","units":[57]} (outpost_truck -> outpost), {"type":"repair","units":[61],"target":12} (repair truck), {"type":"heal","units":[70],"target":33} (medic), {"type":"say","text":"gg"}',
+      '{"type":"harvest","units":[3],"ore":"crystal"}, {"type":"deploy","units":[57]} (outpost_truck -> outpost), {"type":"repair","units":[61],"target":12} (repair truck), {"type":"heal","units":[70],"target":33} (medic), {"type":"load","units":[20,21],"transport":40}, {"type":"unload","units":[40]}, {"type":"capture","units":[52],"target":7} (engineer), {"type":"lay_mines","units":[60],"x":30,"y":30,"count":4}, {"type":"say","text":"gg"}',
     inputSchema: { commands: z.array(Command).min(1).describe("Commands to execute in order") },
   },
   async ({ commands }) => {

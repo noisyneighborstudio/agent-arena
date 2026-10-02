@@ -254,7 +254,10 @@ namespace Pez.View
             var input = Runner.Input;
             var buildingNow = t.StructureQueue.Count > 0 ? W.Get(t.StructureQueue[0].StructureId) : null;
             var cell = new GUIStyle(button) { fontSize = 11, padding = new RectOffset(5, 3, 2, 2), wordWrap = false };
-            const float bw = 124, bh = 32;
+            const float bw = 124;
+            // Shrink button rows so every structure and unit fits above the help text.
+            int rows = (Defs.All.Values.Count(d => d.IsStructure && d.Buildable) + 1) / 2 + (Defs.All.Values.Count(d => !d.IsStructure && d.BuiltBy != Producer.None) + 1) / 2;
+            float bh = Mathf.Clamp((sh - 100 - y - 50) / rows - 2, 22, 32);
 
             GUI.Label(new Rect(x, y, 250, 18), "<b>STRUCTURES</b>", label); y += 19;
             col = 0;
@@ -275,7 +278,7 @@ namespace Pez.View
             y += 4;
             GUI.Label(new Rect(x, y, 250, 18), "<b>UNITS</b>", label); y += 19;
             col = 0;
-            foreach (var d in Defs.All.Values.Where(d => !d.IsStructure))
+            foreach (var d in Defs.All.Values.Where(d => !d.IsStructure && d.BuiltBy != Producer.None))
             {
                 var missing = W.MissingPrereq(Team, d);
                 var q = t.UnitQueues[d.BuiltBy];
@@ -302,7 +305,7 @@ namespace Pez.View
             else if (input.LastError != null && Time.time - input.LastErrorTime < 4f)
                 GUI.Label(new Rect(x, by, 250, 60), $"<color=#ff7755>{input.LastError}</color>", small);
             else
-                GUI.Label(new Rect(x, by, 250, 92), "<size=10><color=#999>Click: build/train (shift x5, right-click cancel). Right-click map: move/attack/mine/rally. F+right-click: attack-move. G: deploy. X: stop. Del: sell. WASD/edge pan, Q/E rotate, wheel zoom.</color></size>", small);
+                GUI.Label(new Rect(x, by, 250, 92), "<size=10><color=#999>Click: build/train (shift x5, right-click cancel). Right-click map: move/attack/mine/rally. F+right-click: attack-move. G: deploy. U: unload. M+right-click: lay mines. Right-click own transport: board; enemy building with engineers: capture. X: stop. Del: sell. WASD/edge pan, Q/E rotate, wheel zoom.</color></size>", small);
         }
 
         bool OrdersVisible => !Runner.InMenu && W.Teams.Any(t => t.Controller == "llm") && (Team < 0 || ShowOrders);

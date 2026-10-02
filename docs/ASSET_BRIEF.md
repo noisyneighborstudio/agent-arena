@@ -80,6 +80,16 @@ You're the art director and lead asset designer for **Pez**, a modern, high-reso
 | rocket_soldier | 0.55 tall | infantry, shoulder launcher | `turret`, `barrel` |
 | laser_trooper | 0.55 tall | elite armour, glowing cyan rifle | `turret`, `barrel` |
 | medic | 0.55 tall | white medical pack with a red cross, no weapon | – |
+| engineer | 0.55 tall | yellow hard hat, toolbox, no weapon | `turret`, `barrel` (toolbox) |
+| sniper | 0.55 tall | ghillie camouflage, long scoped rifle | `turret`, `barrel` |
+| commando | 0.55 tall | beret, satchel of glowing red C4 charges | `turret`, `barrel` |
+| apc | 0.95 | six-wheeled armoured carrier, rear door, roof machine gun | `turret`, `barrel` |
+| flak_track | 0.85 | tracked anti-air with quad guns angled up | `turret`, `barrel` |
+| minelayer | 0.9 | tracked vehicle with a hazard-yellow mine hopper | – |
+| mine | 0.32 wide | flat disc mine with team ring and blinking red light | – |
+| mammoth_tank | 1.5 | super-heavy twin-cannon tank with side missile pods | `turret`, `barrel` |
+| recon_drone | 0.5 | quadcopter drone with a cyan camera eye (flies 2.8 up) | – |
+| transport_chopper | 1.3 | twin-rotor transport helicopter (flies 2.6 up) | `spinner` (rotors) |
 
 ### Assets the game doesn't have yet (design these too)
 

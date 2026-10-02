@@ -9,7 +9,8 @@ namespace Pez.View
     /// Mouse/keyboard control for the human team. Every action becomes a Commands.Execute call,
     /// exactly what an LLM would send over the API.
     /// Left click/drag: select. Right click: move / attack / harvest / rally, or repair/heal a damaged friendly with repair trucks/medics. F + right click: attack-move.
-    /// X: stop. G: deploy outpost truck. Delete: sell. Ctrl+A: select all combat units. Esc: cancel placement.
+    /// X: stop. G: deploy outpost truck. U: unload transports. M + right-click: lay mines (shift: 5). Delete: sell.
+    /// Right-click your own APC/chopper with infantry selected to board; right-click an enemy building with engineers to capture. Ctrl+A: select all combat units. Esc: cancel placement.
     /// </summary>
     public class PlayerInput : MonoBehaviour
     {
@@ -19,7 +20,7 @@ namespace Pez.View
         public float LastErrorTime;
         public bool Dragging;
         public Vector2 DragStart;
-        bool attackMoveArmed;
+        bool attackMoveArmed, mineArmed;
         Transform ghost;
         Material ghostOk, ghostBad;
 
@@ -53,8 +54,14 @@ namespace Pez.View
 
             if (Hud.Typing) return; // keystrokes belong to the orders text box
             if (Input.GetKeyDown(KeyCode.O) && Runner.Hud != null) Runner.Hud.ShowOrders = !Runner.Hud.ShowOrders;
-            if (Input.GetKeyDown(KeyCode.Escape)) { PlacingKey = null; attackMoveArmed = false; }
+            if (Input.GetKeyDown(KeyCode.Escape)) { PlacingKey = null; attackMoveArmed = false; mineArmed = false; }
             if (Input.GetKeyDown(KeyCode.F)) attackMoveArmed = true;
+            if (Input.GetKeyDown(KeyCode.M)) mineArmed = true;
+            if (Input.GetKeyDown(KeyCode.U))
+            {
+                var tr = SelectedUnits().Where(id => W.Get(id)?.Def.Capacity > 0).ToList();
+                if (tr.Count > 0) Exec("type", "unload", "units", tr);
+            }
             if (Input.GetKeyDown(KeyCode.X)) { var u = SelectedUnits(); if (u.Count > 0) Exec("type", "stop", "units", u); }
             if (Input.GetKeyDown(KeyCode.G))
             {
@@ -105,8 +112,22 @@ namespace Pez.View
                 if (units.Count > 0)
                 {
                     var unitEntities = units.Select(W.Get).Where(e => e != null).ToList();
+                    var engineers = unitEntities.Where(e => e.Def.Engineer).Select(e => e.Id).ToList();
+                    var layers = unitEntities.Where(e => e.Def.LaysMines).Select(e => e.Id).ToList();
+                    var infantry = unitEntities.Where(e => e.Def.Armor == Armor.Infantry).Select(e => e.Id).ToList();
                     var healers = unitEntities.Where(e => e.Def.RepairRate > 0 && target != null && World.CanTend(e, target)).Select(e => e.Id).ToList();
-                    if (healers.Count > 0)
+                    if (mineArmed && layers.Count > 0)
+                        Exec("type", "lay_mines", "units", layers, "x", ground.x, "y", ground.z, "count", Input.GetKey(KeyCode.LeftShift) ? 5 : 1);
+                    else if (target != null && target.Team == Team && target.Def.Capacity > 0 && infantry.Count > 0)
+                        Exec("type", "load", "units", infantry, "transport", target.Id);
+                    else if (target != null && target.IsStructure && target.Team != Team && engineers.Count > 0)
+                    {
+                        // Engineers capture; anyone else selected keeps shooting at it.
+                        Exec("type", "capture", "units", engineers, "target", target.Id);
+                        var rest = units.Except(engineers).ToList();
+                        if (rest.Count > 0) Exec("type", "attack", "units", rest, "target", target.Id);
+                    }
+                    else if (healers.Count > 0)
                     {
                         // Medics/repair trucks tend the target; everyone else moves up beside it.
                         Exec("type", "repair", "units", healers, "target", target.Id);
@@ -120,6 +141,7 @@ namespace Pez.View
                 }
                 else if (structures.Count > 0) Exec("type", "rally", "structure_id", structures[0], "x", ground.x, "y", ground.z);
                 attackMoveArmed = false;
+                mineArmed = false;
             }
         }
 

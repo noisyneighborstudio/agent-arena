@@ -140,11 +140,15 @@ namespace Pez.Sim
             // Expensive tiers first so cheap infantry doesn't eat all the steel; infantry is capped.
             int roll = w.Tick / 20 % 3;
             Train(Producer.Airfield, roll == 0 ? new[] { "stealth_bomber", "gunship" } : new[] { "gunship" });
-            Train(Producer.Factory, roll == 0 ? new[] { "laser_tank", "heavy_tank", "light_tank" } : roll == 1 ? new[] { "artillery", "heavy_tank", "light_tank" } : new[] { "light_tank", "scout_buggy" });
+            // Answer enemy aircraft with flak; otherwise climb toward mammoths.
+            bool enemyAir = w.Entities.Any(e => !e.Dead && e.Team != team && e.IsAir && w.IsVisibleTo(team, e));
+            if (enemyAir && mine.Count(e => e.Def.Key == "flak_track") < 3) Train(Producer.Factory, "flak_track");
+            if (w.HasComplete(team, "electronics_plant") && mine.Count(e => e.Def.Key == "recon_drone") == 0) Train(Producer.Factory, "recon_drone");
+            Train(Producer.Factory, roll == 0 ? new[] { "mammoth_tank", "laser_tank", "heavy_tank", "light_tank" } : roll == 1 ? new[] { "artillery", "heavy_tank", "light_tank" } : new[] { "light_tank", "apc", "scout_buggy" });
             int infantry = mine.Count(e => e.Def.Armor == Armor.Infantry);
             int vehicles = mine.Count(e => !e.IsStructure && e.Def.Armor != Armor.Infantry && !e.IsHarvester);
             if (infantry < 6 + vehicles && t.Amount("steel") > 150)
-                Train(Producer.Barracks, roll == 0 ? new[] { "laser_trooper", "rocket_soldier", "rifleman" } : roll == 1 ? new[] { "rocket_soldier", "rifleman" } : new[] { "rifleman" });
+                Train(Producer.Barracks, roll == 0 ? new[] { "laser_trooper", "sniper", "rocket_soldier", "rifleman" } : roll == 1 ? new[] { "rocket_soldier", "rifleman" } : new[] { "rifleman" });
 
             // ---- Defense: anything hostile near a base gets everyone nearby.
             var army = mine.Where(e => !e.IsStructure && e.IsArmed).ToList();

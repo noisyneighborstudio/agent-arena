@@ -77,6 +77,9 @@ namespace Pez.View
                 case "rocket_soldier":
                 case "laser_trooper":
                 case "medic":
+                case "engineer":
+                case "sniper":
+                case "commando":
                     {
                         float s = 0.85f;
                         Part(b, PrimitiveType.Capsule, new Vector3(0, 0.22f * s, 0), new Vector3(0.16f, 0.2f, 0.12f) * s, teamMat);
@@ -85,6 +88,26 @@ namespace Pez.View
                         rig.Turret = Empty(b, "arms", new Vector3(0, 0.32f * s, 0));
                         if (key == "rifleman")
                             rig.Barrel = Part(rig.Turret, PrimitiveType.Cube, new Vector3(0.06f, 0, 0.12f), new Vector3(0.03f, 0.04f, 0.26f), dark);
+                        else if (key == "engineer")
+                        {
+                            // Hard hat and toolbox.
+                            Part(b, PrimitiveType.Sphere, new Vector3(0, 0.55f * s, 0), new Vector3(0.14f, 0.07f, 0.14f) * s, Mats.Lit(new Color(1f, 0.8f, 0.1f), 0.5f, 0.1f));
+                            rig.Barrel = Part(rig.Turret, PrimitiveType.Cube, new Vector3(0.1f, -0.1f, 0.03f), new Vector3(0.07f, 0.06f, 0.12f), Mats.Lit(new Color(0.85f, 0.2f, 0.1f), 0.4f, 0.3f));
+                        }
+                        else if (key == "sniper")
+                        {
+                            // Ghillie-dark body overlay and a long scoped rifle.
+                            Part(b, PrimitiveType.Capsule, new Vector3(0, 0.22f * s, 0), new Vector3(0.17f, 0.2f, 0.13f) * s, Mats.Lit(new Color(0.2f, 0.26f, 0.14f), 0.05f, 0));
+                            rig.Barrel = Part(rig.Turret, PrimitiveType.Cube, new Vector3(0.06f, 0, 0.2f), new Vector3(0.025f, 0.035f, 0.46f), dark);
+                            Part(rig.Barrel, PrimitiveType.Cylinder, new Vector3(0, 1.4f, 0.05f), new Vector3(0.9f, 0.12f, 0.9f), Mats.Glow(new Color(0.4f, 0.9f, 1f), 1.5f), new Vector3(90, 0, 0));
+                        }
+                        else if (key == "commando")
+                        {
+                            // Beret and a satchel of charges.
+                            Part(b, PrimitiveType.Sphere, new Vector3(0.02f, 0.55f * s, 0), new Vector3(0.13f, 0.04f, 0.13f) * s, Mats.Lit(new Color(0.1f, 0.1f, 0.1f), 0.2f, 0));
+                            Part(b, PrimitiveType.Cube, new Vector3(0, 0.26f * s, -0.09f), new Vector3(0.14f, 0.12f, 0.07f) * s, Mats.Lit(new Color(0.3f, 0.25f, 0.15f), 0.2f, 0));
+                            rig.Barrel = Part(rig.Turret, PrimitiveType.Cube, new Vector3(0.08f, 0, 0.08f), new Vector3(0.06f, 0.05f, 0.08f), Mats.Glow(new Color(1f, 0.2f, 0.1f), 2f));
+                        }
                         else if (key == "medic")
                         {
                             // White pack with a red cross on the back, no weapon.
@@ -257,6 +280,68 @@ namespace Pez.View
                     rig.Turret = Empty(b, "crane", new Vector3(0, 0.52f, -0.25f));
                     Part(rig.Turret, PrimitiveType.Cube, new Vector3(0, 0.12f, 0.2f), new Vector3(0.06f, 0.06f, 0.55f), steel, new Vector3(-20, 0, 0));
                     rig.Barrel = Part(rig.Turret, PrimitiveType.Sphere, new Vector3(0, 0.22f, 0.48f), Vector3.one * 0.08f, Mats.Glow(new Color(1f, 0.85f, 0.4f), 2.5f));
+                    break;
+                case "apc":
+                    for (int i = 0; i < 6; i++)
+                        Part(b, PrimitiveType.Cylinder, new Vector3(i % 2 == 0 ? -0.28f : 0.28f, 0.11f, -0.3f + (i / 2) * 0.3f), new Vector3(0.2f, 0.05f, 0.2f), track, new Vector3(0, 0, 90));
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.27f, 0), new Vector3(0.52f, 0.26f, 0.95f), teamMat);
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.3f, 0.47f), new Vector3(0.5f, 0.18f, 0.1f), teamDark, new Vector3(-30, 0, 0));
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.25f, -0.49f), new Vector3(0.32f, 0.2f, 0.02f), dark);
+                    rig.Turret = Empty(b, "mg", new Vector3(0, 0.44f, 0.1f));
+                    Part(rig.Turret, PrimitiveType.Cylinder, Vector3.zero, new Vector3(0.14f, 0.04f, 0.14f), teamDark);
+                    rig.Barrel = Part(rig.Turret, PrimitiveType.Cube, new Vector3(0, 0.04f, 0.15f), new Vector3(0.035f, 0.035f, 0.3f), dark);
+                    break;
+                case "flak_track":
+                    Part(b, PrimitiveType.Cube, new Vector3(-0.25f, 0.11f, 0), new Vector3(0.15f, 0.22f, 0.85f), track);
+                    Part(b, PrimitiveType.Cube, new Vector3(0.25f, 0.11f, 0), new Vector3(0.15f, 0.22f, 0.85f), track);
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.24f, 0), new Vector3(0.42f, 0.16f, 0.8f), teamMat);
+                    rig.Turret = Empty(b, "flak", new Vector3(0, 0.38f, -0.05f));
+                    Part(rig.Turret, PrimitiveType.Cube, Vector3.zero, new Vector3(0.3f, 0.14f, 0.26f), teamDark);
+                    rig.Barrel = Empty(rig.Turret, "guns", new Vector3(0, 0.06f, 0.05f));
+                    for (int i = 0; i < 4; i++)
+                        Part(rig.Barrel, PrimitiveType.Cylinder, new Vector3(-0.09f + (i % 2) * 0.18f, 0.08f + (i / 2) * 0.07f, 0.16f), new Vector3(0.035f, 0.18f, 0.035f), steel, new Vector3(50, 0, 0));
+                    break;
+                case "minelayer":
+                    Part(b, PrimitiveType.Cube, new Vector3(-0.25f, 0.11f, 0), new Vector3(0.15f, 0.22f, 0.9f), track);
+                    Part(b, PrimitiveType.Cube, new Vector3(0.25f, 0.11f, 0), new Vector3(0.15f, 0.22f, 0.9f), track);
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.26f, 0.15f), new Vector3(0.44f, 0.2f, 0.55f), teamMat);
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.3f, -0.3f), new Vector3(0.4f, 0.24f, 0.3f), Mats.Lit(new Color(0.95f, 0.75f, 0.1f), 0.4f, 0.3f));
+                    for (int i = 0; i < 3; i++) Part(b, PrimitiveType.Cylinder, new Vector3(-0.12f + i * 0.12f, 0.45f, -0.3f), new Vector3(0.1f, 0.02f, 0.1f), dark);
+                    break;
+                case "mine":
+                    Part(b, PrimitiveType.Cylinder, new Vector3(0, 0.03f, 0), new Vector3(0.32f, 0.03f, 0.32f), dark);
+                    Part(b, PrimitiveType.Cylinder, new Vector3(0, 0.065f, 0), new Vector3(0.22f, 0.01f, 0.22f), teamMat);
+                    Part(b, PrimitiveType.Sphere, new Vector3(0, 0.08f, 0), Vector3.one * 0.05f, Mats.Glow(new Color(1f, 0.15f, 0.1f), 3f));
+                    break;
+                case "mammoth_tank":
+                    Tank(rig, teamMat, teamDark, steel, track, 1.65f, true);
+                    // Missile pods either side of the turret.
+                    Part(rig.Turret, PrimitiveType.Cube, new Vector3(0.32f, 0.12f, -0.05f), new Vector3(0.12f, 0.12f, 0.3f), teamDark);
+                    Part(rig.Turret, PrimitiveType.Cube, new Vector3(-0.32f, 0.12f, -0.05f), new Vector3(0.12f, 0.12f, 0.3f), teamDark);
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.42f, -0.4f), new Vector3(0.6f, 0.1f, 0.2f), steel);
+                    break;
+                case "recon_drone":
+                    rig.Altitude = 2.8f;
+                    Part(b, PrimitiveType.Sphere, Vector3.zero, new Vector3(0.22f, 0.1f, 0.28f), teamMat);
+                    Part(b, PrimitiveType.Sphere, new Vector3(0, -0.04f, 0.1f), Vector3.one * 0.07f, Mats.Glow(new Color(0.4f, 0.9f, 1f), 2.5f));
+                    var props = Empty(b, "props", Vector3.zero); // static discs read as spinning props at game distance
+                    for (int i = 0; i < 4; i++)
+                    {
+                        var arm = new Vector3(i % 2 == 0 ? -0.22f : 0.22f, 0.02f, i < 2 ? 0.22f : -0.22f);
+                        Part(b, PrimitiveType.Cube, arm * 0.5f, new Vector3(0.03f, 0.02f, 0.3f), dark, new Vector3(0, i % 3 == 0 ? 45 : -45, 0));
+                        Part(props, PrimitiveType.Cylinder, arm + Vector3.up * 0.03f, new Vector3(0.18f, 0.005f, 0.18f), Mats.Unlit(new Color(0.75f, 0.75f, 0.75f, 0.45f)));
+                    }
+                    break;
+                case "transport_chopper":
+                    rig.Altitude = 2.6f;
+                    Part(b, PrimitiveType.Capsule, new Vector3(0, 0, 0), new Vector3(0.42f, 0.55f, 0.42f), teamMat, new Vector3(90, 0, 0));
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.06f, 0.42f), new Vector3(0.3f, 0.16f, 0.14f), Mats.Lit(new Color(0.15f, 0.25f, 0.35f), 0.95f, 0.4f));
+                    Part(b, PrimitiveType.Cube, new Vector3(0, -0.2f, 0), new Vector3(0.4f, 0.03f, 0.6f), dark);
+                    rig.Spinner = Empty(b, "rotors", Vector3.zero);
+                    Part(rig.Spinner, PrimitiveType.Cube, new Vector3(0, 0.28f, 0.35f), new Vector3(1.3f, 0.015f, 0.07f), dark);
+                    Part(rig.Spinner, PrimitiveType.Cube, new Vector3(0, 0.28f, 0.35f), new Vector3(0.07f, 0.015f, 1.3f), dark);
+                    Part(rig.Spinner, PrimitiveType.Cube, new Vector3(0, 0.32f, -0.4f), new Vector3(1.3f, 0.015f, 0.07f), dark);
+                    Part(rig.Spinner, PrimitiveType.Cube, new Vector3(0, 0.32f, -0.4f), new Vector3(0.07f, 0.015f, 1.3f), dark);
                     break;
                 case "outpost_truck":
                     Part(b, PrimitiveType.Cube, new Vector3(-0.28f, 0.13f, 0), new Vector3(0.16f, 0.26f, 1.1f), track);

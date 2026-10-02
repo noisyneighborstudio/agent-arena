@@ -22,6 +22,10 @@ namespace Pez.Sim
   {""type"":""harvest"", ""units"":[IDS], ""ore"":""crystal""}  send mining trucks to the nearest ore of a type (iron_ore, copper_ore, crystal, uranium; ""any"" to reset)
   {""type"":""repair"", ""units"":[IDS], ""target"":ID}     repair trucks fix a damaged friendly vehicle, aircraft or structure (costs steel)
   {""type"":""heal"", ""units"":[IDS], ""target"":ID}       medics heal a wounded friendly infantry unit (free); same as repair
+  {""type"":""load"", ""units"":[INFANTRY IDS], ""transport"":ID}   infantry walk to an APC / transport_chopper and board it
+  {""type"":""unload"", ""units"":[TRANSPORT IDS]}          drop all passengers where the transport is
+  {""type"":""capture"", ""units"":[ENGINEER IDS], ""target"":ID}  engineer takes over an enemy structure below 50% HP (engineer is used up)
+  {""type"":""lay_mines"", ""units"":[MINELAYER IDS], ""x"":X, ""y"":Y, ""count"":N}  lay up to 8 hidden mines around x,y (30 steel each)
   {""type"":""deploy"", ""units"":[IDS]}                   deploy an outpost_truck into an Outpost where it stands
   {""type"":""rally"", ""structure_id"":ID, ""x"":X, ""y"":Y} where new units from that building go
   {""type"":""sell"", ""structure_id"":ID}                 sell for 50% refund
@@ -49,6 +53,10 @@ namespace Pez.Sim
                     case "deploy": return Deploy(w, team, c);
                     case "repair":
                     case "heal": return Repair(w, team, c);
+                    case "load": return Load(w, team, c);
+                    case "unload": return Unload(w, team, c);
+                    case "capture": return Capture(w, team, c);
+                    case "lay_mines": return LayMines(w, team, c);
                     case "rally": return Rally(w, team, c);
                     case "sell": return Sell(w, team, c);
                     case "cancel": return Cancel(w, team, c);
@@ -136,7 +144,7 @@ namespace Pez.Sim
                 if (s == "idle") mine = mine.Where(e => e.Order == Order.Idle);
                 return mine.ToList();
             }
-            return c.Ids("units").Select(w.Get).Where(e => e != null && e.Team == team && !e.IsStructure).ToList();
+            return c.Ids("units").Select(w.Get).Where(e => e != null && e.Team == team && !e.IsStructure && !e.IsMine && !e.IsCarried).ToList();
         }
 
         static JObj UnitOrder(World w, int team, Dictionary<string, object> c, Order order)
@@ -224,6 +232,66 @@ namespace Pez.Sim
             w.Emit("destroyed", team, s.Id, 0, s.Center, key: s.Def.Key);
             w.Remove(s);
             return Ok($"sold {s.Def.Key} for {refund}");
+        }
+
+        static JObj Load(World w, int team, Dictionary<string, object> c)
+        {
+            var t = w.Get((int)c.Num("transport", c.Num("target", 0)));
+            if (t == null || t.Team != team || t.Def.Capacity == 0) return Err("transport must be one of your apc or transport_chopper ids");
+            var inf = ResolveUnits(w, team, c).Where(u => u.Def.Armor == Armor.Infantry).ToList();
+            if (inf.Count == 0) return Err("only infantry can board; none given");
+            int seats = w.FreeSeats(t);
+            if (seats <= 0) return Err($"{t.Def.Key} #{t.Id} is full ({t.Passengers.Count}/{t.Def.Capacity})");
+            var going = inf.Take(seats).ToList();
+            foreach (var u in going) w.SetOrder(u, Order.Board, t.Pos, t.Id);
+            return Ok($"{going.Count} infantry boarding {t.Def.Key} #{t.Id}" + (inf.Count > going.Count ? $"; {inf.Count - going.Count} left behind (no room)" : ""));
+        }
+
+        static JObj Unload(World w, int team, Dictionary<string, object> c)
+        {
+            var ts = ResolveUnits(w, team, c).Where(u => u.Def.Capacity > 0).ToList();
+            if (ts.Count == 0) return Err("no transports given");
+            int n = ts.Sum(w.Unload);
+            return n > 0 ? Ok($"{n} passenger(s) unloaded") : Err("those transports are empty");
+        }
+
+        static JObj Capture(World w, int team, Dictionary<string, object> c)
+        {
+            var eng = ResolveUnits(w, team, c).Where(u => u.Def.Engineer).ToList();
+            if (eng.Count == 0) return Err("no engineers given");
+            var t = w.Get((int)c.Num("target", 0));
+            if (t == null || !t.IsStructure || t.Team == team) return Err("target must be an enemy structure");
+            if (!w.IsVisibleTo(team, t)) return Err("target is not currently visible");
+            if (!t.IsComplete) return Err("can't capture a structure that's still under construction");
+            if (t.Hp > t.Def.MaxHp * World.CaptureThreshold)
+                return Err($"{t.Def.Key} #{t.Id} is at {(int)t.Hp}/{t.Def.MaxHp}; damage it below 50% before an engineer can capture it");
+            foreach (var u in eng) w.SetOrder(u, Order.Capture, t.Center, t.Id);
+            return Ok($"{eng.Count} engineer(s) moving to capture {t.Def.Key} #{t.Id}");
+        }
+
+        static readonly Vec2[] MinePattern =
+        {
+            new Vec2(0, 0), new Vec2(1.2f, 0), new Vec2(-1.2f, 0), new Vec2(0, 1.2f), new Vec2(0, -1.2f), new Vec2(1.2f, 1.2f), new Vec2(-1.2f, -1.2f), new Vec2(1.2f, -1.2f),
+        };
+
+        static JObj LayMines(World w, int team, Dictionary<string, object> c)
+        {
+            var ls = ResolveUnits(w, team, c).Where(u => u.Def.LaysMines).ToList();
+            if (ls.Count == 0) return Err("no mine layers given");
+            float x = c.Num("x"), y = c.Num("y");
+            if (float.IsNaN(x) || float.IsNaN(y)) return Err("x and y are required");
+            int count = Math.Max(1, Math.Min(8, (int)c.Num("count", 1)));
+            if (w.Teams[team].Amount("steel") < EntityDef.MineCost) return Err($"mines cost {EntityDef.MineCost} steel each; you have {w.Teams[team].Amount("steel")}");
+            var spots = MinePattern.Take(count).Select(o => new Vec2(x, y) + o).ToList();
+            for (int i = 0; i < ls.Count; i++)
+            {
+                var l = ls[i];
+                w.SetOrder(l, Order.LayMines, new Vec2(x, y));
+                l.MineQueue.Clear();
+                // Split the pattern between layers.
+                for (int k = i; k < spots.Count; k += ls.Count) l.MineQueue.Add(spots[k]);
+            }
+            return Ok($"laying {count} mine(s) around ({x:0},{y:0}); {EntityDef.MineCost} steel each, paid as each is laid");
         }
 
         static JObj Repair(World w, int team, Dictionary<string, object> c)

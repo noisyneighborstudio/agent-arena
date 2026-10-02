@@ -226,6 +226,7 @@ namespace Pez.View
 
         void RebuildView()
         {
+            Game.World.ErrorLog = msg => Debug.LogError("Sim error (game continues): " + msg);
             if (View != null) Destroy(View.gameObject);
             viewWorld = Game.World;
             HumanTeam = System.Array.IndexOf(Game.Config.Controllers, "human");

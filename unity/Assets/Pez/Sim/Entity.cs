@@ -2,7 +2,7 @@ using System.Collections.Generic;
 
 namespace Pez.Sim
 {
-    public enum Order { Idle, Move, AttackMove, Attack, Harvest, ReturnOre, Repair }
+    public enum Order { Idle, Move, AttackMove, Attack, Harvest, ReturnOre, Repair, Board, Capture, LayMines }
 
     public class Entity
     {
@@ -33,6 +33,11 @@ namespace Pez.Sim
         public bool Moving;
         public int LastAttackerId;
         public float LastHitTime = -999;
+        public float LastCallForHelp = -999;
+
+        // Responding to an attack nearby: remember where to come back to.
+        public bool Responding;
+        public Vec2 HomePos;
 
         // Mining trucks
         public int Cargo;
@@ -44,10 +49,19 @@ namespace Pez.Sim
         // Converters / reactors: currently producing
         public bool Working;
 
+        // Transports and passengers
+        public int CarrierId;                         // != 0 while riding inside a transport
+        public readonly List<int> Passengers = new List<int>();
+        public bool IsCarried => CarrierId != 0;
+
+        // Mine layers: where to put the remaining mines
+        public readonly List<Vec2> MineQueue = new List<Vec2>();
+
         public bool IsStructure => Def.IsStructure;
         public bool IsArmed => Def.Weapon != null;
         public bool IsHarvester => Def.HarvestCapacity > 0;
         public bool IsAir => Def.IsAir;
+        public bool IsMine => Def.IsMine;
 
         public Vec2 Center => IsStructure ? new Vec2(Origin.X + Def.SizeX / 2f, Origin.Y + Def.SizeY / 2f) : Pos;
 
@@ -64,6 +78,7 @@ namespace Pez.Sim
         {
             "attackmove" => "attack_move",
             "returnore" => "return_ore",
+            "laymines" => "lay_mines",
             var s => s
         };
     }

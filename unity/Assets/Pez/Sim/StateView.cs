@@ -65,12 +65,17 @@ namespace Pez.Sim
                 return s;
             }).ToList());
 
-            o.Set("my_units", w.Owned(team).Where(e => !e.IsStructure).Select(e =>
+            var mines = w.Owned(team).Where(e => e.IsMine).ToList();
+            o.Set("my_mines", mines.Count == 0 ? (object)"none" : $"{mines.Count}: " + string.Join(" ", mines.Take(30).Select(m => $"({R(m.Pos.X)},{R(m.Pos.Y)})")));
+            o.Set("my_units", w.Owned(team).Where(e => !e.IsStructure && !e.IsMine).Select(e =>
             {
                 var s = $"#{e.Id} {e.Def.Key} at {R(e.Pos.X)},{R(e.Pos.Y)} hp {(int)e.Hp}/{e.Def.MaxHp} {e.OrderName}";
-                if (e.Order == Order.Attack || e.Order == Order.Repair) s += $" #{e.TargetId}";
+                if (e.Order == Order.Attack || e.Order == Order.Repair || e.Order == Order.Capture || e.Order == Order.Board) s += $" #{e.TargetId}";
                 if (e.IsHarvester) s += $" cargo {e.Cargo}/{e.Def.HarvestCapacity}{(e.CargoType >= 0 ? " " + Defs.Ores[e.CargoType] : "")}{(e.HarvestType >= 0 ? $" (assigned {Defs.Ores[e.HarvestType]})" : "")}";
                 if (e.IsAir) s += " (air)";
+                if (e.IsCarried) s += $" (inside #{e.CarrierId})";
+                if (e.Def.Capacity > 0) s += $" carrying {e.Passengers.Count}/{e.Def.Capacity}" + (e.Passengers.Count > 0 ? ": " + string.Join(",", e.Passengers.Select(p => "#" + p)) : "");
+                if (e.Def.LaysMines && e.MineQueue.Count > 0) s += $" ({e.MineQueue.Count} mines to lay)";
                 return s;
             }).ToList());
 
@@ -214,12 +219,14 @@ namespace Pez.Sim
                 if (!mine && !w.IsVisibleTo(team, e)) continue;
                 var t = Int2.Of(e.Pos);
                 if (!m.InBounds(t.X, t.Y)) continue;
+                if (e.IsCarried) continue;
+                if (e.IsMine) { g[m.Idx(t.X, t.Y)] = mine ? '^' : '&'; continue; }
                 g[m.Idx(t.X, t.Y)] = mine ? (e.IsHarvester ? 'm' : e.IsAir ? 'a' : e.Def.Armor == Armor.Vehicle ? 'v' : 'i') : (e.IsHarvester ? 'M' : e.IsAir ? 'W' : e.Def.Armor == Armor.Vehicle ? 'X' : 'x');
             }
             var sb = new StringBuilder();
             sb.AppendLine("Legend: . open  # rock  ~ water  blank = unexplored | ore: $ iron_ore  % copper_ore  * crystal  ! uranium");
             sb.AppendLine("YOUR structures: C command_center O outpost P power_plant R mining_refinery B barracks F factory T gun_turret E electronics_plant D radar_dome S sam_site L optics_lab N enrichment_plant Z laser_tower K composite_foundry U fusion_reactor A airfield (enemy: same letters lowercase)");
-            sb.AppendLine("Units: yours i infantry v vehicle m mining_truck a aircraft | enemy x infantry X vehicle M mining_truck W aircraft | enemies outside your vision are hidden; enemy structures you've seen stay drawn");
+            sb.AppendLine("Units: yours i infantry v vehicle m mining_truck a aircraft ^ mine | enemy x infantry X vehicle M mining_truck W aircraft & mine | enemies outside your vision are hidden; enemy structures you've seen stay drawn");
             sb.Append("    ");
             for (int x = 0; x < m.W; x++) sb.Append(x % 10 == 0 ? (char)('0' + (x / 10) % 10) : ' ');
             sb.AppendLine();
@@ -244,6 +251,7 @@ namespace Pez.Sim
                 "Typical opening: power_plant -> more mining_trucks -> mining_refinery -> barracks/factory -> electronics_plant. Raw ore pays for the first buildings; everything later needs refined materials.",
                 "Assign trucks to the ore you need with harvest + ore. Crystal and uranium sit in the contested middle.",
                 "Expand: build an outpost_truck at the factory, drive it to a remote ore field and deploy it. Outposts are drop-off points and let you build defenses there.",
+                "Specialists: engineers capture enemy buildings below 50% HP; snipers delete infantry from range 9; commandos C4 buildings. APCs and transport choppers carry infantry (load/unload). Mine layers plant hidden mines. Flak tracks are mobile anti-air. Mammoth tanks are super-heavy and self-repair to 50%. Recon drones are cheap flying scouts.",
                 "Repair trucks (factory) fix vehicles, aircraft and structures for steel; medics (barracks) heal infantry for free. Both auto-tend anything damaged within 6 tiles when idle, so park them behind your army.",
                 "Aircraft ignore terrain. Only rockets, lasers, SAMs, gunships (and weakly, rifles/mg) can hit them. Stealth bombers are invisible except within 3 tiles of your units or inside your radar dome range.",
                 "Keep power produced >= power used or production and refining halve.",

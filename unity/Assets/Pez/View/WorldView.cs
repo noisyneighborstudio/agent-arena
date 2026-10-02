@@ -48,7 +48,7 @@ namespace Pez.View
             lastSeq = w.Events.Count > 0 ? w.Events[w.Events.Count - 1].Seq : 0;
         }
 
-        bool Shown(Entity e) => PovTeam < 0 || World.IsVisibleTo(PovTeam, e) ||
+        bool Shown(Entity e) => !e.IsCarried && (PovTeam < 0 || World.IsVisibleTo(PovTeam, e)) ||
                                 (e.IsStructure && World.Teams[PovTeam].KnownEnemyStructures.ContainsKey(e.Id));
 
         public void Sync(float alpha)
@@ -213,10 +213,16 @@ namespace Pez.View
                                 Fx.Beam(from, to, c, ev.Key == "beam" ? 0.12f : 0.06f);
                                 Fx.MuzzleFlash(to, 0.1f);
                             }
+                            else if (ev.Key == "c4")
+                            {
+                                // Charge planted and blown: no tracer, a big blast on the target.
+                                Fx.Explosion(to, 1.1f);
+                                Fx.Scorch(W(ev.Pos2), 1.2f);
+                            }
                             else
                             {
-                                Fx.Tracer(from, to, new Color(1f, 0.85f, 0.4f, 0.9f));
-                                Fx.MuzzleFlash(from, 0.06f);
+                                Fx.Tracer(from, to, ev.Key == "sniper" ? new Color(0.6f, 0.95f, 1f, 1f) : new Color(1f, 0.85f, 0.4f, 0.9f));
+                                Fx.MuzzleFlash(from, ev.Key == "sniper" ? 0.1f : 0.06f);
                             }
                             Kick(ev.A, beam ? 0.04f : 0.02f);
                             break;
@@ -224,6 +230,10 @@ namespace Pez.View
                     case "fire":
                         Fx.MuzzleFlash(MuzzleOf(ev.A, ev.Pos), ev.Key == "heavy_cannon" ? 0.2f : 0.13f);
                         Kick(ev.A, 0.08f);
+                        break;
+                    case "captured":
+                        Fx.Beam(W(ev.Pos, 0.2f), W(ev.Pos, 4f), Mats.Team(ev.Team), 0.25f);
+                        Fx.MuzzleFlash(W(ev.Pos, 0.6f), 0.4f);
                         break;
                     case "repair":
                     case "heal":
@@ -237,9 +247,10 @@ namespace Pez.View
                         }
                     case "hit":
                         {
-                            float size = ev.Key == "bombs" ? 1.6f : ev.Key == "artillery" ? 0.9f : ev.Key == "heavy_cannon" ? 0.55f : ev.Key == "rocket" || ev.Key == "sam" ? 0.45f : 0.3f;
+                            float size = ev.Key == "bombs" ? 1.6f : ev.Key == "mine" ? 1.2f : ev.Key == "artillery" || ev.Key == "mammoth_cannon" ? 0.9f : ev.Key == "heavy_cannon" ? 0.55f : ev.Key == "rocket" || ev.Key == "sam" || ev.Key == "flak" ? 0.45f : 0.3f;
                             Fx.Explosion(W(ev.Pos, HeightOf(ev.B, 0.2f)), size);
-                            if (ev.Key == "bombs" || ev.Key == "artillery") Fx.Scorch(W(ev.Pos), size * 1.3f);
+                            if (ev.Key == "bombs" || ev.Key == "artillery" || ev.Key == "mine") Fx.Scorch(W(ev.Pos), size * 1.3f);
+                            if (ev.Key == "mine") Fx.Debris(W(ev.Pos), 0.8f, new Color(0.35f, 0.3f, 0.25f), 10);
                             break;
                         }
                     case "destroyed":

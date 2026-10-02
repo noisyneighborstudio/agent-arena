@@ -34,6 +34,8 @@ namespace Pez.Sim
         public int PowerProduced, PowerUsed;
         /// <summary>Enemy stealth units this team can currently see.</summary>
         public readonly HashSet<int> Detected = new HashSet<int>();
+        /// <summary>Enemies briefly revealed by firing on this team (entity id -> game time the reveal ends).</summary>
+        public readonly Dictionary<int, float> Revealed = new Dictionary<int, float>();
 
         public int Amount(string item) => Stock.TryGetValue(item, out var v) ? (int)v : 0;
         public void Add(string item, float n) => Stock[item] = (Stock.TryGetValue(item, out var v) ? v : 0) + n;
@@ -80,6 +82,23 @@ namespace Pez.Sim
         public float Time => Tick * Dt;
         public bool GameOver;
         public int Winner = -1;
+        /// <summary>Exceptions caught inside the sim (each is logged once per site and the game carries on).</summary>
+        public int Errors;
+        public string LastError;
+        public Action<string> ErrorLog = _ => { };
+        readonly HashSet<string> loggedErrors = new HashSet<string>();
+
+        void RecordError(string where, Exception ex)
+        {
+            Errors++;
+            LastError = $"[{Time:0}s] {where}: {ex.GetType().Name}: {ex.Message}";
+            if (loggedErrors.Add(where.Split(' ')[0] + ex.GetType().Name)) ErrorLog(LastError + "\n" + ex.StackTrace);
+        }
+
+        void Guard(string where, Action a)
+        {
+            try { a(); } catch (Exception ex) { RecordError(where, ex); }
+        }
         int nextId = 1;
         long nextSeq = 1;
         const int MaxEvents = 4000;
@@ -193,7 +212,20 @@ namespace Pez.Sim
 
         public void Remove(Entity e)
         {
+            if (e.Dead) return;
             e.Dead = true;
+            if (e.IsCarried) Get(e.CarrierId)?.Passengers.Remove(e.Id);
+            foreach (var pid in e.Passengers.ToList())
+            {
+                var p = Get(pid);
+                if (p == null) continue;
+                // Nobody gets out of a destroyed transport.
+                Emit("destroyed", p.Team, p.Id, 0, e.Center, key: p.Def.Key);
+                Teams[p.Team].Stats.UnitsLost++;
+                p.CarrierId = 0;
+                Remove(p);
+            }
+            e.Passengers.Clear();
             if (e.IsStructure)
             {
                 for (int y = 0; y < e.Def.SizeY; y++)
@@ -250,6 +282,9 @@ namespace Pez.Sim
         public bool IsVisibleTo(int team, Entity e)
         {
             if (e.Team == team) return true;
+            if (e.IsCarried) return false; // inside a transport
+            // Muzzle flash: whoever just shot at this team is visible to it for a few seconds.
+            if (Teams[team].Revealed.TryGetValue(e.Id, out var until) && until >= Time) return true;
             if (e.Def.Stealth) return Teams[team].Detected.Contains(e.Id);
             var vis = Teams[team].Visible;
             if (!e.IsStructure) { var t = Int2.Of(e.Pos); return Map.InBounds(t.X, t.Y) && vis[Map.Idx(t.X, t.Y)]; }
@@ -319,6 +354,7 @@ namespace Pez.Sim
             e.Path = null;
             e.RepathTimer = 0;
             if (o == Order.Idle) e.GuardPos = e.Pos;
+            e.Responding = false; // any new order (from a commander or the response itself) replaces the old one
             if (o == Order.Harvest && e.IsHarvester)
             {
                 var t = Int2.Of(pos);
@@ -345,14 +381,27 @@ namespace Pez.Sim
                 var e = Entities[i];
                 if (e.Dead) continue;
                 if (e.Cooldown > 0) e.Cooldown -= Dt;
-                if (!e.IsStructure) UpdateUnit(e);
-                else if (e.IsArmed && e.IsComplete) UpdateTurret(e);
+                if (e.IsCarried) { var c = Get(e.CarrierId); if (c != null) e.Pos = c.Pos; continue; } // riding along
+                if (e.Def.SelfRepairRate > 0 && e.Hp < e.Def.MaxHp * e.Def.SelfRepairTo)
+                    e.Hp = MathF.Min(e.Def.MaxHp * e.Def.SelfRepairTo, e.Hp + e.Def.SelfRepairRate * Dt);
+                // One misbehaving entity must never stop the rest of the world from updating.
+                try
+                {
+                    if (e.IsMine) { MineTick(e); continue; }
+                    if (!e.IsStructure) UpdateUnit(e);
+                    else if (e.IsArmed && e.IsComplete) UpdateTurret(e);
+                }
+                catch (Exception ex)
+                {
+                    RecordError($"{e.Def.Key} #{e.Id} ({e.OrderName})", ex);
+                    if (!e.IsStructure) SetOrder(e, Order.Idle, e.Pos);
+                }
             }
-            UpdateProjectiles();
-            Separate();
-            Cleanup();
-            if (Tick % 4 == 0) UpdateVisibility();
-            CheckVictory();
+            Guard("projectiles", UpdateProjectiles);
+            Guard("separation", Separate);
+            Guard("cleanup", Cleanup);
+            if (Tick % 4 == 0) Guard("visibility", UpdateVisibility);
+            Guard("victory", CheckVictory);
         }
 
         void UpdatePower()
@@ -482,21 +531,41 @@ namespace Pez.Sim
                 case Order.Repair:
                     UpdateRepair(e);
                     break;
+                case Order.Board:
+                    UpdateBoard(e);
+                    break;
+                case Order.Capture:
+                    UpdateCapture(e);
+                    break;
+                case Order.LayMines:
+                    UpdateLayMines(e);
+                    break;
                 case Order.Move:
                     if (FollowPath(e, e.OrderPos, 0.3f)) SetOrder(e, Order.Idle, e.Pos);
                     if (e.IsArmed && (e.Def.Armor == Armor.Vehicle || e.IsAir)) OpportunisticFire(e);
                     break;
                 case Order.AttackMove:
                     {
+                        // Unarmed units (medics, repair trucks...) swept up in an attack-move just travel.
+                        if (!e.IsArmed) { if (FollowPath(e, e.OrderPos, 0.5f)) FinishOrder(e); break; }
                         var t = AcquireTarget(e, e.Def.Sight);
                         if (t != null) { Engage(e, t); break; }
-                        if (FollowPath(e, e.OrderPos, 0.5f)) SetOrder(e, Order.Idle, e.Pos);
+                        if (FollowPath(e, e.OrderPos, 0.5f)) FinishOrder(e);
                         break;
                     }
                 case Order.Attack:
                     {
                         var t = Get(e.TargetId);
-                        if (t == null || t.Team == e.Team || !IsVisibleTo(e.Team, t) || !e.Def.Weapon.CanHit(t.Def)) { SetOrder(e, Order.Idle, e.Pos); break; }
+                        if (t == null || t.Team == e.Team || !e.Def.Weapon.CanHit(t.Def)) { FinishOrder(e); break; }
+                        if (!IsVisibleTo(e.Team, t))
+                        {
+                            // Lost sight of it: push to where it was last seen and fight whatever is there.
+                            bool resp = e.Responding; var home = e.HomePos;
+                            SetOrder(e, Order.AttackMove, e.OrderPos);
+                            e.Responding = resp; e.HomePos = home;
+                            break;
+                        }
+                        e.OrderPos = t.Center; // last known position
                         Engage(e, t);
                         break;
                     }
@@ -518,7 +587,38 @@ namespace Pez.Sim
             }
             float d = t.DistFrom(e.Pos);
             if (d <= e.Def.Weapon.Range) { e.Moving = false; FireAt(e, t); }
-            else if (Vec2.Dist(e.Pos, e.GuardPos) < 6f) { e.Path = null; StepToward(e, t.Center); }
+            else if (Vec2.Dist(e.Pos, e.GuardPos) < 6f) Chase(e, t); // path around obstacles, not straight into them
+        }
+
+        /// <summary>Done with an order. Units that left their post to answer an attack head back to it.</summary>
+        void FinishOrder(Entity e)
+        {
+            bool back = e.Responding;
+            var home = e.HomePos;
+            SetOrder(e, Order.Idle, e.Pos);
+            if (back) e.GuardPos = home; // IdleCombat walks them home
+        }
+
+        /// <summary>
+        /// Someone hit one of our units or buildings: idle armed units nearby that can hit the attacker go after it,
+        /// the way a garrison reacts to an alarm. Commanded units (moving, attacking, harvesting...) stay on task.
+        /// </summary>
+        void CallForHelp(Entity victim, Entity attacker)
+        {
+            if (Time - victim.LastCallForHelp < 1.5f) return;
+            victim.LastCallForHelp = Time;
+            foreach (var u in Entities)
+            {
+                if (u.Dead || u.Team != victim.Team || u.IsStructure || !u.IsArmed || u.IsCarried || u.Order != Order.Idle) continue;
+                if (!u.Def.Weapon.CanHit(attacker.Def)) continue;
+                if (Vec2.Dist(u.Pos, victim.Center) > 10f) continue;
+                var home = u.GuardPos;
+                if (IsVisibleTo(u.Team, attacker)) SetOrder(u, Order.Attack, attacker.Center, attacker.Id);
+                else SetOrder(u, Order.AttackMove, attacker.Center);
+                u.OrderPos = attacker.Center;
+                u.Responding = true;
+                u.HomePos = home;
+            }
         }
 
         void OpportunisticFire(Entity e)
@@ -553,11 +653,115 @@ namespace Pez.Sim
             AdvancePath(e);
         }
 
+        // ------------------------------------------------------------------ transports
+
+        public int FreeSeats(Entity t) => t.Def.Capacity - t.Passengers.Count - Entities.Count(o => !o.Dead && o.Order == Order.Board && o.TargetId == t.Id && !o.IsCarried);
+
+        void UpdateBoard(Entity e)
+        {
+            var t = Get(e.TargetId);
+            if (t == null || t.Team != e.Team || t.Def.Capacity == 0 || t.Passengers.Count >= t.Def.Capacity) { SetOrder(e, Order.Idle, e.Pos); return; }
+            if (Vec2.Dist(e.Pos, t.Pos) > t.Def.Radius + 0.8f) { Chase(e, t); return; }
+            e.CarrierId = t.Id;
+            e.Path = null;
+            e.Moving = false;
+            e.Order = Order.Idle;
+            t.Passengers.Add(e.Id);
+            Emit("boarded", e.Team, e.Id, t.Id, t.Pos, key: e.Def.Key);
+        }
+
+        /// <summary>Drop everyone off around the transport (aircraft land their troops on the nearest open ground).</summary>
+        public int Unload(Entity t)
+        {
+            int n = 0;
+            var baseTile = Paths.NearestPassable(Int2.Of(t.Pos));
+            foreach (var pid in t.Passengers.ToList())
+            {
+                var p = Get(pid);
+                if (p == null) continue;
+                float a = n * 2.4f;
+                var spot = baseTile.Center + new Vec2(MathF.Cos(a), MathF.Sin(a)) * (0.5f + 0.15f * n);
+                var st = Int2.Of(spot);
+                if (!Map.Passable(st.X, st.Y)) spot = baseTile.Center;
+                p.CarrierId = 0;
+                p.Pos = p.PrevPos = p.GuardPos = spot;
+                SetOrder(p, Order.Idle, spot);
+                n++;
+            }
+            t.Passengers.Clear();
+            if (n > 0) Emit("unloaded", t.Team, t.Id, 0, t.Pos, key: t.Def.Key);
+            return n;
+        }
+
+        // ------------------------------------------------------------------ engineers
+
+        public const float CaptureThreshold = 0.5f;
+
+        void UpdateCapture(Entity e)
+        {
+            var t = Get(e.TargetId);
+            if (t == null || !t.IsStructure || t.Team == e.Team || !t.IsComplete || t.Hp > t.Def.MaxHp * CaptureThreshold) { SetOrder(e, Order.Idle, e.Pos); return; }
+            if (t.DistFrom(e.Pos) > 0.6f) { Chase(e, t); return; }
+            int old = t.Team;
+            t.Team = e.Team;
+            t.Rally = null;
+            Teams[e.Team].KnownEnemyStructures.Remove(t.Id);
+            Teams[old].Stats.StructuresLost++;
+            Teams[e.Team].Stats.Count(t.Def.Key);
+            Emit("captured", e.Team, t.Id, e.Id, t.Center, key: t.Def.Key);
+            Alerts.Raise(this, old, "structure_lost", Priority.Critical, t.Center, attacker: e).Lost.Add($"{t.Def.Key} #{t.Id} (captured by an engineer)");
+            Remove(e); // the engineer moves in for good
+            UpdatePower();
+        }
+
+        // ------------------------------------------------------------------ mines
+
+        public Entity SpawnMine(int team, Vec2 pos)
+        {
+            var m = NewEntity(team, Defs.Get("mine"));
+            m.Pos = m.PrevPos = m.GuardPos = pos;
+            return m;
+        }
+
+        void UpdateLayMines(Entity e)
+        {
+            if (e.MineQueue.Count == 0) { SetOrder(e, Order.Idle, e.Pos); return; }
+            var spot = e.MineQueue[0];
+            if (!FollowPath(e, spot, 0.3f)) return;
+            var team = Teams[e.Team];
+            if (team.Amount("steel") < EntityDef.MineCost) { e.MineQueue.Clear(); SetOrder(e, Order.Idle, e.Pos); return; }
+            var t = Int2.Of(e.Pos);
+            bool clear = Map.Passable(t.X, t.Y) && !Entities.Any(o => !o.Dead && o.IsMine && Vec2.Dist(o.Pos, e.Pos) < 0.7f);
+            if (clear)
+            {
+                team.Add("steel", -EntityDef.MineCost);
+                SpawnMine(e.Team, e.Pos);
+                Emit("mine_laid", e.Team, e.Id, 0, e.Pos);
+            }
+            e.MineQueue.RemoveAt(0);
+            e.Path = null;
+        }
+
+        /// <summary>An enemy ground unit on top of a mine sets it off: splash damage, then it's gone.</summary>
+        void MineTick(Entity m)
+        {
+            Entity trigger = null;
+            foreach (var o in Entities)
+                if (!o.Dead && o.Team != m.Team && !o.IsStructure && !o.IsAir && !o.IsCarried && !o.IsMine && Vec2.Dist(o.Pos, m.Pos) <= 0.35f + o.Def.Radius)
+                { trigger = o; break; }
+            if (trigger == null) return;
+            Emit("hit", m.Team, m.Id, trigger.Id, m.Pos, key: "mine");
+            foreach (var o in Entities.ToList())
+                if (!o.Dead && o.Team != m.Team && !o.IsStructure && !o.IsAir && !o.IsCarried && !o.IsMine && Vec2.Dist(o.Pos, m.Pos) <= 1.3f + o.Def.Radius)
+                    Damage(o, o == trigger ? 260 : 120, m);
+            Remove(m);
+        }
+
         // ------------------------------------------------------------------ repair
 
         /// <summary>Medics heal infantry; repair trucks fix everything else. Neither works on itself.</summary>
         public static bool CanTend(Entity healer, Entity t) =>
-            t != healer && !t.Dead && t.Team == healer.Team && t.IsComplete && t.Hp < t.Def.MaxHp - 0.5f &&
+            t != healer && !t.Dead && !t.IsMine && !t.IsCarried && t.Team == healer.Team && t.IsComplete && t.Hp < t.Def.MaxHp - 0.5f &&
             (healer.Def.Medic ? t.Def.Armor == Armor.Infantry : t.Def.Armor != Armor.Infantry);
 
         void IdleRepair(Entity e)
@@ -602,7 +806,7 @@ namespace Pez.Sim
             Entity best = null; float bestScore = float.MaxValue;
             foreach (var o in Entities)
             {
-                if (o.Dead || o.Team == e.Team) continue;
+                if (o.Dead || o.Team == e.Team || o.IsCarried) continue;
                 if (e.Def.Weapon != null && !e.Def.Weapon.CanHit(o.Def)) continue;
                 float d = o.DistFrom(e.Pos);
                 if (d > radius) continue;
@@ -662,7 +866,7 @@ namespace Pez.Sim
                     if (t != null) Damage(t, p.Weapon.Damage * p.Weapon.Multiplier(t.Def.Armor), src, p.Team);
                     if (p.Weapon.SplashRadius > 0)
                         foreach (var o in Entities.ToList())
-                            if (!o.Dead && o != t && o.Team != p.Team && p.Weapon.CanHit(o.Def) && o.DistFrom(p.Pos) < p.Weapon.SplashRadius)
+                            if (!o.Dead && o != t && !o.IsCarried && o.Team != p.Team && p.Weapon.CanHit(o.Def) && o.DistFrom(p.Pos) < p.Weapon.SplashRadius)
                                 Damage(o, p.Weapon.Damage * 0.4f * p.Weapon.Multiplier(o.Def.Armor), src, p.Team);
                 }
                 else p.Pos += to.Normalized * step;
@@ -679,9 +883,11 @@ namespace Pez.Sim
                 Emit("under_attack", t.Team, t.Id, src?.Id ?? 0, t.Center, key: t.Def.Key);
             t.LastHitTime = Time;
             RaiseDamageAlert(t, src);
-            // Retaliate if idle.
-            if (src != null && !t.IsStructure && t.IsArmed && t.Order == Order.Idle && !src.Dead && t.Def.Weapon.CanHit(src.Def) && IsVisibleTo(t.Team, src))
-                SetOrder(t, Order.Attack, src.Pos, src.Id);
+            if (src != null && !src.Dead && src.Team != t.Team && !src.IsMine)
+            {
+                Teams[t.Team].Revealed[src.Id] = Time + 3f; // muzzle flash gives the shooter away
+                CallForHelp(t, src);                         // the victim (if idle) and idle units nearby respond
+            }
             if (t.Hp <= 0)
             {
                 Emit("destroyed", t.Team, t.Id, src?.Id ?? 0, t.Center, key: t.Def.Key);
@@ -699,6 +905,7 @@ namespace Pez.Sim
         /// </summary>
         void RaiseDamageAlert(Entity t, Entity src)
         {
+            if (t.IsMine) return; // a mine being swept isn't news
             string kind; Priority p;
             if (t.IsStructure) { kind = "base_under_attack"; p = Priority.Critical; }
             else if (t.IsHarvester) { kind = "harvester_under_attack"; p = Priority.High; }
@@ -843,11 +1050,11 @@ namespace Pez.Sim
             for (int i = 0; i < Entities.Count; i++)
             {
                 var a = Entities[i];
-                if (a.Dead || a.IsStructure) continue;
+                if (a.Dead || a.IsStructure || a.IsCarried || a.IsMine) continue;
                 for (int j = i + 1; j < Entities.Count; j++)
                 {
                     var b = Entities[j];
-                    if (b.Dead || b.IsStructure || a.IsAir != b.IsAir) continue;
+                    if (b.Dead || b.IsStructure || b.IsCarried || b.IsMine || a.IsAir != b.IsAir) continue;
                     float min = a.Def.Radius + b.Def.Radius;
                     var d = b.Pos - a.Pos;
                     float dsq = d.LengthSq;
@@ -898,7 +1105,7 @@ namespace Pez.Sim
                 Array.Clear(team.Visible, 0, team.Visible.Length);
                 foreach (var e in Entities)
                 {
-                    if (e.Dead || e.Team != team.Id) continue;
+                    if (e.Dead || e.Team != team.Id || e.IsCarried) continue;
                     var c = e.Center;
                     int r = (int)MathF.Ceiling(e.Def.Sight + (e.IsStructure ? e.Def.SizeX / 2f : 0));
                     float rr = (e.Def.Sight + (e.IsStructure ? e.Def.SizeX / 2f : 0));
@@ -919,11 +1126,12 @@ namespace Pez.Sim
                     foreach (var o in Entities)
                     {
                         if (o.Dead || o.Team != team.Id) continue;
-                        float range = o.Def.Key == "radar_dome" && o.IsComplete ? 16f : 3f;
+                        if (o.IsCarried || o.IsMine) continue;
+                        float range = o.Def.Key == "radar_dome" && o.IsComplete ? 16f : s.IsMine ? 1.5f : 3f;
                         if (Vec2.DistSq(o.Center, s.Pos) <= range * range)
                         {
                             team.Detected.Add(s.Id);
-                            if (!wasDetected.Contains(s.Id)) Alerts.Raise(this, team.Id, "stealth_detected", Priority.Critical, s.Pos, attacker: s, hit: false);
+                            if (!wasDetected.Contains(s.Id) && !s.IsMine) Alerts.Raise(this, team.Id, "stealth_detected", Priority.Critical, s.Pos, attacker: s, hit: false);
                             break;
                         }
                     }
@@ -931,7 +1139,7 @@ namespace Pez.Sim
                 // Enemy forces showing up near any of this team's structures.
                 foreach (var e in Entities)
                 {
-                    if (e.Dead || e.Team == team.Id || e.IsStructure || e.IsHarvester || !IsVisibleTo(team.Id, e)) continue;
+                    if (e.Dead || e.Team == team.Id || e.IsStructure || e.IsHarvester || e.IsMine || !IsVisibleTo(team.Id, e)) continue;
                     if (Entities.Any(s => !s.Dead && s.Team == team.Id && s.IsStructure && s.DistFrom(e.Pos) <= 10f))
                         Alerts.Raise(this, team.Id, "enemy_near_base", Priority.High, e.Pos, attacker: e, hit: false);
                 }
