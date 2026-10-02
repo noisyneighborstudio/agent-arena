@@ -18,3 +18,5 @@ node_modules/
 .DS_Store
 arena/logs/
 unity/*.slnx
+.ci/
+.claude/
