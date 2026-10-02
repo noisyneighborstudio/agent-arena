@@ -17,8 +17,10 @@ namespace Pez.View
     {
         public int Port = 7778;
         public float IdleInterval = 0.2f; // the host's view when nobody is streaming it
-        public int Width = 1280;
-        public const int StreamFps = 60, Quality = 70, MainView = -1;
+        public int Width = 1280, MaxHeight = 720;
+        // Live streams go out through the host's uplink (and Cloudflare) once per viewer: 30 fps of 1280x720 JPEG at
+        // quality 70 keeps a viewer around 0.5-0.8 MB/s. Stills (frame.jpg, team/N.jpg) use the same frames.
+        public const int StreamFps = 30, Quality = 70, MainView = -1;
         TcpListener listener;
         Thread thread;
 
@@ -133,12 +135,13 @@ img.onerror=()=>setTimeout(()=>img.src='stream?'+Date.now(),1000);img.src='strea
             while (running)
             {
                 yield return wait;
-                float gap = Streaming(MainView) ? 0.75f / StreamFps : IdleInterval;
+                float gap = Streaming(MainView) ? 0.9f / StreamFps : IdleInterval;
                 if (Time.unscaledTime - last < gap || Busy(MainView)) continue;
                 int sw = Screen.width, sh = Screen.height;
                 if (sw <= 0 || sh <= 0) continue;
                 last = Time.unscaledTime;
-                int w = Mathf.Min(Width, sw), h = Mathf.RoundToInt(w * sh / (float)sw);
+                // Cap the host view at Width x MaxHeight (1280x720 for a 16:9 window) whatever the window's shape.
+                int w = Mathf.Min(Width, sw, Mathf.RoundToInt(MaxHeight * sw / (float)sh)), h = Mathf.RoundToInt(w * sh / (float)sw);
                 if (full == null || full.width != sw || full.height != sh) { if (full != null) full.Release(); full = new RenderTexture(sw, sh, 0); }
                 if (small == null || small.width != w || small.height != h)
                 {
@@ -179,22 +182,30 @@ img.onerror=()=>setTimeout(()=>img.src='stream?'+Date.now(),1000);img.src='strea
             stream.Write(head, 0, head.Length);
             int sent = -1;
             var lastFrame = System.DateTime.UtcNow;
+            // Never push faster than StreamFps, whatever rate frames arrive at: frames that land inside the gap are
+            // skipped and the newest goes out when it ends.
+            var pace = System.Diagnostics.Stopwatch.StartNew();
+            long minGapMs = 1000 / StreamFps;
             while (running)
             {
                 teamWanted[team] = System.DateTime.UtcNow;
-                int seq;
+                long wait = minGapMs - pace.ElapsedMilliseconds;
+                if (wait > 0) Thread.Sleep((int)wait);
+                byte[] jpg;
                 lock (frameSignal)
                 {
-                    if ((seq = Seq(team)) == sent)
+                    if (Seq(team) == sent)
                     {
                         Monitor.Wait(frameSignal, 500);
                         // Nothing for a while (the seat emptied, or the game is in its menu): end it; the viewer reconnects.
                         if (Seq(team) == sent && (System.DateTime.UtcNow - lastFrame).TotalSeconds > 10) return;
                         continue;
                     }
+                    sent = Seq(team);
+                    teamFrames.TryGetValue(team, out jpg);
                 }
-                sent = seq;
-                if (!teamFrames.TryGetValue(team, out var jpg) || jpg == null) continue;
+                if (jpg == null) continue;
+                pace.Restart();
                 lastFrame = System.DateTime.UtcNow;
                 var part = Encoding.ASCII.GetBytes($"--pezframe\r\nContent-Type: image/jpeg\r\nContent-Length: {jpg.Length}\r\n\r\n");
                 stream.Write(part, 0, part.Length);

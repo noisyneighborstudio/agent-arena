@@ -11,10 +11,14 @@ namespace Pez.View
     {
         public Vector3 Focus;
         public float Distance = 12f, Yaw = 45f, Pitch = 55f;
-        // Art pack camera: ortho size 8 (close) to 40 (strategic); about 40 px per tile by default, 14 px zoomed out.
+        // Art pack camera: ortho size 8 (close) to 40 (strategic).
         public float MinDist = 8f, MaxDist = 40f;
-        /// <summary>Ortho size that gives the art pack's ~40 px per tile on this screen.</summary>
-        public float DefaultDist => Mathf.Clamp(Screen.height / 80f, MinDist, MaxDist);
+        /// <summary>
+        /// The boards' framing (07_Camera "ortho height 17", 06_HUD, hero_offaxis): ortho size 9, about 60 px per tile
+        /// at 1080p. A fixed world extent, so a Retina window frames the same as the boards rather than twice as wide.
+        /// </summary>
+        public const float BoardOrthoSize = 9f;
+        public float DefaultDist => Mathf.Clamp(BoardOrthoSize, MinDist, MaxDist);
 
         // Art pack lighting: the warm sun sits at the upper left of the screen (a little beyond the focus), about
         // 57 degrees up, so shadows fall to the lower right. It is defined against the view, so it follows the yaw.
@@ -76,9 +80,13 @@ namespace Pez.View
             if (Input.GetMouseButtonUp(2)) dragging = false;
             if (dragging && GroundPoint(Input.mousePosition, out var now)) Focus += dragAnchor - now;
 
-            Focus.x = Mathf.Clamp(Focus.x, 0, Bounds.x);
-            Focus.z = Mathf.Clamp(Focus.z, -4, Bounds.y);
             Distance = Mathf.Clamp(Distance, MinDist, MaxDist); // the API and stream viewers can set it directly
+            if (Cam.orthographic) Focus = KeepOverMap(Focus, Distance, Cam.aspect, Yaw, Pitch, Bounds);
+            else
+            {
+                Focus.x = Mathf.Clamp(Focus.x, 0, Bounds.x);
+                Focus.z = Mathf.Clamp(Focus.z, -4, Bounds.y);
+            }
             AimSun(Yaw);
             if (Cam.orthographic)
             {
@@ -106,6 +114,23 @@ namespace Pez.View
             Focus += right * fx * halfH * 2f * Cam.aspect + fwd * fy * halfH * 2f / Mathf.Sin(Pitch * Mathf.Deg2Rad);
             Distance = Mathf.Clamp(Distance * zoom, MinDist, MaxDist);
             Yaw += yaw;
+        }
+
+        /// <summary>
+        /// Clamp an orthographic view's focus so the picture stays over the map: the view's ground footprint (a
+        /// rectangle turned by the yaw) may hang off an edge by a corner, never by half the screen. A view wider
+        /// than the map centres on it.
+        /// </summary>
+        public static Vector3 KeepOverMap(Vector3 focus, float orthoSize, float aspect, float yaw, float pitch, Vector2 bounds)
+        {
+            const float Overhang = 0.5f; // 1 = the whole footprint stays inside; 0.5 leaves at most about a quarter of the screen off-map, at a map corner
+            float halfW = orthoSize * aspect, halfD = orthoSize / Mathf.Max(0.2f, Mathf.Sin(pitch * Mathf.Deg2Rad));
+            float c = Mathf.Abs(Mathf.Cos(yaw * Mathf.Deg2Rad)), s = Mathf.Abs(Mathf.Sin(yaw * Mathf.Deg2Rad));
+            float ex = (c * halfW + s * halfD) * Overhang, ez = (s * halfW + c * halfD) * Overhang;
+            focus.x = 2 * ex >= bounds.x ? bounds.x / 2 : Mathf.Clamp(focus.x, ex, bounds.x - ex);
+            focus.z = 2 * ez >= bounds.y ? bounds.y / 2 : Mathf.Clamp(focus.z, ez, bounds.y - ez);
+            focus.y = 0;
+            return focus;
         }
 
         public bool GroundPoint(Vector3 screen, out Vector3 p)

@@ -16,13 +16,19 @@ namespace Pez
         public bool working;
         public bool idleScan = true;
 
-        Transform turret, barrel, spinner, bin, binOre, door, lift;
+        Transform turret, barrel, spinner, bin, binOre, door, lift, piston, mast, beam, oreTube;
         Vector3 barrelRestPos;
         Quaternion turretRest, binRest;
         float yaw, targetYaw, recoilT = -1f, rpm, doorScale = 1f, doorTarget = 1f;
         float liftRestY, liftOffset, liftTarget, binLoad, binShown, tipT = -1f;
         bool hasTarget;
         float scanPhase;
+        // deep mining
+        Vector3 pistonRest; Quaternion mastRest, beamRest;
+        int thumpsLeft, thumpCount; float thumpT = -1f;
+        float mastAngle, mastTarget, beamPhase, oreLevel = 1f, oreShown = 1f;
+        public System.Action OnThump;   // spawn the ripple decal here
+        public bool MastRaised => mastAngle <= -89f;
 
         public bool HasTurret => turret != null;
 
@@ -37,6 +43,13 @@ namespace Pez
             binOre = FindDeep(transform, "bin_ore");
             door = FindDeep(transform, "door");
             lift = FindDeep(transform, "lift");
+            piston = FindDeep(transform, "piston");
+            mast = FindDeep(transform, "mast");
+            beam = FindDeep(transform, "beam");
+            oreTube = FindDeep(transform, "ore_tube");
+            if (piston) pistonRest = piston.localPosition;
+            if (mast) mastRest = mast.localRotation;
+            if (beam) beamRest = beam.localRotation;
             if (turret) turretRest = turret.localRotation;
             if (barrel) barrelRestPos = barrel.localPosition;
             if (bin) binRest = bin.localRotation;
@@ -65,6 +78,14 @@ namespace Pez
         public void SnapLiftDown() { liftOffset = liftTarget = -0.6f; ApplyLift(); }
         public void SetBinLoad(float fraction) => binLoad = Mathf.Clamp01(fraction);
         public void TipBin() => tipT = 0f;
+        /// <summary>Surveyor: thump `count` times, 1.2 s apart. OnThump fires on each slam.</summary>
+        public void Survey(int count = 3) { thumpsLeft = thumpCount = count; thumpT = 0f; working = true; }
+        public void CancelSurvey() { thumpsLeft = 0; thumpT = -1f; working = false; if (piston) piston.localPosition = pistonRest; }
+        public bool Surveying => thumpsLeft > 0;
+        /// <summary>Drill rig: raise or stow the mast (0 to -90 deg about X over 1.2 s).</summary>
+        public void SetMastRaised(bool up) => mastTarget = up ? -90f : 0f;
+        /// <summary>Deep mine: remaining reserve 0..1 drives the ore tube.</summary>
+        public void SetOreLevel(float fraction) => oreLevel = Mathf.Clamp01(fraction);
 
         // ---------------------------------------------------------------- update
         void Update()
@@ -119,6 +140,36 @@ namespace Pez
                 binShown = Mathf.MoveTowards(binShown, Mathf.Ceil(binLoad * 5f) / 5f, dt * 2f);
                 binOre.localScale = new Vector3(1f, Mathf.Max(binShown, 0.001f), 1f);
             }
+            if (piston && thumpsLeft > 0)
+            {
+                thumpT += dt;
+                float c = thumpT % 1.2f;
+                float y = c < 0.25f ? Mathf.SmoothStep(0f, 0.12f, c / 0.25f) : c < 0.31f ? Mathf.Lerp(0.12f, 0f, (c - 0.25f) / 0.06f) : 0f;
+                piston.localPosition = pistonRest + Vector3.up * y;
+                if (c >= 0.31f && c - dt < 0.31f) { OnThump?.Invoke(); }
+                if (thumpT >= 1.2f * thumpCount) { thumpsLeft = 0; working = false; piston.localPosition = pistonRest; }
+            }
+
+            if (mast)
+            {
+                mastAngle = Mathf.MoveTowards(mastAngle, mastTarget, 90f / 1.2f * dt);
+                float k = Mathf.Abs(mastAngle / 90f);
+                float eased = -90f * (k * k * (3f - 2f * k));
+                mast.localRotation = mastRest * Quaternion.Euler(eased, 0f, 0f);
+            }
+
+            if (beam && working)
+            {
+                beamPhase += dt / 2.4f;
+                beam.localRotation = beamRest * Quaternion.Euler(Mathf.Sin(beamPhase * 6.2831853f) * 18f, 0f, 0f);
+            }
+
+            if (oreTube)
+            {
+                oreShown = Mathf.MoveTowards(oreShown, oreLevel, dt / 1.5f);
+                oreTube.localScale = new Vector3(1f, Mathf.Max(oreShown, 0.001f), 1f);
+            }
+
             if (bin && tipT >= 0f)
             {
                 tipT += dt;

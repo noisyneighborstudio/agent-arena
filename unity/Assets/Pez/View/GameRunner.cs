@@ -24,7 +24,8 @@ namespace Pez.View
         public RtsCamera Camera { get; private set; }
         public PlayerInput Input { get; private set; }
         public Hud Hud { get; private set; }
-        public readonly List<(float time, int team, string text)> CommandFeed = new List<(float, int, string)>();
+        /// <summary>Commands agents sent over the API, for the HUD's command feed: plain text, sectors as bare "E5".</summary>
+        public readonly List<(float time, int team, string text, bool ok, string error)> CommandFeed = new List<(float, int, string, bool, string)>();
         public string AgentStatus;
         System.Diagnostics.Process agentProc, gatewayProc;
         /// <summary>URL outside agents use to join (the local gateway; expose it with tailscale serve).</summary>
@@ -78,6 +79,12 @@ namespace Pez.View
                     if (!float.IsNaN(d.Num("yaw"))) Camera.Yaw = d.Num("yaw");
                     if (d.Str("menu") == "close") InMenu = false;
                     if (d.TryGetValue("edge_pan", out var ep) && ep is bool on) Camera.EdgePan = on;
+                    // Inspect entities in the HUD's selection card (e.g. for screenshots): {"select": [id, ...]}.
+                    if (d.TryGetValue("select", out var sel) && sel is List<object> ids && View != null)
+                    {
+                        View.Selected.Clear();
+                        foreach (var id in ids) if (id is double n) View.Selected.Add((int)n);
+                    }
                 };
                 Api.Start();
             }
@@ -91,7 +98,8 @@ namespace Pez.View
 
         void OnApiCommand(int team, string cmdJson, string resultJson)
         {
-            string summary = cmdJson;
+            string summary = cmdJson, error = null;
+            bool ok = false;
             try
             {
                 var c = Json.Parse(cmdJson) as Dictionary<string, object>;
@@ -101,14 +109,17 @@ namespace Pez.View
                     var type = c.Str("type", "?");
                     if (type == "say") return; // already shown as chat
                     var what = c.Str("structure") ?? c.Str("unit") ?? (c.ContainsKey("target") ? $"#{c.Num("target")}" : null);
-                    var where = !float.IsNaN(c.Num("x")) ? $" @{c.Num("x"):0},{c.Num("y"):0} [{StateView.Sector(Game.World.Map, new Vec2(c.Num("x"), c.Num("y")))}]" : "";
-                    var units = c.TryGetValue("units", out var u) ? (u is List<object> l ? $" {l.Count} units" : $" {u}") : "";
-                    bool ok = r != null && r.TryGetValue("ok", out var o) && o is bool b && b;
-                    summary = $"{type} {what}{units}{where} {(ok ? "<color=#7f7>✓</color>" : $"<color=#f75>✗ {r?.Str("error")}</color>")}";
+                    what = what?.Replace('_', ' ');
+                    var where = !float.IsNaN(c.Num("x")) ? $" at {StateView.Sector(Game.World.Map, new Vec2(c.Num("x"), c.Num("y")))}" : "";
+                    var units = c.TryGetValue("units", out var u) ? (u is List<object> l ? $" {l.Count} unit{(l.Count == 1 ? "" : "s")}" : $" {u}") : "";
+                    ok = r != null && r.TryGetValue("ok", out var o) && o is bool b && b;
+                    if (!ok) error = r?.Str("error");
+                    var verb = type.Replace('_', ' ');
+                    summary = $"{char.ToUpperInvariant(verb[0])}{verb.Substring(1)}{(what != null ? " " + what : "")}{units}{where}";
                 }
             }
             catch { }
-            CommandFeed.Add((Game.World.Time, team, summary));
+            CommandFeed.Add((Game.World.Time, team, summary, ok, error));
             if (CommandFeed.Count > 60) CommandFeed.RemoveRange(0, CommandFeed.Count - 60);
         }
 
@@ -298,14 +309,27 @@ namespace Pez.View
             View.Init(viewWorld, HumanTeam);
             Camera.Bounds = new Vector2(viewWorld.Map.W, viewWorld.Map.H);
             View.MapRebuilt = () => Camera.Bounds = new Vector2(viewWorld.Map.W, viewWorld.Map.H); // the arena grew
-            var focus = HumanTeam >= 0 ? viewWorld.Teams[HumanTeam].StartPos : new Vec2(viewWorld.Map.W / 2f, viewWorld.Map.H / 2f);
-            Camera.LookAt(WorldView.W(focus) + new Vector3(3, 0, 3));
-            Camera.Distance = HumanTeam >= 0 ? Camera.DefaultDist : Mathf.Min(Camera.MaxDist, viewWorld.Map.W * 0.375f); // spectators see most of the map
+            // Open on a base at the art pack's ~40 px per tile (06_HUD, hero_offaxis): the player's own, or for a
+            // spectator the first seated team's; the map centre if nobody has a base yet. RtsCamera keeps it over the map.
+            Camera.LookAt(WorldView.W(OpeningFocus(viewWorld, HumanTeam)));
+            Camera.Distance = Camera.DefaultDist;
             CommandFeed.Clear();
             // A restart that came from the API (e.g. the LLM arena) should start playing immediately.
             if (!startingFromMenu && !firstView) InMenu = false;
             firstView = false;
             startingFromMenu = false;
+        }
+
+        static Vec2 OpeningFocus(World w, int team)
+        {
+            var seats = team >= 0 ? new[] { w.Teams[team] } : w.Teams.Where(t => !t.Left && !t.Defeated).ToArray();
+            foreach (var t in seats)
+            {
+                var hq = w.Entities.FirstOrDefault(e => !e.Dead && e.Team == t.Id && e.Def.Key == "command_center");
+                if (hq != null) return hq.Center;
+                if (t.StartPos.X > 0 || t.StartPos.Y > 0) return t.StartPos;
+            }
+            return new Vec2(w.Map.W / 2f, w.Map.H / 2f);
         }
 
         void Start()

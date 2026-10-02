@@ -46,21 +46,136 @@ namespace Pez.View
             return t == Terrain.Water ? -0.55f : 0f; // rock height comes from the cliff massifs, not the ground mesh
         }
 
+        /// <summary>Flat colour of a tile before the per-vertex ground dressing (blotches, ore pads, shore).</summary>
         Color TileColor(int x, int y)
         {
             x = Mathf.Clamp(x, 0, map.W - 1); y = Mathf.Clamp(y, 0, map.H - 1);
-            int i = map.Idx(x, y);
-            if (map.Ore[i] > 0) return Color.Lerp(OreGround, WorldView.OreColors[map.OreType[i]], 0.25f);
-            // Cola lakes get a light shore band so they read as liquid, not as holes in the ground.
-            if (map.Tiles[i] != Terrain.Water && NextToWater(x, y)) return Color.Lerp(GrassA, PezPalette.TerrainShore, 0.75f);
-            switch (map.Tiles[i])
+            switch (map.Tiles[map.Idx(x, y)])
             {
                 case Terrain.Water: return Seabed;
                 // Dirt patches are purely cosmetic: keep them within the art pack's 8% "quiet ground" rule so they
                 // don't read as holes or shadows. Rock tiles sit under the massifs and use the ground colour.
                 case Terrain.Dirt: return GrassA * 0.975f;
-                default: return Color.Lerp(GrassA, GrassA * 1.02f, Mathf.PerlinNoise(x * 0.15f + 3.1f, y * 0.15f + 7.7f));
+                default: return GrassA;
             }
+        }
+
+        // ---- Ground dressing (05_Terrain "quiet ground", hero_offaxis): large soft light and dark blotches within
+        // the 8% value budget, a soft disc of ore colour under each ore field, and a light shore band around lakes.
+        // The Pez/Ground shader adds the cream speckles and the faint diamond tile grid on top.
+        const float BlotchStrength = 0.04f; // +-4% value: light and dark together stay inside 8%
+        const float OrePadAlpha = 0.34f, ShoreWidth = 0.7f;
+
+        /// <summary>GLSL-style smoothstep (Mathf.SmoothStep interpolates between its first two arguments instead).</summary>
+        public static float Smooth(float edge0, float edge1, float x)
+        {
+            float t = Mathf.Clamp01((x - edge0) / (edge1 - edge0));
+            return t * t * (3f - 2f * t);
+        }
+
+        /// <summary>Signed value offset per ground vertex from overlapping soft ellipses (+ light, - dark).</summary>
+        float[] Blotches(int vw, int vh)
+        {
+            var v = new float[vw * vh];
+            var rng = new System.Random(map.W * 7919 + map.H * 31 + 5);
+            int count = Mathf.Max(6, map.W * map.H / 55);
+            for (int n = 0; n < count; n++)
+            {
+                float cx = (float)rng.NextDouble() * map.W, cy = (float)rng.NextDouble() * map.H;
+                float ra = 3.5f + (float)rng.NextDouble() * 7f, rb = ra * (0.45f + (float)rng.NextDouble() * 0.45f);
+                float ang = (float)rng.NextDouble() * Mathf.PI, ca = Mathf.Cos(ang), sa = Mathf.Sin(ang);
+                float amp = (rng.Next(2) == 0 ? 1f : -1f) * BlotchStrength * (0.55f + (float)rng.NextDouble() * 0.45f);
+                int x0 = Mathf.Max(0, Mathf.FloorToInt((cx - ra) * Sub)), x1 = Mathf.Min(vw - 1, Mathf.CeilToInt((cx + ra) * Sub));
+                int y0 = Mathf.Max(0, Mathf.FloorToInt((cy - ra) * Sub)), y1 = Mathf.Min(vh - 1, Mathf.CeilToInt((cy + ra) * Sub));
+                for (int vy = y0; vy <= y1; vy++)
+                    for (int vx = x0; vx <= x1; vx++)
+                    {
+                        float dx = vx / (float)Sub - cx, dy = vy / (float)Sub - cy;
+                        float u = (dx * ca + dy * sa) / ra, w = (-dx * sa + dy * ca) / rb;
+                        float d = u * u + w * w;
+                        if (d >= 1f) continue;
+                        // A soft but definite edge: the hero's blotches read as shapes, not as noise.
+                        v[vy * vw + vx] += amp * (1f - Smooth(0.55f, 1f, d));
+                    }
+            }
+            for (int i = 0; i < v.Length; i++) v[i] = Mathf.Clamp(v[i], -BlotchStrength, BlotchStrength);
+            return v;
+        }
+
+        /// <summary>Ore fields as soft ellipses: (weight, ore type) per ground vertex.</summary>
+        (float w, int type)[] OrePads(int vw, int vh)
+        {
+            var pads = new (float, int)[vw * vh];
+            var seen = new bool[map.W * map.H];
+            var field = new List<int>();
+            var stack = new Stack<int>();
+            for (int start = 0; start < map.Ore.Length; start++)
+            {
+                if (map.Ore[start] <= 0 || seen[start]) continue;
+                // One field: ore tiles of the same type within two tiles of each other.
+                field.Clear();
+                int type = map.OreType[start];
+                stack.Push(start); seen[start] = true;
+                while (stack.Count > 0)
+                {
+                    int i = stack.Pop(); field.Add(i);
+                    int x = i % map.W, y = i / map.W;
+                    for (int dy = -2; dy <= 2; dy++)
+                        for (int dx = -2; dx <= 2; dx++)
+                        {
+                            int nx = x + dx, ny = y + dy;
+                            if (!map.InBounds(nx, ny)) continue;
+                            int j = map.Idx(nx, ny);
+                            if (seen[j] || map.Ore[j] <= 0 || map.OreType[j] != type) continue;
+                            seen[j] = true; stack.Push(j);
+                        }
+                }
+                // Fit an ellipse to the field (mean and covariance of its tile centres), padded past the clusters.
+                float mx = 0, my = 0;
+                foreach (int i in field) { mx += i % map.W + 0.5f; my += i / map.W + 0.5f; }
+                mx /= field.Count; my /= field.Count;
+                float sxx = 0, syy = 0, sxy = 0;
+                foreach (int i in field)
+                {
+                    float dx = i % map.W + 0.5f - mx, dy = i / map.W + 0.5f - my;
+                    sxx += dx * dx; syy += dy * dy; sxy += dx * dy;
+                }
+                sxx /= field.Count; syy /= field.Count; sxy /= field.Count;
+                float tr = sxx + syy, det = sxx * syy - sxy * sxy, disc = Mathf.Sqrt(Mathf.Max(0, tr * tr / 4 - det));
+                float l1 = tr / 2 + disc, l2 = Mathf.Max(0, tr / 2 - disc);
+                float ang = 0.5f * Mathf.Atan2(2 * sxy, sxx - syy), ca = Mathf.Cos(ang), sa = Mathf.Sin(ang);
+                float ra = 2f * Mathf.Sqrt(l1) + 1.2f, rb = 2f * Mathf.Sqrt(l2) + 1.2f;
+                rb = Mathf.Max(rb, ra * 0.55f); // keep it a disc-ish pad, never a sliver
+                int x0 = Mathf.Max(0, Mathf.FloorToInt((mx - ra) * Sub)), x1 = Mathf.Min(vw - 1, Mathf.CeilToInt((mx + ra) * Sub));
+                int y0 = Mathf.Max(0, Mathf.FloorToInt((my - ra) * Sub)), y1 = Mathf.Min(vh - 1, Mathf.CeilToInt((my + ra) * Sub));
+                for (int vy = y0; vy <= y1; vy++)
+                    for (int vx = x0; vx <= x1; vx++)
+                    {
+                        float dx = vx / (float)Sub - mx, dy = vy / (float)Sub - my;
+                        float u = (dx * ca + dy * sa) / ra, w = (-dx * sa + dy * ca) / rb;
+                        float d = Mathf.Sqrt(u * u + w * w);
+                        if (d >= 1f) continue;
+                        float a = 1f - Smooth(0.72f, 1f, d);
+                        int k = vy * vw + vx;
+                        if (a > pads[k].Item1) pads[k] = (a, type);
+                    }
+            }
+            return pads;
+        }
+
+        /// <summary>Distance from a ground vertex to the nearest water tile (capped at 2 tiles).</summary>
+        float WaterDistance(float fx, float fy)
+        {
+            int tx = Mathf.FloorToInt(fx), ty = Mathf.FloorToInt(fy);
+            float best = 2f;
+            for (int y = ty - 2; y <= ty + 2; y++)
+                for (int x = tx - 2; x <= tx + 2; x++)
+                {
+                    if (!map.InBounds(x, y) || map.TerrainAt(x, y) != Terrain.Water) continue;
+                    float dx = Mathf.Max(x - fx, 0, fx - (x + 1)), dy = Mathf.Max(y - fy, 0, fy - (y + 1));
+                    best = Mathf.Min(best, Mathf.Sqrt(dx * dx + dy * dy));
+                }
+            return best;
         }
 
         void BuildGround()
@@ -68,6 +183,8 @@ namespace Pez.View
             int vw = map.W * Sub + 1, vh = map.H * Sub + 1;
             var verts = new Vector3[vw * vh];
             var cols = new Color[vw * vh];
+            var blotch = Blotches(vw, vh);
+            var pads = OrePads(vw, vh);
             for (int vy = 0; vy < vh; vy++)
                 for (int vx = 0; vx < vw; vx++)
                 {
@@ -78,9 +195,17 @@ namespace Pez.View
                     float tx = gx - x0, ty = gy - y0;
                     float h = Mathf.Lerp(Mathf.Lerp(TileHeight(x0, y0), TileHeight(x0 + 1, y0), tx), Mathf.Lerp(TileHeight(x0, y0 + 1), TileHeight(x0 + 1, y0 + 1), tx), ty);
                     var c = Color.Lerp(Color.Lerp(TileColor(x0, y0), TileColor(x0 + 1, y0), tx), Color.Lerp(TileColor(x0, y0 + 1), TileColor(x0 + 1, y0 + 1), tx), ty);
+                    int i = vy * vw + vx;
+                    float wd = WaterDistance(fx, fy);
+                    if (wd > 0f)
+                    {
+                        c *= 1f + blotch[i];
+                        if (pads[i].w > 0f) c = Color.Lerp(c, WorldView.OreColors[pads[i].type], pads[i].w * OrePadAlpha);
+                        // Cola lakes get a light shore band so they read as liquid, not as holes in the ground.
+                        if (wd < ShoreWidth + 0.15f) c = Color.Lerp(c, PezPalette.TerrainShore, 1f - Smooth(ShoreWidth - 0.1f, ShoreWidth + 0.15f, wd));
+                    }
                     // Rocks get craggy noise; open ground stays near y=0 so picking with a flat plane is accurate.
                     if (h > -0.05f) h += (Mathf.PerlinNoise(fx * 0.8f + 11, fy * 0.8f + 5) - 0.5f) * 0.05f;
-                    int i = vy * vw + vx;
                     verts[i] = new Vector3(fx, h, fy);
                     cols[i] = c.linear; // vertex colours aren't converted in linear colour space
                 }
@@ -100,9 +225,13 @@ namespace Pez.View
             go.transform.SetParent(transform, false);
             go.AddComponent<MeshFilter>().sharedMesh = mesh;
             var r = go.AddComponent<MeshRenderer>();
-            var groundMat = new Material(Mats.Terrain());
-            groundMat.SetFloat("_DetailStrength", 0.035f); // quiet ground: large dark noise clouds read as fake shadows
+            // Pez/Ground (Resources/PezShaders): cream speckles and the faint diamond grid over the dressed vertex colours.
+            var groundShader = Resources.Load<Shader>("PezShaders/PezGround");
+            var groundMat = groundShader != null ? new Material(groundShader) : new Material(Mats.Terrain());
+            if (groundShader == null) groundMat.SetFloat("_DetailStrength", 0.035f);
             groundMat.SetFloat("_GridStrength", 0.06f); // the art pack's tile grid is a faint 5-7% line, inside the 8% quiet-ground budget
+            groundMat.SetFloat("_SpeckDensity", 0.16f); // sparse cream sugar grains, as in hero_offaxis
+            groundMat.SetFloat("_SpeckStrength", 0.3f);
             r.sharedMaterial = groundMat;
             r.receiveShadows = true;
 
@@ -231,14 +360,6 @@ namespace Pez.View
         {
             double a = rng.NextDouble() * System.Math.PI * 2, r = 0.4 + rng.NextDouble() * 0.6;
             return new Vector2((float)(System.Math.Cos(a) * r), (float)(System.Math.Sin(a) * r));
-        }
-
-        bool NextToWater(int x, int y)
-        {
-            for (int dy = -1; dy <= 1; dy++)
-                for (int dx = -1; dx <= 1; dx++)
-                    if (map.InBounds(x + dx, y + dy) && map.TerrainAt(x + dx, y + dy) == Terrain.Water) return true;
-            return false;
         }
 
         static Color Hex(string h) => ColorUtility.TryParseHtmlString("#" + h, out var c) ? c : Color.magenta;

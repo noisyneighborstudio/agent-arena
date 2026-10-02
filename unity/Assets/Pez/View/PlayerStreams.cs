@@ -14,7 +14,7 @@ namespace Pez.View
     public class PlayerStreams : MonoBehaviour
     {
         public GameRunner Runner;
-        public int Width = 1280, Height = 720;
+        public int Width = 1280, Height = 720; // the cap for player streams and look stills (bandwidth)
         public float SnapshotInterval = 0.15f; // a stream polled for snapshots (the look tool), not watched live
         Camera cam;
         RenderTexture rt, resolved;
@@ -24,6 +24,10 @@ namespace Pez.View
         // A viewer looking around takes over the stream camera; the director returns after 20 seconds of no input.
         readonly Dictionary<int, (Vector3 focus, float size, float yaw, float until)> manual = new Dictionary<int, (Vector3, float, float, float)>();
         const float StreamPitch = 55f;
+        /// <summary>The boards' framing, as on the main view (RtsCamera.BoardOrthoSize).</summary>
+        float DefaultSize => RtsCamera.BoardOrthoSize;
+        Vector3 OverMap(World w, Vector3 focus, float size, float yaw) =>
+            RtsCamera.KeepOverMap(focus, size, Width / (float)Height, yaw, StreamPitch, new Vector2(w.Map.W, w.Map.H));
 
         void Start()
         {
@@ -44,13 +48,14 @@ namespace Pez.View
             {
                 if (op.Team < 0) { Runner.Camera.Nudge(op.Dx, op.Dy, op.Zoom, op.Yaw); continue; }
                 if (!state.TryGetValue(op.Team, out var st)) continue;
-                (Vector3 focus, float size, float yaw, float until) m = manual.TryGetValue(op.Team, out var cur) && Time.unscaledTime < cur.until ? cur : (st.focus, 11f, 45f, 0f);
+                (Vector3 focus, float size, float yaw, float until) m = manual.TryGetValue(op.Team, out var cur) && Time.unscaledTime < cur.until ? cur : (st.focus, DefaultSize, 45f, 0f);
                 var right = Quaternion.Euler(0, m.yaw, 0) * Vector3.right;
                 var fwd = Quaternion.Euler(0, m.yaw, 0) * Vector3.forward;
                 m.focus += right * op.Dx * m.size * 2f * Width / Height + fwd * op.Dy * m.size * 2f / Mathf.Sin(StreamPitch * Mathf.Deg2Rad);
                 if (!float.IsNaN(op.X) && !float.IsNaN(op.Y)) m.focus = new Vector3(op.X, 0, op.Y); // "look at x,y"
                 m.size = Mathf.Clamp(m.size * op.Zoom, 8f, 40f); // the art pack's zoom range
                 m.yaw += op.Yaw;
+                m.focus = OverMap(w, m.focus, m.size, m.yaw);
                 m.until = Time.unscaledTime + 20f;
                 manual[op.Team] = m;
                 state[op.Team] = (m.focus, st.last - SnapshotInterval, st.seat); // render the change right away
@@ -62,8 +67,8 @@ namespace Pez.View
                 state.TryGetValue(t, out var s);
                 if (s.seat != w.Teams[t].Seat) { s = (Vector3.zero, 0, w.Teams[t].Seat); FrameServer.Forget(t); directed.Remove(t); } // seat changed hands
                 state[t] = s;
-                // Live streams render every frame (the 0.75 absorbs frame-time jitter at the cap).
-                float gap = FrameServer.Streaming(t) ? 0.75f / FrameServer.StreamFps : SnapshotInterval;
+                // Live streams render at the stream's frame cap (the 0.9 absorbs frame-time jitter).
+                float gap = FrameServer.Streaming(t) ? 0.9f / FrameServer.StreamFps : SnapshotInterval;
                 if (Time.unscaledTime - s.last < gap || FrameServer.Busy(t)) continue;
                 Render(w, view, t);
                 rendered = true;
@@ -93,13 +98,13 @@ namespace Pez.View
         void Render(World w, WorldView view, int team)
         {
             var s = state[team];
-            float size = 11f, yaw = 45f;
+            float size = DefaultSize, yaw = 45f;
             Vector3 focus;
             if (manual.TryGetValue(team, out var m) && Time.unscaledTime < m.until) { focus = m.focus; size = m.size; yaw = m.yaw; }
             else
             {
                 if (!directed.TryGetValue(team, out var d) || Time.unscaledTime - d.at > 0.25f) directed[team] = d = (Director(w, team), Time.unscaledTime);
-                var target = d.target;
+                var target = OverMap(w, d.target, size, yaw); // a base in a corner frames with the map, not the void
                 float dt = s.last == 0 ? 10f : Time.unscaledTime - s.last;
                 focus = s.last == 0 ? target : Vector3.Lerp(s.focus, target, 1f - Mathf.Exp(-dt * 1.5f));
             }

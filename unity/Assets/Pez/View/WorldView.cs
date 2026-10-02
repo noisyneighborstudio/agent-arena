@@ -23,10 +23,16 @@ namespace Pez.View
             public float LandK;          // aircraft: 0 flying, 1 parked on its pad (eases between)
             // Hull feel (MOTION.md): nose-up under acceleration, dip when braking, kick back on firing.
             public float HullSpeed, HullPitch, HullPitchVel;
+            public int OreTint = -1;     // deep mine: the ore its tube is tinted to
+            public int Born;             // frame the view was made (deploys pair a unit with the structure it became)
+            public float BoardT;         // boarding: 0..1 while the passenger shrinks into its carrier
+            public bool MainShow = true; // the local view's visibility and fade scale, restored after a stream render
+            public float MainScale = 1f;
         }
 
         public World World { get; private set; }
         public TerrainView Terrain { get; private set; }
+        public DeepDepositsView Deposits { get; private set; }
         public readonly Dictionary<int, EV> Views = new Dictionary<int, EV>();
         readonly Dictionary<int, Transform> projectiles = new Dictionary<int, Transform>();
         readonly Dictionary<int, (Vector3 start, float total)> projectileStart = new Dictionary<int, (Vector3, float)>();
@@ -55,11 +61,24 @@ namespace Pez.View
             tgo.transform.SetParent(transform, false);
             Terrain = tgo.AddComponent<TerrainView>();
             Terrain.Build(w.Map);
+            Deposits = new GameObject("DeepDeposits").AddComponent<DeepDepositsView>();
+            Deposits.transform.SetParent(transform, false);
+            Deposits.Init(w);
             mapVersion = w.MapVersion;
             lastSeq = w.Events.Count > 0 ? w.Events[w.Events.Count - 1].Seq : 0;
         }
 
-        bool Shown(Entity e) => ShownFor(e, PovTeam);
+        // When a unit drops out of a team's sight it shrinks away over half a second instead of blinking off.
+        const float FogFade = 0.5f;
+        readonly Dictionary<(int team, int id), float> lastSeen = new Dictionary<(int, int), float>();
+
+        /// <summary>How much of `e` team `team` sees: 1 in sight, 1 to 0 over FogFade after it slips into the fog.</summary>
+        float Visibility(Entity e, int team)
+        {
+            if (ShownFor(e, team)) { if (team >= 0) lastSeen[(team, e.Id)] = Time.time; return 1f; }
+            if (team < 0 || e.IsCarried || e.Dead || e.IsStructure || !lastSeen.TryGetValue((team, e.Id), out var t)) return 0f;
+            return Mathf.Clamp01(1f - (Time.time - t) / FogFade);
+        }
 
         bool ShownFor(Entity e, int team) => !e.IsCarried && (team < 0 || World.IsVisibleTo(team, e) ||
                                              (e.IsStructure && World.Teams[team].KnownEnemyStructures.ContainsKey(e.Id)));
@@ -72,12 +91,16 @@ namespace Pez.View
         {
             foreach (var v in Views.Values)
             {
-                bool show = !v.E.Dead && ShownFor(v.E, team);
+                bool main = team == PovTeam;
+                float vis = main ? (v.MainShow ? v.MainScale : 0f) : v.E.Dead ? 0f : Visibility(v.E, team);
+                bool show = vis > 0f;
                 var go = v.Rig.Root.gameObject;
                 if (go.activeSelf != show) go.SetActive(show);
-                bool ring = team == PovTeam && Selected.Contains(v.E.Id);
+                if (show && v.BoardT <= 0f) v.Rig.Root.localScale = Vector3.one * vis;
+                bool ring = team == PovTeam && Selected.Contains(v.E.Id) && !v.E.IsStructure;
                 if (v.Ring.gameObject.activeSelf != ring) v.Ring.gameObject.SetActive(ring);
             }
+            Deposits?.SetPov(team, PovTeam);
         }
 
         int mapVersion;
@@ -108,16 +131,27 @@ namespace Pez.View
                 if (e.Dead) continue;
                 seen.Add(e.Id);
                 if (!Views.TryGetValue(e.Id, out var v)) Views[e.Id] = v = Create(e);
-                bool show = Shown(e);
+                // Boarding: the passenger slides into its carrier and shrinks away instead of vanishing.
+                if (e.IsCarried && v.BoardT < 1f && v.Rig.Root.gameObject.activeSelf) { Board(v); continue; }
+                if (!e.IsCarried && v.BoardT > 0f) { v.BoardT = 0f; v.Rig.Root.localScale = Vector3.one; }
+                float vis = Visibility(e, PovTeam);
+                bool show = vis > 0f;
+                v.MainShow = show; v.MainScale = vis;
                 if (v.Rig.Root.gameObject.activeSelf != show) v.Rig.Root.gameObject.SetActive(show);
                 if (!show) continue;
+                v.Rig.Root.localScale = Vector3.one * vis;
                 UpdateView(v, alpha);
             }
             PlayEvents();
             var gone = new List<int>();
             foreach (var kv in Views) if (!seen.Contains(kv.Key)) gone.Add(kv.Key);
-            foreach (var id in gone) { Retire(Views[id]); Views.Remove(id); Selected.Remove(id); }
+            foreach (var id in gone)
+            {
+                Retire(Views[id]); Views.Remove(id); Selected.Remove(id);
+                for (int t = 0; t < 8; t++) lastSeen.Remove((t, id));
+            }
 
+            Deposits.Sync(PovTeam);
             SyncProjectiles(alpha);
             if (Time.time >= nextFog) { nextFog = Time.time + 0.2f; Terrain.UpdateFog(w, PovTeam); }
             SyncShields();
@@ -147,10 +181,38 @@ namespace Pez.View
         }
 
         /// <summary>Nothing pops off the map: art-pack models sink or collapse (wrecks linger) before they're destroyed.</summary>
+        void Board(EV v)
+        {
+            v.BoardT = Mathf.Min(1f, v.BoardT + Time.deltaTime / 0.35f);
+            var root = v.Rig.Root;
+            if (Views.TryGetValue(v.E.CarrierId, out var carrier) && carrier.Rig.Root.gameObject.activeInHierarchy)
+                root.position = Vector3.Lerp(root.position, carrier.Rig.Root.position, v.BoardT);
+            root.localScale = Vector3.one * (1f - v.BoardT * v.BoardT);
+            v.MainShow = v.BoardT < 1f; v.MainScale = 1f - v.BoardT * v.BoardT;
+            if (v.BoardT >= 1f) root.gameObject.SetActive(false);
+        }
+
+        /// <summary>The structure a deployable unit just turned into (spawned this frame where it stood).</summary>
+        EV DeployedInto(EV v)
+        {
+            foreach (var o in Views.Values)
+                if (o.E.Team == v.E.Team && o.E.IsStructure && o.E.Def.Key == v.E.Def.DeploysInto && o.Rig.HasModel && o.Rig.Emerge != null &&
+                    Vec2.Dist(o.E.Center, v.E.Pos) <= 3.5f && Time.frameCount - o.Born <= 1)
+                    return o;
+            return null;
+        }
+
         void Retire(EV v)
         {
             var rig = v.Rig;
-            if (rig.HasModel && rig.Root.gameObject.activeInHierarchy)
+            if (rig.HasModel && rig.Root.gameObject.activeInHierarchy && !v.Destroyed && v.E.Def.DeploysInto != null && DeployedInto(v) is EV into)
+            {
+                // Outpost truck / drill rig: the mast stands up, the chassis sinks and the structure rises in its place.
+                rig.Model.transform.SetParent(transform, true);
+                into.Rig.Emerge.SetBuildProgress(0f);
+                rig.Emerge.StartCoroutine(rig.Emerge.PlayDeployInto(into.Rig.Emerge));
+            }
+            else if (rig.HasModel && rig.Root.gameObject.activeInHierarchy)
             {
                 rig.Model.transform.SetParent(transform, true);
                 // Vehicles leave a wreck for a while; infantry and dismantled forces just sink away.
@@ -167,6 +229,28 @@ namespace Pez.View
             if (e.Def.Key == "radar_dome") return e.IsComplete && !t.LowPower;
             if (e.Def.Produces != Producer.None && t.UnitQueues.TryGetValue(e.Def.Produces, out var q)) return q.Count > 0;
             return e.Working;
+        }
+
+        // ---- deep mining (art pack v0.4 hooks)
+
+        /// <summary>Deep mine: the ore tube takes the deposit's colour and drains with its reserve.</summary>
+        void DeepMine(EV v)
+        {
+            var d = World.Map.DepositById(v.E.DepositId);
+            if (d == null) return;
+            if (v.OreTint != d.Type) { Models.TintOre(v.Rig.Model, d.Type); v.OreTint = d.Type; }
+            v.Rig.Motion.SetOreLevel(d.Initial > 0 ? d.Amount / d.Initial : 0);
+        }
+
+        /// <summary>Surveyor: thump while it stands surveying (each slam sends a ripple); moving off cancels.</summary>
+        void Survey(EV v)
+        {
+            var e = v.E;
+            var m = v.Rig.Motion;
+            if (m.OnThump == null) m.OnThump = () => Deposits.Ripple(v.Rig.Root.position);
+            bool surveying = e.Order == Order.Survey && !e.Moving && Vec2.Dist(e.Pos, e.OrderPos) <= 0.6f;
+            if (surveying && !m.Surveying) m.Survey();
+            else if (!surveying && m.Surveying) m.CancelSurvey();
         }
 
         /// <summary>Point the model's turret where the sim says it's facing; idle turrets scan.</summary>
@@ -193,7 +277,7 @@ namespace Pez.View
             float r = e.IsStructure ? Mathf.Max(e.Def.SizeX, e.Def.SizeY) * 0.75f : e.Def.Radius * 2.6f;
             ring.localScale = new Vector3(r, 1f, r);
             ring.gameObject.SetActive(false);
-            var v = new EV { E = e, Rig = rig, Ring = ring };
+            var v = new EV { E = e, Rig = rig, Ring = ring, Born = Time.frameCount };
             if (e.IsStructure) rig.Root.position = W(e.Center);
             return v;
         }
@@ -207,6 +291,7 @@ namespace Pez.View
                 // Build stages rise out of the pad as construction progresses.
                 if (!Mathf.Approximately(v.BuiltShown, e.BuildProgress)) { rig.Emerge.SetBuildProgress(e.BuildProgress); v.BuiltShown = e.BuildProgress; }
                 rig.Motion.SetWorking(e.IsComplete && Producing(e));
+                if (e.Def.Key == "deep_mine") DeepMine(v);
                 if (rig.Turret != null) Aim(v);
                 if (v.DoorTimer > 0 && (v.DoorTimer -= Time.deltaTime) <= 0) rig.Motion.SetDoorOpen(false);
             }
@@ -223,6 +308,8 @@ namespace Pez.View
                 }
                 else if (rig.Turret != null && e.Def.Key == "radar_dome")
                     rig.Turret.localRotation = Quaternion.Euler(0, e.IsComplete ? Time.time * 50f : 0, 0);
+                else if (rig.Turret != null && e.Def.Key == "deep_mine")
+                    rig.Turret.localRotation = Quaternion.Euler(e.Working ? Time.time * 140f : 0, 0, 0); // the sheave turns while it pumps
                 else if (rig.Turret != null && e.Def.Key == "construction_yard")
                 {
                     bool building = World.Teams[e.Team].StructureQueue.Count > 0;
@@ -256,6 +343,7 @@ namespace Pez.View
                 {
                     if (rig.Turret != null) Aim(v);
                     if (e.IsAir) rig.Motion.SetWorking(true);
+                    if (e.Def.Key == "geological_surveyor") Survey(v);
                     if (e.IsHarvester)
                     {
                         rig.Motion.SetBinLoad(e.Cargo / (float)e.Def.HarvestCapacity);
@@ -297,7 +385,7 @@ namespace Pez.View
                 v.Recoil = Mathf.MoveTowards(v.Recoil, 0, Time.deltaTime * 0.6f);
                 rig.Barrel.localPosition = rig.BarrelRest + Vector3.back * v.Recoil;
             }
-            bool sel = Selected.Contains(e.Id);
+            bool sel = Selected.Contains(e.Id) && !e.IsStructure; // structures get the HUD's corner brackets instead
             if (v.Ring.gameObject.activeSelf != sel) v.Ring.gameObject.SetActive(sel);
         }
 
@@ -413,6 +501,10 @@ namespace Pez.View
                             }
                         }
                         break;
+                    case "salvaged":
+                        // A leaving player's base turns to salvage: a puff of sugar dust, not a silent swap.
+                        Fx.Debris(W(ev.Pos), 0.6f, Mats.Cream, 6);
+                        break;
                     case "captured":
                         Fx.Beam(W(ev.Pos, 0.2f), W(ev.Pos, 4f), Mats.Team(ev.Team), 0.25f);
                         Fx.MuzzleFlash(W(ev.Pos, 0.6f), 0.4f);
@@ -441,7 +533,13 @@ namespace Pez.View
                             if (Views.TryGetValue(ev.A, out var dead)) dead.Destroyed = true;
                             var def = Defs.Get(ev.Key);
                             float size = def.IsStructure ? def.SizeX * 1.2f : def.Armor == Armor.Infantry ? 0.35f : 1f;
-                            if (def.Armor == Armor.Infantry) { Fx.Explosion(W(ev.Pos), 0.2f); break; }
+                            if (def.Armor == Armor.Infantry)
+                            {
+                                // Readable at game zoom: a small blast and a few bits in the team's colour.
+                                Fx.Explosion(W(ev.Pos, 0.25f), 0.4f);
+                                Fx.Debris(W(ev.Pos), 0.4f, Mats.Team(ev.Team), 4);
+                                break;
+                            }
                             float y = Views.TryGetValue(ev.A, out var dv) ? dv.Rig.Root.position.y : 0.3f;
                             Fx.Explosion(W(ev.Pos, y), size);
                             Fx.Debris(W(ev.Pos), def.IsStructure ? 2f : 1f, Mats.Team(ev.Team), def.IsStructure ? 18 : 8);

@@ -46,6 +46,7 @@ namespace Pez.View
 
         void Update()
         {
+            if (Runner != null && !Runner.InMenu && Team < 0) { Dragging = false; ClearGhost(); Inspect(); return; }
             if (Runner == null || Runner.InMenu || Team < 0 || W.GameOver) { Dragging = false; ClearGhost(); return; }
             var mouse = (Vector2)Input.mousePosition;
             bool overUi = Runner.Hud != null && Runner.Hud.IsOverUi(mouse);
@@ -143,6 +144,24 @@ namespace Pez.View
                 attackMoveArmed = false;
                 mineArmed = false;
             }
+        }
+
+        /// <summary>Spectators can't command, but a click picks any unit or building for the HUD's selection card.</summary>
+        void Inspect()
+        {
+            var mouse = (Vector2)Input.mousePosition;
+            if (Hud.Typing || !Input.GetMouseButtonDown(0) || (Runner.Hud != null && Runner.Hud.IsOverUi(mouse))) return;
+            if (!Cam.GroundPoint(mouse, out var ground)) return;
+            var p = WorldView.S(ground);
+            Entity best = null; float bd = float.MaxValue;
+            foreach (var e in W.Entities)
+            {
+                if (e.Dead || e.IsMine) continue;
+                float d = e.DistFrom(p);
+                if (d <= (e.IsStructure ? 0.05f : 0.45f) && d < bd) { bd = d; best = e; }
+            }
+            View.Selected.Clear();
+            if (best != null) View.Selected.Add(best.Id);
         }
 
         void Placement(Int2 tile, bool overUi)

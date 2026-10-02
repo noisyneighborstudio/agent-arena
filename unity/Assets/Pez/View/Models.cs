@@ -166,6 +166,47 @@ namespace Pez.View
             return m;
         }
 
+        static readonly Dictionary<(Material, int), Material> oreTinted = new Dictionary<(Material, int), Material>();
+
+        /// <summary>
+        /// Swap every M_OreTint material (deep mine ore tube, deposit stake cap) for a copy in an ore's colour; crystal
+        /// and uranium glow (art pack v0.4).
+        /// </summary>
+        public static void TintOre(GameObject go, int oreType)
+        {
+            if (oreType < 0 || oreType >= WorldView.OreColors.Length) return;
+            var color = WorldView.OreColors[oreType];
+            bool glow = oreType >= 2;
+            foreach (var r in go.GetComponentsInChildren<Renderer>(true))
+            {
+                var mats = r.sharedMaterials;
+                bool changed = false;
+                for (int i = 0; i < mats.Length; i++)
+                {
+                    var m = mats[i];
+                    if (m == null || !m.name.StartsWith("M_OreTint")) continue;
+                    if (!oreTinted.TryGetValue((m, oreType), out var t))
+                    {
+                        t = new Material(m) { name = m.name + "_ore" + oreType, enableInstancing = true };
+                        t.color = color;
+                        if (t.HasProperty("_BaseColor")) t.SetColor("_BaseColor", color);
+                        if (t.HasProperty("baseColorFactor")) t.SetColor("baseColorFactor", color);
+                        if (glow)
+                        {
+                            t.EnableKeyword("_EMISSION");
+                            t.globalIlluminationFlags = MaterialGlobalIlluminationFlags.None;
+                            if (t.HasProperty("_EmissionColor")) t.SetColor("_EmissionColor", color * 1.4f);
+                            if (t.HasProperty("emissiveFactor")) t.SetColor("emissiveFactor", color * 1.4f);
+                        }
+                        oreTinted[(m, oreType)] = t;
+                    }
+                    mats[i] = t;
+                    changed = true;
+                }
+                if (changed) r.sharedMaterials = mats;
+            }
+        }
+
         /// <summary>Swap every M_Team material for a copy tinted to the team's flavour.</summary>
         public static void TintTeam(GameObject go, int team)
         {
@@ -570,6 +611,11 @@ namespace Pez.View
                         Part(b, PrimitiveType.Cube, new Vector3(0, 0.1f, 0.3f), new Vector3(0.14f, 0.04f, 0.18f), Mats.Lit(new Color(0.25f, 0.2f, 0.1f), 0.95f, 0.8f));
                         break;
                     }
+                // Deep mining fallbacks, used only while a model is missing. Swapping in art needs no code: drop geological_surveyor.glb, drill_rig.glb or
+                // deep_mine.glb into Resources/PezModels and ModelFor picks it up ahead of these.
+                case "geological_surveyor": Surveyor(rig, teamMat, steel, track); break;
+                case "drill_rig": DrillRig(rig, teamMat, steel, track); break;
+                case "deep_mine": DeepMine(rig, teamMat, steel, concrete); break;
                 default:
                     Part(b, PrimitiveType.Cube, new Vector3(0, 0.25f, 0), Vector3.one * 0.5f, teamMat);
                     break;
@@ -602,6 +648,64 @@ namespace Pez.View
                 Part(rig.Barrel, PrimitiveType.Cylinder, new Vector3(0.06f, 0, 0.25f) * s, new Vector3(0.05f, 0.25f, 0.05f) * s, steel, new Vector3(90, 0, 0));
             }
             else Part(rig.Barrel, PrimitiveType.Cylinder, new Vector3(0, 0, 0.22f) * s, new Vector3(0.05f, 0.22f, 0.05f) * s, steel, new Vector3(90, 0, 0));
+        }
+
+        // ---- Deep mining placeholders, in the placeholder palette: smoke-plastic hull, team-coloured top, caramel amber
+        // for industry. Each is self-contained so it can be deleted when its model lands.
+        static Material Smoke => Mats.Lit(DarkSteel, 0.5f, 0f);
+        static Material Amber(float glow = 1.6f) => Mats.Glow(PezPalette.EmissiveAmberIndustryDocking, glow);
+
+        /// <summary>Geological Surveyor: a light wheeled vehicle with a sensor mast (Turret) that spins while surveying.</summary>
+        static void Surveyor(Rig rig, Material team, Material steel, Material track)
+        {
+            var b = rig.Body;
+            for (int i = 0; i < 4; i++)
+                Part(b, PrimitiveType.Cylinder, new Vector3(i % 2 == 0 ? -0.26f : 0.26f, 0.11f, i < 2 ? 0.28f : -0.28f), new Vector3(0.2f, 0.05f, 0.2f), track, new Vector3(0, 0, 90));
+            Part(b, PrimitiveType.Cube, new Vector3(0, 0.22f, 0), new Vector3(0.44f, 0.16f, 0.8f), Smoke);
+            Part(b, PrimitiveType.Cube, new Vector3(0, 0.34f, 0.22f), new Vector3(0.38f, 0.12f, 0.28f), team);
+            Part(b, PrimitiveType.Cube, new Vector3(0, 0.36f, 0.37f), new Vector3(0.3f, 0.07f, 0.02f), Mats.Lit(new Color(0.15f, 0.25f, 0.35f), 0.95f, 0.4f));
+            rig.Turret = Empty(b, "mast", new Vector3(0, 0.3f, -0.18f));
+            Part(rig.Turret, PrimitiveType.Cylinder, new Vector3(0, 0.25f, 0), new Vector3(0.05f, 0.25f, 0.05f), steel);
+            Part(rig.Turret, PrimitiveType.Cylinder, new Vector3(0, 0.52f, 0.06f), new Vector3(0.26f, 0.02f, 0.26f), steel, new Vector3(70, 0, 0));
+            Part(rig.Turret, PrimitiveType.Sphere, new Vector3(0, 0.54f, 0.1f), Vector3.one * 0.06f, Amber(2f));
+        }
+
+        /// <summary>Drill Rig: a slow tracked carrier with its drill tower folded flat along the back.</summary>
+        static void DrillRig(Rig rig, Material team, Material steel, Material track)
+        {
+            var b = rig.Body;
+            Part(b, PrimitiveType.Cube, new Vector3(-0.34f, 0.13f, 0), new Vector3(0.2f, 0.26f, 1.3f), track);
+            Part(b, PrimitiveType.Cube, new Vector3(0.34f, 0.13f, 0), new Vector3(0.2f, 0.26f, 1.3f), track);
+            Part(b, PrimitiveType.Cube, new Vector3(0, 0.3f, 0), new Vector3(0.62f, 0.2f, 1.3f), Smoke);
+            Part(b, PrimitiveType.Cube, new Vector3(0, 0.5f, 0.45f), new Vector3(0.5f, 0.22f, 0.32f), team);
+            // The folded tower: two rails with cross braces, the drill head at the front.
+            for (int i = -1; i <= 1; i += 2)
+                Part(b, PrimitiveType.Cube, new Vector3(i * 0.14f, 0.47f, -0.2f), new Vector3(0.05f, 0.05f, 1.2f), steel);
+            for (int i = 0; i < 5; i++)
+                Part(b, PrimitiveType.Cube, new Vector3(0, 0.47f, -0.72f + i * 0.26f), new Vector3(0.28f, 0.03f, 0.03f), steel, new Vector3(0, 35, 0));
+            Part(b, PrimitiveType.Cylinder, new Vector3(0, 0.47f, 0.42f), new Vector3(0.12f, 0.14f, 0.12f), Amber(1.2f), new Vector3(90, 0, 0));
+            Part(b, PrimitiveType.Cube, new Vector3(0, 0.42f, -0.66f), new Vector3(0.5f, 0.04f, 0.04f), Amber(1.8f));
+        }
+
+        /// <summary>Deep Mine (2x2): a derrick headframe over the shaft; its sheave wheel (Turret) turns while pumping.</summary>
+        static void DeepMine(Rig rig, Material team, Material steel, Material concrete)
+        {
+            var b = rig.Body;
+            Pad(b, 2, 2, concrete);
+            Part(b, PrimitiveType.Cube, new Vector3(0.45f, 0.3f, 0.45f), new Vector3(0.75f, 0.45f, 0.75f), Smoke);
+            Part(b, PrimitiveType.Cube, new Vector3(0.45f, 0.56f, 0.45f), new Vector3(0.77f, 0.07f, 0.77f), team);
+            Part(b, PrimitiveType.Cylinder, new Vector3(-0.15f, 0.1f, -0.15f), new Vector3(0.6f, 0.04f, 0.6f), Mats.Lit(PezPalette.MaterialsLicorice, 0.2f, 0f));
+            // Four-legged derrick leaning in over the shaft.
+            for (int i = 0; i < 4; i++)
+            {
+                float sx = i % 2 == 0 ? -1 : 1, sz = i < 2 ? -1 : 1;
+                Part(b, PrimitiveType.Cube, new Vector3(-0.15f + sx * 0.22f, 0.8f, -0.15f + sz * 0.22f), new Vector3(0.05f, 1.45f, 0.05f), steel, new Vector3(-sz * 9f, 0, sx * 9f));
+            }
+            Part(b, PrimitiveType.Cube, new Vector3(-0.15f, 1.5f, -0.15f), new Vector3(0.3f, 0.06f, 0.3f), team);
+            rig.Turret = Empty(b, "sheave", new Vector3(-0.15f, 1.62f, -0.15f));
+            Part(rig.Turret, PrimitiveType.Cylinder, Vector3.zero, new Vector3(0.34f, 0.025f, 0.34f), steel, new Vector3(0, 0, 90));
+            Part(rig.Turret, PrimitiveType.Cube, Vector3.zero, new Vector3(0.03f, 0.3f, 0.04f), Amber(1.4f));
+            Part(b, PrimitiveType.Cube, new Vector3(0.45f, 0.35f, 0.07f), new Vector3(0.5f, 0.05f, 0.02f), Amber(1.6f));
         }
 
         /// <summary>Concrete foundation covering a w x h footprint, centred on the structure origin.</summary>

@@ -123,6 +123,30 @@ namespace Pez
             airfield.SetLiftUp(false);
         }
 
+        /// <summary>outpost_truck → outpost, drill_rig → deep_mine. The carrier (this) sinks while the target's stages rise.
+        /// `target` is already instantiated at the grid-aligned spot and starts at build progress 0.</summary>
+        public IEnumerator PlayDeployInto(PezEmerge target, float riseSeconds = 1.8f)
+        {
+            var m = GetComponent<PezMotion>();
+            if (m && PezMotion.FindDeep(transform, "mast"))
+            {
+                m.SetMastRaised(true);
+                while (!m.MastRaised) yield return null;
+                yield return new WaitForSeconds(0.4f);   // bit bites
+            }
+            target.SetBuildProgress(0f);
+            Vector3 start = transform.position;
+            for (float t = 0f; t < riseSeconds; t += Time.deltaTime)
+            {
+                float k = t / riseSeconds;
+                transform.position = start + Vector3.down * 0.6f * Mathf.Clamp01(k / 0.55f);   // chassis sinks over ~1 s
+                target.SetBuildProgress(k);
+                yield return null;
+            }
+            target.SetBuildProgress(1f);
+            Destroy(gameObject);
+        }
+
         // ---------------------------------------------------------------- ores
         public void SetClusterAmount(int cluster, float fraction)
         {
