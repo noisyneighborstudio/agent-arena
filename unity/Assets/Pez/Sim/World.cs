@@ -95,9 +95,57 @@ namespace Pez.Sim
             if (loggedErrors.Add(where.Split(' ')[0] + ex.GetType().Name)) ErrorLog(LastError + "\n" + ex.StackTrace);
         }
 
+        // ------------------------------------------------------------------ spatial grid
+        // Entities bucketed by 4x4-tile cell, rebuilt each tick, so "what's near me" doesn't scan the whole world.
+
+        const int CellSize = 4;
+        List<Entity>[] cells;
+        int cellsW, cellsH;
+        readonly List<Entity> nearTarget = new List<Entity>(), nearHelp = new List<Entity>(), nearMine = new List<Entity>(),
+                              nearSep = new List<Entity>(), nearVis = new List<Entity>();
+
+        void RebuildGrid()
+        {
+            if (cells == null)
+            {
+                cellsW = (Map.W + CellSize - 1) / CellSize; cellsH = (Map.H + CellSize - 1) / CellSize;
+                cells = new List<Entity>[cellsW * cellsH];
+                for (int i = 0; i < cells.Length; i++) cells[i] = new List<Entity>();
+            }
+            foreach (var c in cells) c.Clear();
+            foreach (var e in Entities)
+            {
+                if (e.Dead || e.IsCarried) continue;
+                var p = e.Center;
+                int cx = Math.Clamp((int)p.X / CellSize, 0, cellsW - 1), cy = Math.Clamp((int)p.Y / CellSize, 0, cellsH - 1);
+                cells[cy * cellsW + cx].Add(e);
+            }
+        }
+
+        /// <summary>Entities whose centre is within r (+2 tiles of slack for building footprints and movement this tick).</summary>
+        void Near(Vec2 p, float r, List<Entity> into)
+        {
+            into.Clear();
+            if (cells == null) RebuildGrid();
+            float rr = r + 2f;
+            int x0 = Math.Clamp((int)((p.X - rr) / CellSize), 0, cellsW - 1), x1 = Math.Clamp((int)((p.X + rr) / CellSize), 0, cellsW - 1);
+            int y0 = Math.Clamp((int)((p.Y - rr) / CellSize), 0, cellsH - 1), y1 = Math.Clamp((int)((p.Y + rr) / CellSize), 0, cellsH - 1);
+            for (int y = y0; y <= y1; y++)
+                for (int x = x0; x <= x1; x++)
+                    foreach (var e in cells[y * cellsW + x])
+                        if (!e.Dead) into.Add(e);
+        }
+
+        /// <summary>Optional per-phase timing (seconds), filled when Profile is on. Used by the headless --profile run.</summary>
+        public static bool Profile;
+        public static readonly Dictionary<string, double> Timings = new Dictionary<string, double>();
+        static readonly System.Diagnostics.Stopwatch profileClock = System.Diagnostics.Stopwatch.StartNew();
+
         void Guard(string where, Action a)
         {
+            double t0 = Profile ? profileClock.Elapsed.TotalSeconds : 0;
             try { a(); } catch (Exception ex) { RecordError(where, ex); }
+            if (Profile) Timings[where] = (Timings.TryGetValue(where, out var v) ? v : 0) + profileClock.Elapsed.TotalSeconds - t0;
         }
         int nextId = 1;
         long nextSeq = 1;
@@ -372,10 +420,12 @@ namespace Pez.Sim
             if (GameOver) return;
             Tick++;
             foreach (var e in Entities) e.PrevPos = e.Pos;
+            RebuildGrid();
             foreach (var p in Projectiles) p.PrevPos = p.Pos;
 
-            UpdateEconomy();
-            UpdateProduction();
+            Guard("economy", UpdateEconomy);
+            Guard("production", UpdateProduction);
+            double tu = Profile ? profileClock.Elapsed.TotalSeconds : 0;
             for (int i = 0; i < Entities.Count; i++)
             {
                 var e = Entities[i];
@@ -397,6 +447,7 @@ namespace Pez.Sim
                     if (!e.IsStructure) SetOrder(e, Order.Idle, e.Pos);
                 }
             }
+            if (Profile) Timings["units"] = (Timings.TryGetValue("units", out var uv) ? uv : 0) + profileClock.Elapsed.TotalSeconds - tu;
             Guard("projectiles", UpdateProjectiles);
             Guard("separation", Separate);
             Guard("cleanup", Cleanup);
@@ -607,7 +658,8 @@ namespace Pez.Sim
         {
             if (Time - victim.LastCallForHelp < 1.5f) return;
             victim.LastCallForHelp = Time;
-            foreach (var u in Entities)
+            Near(victim.Center, 10f, nearHelp);
+            foreach (var u in nearHelp)
             {
                 if (u.Dead || u.Team != victim.Team || u.IsStructure || !u.IsArmed || u.IsCarried || u.Order != Order.Idle) continue;
                 if (!u.Def.Weapon.CanHit(attacker.Def)) continue;
@@ -746,12 +798,13 @@ namespace Pez.Sim
         void MineTick(Entity m)
         {
             Entity trigger = null;
-            foreach (var o in Entities)
+            Near(m.Pos, 1.5f, nearMine);
+            foreach (var o in nearMine)
                 if (!o.Dead && o.Team != m.Team && !o.IsStructure && !o.IsAir && !o.IsCarried && !o.IsMine && Vec2.Dist(o.Pos, m.Pos) <= 0.35f + o.Def.Radius)
                 { trigger = o; break; }
             if (trigger == null) return;
             Emit("hit", m.Team, m.Id, trigger.Id, m.Pos, key: "mine");
-            foreach (var o in Entities.ToList())
+            foreach (var o in nearMine.ToList())
                 if (!o.Dead && o.Team != m.Team && !o.IsStructure && !o.IsAir && !o.IsCarried && !o.IsMine && Vec2.Dist(o.Pos, m.Pos) <= 1.3f + o.Def.Radius)
                     Damage(o, o == trigger ? 260 : 120, m);
             Remove(m);
@@ -804,7 +857,8 @@ namespace Pez.Sim
         Entity AcquireTarget(Entity e, float radius)
         {
             Entity best = null; float bestScore = float.MaxValue;
-            foreach (var o in Entities)
+            Near(e.Pos, radius, nearTarget);
+            foreach (var o in nearTarget)
             {
                 if (o.Dead || o.Team == e.Team || o.IsCarried) continue;
                 if (e.Def.Weapon != null && !e.Def.Weapon.CanHit(o.Def)) continue;
@@ -1051,9 +1105,10 @@ namespace Pez.Sim
             {
                 var a = Entities[i];
                 if (a.Dead || a.IsStructure || a.IsCarried || a.IsMine) continue;
-                for (int j = i + 1; j < Entities.Count; j++)
+                Near(a.Pos, 1.5f, nearSep);
+                foreach (var b in nearSep)
                 {
-                    var b = Entities[j];
+                    if (b.Id <= a.Id) continue; // each pair once
                     if (b.Dead || b.IsStructure || b.IsCarried || b.IsMine || a.IsAir != b.IsAir) continue;
                     float min = a.Def.Radius + b.Def.Radius;
                     var d = b.Pos - a.Pos;
@@ -1100,6 +1155,7 @@ namespace Pez.Sim
 
         public void UpdateVisibility()
         {
+            RebuildGrid();
             foreach (var team in Teams)
             {
                 Array.Clear(team.Visible, 0, team.Visible.Length);
@@ -1140,7 +1196,8 @@ namespace Pez.Sim
                 foreach (var e in Entities)
                 {
                     if (e.Dead || e.Team == team.Id || e.IsStructure || e.IsHarvester || e.IsMine || !IsVisibleTo(team.Id, e)) continue;
-                    if (Entities.Any(s => !s.Dead && s.Team == team.Id && s.IsStructure && s.DistFrom(e.Pos) <= 10f))
+                    Near(e.Pos, 10f, nearVis);
+                    if (nearVis.Any(s => !s.Dead && s.Team == team.Id && s.IsStructure && s.DistFrom(e.Pos) <= 10f))
                         Alerts.Raise(this, team.Id, "enemy_near_base", Priority.High, e.Pos, attacker: e, hit: false);
                 }
                 // Remember enemy structures that are in view; forget ones seen to be gone.

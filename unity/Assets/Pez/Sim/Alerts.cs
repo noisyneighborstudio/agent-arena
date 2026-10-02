@@ -30,19 +30,25 @@ namespace Pez.Sim
         public const float MergeWindow = 8f;     // seconds of quiet before the same area raises a fresh alert
         public const float ActiveWindow = 20f;   // how long an alert stays in get_state after its last update
         public readonly List<Alert> All = new List<Alert>();
+        readonly List<Alert> open = new List<Alert>(); // alerts still inside their merge window
         long nextSeq = 1;
 
         public long LastSeq => nextSeq - 1;
 
         public Alert Raise(World w, int team, string kind, Priority p, Vec2 pos, Entity victim = null, Entity attacker = null, bool hit = true)
         {
-            var a = All.LastOrDefault(x => x.Team == team && x.Kind == kind &&
-                                           (w.Tick - x.LastTick) * World.Dt <= MergeWindow &&
-                                           Vec2.Dist(x.Pos, pos) <= MergeRadius);
+            open.RemoveAll(x => (w.Tick - x.LastTick) * World.Dt > MergeWindow);
+            Alert a = null;
+            for (int i = open.Count - 1; i >= 0; i--)
+            {
+                var x = open[i];
+                if (x.Team == team && x.Kind == kind && Vec2.Dist(x.Pos, pos) <= MergeRadius) { a = x; break; }
+            }
             if (a == null)
             {
                 a = new Alert { Seq = nextSeq++, Team = team, Kind = kind, Priority = p, Pos = pos, StartTick = w.Tick };
                 All.Add(a);
+                open.Add(a);
                 if (All.Count > 500) All.RemoveRange(0, All.Count - 500);
             }
             else if (p > a.Priority) a.Priority = p;
