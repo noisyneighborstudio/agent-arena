@@ -1352,25 +1352,7 @@ namespace Pez.View
                 if (e.Dead || !v.Rig.Root.gameObject.activeInHierarchy) continue;
                 bool sel = Runner.View.Selected.Contains(e.Id);
                 if (sel && e.IsStructure) Brackets(cam, e);
-                if (!sel && e.Hp >= e.Def.MaxHp && e.IsComplete) continue;
-                float lift = e.IsStructure ? 1.6f : 0.9f;
-                var sp = cam.WorldToScreenPoint(v.Rig.Root.position + Vector3.up * lift);
-                if (sp.z < 0) continue;
-                var p = new Vector2(sp.x, Screen.height - sp.y) / k;
-                float w = e.IsStructure ? 46 : 26;
-                float f = Mathf.Clamp01(e.Hp / e.Def.MaxHp);
-                // HUD kit: a licorice track; health runs cream, then amber below 50%, then hazard stripe below 25%.
-                Fill(new Rect(p.x - w / 2 - 1, p.y - 1, w + 2, 6), Liquorice);
-                if (f < 0.25f) Hazard(new Rect(p.x - w / 2, p.y, Mathf.Max(3f, w * f), 4), 2f);
-                else Fill(new Rect(p.x - w / 2, p.y, w * f, 4), f < 0.5f ? Amber : Cream);
-                if (!e.IsComplete) Fill(new Rect(p.x - w / 2, p.y + 6, w * e.BuildProgress, 3), Amber);
-                // Fuel under health for selected vehicles and aircraft: crystal blue, amber when low.
-                if (sel && e.Def.UsesFuel)
-                {
-                    float ff = Mathf.Clamp01(e.FuelFraction);
-                    Fill(new Rect(p.x - w / 2 - 1, p.y + 5, w + 2, 4), Liquorice);
-                    Fill(new Rect(p.x - w / 2, p.y + 6, w * ff, 2), ff < 0.3f ? Amber : Fuel);
-                }
+                // Health and fuel bars are drawn in the world now (Bars.cs), so player streams show them too.
             }
         }
 

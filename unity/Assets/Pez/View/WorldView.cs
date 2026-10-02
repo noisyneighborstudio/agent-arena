@@ -26,6 +26,7 @@ namespace Pez.View
             public int OreTint = -1;     // deep mine: the ore its tube is tinted to
             public int Born;             // frame the view was made (deploys pair a unit with the structure it became)
             public float BoardT;         // boarding: 0..1 while the passenger shrinks into its carrier
+            public Bars Bars;            // world-space health and fuel bars (seen by every camera)
             public bool MainShow = true; // the local view's visibility and fade scale, restored after a stream render
             public float MainScale = 1f;
         }
@@ -99,6 +100,7 @@ namespace Pez.View
                 if (show && v.BoardT <= 0f) v.Rig.Root.localScale = Vector3.one * vis;
                 bool ring = team == PovTeam && Selected.Contains(v.E.Id) && !v.E.IsStructure;
                 if (v.Ring.gameObject.activeSelf != ring) v.Ring.gameObject.SetActive(ring);
+                v.Bars?.ForView(v.E, team); // a player's stream shows only their own units' fuel
             }
             Deposits?.SetPov(team, PovTeam);
         }
@@ -141,6 +143,7 @@ namespace Pez.View
                 if (!show) continue;
                 v.Rig.Root.localScale = Vector3.one * vis;
                 UpdateView(v, alpha);
+                if (v.Bars != null) { v.Bars.Update(e); v.Bars.ForView(e, PovTeam); }
             }
             PlayEvents();
             var gone = new List<int>();
@@ -277,7 +280,7 @@ namespace Pez.View
             float r = e.IsStructure ? Mathf.Max(e.Def.SizeX, e.Def.SizeY) * 0.75f : e.Def.Radius * 2.6f;
             ring.localScale = new Vector3(r, 1f, r);
             ring.gameObject.SetActive(false);
-            var v = new EV { E = e, Rig = rig, Ring = ring, Born = Time.frameCount };
+            var v = new EV { E = e, Rig = rig, Ring = ring, Born = Time.frameCount, Bars = e.IsMine ? null : new Bars(rig.Root, e, 0f) };
             if (e.IsStructure) rig.Root.position = W(e.Center);
             return v;
         }
