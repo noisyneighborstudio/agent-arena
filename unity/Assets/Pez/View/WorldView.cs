@@ -380,8 +380,8 @@ namespace Pez.View
                 }
                 // Aircraft bank into turns.
                 if (e.IsAir) rig.Body.localRotation = Quaternion.Euler(e.Moving ? 6f : 0, 0, Mathf.Clamp(Mathf.DeltaAngle(rig.Root.eulerAngles.y, Yaw(e.Facing)) * 0.6f, -25f, 25f));
-                // Infantry bob while walking.
-                if (e.Def.Armor == Armor.Infantry) rig.Body.localPosition = new Vector3(0, e.Moving ? Mathf.Abs(Mathf.Sin(Time.time * 12f + e.Id)) * 0.04f : 0, 0);
+                // Infantry walk: the stride follows the ground actually covered this frame, and they settle when they stop.
+                if (rig.Gait != null) rig.Gait.Tick(rig.Root, Time.deltaTime);
             }
             if (rig.Barrel != null && !rig.HasModel)
             {

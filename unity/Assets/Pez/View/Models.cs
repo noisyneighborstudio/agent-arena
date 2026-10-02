@@ -14,6 +14,7 @@ namespace Pez.View
         public PezEmerge Emerge;
         public bool HasModel => Model != null;
         public Vector3 BarrelRest;
+        public Gait Gait;            // infantry walk cycle (legs, hips) or null
     }
 
     /// <summary>
@@ -65,6 +66,7 @@ namespace Pez.View
         }
 
         static Mesh dashedRing;
+        static int gaitSeed;
 
         /// <summary>
         /// The HUD kit's selection ring: a flat dashed circle (diameter 1, in XZ), drawn in cream for every team.
@@ -251,6 +253,8 @@ namespace Pez.View
                 rig.Barrel = PezMotion.FindDeep(go.transform, "barrel");
                 rig.Spinner = PezMotion.FindDeep(go.transform, "spinner");
                 rig.Bin = PezMotion.FindDeep(go.transform, "bin");
+                // Soldiers get hips and legs cut from their body mesh before PezMotion caches the turret's rest pose.
+                if (Pez.Sim.Defs.Get(key)?.Armor == Pez.Sim.Armor.Infantry) rig.Gait = Gait.FromModel(rig.Body, go, ++gaitSeed);
                 rig.Motion = go.AddComponent<PezMotion>();
                 // Visual turrets keep up with the sim's aim so shots leave the barrel, not the side of it.
                 if (rig.Motion.profile.turretYawSpeed > 0) rig.Motion.profile.turretYawSpeed = Mathf.Max(rig.Motion.profile.turretYawSpeed, 240f);
@@ -292,8 +296,8 @@ namespace Pez.View
                 case "commando":
                     {
                         float s = 0.85f;
-                        // Smoke-plastic body; the team colour sits on the helmet, on top, where it reads at full zoom-out.
-                        Part(b, PrimitiveType.Capsule, new Vector3(0, 0.22f * s, 0), new Vector3(0.16f, 0.2f, 0.12f) * s, Mats.Lit(DarkSteel, 0.5f, 0));
+                        // Smoke-plastic torso on licorice legs; the team colour sits on the helmet, on top, where it reads at full zoom-out.
+                        Part(b, PrimitiveType.Capsule, new Vector3(0, 0.3f * s, 0), new Vector3(0.16f, 0.13f, 0.12f) * s, Mats.Lit(DarkSteel, 0.5f, 0));
                         Part(b, PrimitiveType.Sphere, new Vector3(0, 0.5f * s, 0), Vector3.one * 0.1f * s, Mats.Lit(Skin, 0.6f, 0));
                         Part(b, PrimitiveType.Sphere, new Vector3(0, 0.53f * s, -0.005f), new Vector3(0.11f, 0.06f, 0.11f) * s, teamMat);
                         rig.Turret = Empty(b, "arms", new Vector3(0, 0.32f * s, 0));
@@ -308,7 +312,7 @@ namespace Pez.View
                         else if (key == "sniper")
                         {
                             // Ghillie-dark body overlay and a long scoped rifle.
-                            Part(b, PrimitiveType.Capsule, new Vector3(0, 0.22f * s, 0), new Vector3(0.17f, 0.2f, 0.13f) * s, Mats.Lit(Kraft * 0.6f, 0.05f, 0));
+                            Part(b, PrimitiveType.Capsule, new Vector3(0, 0.3f * s, 0), new Vector3(0.17f, 0.135f, 0.13f) * s, Mats.Lit(Kraft * 0.6f, 0.05f, 0));
                             rig.Barrel = Part(rig.Turret, PrimitiveType.Cube, new Vector3(0.06f, 0, 0.2f), new Vector3(0.025f, 0.035f, 0.46f), dark);
                             Part(rig.Barrel, PrimitiveType.Cylinder, new Vector3(0, 1.4f, 0.05f), new Vector3(0.9f, 0.12f, 0.9f), Mats.Glow(PezPalette.EmissiveCyanLaserOptics, 1.5f), new Vector3(90, 0, 0));
                         }
@@ -334,6 +338,7 @@ namespace Pez.View
                         }
                         else
                             rig.Barrel = Part(rig.Turret, PrimitiveType.Cylinder, new Vector3(0.08f, 0.07f, 0.02f), new Vector3(0.07f, 0.17f, 0.07f), Mats.Lit(Kraft, 0.3f, 0f), new Vector3(90, 0, 0));
+                        Legs(rig, s, key == "sniper" ? Mats.Lit(Kraft * 0.45f, 0.05f, 0) : Mats.Lit(Track, 0.2f, 0));
                         break;
                     }
                 case "command_center":
@@ -627,6 +632,33 @@ namespace Pez.View
                 r.receiveShadows = true;
             }
             return rig;
+        }
+
+        /// <summary>
+        /// Placeholder soldier: hang everything built so far from a hips pivot and stand it on two swinging legs.
+        /// </summary>
+        static void Legs(Rig rig, float s, Material m)
+        {
+            var b = rig.Body;
+            float hipY = 0.2f * s, legLen = 0.2f * s;
+            var kids = new List<Transform>();
+            foreach (Transform c in b) kids.Add(c);
+            var hips = Empty(b, "hips", new Vector3(0, hipY, 0));
+            foreach (var c in kids)
+            {
+                var lp = c.localPosition;
+                c.SetParent(hips, false);
+                c.localPosition = lp - hips.localPosition;
+            }
+            Transform Leg(string name, float x)
+            {
+                var pivot = Empty(b, name, new Vector3(x, hipY, 0));
+                Part(pivot, PrimitiveType.Cube, new Vector3(0, -legLen * 0.5f, 0), new Vector3(0.055f, legLen + 0.02f * s, 0.065f), m);
+                return pivot;
+            }
+            var legL = Leg("leg_l", -0.038f * s);
+            var legR = Leg("leg_r", 0.038f * s);
+            rig.Gait = new Gait(b, hips, legL, legR, legLen, 1f, ++gaitSeed);
         }
 
         static void Tank(Rig rig, Material team, Material teamDark, Material steel, Material track, float s, bool twin)
