@@ -23,6 +23,7 @@ setup() {
   if [ ! -e "$LIVE/.git" ]; then
     git -C "$REPO" worktree add -q --detach "$LIVE" "$(cat "$CI/deployed" 2>/dev/null || echo origin/main)" || return 1
     ln -s "$REPO/mcp/node_modules" "$LIVE/mcp/node_modules"
+    mkdir -p "$LIVE/arena/logs" # the gateway logs here (git-ignored, so a fresh checkout lacks it)
     (cd "$LIVE/headless" && dotnet build -c Release >/dev/null 2>&1) # the overflow rooms' engine
   fi
   [ -e "$WT/.git" ] && return 0
@@ -34,6 +35,7 @@ setup() {
   cp -c -R "$REPO/unity/Library" "$WT/unity/Library"
   ln -s "$REPO/unity/Build" "$WT/unity/Build"
   ln -s "$REPO/mcp/node_modules" "$WT/mcp/node_modules"
+  mkdir -p "$WT/arena/logs"
 }
 
 outside_players() {
