@@ -254,9 +254,22 @@ async function liveLoop() {
   try {
     const r = await fetch(`${BASE}/live.mjpg`, { cache: "no-store", signal: liveAbort.signal });
     if (r.ok) { liveFails = 0; await readFrames(r.body.getReader()); }
-    else if (r.status !== 429 && ++liveFails > 3) { liveOk = false; setMode(false); setTimeout(liveLoop, 15000); return; }
+    else if (r.status !== 429 && ++liveFails > 3) return pollLoop(); // no push stream from this host: poll stills
   } catch { if (liveAbort.signal.aborted) return setTimeout(liveLoop, 0); liveFails++; }
   setTimeout(liveLoop, 1000); // the stream ended (the game restarted, the seat emptied): reconnect
+}
+// Fallback for hosts without the push stream: fetch one still at a time, as fast as they come.
+async function pollLoop() {
+  let misses = 0;
+  for (;;) {
+    if (!liveWanted()) { await new Promise((r) => setTimeout(r, 250)); continue; }
+    try {
+      const r = await fetch(`${BASE}/live.jpg?${Date.now()}`, { cache: "no-store" });
+      if (r.ok) { misses = 0; showFrame(new Uint8Array(await r.arrayBuffer())); }
+      else if (r.status !== 503 && ++misses > 5) { liveOk = false; setMode(false); await new Promise((r) => setTimeout(r, 15000)); misses = 0; }
+    } catch { misses++; }
+    await new Promise((r) => setTimeout(r, 60));
+  }
 }
 // The stream is multipart: each part is a few header lines (with Content-Length) and then one JPEG.
 async function readFrames(reader) {
