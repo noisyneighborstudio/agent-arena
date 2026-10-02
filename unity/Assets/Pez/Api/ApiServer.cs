@@ -292,6 +292,14 @@ namespace Pez.Api
                     return Json.Write(ViewMap(w, ViewTeam(req, w)));
                 case "/api/view/frame":
                     return Json.Write(ViewFrame(w, ViewTeam(req, w)));
+                case "/api/viewlink":
+                    {
+                        // A player's own read-only watch-link token (for links made after joining, e.g. the commander link).
+                        int team = TeamParam(req, w);
+                        var vt = viewTokens.FirstOrDefault(kv => kv.Value.world == w && kv.Value.team == team && kv.Value.seat == w.Teams[team].Seat).Key;
+                        if (vt == null) { status = 404; return Json.Write(new JObj().Set("ok", false).Set("error", "no view link for this seat")); }
+                        return Json.Write(new JObj().Set("ok", true).Set("view_token", vt));
+                    }
                 case "/api/view/unit":
                     {
                         // Details for one entity, as the viewing team knows it: everything about its own, what can be

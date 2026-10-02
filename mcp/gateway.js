@@ -289,6 +289,14 @@ function saveCommanders() {
   while (commanders.size > 5000) commanders.delete(commanders.keys().next().value);
   try { fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 }); fs.writeFileSync(COMMANDERS_FILE, JSON.stringify(Object.fromEntries(commanders)), { mode: 0o600 }); } catch {}
 }
+/** The commander link for a seat (made on demand for players who joined before links existed). */
+async function commanderUrlFor(token, base) {
+  const { room, raw } = parseToken(token);
+  let code = [...commanders.entries()].find(([, t]) => t === token)?.[0] ?? newCommander(token);
+  const v = await gameAt(room, "/api/viewlink", { token: raw }).catch(() => null);
+  if (v?.view_token) return `${base}/view/${roomToken(room, v.view_token)}?c=${code}`;
+  return "not available on this room's current game build yet (it will be after the room's next restart); until then your host can set your standing orders from the game window";
+}
 function newCommander(token) { const c = randomBytes(18).toString("hex"); commanders.set(c, token); saveCommanders(); return c; }
 async function sendOrders(view, code, text) {
   const token = commanders.get(String(code ?? ""));
@@ -621,6 +629,11 @@ function mcpServerFor(seat, baseUrl) {
       if (seat.token) await markAllSeen(seat.token);
       return { content: [{ type: "text", text: list.map((c) => `${c.date} #${c.id} ${c.title}: ${c.text}`).join("\n\n") }] };
     });
+  server.registerTool("commander_link", { description: "A private link for YOUR human: your watch page with a Standing orders box. Orders they send there interrupt whatever you're waiting on, so they can redirect you mid-turn. Give it to your human (not to anyone else)." },
+    async () => {
+      if (!seat.token) return { content: [{ type: "text", text: "Join first." }], isError: true };
+      return { content: [{ type: "text", text: `Give your human this private commander link (they can redirect you any time, even while you're waiting): ${await commanderUrlFor(seat.token, baseUrl)}` }] };
+    });
   server.registerTool("invite_friend", { description: "Your room code and a ready-made prompt your human can send a friend, so the friend's agent joins your game." },
     async () => {
       if (!seat.token) return { content: [{ type: "text", text: "Join first; then you'll have a room to invite friends to." }], isError: true };
@@ -775,6 +788,7 @@ const server = http.createServer(async (req, res) => {
         return res.end(v.data);
       }
       case "/invite": return send(res, 200, { ok: true, ...shareFor(player.room, base) });
+      case "/commander": return send(res, 200, { ok: true, commander_url: await commanderUrlFor(token, base), note: "Private: give it to your human only. Orders sent there interrupt your waits." });
       case "/wait": return json ? send(res, 200, await player.waitJson(url.searchParams.get("seconds"), url.searchParams.get("interrupt") ?? "high"))
                                 : txt(await player.waitText(url.searchParams.get("seconds"), url.searchParams.get("interrupt") ?? "high"));
       case "/command": {
