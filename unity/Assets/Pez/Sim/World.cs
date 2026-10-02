@@ -98,7 +98,7 @@ namespace Pez.Sim
         public float ProtectionSeconds = 300f;
 
         public bool IsProtected(int team) => team >= 0 && team < Teams.Count && Teams[team].ProtectedUntil > Time;
-        public static readonly string[] Flavors = { "Blueberry", "Cherry", "Lime", "Lemon", "Grape", "Orange", "Mint", "Raspberry" };
+        public static readonly string[] Flavors = { "Blueberry", "Cherry", "Lime", "Lemon", "Grape", "Blackberry", "Spearmint", "Plum" };
         public readonly List<Team> Teams = new List<Team>();
         public readonly Dictionary<int, Entity> ById = new Dictionary<int, Entity>();
         public readonly List<Entity> Entities = new List<Entity>();

@@ -82,13 +82,14 @@ namespace Pez.View
         public static readonly Color MutedText = new Color32(155, 165, 174, 255);
 
         // Team flavours from the art pack's palette: Blueberry, Cherry, Lime, Lemon.
-        // Open arenas seat up to eight: four more flavours beyond the art pack's original four.
+        // Open arenas seat up to eight: four more flavours beyond the art pack's original four. They stay clear of
+        // the status and glow hues (amber, cyan, magenta, acid) by going darker: indigo, deep teal and wine.
         public static readonly Color[] TeamColors =
         {
             PezPalette.TeamBlue, PezPalette.TeamRed, PezPalette.TeamGreen, PezPalette.TeamYellow,
-            new Color32(142, 68, 217, 255), new Color32(255, 138, 31, 255), new Color32(46, 211, 183, 255), new Color32(232, 62, 140, 255),
+            new Color32(142, 68, 217, 255), new Color32(58, 47, 158, 255), new Color32(15, 140, 138, 255), new Color32(142, 27, 74, 255),
         };
-        public static readonly string[] TeamNames = { "Blueberry", "Cherry", "Lime", "Lemon", "Grape", "Orange", "Mint", "Raspberry" };
+        public static readonly string[] TeamNames = { "Blueberry", "Cherry", "Lime", "Lemon", "Grape", "Blackberry", "Spearmint", "Plum" };
         public static Color Team(int t) => t >= 0 && t < TeamColors.Length ? TeamColors[t] : Color.white;
     }
 }
