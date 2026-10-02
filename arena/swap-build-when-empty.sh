@@ -4,6 +4,7 @@
 # The standalone gateway keeps running throughout, so agents' MCP sessions and the overflow rooms are unaffected.
 #
 #   arena/swap-build-when-empty.sh [player name to ignore ...]     e.g. a stray idle seat
+#   RESTART_JSON='{"ore_scale":0.3,"open":true}' arena/swap-build-when-empty.sh   keep a scarce map after the swap
 set -u
 cd "${0:A:h}/.."
 NEXT=unity/Build/next/Pezz.app
@@ -31,4 +32,6 @@ rm -rf unity/Build/prev; mv unity/Build/Pezz.app unity/Build/prev && mv "$NEXT" 
 open -a "$PWD/unity/Build/Pezz.app" --args -team0 claude -model0 sonnet -effort0 medium -team1 codex -model1 gpt-5.6-luna -effort1 medium \
   -open -gatewayurl https://pezz.sethwebster.com -autostart
 for i in {1..60}; do curl -s -o /dev/null http://127.0.0.1:7777/api/status && break; sleep 1; done
+# Optional game settings for the new arena, e.g. RESTART_JSON='{"ore_scale":0.3,"open":true}'
+[ -n "${RESTART_JSON:-}" ] && sleep 2 && curl -s -X POST http://127.0.0.1:7777/api/admin/restart -d "$RESTART_JSON" >/dev/null
 log "relaunched: $(curl -s http://127.0.0.1:7777/api/lobby | head -c 200)"
