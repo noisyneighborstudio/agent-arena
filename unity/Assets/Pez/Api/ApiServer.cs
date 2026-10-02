@@ -448,7 +448,7 @@ namespace Pez.Api
             if (!full) return o;
             if (e.IsStructure)
             {
-                o.Set("complete", e.IsComplete).Set("progress_pct", (int)(e.BuildProgress * 100));
+                o.Set("complete", e.IsComplete).Set("progress_pct", StateView.Pct(e.BuildProgress));
                 if (d.Recipes.Length > 0) o.Set("working", e.Working);
                 if (d.Key == "deep_mine") { var dep = w.Map.DepositById(e.DepositId); if (dep != null) o.Set("deposit", $"{Defs.Ores[dep.Type]}: {(int)dep.Amount}/{(int)dep.Initial} left"); }
                 if (e.Rally.HasValue) o.Set("rally", StateView.Sector(w.Map, e.Rally.Value));
@@ -458,7 +458,7 @@ namespace Pez.Api
             if (e.Order != Order.Idle) o.Set("order_sector", StateView.Sector(w.Map, e.OrderPos));
             var target = e.TargetId != 0 ? w.Get(e.TargetId) : null;
             if (target != null && e.Order != Order.Idle) o.Set("target", $"{target.Def.Name} #{target.Id}");
-            if (d.UsesFuel) o.Set("fuel_pct", (int)(e.FuelFraction * 100)).Set("landed", e.Landed).Set("stranded", e.Stranded);
+            if (d.UsesFuel) o.Set("fuel_pct", StateView.Pct(e.FuelFraction)).Set("landed", e.Landed).Set("stranded", e.Stranded);
             if (e.IsHarvester) o.Set("cargo", $"{e.Cargo}/{d.HarvestCapacity}{(e.CargoType >= 0 ? " " + Defs.Ores[e.CargoType] : "")}");
             if (d.Capacity > 0) o.Set("passengers", $"{e.Passengers.Count}/{d.Capacity}");
             if (e.Waypoints.Count > 0) o.Set("waypoints", e.Waypoints.Count).Set("patrol", e.WaypointLoop);
@@ -487,9 +487,9 @@ namespace Pez.Api
                 if (!known) continue;
                 var c = e.Center;
                 ents.Add(new List<object> { e.Id, e.Def.Key, e.Team, Math.Round(c.X, 2), Math.Round(c.Y, 2), (int)(100 * e.Hp / e.Def.MaxHp),
-                    Math.Round(e.Facing, 2), e.IsStructure ? (int)(e.BuildProgress * 100) : -1, e.IsStructure ? e.Def.SizeX : 0,
+                    Math.Round(e.Facing, 2), e.IsStructure ? StateView.Pct(e.BuildProgress) : -1, e.IsStructure ? e.Def.SizeX : 0,
                     // fuel %: your own units only (spectators see all); -1 = not shown
-                    e.Def.UsesFuel && (team < 0 || e.Team == team) ? (int)(e.FuelFraction * 100) : -1 });
+                    e.Def.UsesFuel && (team < 0 || e.Team == team) ? StateView.Pct(e.FuelFraction) : -1 });
             }
             var shots = new List<object>();
             // Tracers matter for an instant; blasts, deaths, boarding and salvage stay listed long enough that a late poll

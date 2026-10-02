@@ -11,7 +11,7 @@
      uses team hues. Laid out for 1920x1080 and scaled to the window by --k. */
   :root { --bg:#2A2420; --panel:rgba(16,19,23,.9); --border:#2A3138; --line:#3A4047; --btn:#22282E; --ink:#E8EBEE; --cream:#ECE4D2; --muted:#9BA5AE; --soft:#C5CCD2; --amber:#FFA22E; --k:1; }
   html,body { margin:0; height:100%; background:var(--bg); color:var(--ink); font:14px/1.45 "IBM Plex Sans",-apple-system,"Segoe UI",sans-serif; overflow:hidden; }
-  canvas#c, canvas#live { position:absolute; inset:0; width:100%; height:100%; }
+  canvas#c, canvas#live { position:absolute; inset:0; width:100%; height:100%; touch-action:none; } /* touch pans and pinches the map, not the page */
   canvas#c { cursor:grab; } canvas#c:active { cursor:grabbing; }
   #live { object-fit:contain; background:var(--bg); display:none; user-select:none; cursor:grab; }
   body.live #live { display:block; } body.live #c { visibility:hidden; }
@@ -605,8 +605,8 @@ function bar(x, y, w, f, color) { ctx.fillStyle = "rgba(0,0,0,.6)"; ctx.fillRect
 
 // Pan, zoom and pick on the tactical map.
 let drag = null;
-cv.addEventListener("mousedown", (e) => (drag = { x: e.clientX, y: e.clientY, cx: cam.x, cy: cam.y, moved: false }));
-addEventListener("mouseup", (e) => {
+cv.addEventListener("pointerdown", (e) => (drag = { x: e.clientX, y: e.clientY, cx: cam.x, cy: cam.y, moved: false }));
+addEventListener("pointerup", (e) => {
   if (drag && !drag.moved && e.target === cv && frame) {
     const d = devicePixelRatio || 1, wx = cam.x + (e.clientX * d - cv.width / 2) / cam.scale, wy = cam.y - (e.clientY * d - cv.height / 2) / cam.scale;
     let best = 0, bd = 1.6;
@@ -615,7 +615,7 @@ addEventListener("mouseup", (e) => {
   }
   drag = null;
 });
-addEventListener("mousemove", (e) => {
+addEventListener("pointermove", (e) => {
   if (!drag) return;
   if (Math.abs(e.clientX - drag.x) + Math.abs(e.clientY - drag.y) > 3) drag.moved = true;
   const d = devicePixelRatio || 1; cam.x = drag.cx - (e.clientX - drag.x) * d / cam.scale; cam.y = drag.cy + (e.clientY - drag.y) * d / cam.scale;
@@ -721,8 +721,8 @@ function camFlush() {
   camAcc = { dx: 0, dy: 0, zoom: 1, yaw: 0 }; camBusy = true;
   fetch(`${BASE}/cam?dx=${a.dx.toFixed(4)}&dy=${a.dy.toFixed(4)}&zoom=${a.zoom.toFixed(3)}&yaw=${a.yaw}`).finally(() => { camBusy = false; setTimeout(camFlush, 30); });
 }
-liveImg.addEventListener("mousedown", (e) => { camDrag = { x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY }; e.preventDefault(); });
-addEventListener("mouseup", async (e) => {
+liveImg.addEventListener("pointerdown", (e) => { camDrag = { x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY }; e.preventDefault(); });
+addEventListener("pointerup", async (e) => {
   const d = camDrag; camDrag = null;
   if (!d || !liveMode || Math.abs(e.clientX - d.x0) + Math.abs(e.clientY - d.y0) > 4) return;
   // A click, not a drag: find what's under it in the stream image (letterboxed inside the element).
@@ -732,9 +732,27 @@ addEventListener("mouseup", async (e) => {
   if (u < 0 || u > 1 || v < 0 || v > 1) return;
   try { const p = await getJSON(`${BASE}/pick?u=${u.toFixed(4)}&v=${v.toFixed(4)}`); if (p.id) select(p.id); else deselect(); } catch {}
 });
-addEventListener("mousemove", (e) => { if (!camDrag || !liveMode) return; const r = liveImg.getBoundingClientRect(); camAcc.dx -= (e.clientX - camDrag.x) / r.width; camAcc.dy += (e.clientY - camDrag.y) / r.height; camDrag = { x: e.clientX, y: e.clientY }; camFlush(); });
+addEventListener("pointermove", (e) => { if (!camDrag || !liveMode) return; const r = liveImg.getBoundingClientRect(); camAcc.dx -= (e.clientX - camDrag.x) / r.width; camAcc.dy += (e.clientY - camDrag.y) / r.height; camDrag = { x: e.clientX, y: e.clientY }; camFlush(); });
 liveImg.addEventListener("wheel", (e) => { e.preventDefault(); camAcc.zoom *= e.deltaY < 0 ? 0.9 : 1.11; camFlush(); }, { passive: false });
 addEventListener("keydown", (e) => { if (!liveMode) return; const k = e.key.toLowerCase(); if (k === "q") camAcc.yaw += 15; if (k === "e") camAcc.yaw -= 15; camFlush(); });
+
+// Two-finger pinch zooms (the map, or the live stream's camera); one finger pans like a mouse drag.
+const touchPts = new Map(); let pinchDist = 0;
+function pinchTrack(el, onZoom) {
+  el.addEventListener("pointerdown", (e) => { if (e.pointerType === "touch") touchPts.set(e.pointerId, { x: e.clientX, y: e.clientY }); });
+  el.addEventListener("pointermove", (e) => {
+    if (!touchPts.has(e.pointerId)) return;
+    touchPts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (touchPts.size !== 2) return;
+    const [a, b] = [...touchPts.values()], d = Math.hypot(a.x - b.x, a.y - b.y);
+    if (pinchDist > 0) onZoom(d / pinchDist);
+    pinchDist = d; drag = null; camDrag = null;
+  });
+  const end = (e) => { touchPts.delete(e.pointerId); if (touchPts.size < 2) pinchDist = 0; };
+  el.addEventListener("pointerup", end); el.addEventListener("pointercancel", end);
+}
+pinchTrack(cv, (k) => { cam.scale = Math.max(2, Math.min(60, cam.scale * k)); });
+pinchTrack(liveImg, (k) => { camAcc.zoom /= k; camFlush(); });
 addEventListener("keydown", (e) => { if (e.key === "l" || e.key === "L") setMode(!liveMode); });
 setMode(false); tick(); draw(); liveLoop();
 if (new URLSearchParams(location.search).get("replay") === "1") setTimeout(startReplay, 800); // a shareable replay link
