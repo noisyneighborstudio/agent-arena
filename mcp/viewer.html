@@ -117,7 +117,17 @@
   <div class="panel" id="side">
     <div id="prodbox"><div class="head" style="margin-bottom:10px">Building now</div><div id="prod" style="display:flex;flex-direction:column;gap:10px"></div></div>
     <div><div class="head" style="margin-bottom:8px">Stockpile</div><div id="stock"></div></div>
-    <div><div class="head" style="margin-bottom:8px">Standing orders</div><div id="orders"></div></div>
+    <div><div class="head" style="margin-bottom:8px">Standing orders</div><div id="orders"></div>
+      <div id="orderEdit" style="display:none;flex-direction:column;gap:8px;margin-top:10px">
+        <label for="orderText" class="note">New orders for your agent (they interrupt whatever it's waiting on)</label>
+        <textarea id="orderText" maxlength="600" style="height:72px;box-sizing:border-box;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:#101317;color:var(--ink);font:14px 'IBM Plex Sans',sans-serif;resize:none"></textarea>
+        <div style="display:flex;gap:8px">
+          <button id="orderSend" style="flex-grow:1;height:44px;border:0;border-radius:8px;background:var(--cream);color:#101317;font-weight:600;cursor:pointer">Send</button>
+          <button id="orderClear" style="flex-grow:1;height:44px;border:1px solid var(--line);border-radius:8px;background:transparent;cursor:pointer">Clear</button>
+        </div>
+        <span id="orderNote" class="note"></span>
+      </div>
+    </div>
   </div>
 </div>
 <div class="hud panel" id="feed">
@@ -214,6 +224,27 @@ async function tick() {
   setTimeout(tick, 250);
 }
 
+// Keys typed into a text box are text, not shortcuts.
+addEventListener("keydown", (e) => { if (/^(TEXTAREA|INPUT)$/.test(e.target?.tagName ?? "") && e.key !== "Escape") e.stopImmediatePropagation(); }, true);
+
+// ---- Commander link: the watch page plus ?c=<code> lets this player's human redirect their agent at any moment.
+const COMMANDER = new URLSearchParams(location.search).get("c");
+if (COMMANDER && !SPECTATOR) {
+  document.getElementById("orderEdit").style.display = "flex";
+  const note = (t) => (document.getElementById("orderNote").textContent = t);
+  async function sendOrders(text) {
+    note("Sending…");
+    try {
+      const r = await fetch(`${BASE}/orders`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ c: COMMANDER, text }) });
+      const j = await r.json();
+      note(r.ok ? (text ? "Sent: your agent gets them right away, even mid-wait." : "Cleared: your agent uses its own judgment.") : `Not sent: ${j.error}`);
+      if (r.ok && text) document.getElementById("orderText").value = "";
+    } catch (e) { note(`Not sent: ${e.message}`); }
+  }
+  document.getElementById("orderSend").addEventListener("click", () => { const t = document.getElementById("orderText").value.trim(); if (t) sendOrders(t); });
+  document.getElementById("orderClear").addEventListener("click", () => sendOrders(""));
+}
+
 // ---- HUD panels
 function hud() {
   const you = frame.you;
@@ -294,20 +325,54 @@ function chatPanel() {
   }).join("");
 }
 
+// Details for the selected unit come from the game (fog-aware: everything about yours, what's visible of an enemy's).
+let details = null, detailsFor = 0, detailsAt = 0;
+async function loadDetails() {
+  if (SPECTATOR || !selected) { details = null; return; }
+  if (detailsFor === selected && Date.now() - detailsAt < 1000) return;
+  detailsFor = selected; detailsAt = Date.now();
+  try { const d = await getJSON(`${BASE}/unit/${selected}`); if (d.id === selected) details = d; } catch { if (detailsFor === selected) details = null; }
+}
 function selectionCard() {
   const el = document.getElementById("sel");
   const e = selected && frame.entities.find((x) => x[0] === selected);
-  if (!e || liveMode) { el.style.display = "none"; return; }
-  const [, key, team, , , hp, , build, , fuel] = e;
+  if (!e) { if (selected && !liveMode) deselect(); el.style.display = "none"; return; }
+  loadDetails();
+  const [, key, team, , , hp, , build, size, fuel] = e;
+  const d = details && details.id === selected ? details : null;
   const hpCol = hp >= 50 ? "#E8EBEE" : hp >= 25 ? "#FFA22E" : "repeating-linear-gradient(135deg,#1E1B1D 0 5px,#ECE4D2 5px 10px)";
+  const owner = frame.teams.find((t) => t.id === team);
+  const facts = [];
+  if (d?.order) facts.push(`Order: ${d.order.replaceAll("_", " ")}${d.order_sector ? ` → <span class="sec">${d.order_sector}</span>` : ""}`);
+  if (d?.target) facts.push(`target ${esc(d.target)}`);
+  if (d?.cargo) facts.push(`cargo ${esc(d.cargo)}`);
+  if (d?.passengers) facts.push(`carrying ${esc(d.passengers)}`);
+  if (d?.waypoints) facts.push(`${d.waypoints} waypoint${d.waypoints > 1 ? "s" : ""}${d.patrol ? " (patrol)" : ""}`);
+  if (d?.retreat_below_pct) facts.push(d.retreating ? "retreating" : `retreats below ${d.retreat_below_pct}%`);
+  if (d?.deposit) facts.push(esc(d.deposit));
+  if (d?.working != null) facts.push(d.working ? "working" : "idle: missing inputs");
+  if (d?.stranded) facts.push("OUT OF FUEL");
+  const stats = d ? [d.speed != null ? `${d.speed} t/s` : null, d.weapon ? esc(d.weapon) : null, d.armor].filter(Boolean).join(" · ") : "";
+  const mobile = size === 0;
   el.style.display = "flex";
-  el.innerHTML = `<img src="/icons/${key}.png" alt="" onerror="this.style.visibility='hidden'"><div style="flex-grow:1;display:flex;flex-direction:column;gap:8px">` +
-    `<div style="display:flex;align-items:center;gap:8px"><span class="chip" style="background:${FLAVORS[team % 8]}"></span><span class="big">${esc(pretty(key))}</span><span class="note">#${selected}</span></div>` +
-    `<div style="display:flex;align-items:center;gap:10px"><div class="bar" style="flex-grow:1"><div style="width:${hp}%;background:${hpCol}"></div></div><span class="mono note">${hp}%</span></div>` +
+  el.innerHTML = `<img src="/icons/${key}.png" alt="" onerror="this.style.visibility='hidden'"><div style="flex-grow:1;display:flex;flex-direction:column;gap:7px;min-width:0">` +
+    `<div style="display:flex;align-items:center;gap:8px"><span class="chip" style="background:${FLAVORS[team % 8]}"></span><span class="big">${esc(d?.name ?? pretty(key))}</span><span class="note">#${selected} · ${esc(owner?.flavor ?? "")} ${esc(owner?.player ?? "")}</span></div>` +
+    `<div style="display:flex;align-items:center;gap:10px"><div class="bar" style="flex-grow:1"><div style="width:${hp}%;background:${hpCol}"></div></div><span class="mono note">${d ? `${d.hp}/${d.max_hp}` : `${hp}%`}</span></div>` +
     (build >= 0 && build < 100 ? `<div class="note">Building: ${build}%</div>` : "") +
-    (fuel >= 0 ? `<div style="display:flex;align-items:center;gap:10px"><span class="note" style="width:34px">fuel</span><div class="bar" style="flex-grow:1"><div style="width:${fuel}%;background:${fuel < 30 ? "#FFA22E" : "#8FE4FF"}"></div></div><span class="mono note">${fuel}%</span></div>` : "") +
-    `<div class="note">${frame.teams.find((t) => t.id === team)?.flavor ?? ""} · click empty ground to deselect</div></div>`;
+    (fuel >= 0 ? `<div style="display:flex;align-items:center;gap:10px"><span class="note" style="width:34px">fuel</span><div class="bar" style="flex-grow:1"><div style="width:${fuel}%;background:${fuel < 30 ? "#FFA22E" : "#8FE4FF"}"></div></div><span class="mono note">${d?.landed ? "pad" : fuel + "%"}</span></div>` : "") +
+    (facts.length ? `<div style="font-size:14px;color:var(--soft)">${facts.join(" · ")}</div>` : "") +
+    (stats ? `<div class="mono note" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${stats}</div>` : "") +
+    `<div class="note">${mobile ? "Following this unit · Esc or click empty ground to stop" : "Esc or click empty ground to deselect"}</div></div>`;
 }
+
+// Selecting a mobile unit makes the view (and the live stream's camera) follow it until it's deselected.
+function select(id) {
+  selected = id; details = null;
+  const e = id && frame?.entities.find((x) => x[0] === id);
+  if (!SPECTATOR) fetch(`${BASE}/cam?follow=${e && e[8] === 0 ? id : 0}`).catch(() => {});
+}
+function deselect() { if (!selected) return; selected = 0; details = null; if (!SPECTATOR) fetch(`${BASE}/cam?follow=0`).catch(() => {}); }
+addEventListener("keydown", (e) => { if (e.key === "Escape") deselect(); });
 
 // After this player's game ends, the page keeps going as a delayed spectator view, with how it went.
 function showResults(r, rejoin) {
@@ -385,6 +450,8 @@ function draw() {
   drawMini();
   ctx.fillStyle = "#2A2420"; ctx.fillRect(0, 0, cv.width, cv.height);
   if (!map || !frame) return;
+  const fol = selected && frame.entities.find((x) => x[0] === selected && x[8] === 0);
+  if (fol && !drag?.moved) { cam.x += (fol[3] - cam.x) * 0.15; cam.y += (fol[4] - cam.y) * 0.15; } // ride along with the selected unit
   const s = cam.scale;
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(terrainCanvas, sx(0), sy(map.h), map.w * s, map.h * s);
@@ -482,7 +549,7 @@ addEventListener("mouseup", (e) => {
     const d = devicePixelRatio || 1, wx = cam.x + (e.clientX * d - cv.width / 2) / cam.scale, wy = cam.y - (e.clientY * d - cv.height / 2) / cam.scale;
     let best = 0, bd = 1.6;
     for (const en of frame.entities) { const dd = Math.hypot(en[3] - wx, en[4] - wy) - (en[8] > 0 ? en[8] / 2 : 0); if (dd < bd) { bd = dd; best = en[0]; } }
-    selected = best;
+    if (best) select(best); else deselect();
   }
   drag = null;
 });
@@ -592,8 +659,17 @@ function camFlush() {
   camAcc = { dx: 0, dy: 0, zoom: 1, yaw: 0 }; camBusy = true;
   fetch(`${BASE}/cam?dx=${a.dx.toFixed(4)}&dy=${a.dy.toFixed(4)}&zoom=${a.zoom.toFixed(3)}&yaw=${a.yaw}`).finally(() => { camBusy = false; setTimeout(camFlush, 30); });
 }
-liveImg.addEventListener("mousedown", (e) => { camDrag = { x: e.clientX, y: e.clientY }; e.preventDefault(); });
-addEventListener("mouseup", () => (camDrag = null));
+liveImg.addEventListener("mousedown", (e) => { camDrag = { x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY }; e.preventDefault(); });
+addEventListener("mouseup", async (e) => {
+  const d = camDrag; camDrag = null;
+  if (!d || !liveMode || Math.abs(e.clientX - d.x0) + Math.abs(e.clientY - d.y0) > 4) return;
+  // A click, not a drag: find what's under it in the stream image (letterboxed inside the element).
+  const r = liveImg.getBoundingClientRect(), k = Math.min(r.width / liveImg.width, r.height / liveImg.height);
+  const ox = (r.width - liveImg.width * k) / 2, oy = (r.height - liveImg.height * k) / 2;
+  const u = (e.clientX - r.left - ox) / (liveImg.width * k), v = (e.clientY - r.top - oy) / (liveImg.height * k);
+  if (u < 0 || u > 1 || v < 0 || v > 1) return;
+  try { const p = await getJSON(`${BASE}/pick?u=${u.toFixed(4)}&v=${v.toFixed(4)}`); if (p.id) select(p.id); else deselect(); } catch {}
+});
 addEventListener("mousemove", (e) => { if (!camDrag || !liveMode) return; const r = liveImg.getBoundingClientRect(); camAcc.dx -= (e.clientX - camDrag.x) / r.width; camAcc.dy += (e.clientY - camDrag.y) / r.height; camDrag = { x: e.clientX, y: e.clientY }; camFlush(); });
 liveImg.addEventListener("wheel", (e) => { e.preventDefault(); camAcc.zoom *= e.deltaY < 0 ? 0.9 : 1.11; camFlush(); }, { passive: false });
 addEventListener("keydown", (e) => { if (!liveMode) return; const k = e.key.toLowerCase(); if (k === "q") camAcc.yaw += 15; if (k === "e") camAcc.yaw -= 15; camFlush(); });

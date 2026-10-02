@@ -84,7 +84,11 @@ namespace Pez.View
         }
 
         /// <summary>Camera input from a stream viewer: team -1 is the host's main view, 0-7 a player's own stream.</summary>
-        public struct CamOp { public int Team; public float Dx, Dy, Zoom, Yaw, X, Y; } // X/Y: absolute focus (NaN = keep)
+        public struct CamOp { public int Team; public float Dx, Dy, Zoom, Yaw, X, Y; public int Follow; } // X/Y: absolute focus (NaN = keep); Follow: entity id to ride along with (0 = stop, -1 = no change)
+
+        /// <summary>"What's under this point of team N's stream?" Answered on the main thread, where the stream camera lives.</summary>
+        public class PickReq { public int Team; public float U, V; public string Result; public readonly System.Threading.ManualResetEventSlim Done = new System.Threading.ManualResetEventSlim(false); }
+        public static readonly System.Collections.Concurrent.ConcurrentQueue<PickReq> PickOps = new System.Collections.Concurrent.ConcurrentQueue<PickReq>();
         public static readonly System.Collections.Concurrent.ConcurrentQueue<CamOp> CamOps = new System.Collections.Concurrent.ConcurrentQueue<CamOp>();
 
         static float Q(string query, string key, float def)
@@ -234,6 +238,18 @@ img.onerror=()=>setTimeout(()=>img.src='stream?'+Date.now(),1000);img.src='strea
                     var cm = System.Text.RegularExpressions.Regex.Match(path, @"^/(?:team/(\d+)/)?cam(\?.*)?$");
                     var tm = System.Text.RegularExpressions.Regex.Match(path, @"^/team/(\d+)\.jpg");
                     var sm = System.Text.RegularExpressions.Regex.Match(path, @"^/(?:team/(\d+)/)?stream(\?.*)?$");
+                    var pm = System.Text.RegularExpressions.Regex.Match(path, @"^/team/(\d+)/pick(\?.*)?$");
+                    if (pm.Success)
+                    {
+                        // u, v: 0..1 across and down the stream image.
+                        var req = new PickReq { Team = int.Parse(pm.Groups[1].Value), U = Mathf.Clamp01(Q(pm.Groups[2].Value, "u", 0.5f)), V = Mathf.Clamp01(Q(pm.Groups[2].Value, "v", 0.5f)) };
+                        PickOps.Enqueue(req);
+                        req.Done.Wait(800);
+                        var pb = Encoding.UTF8.GetBytes(req.Result ?? "{\"ok\":false,\"error\":\"no answer\"}");
+                        var ph = Encoding.ASCII.GetBytes($"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {pb.Length}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n");
+                        stream.Write(ph, 0, ph.Length); stream.Write(pb, 0, pb.Length);
+                        return;
+                    }
                     if (sm.Success) { PushFrames(stream, sm.Groups[1].Success ? int.Parse(sm.Groups[1].Value) : MainView); return; }
                     if (cm.Success)
                     {
@@ -245,6 +261,7 @@ img.onerror=()=>setTimeout(()=>img.src='stream?'+Date.now(),1000);img.src='strea
                             Dx = Mathf.Clamp(Q(q, "dx", 0), -1, 1), Dy = Mathf.Clamp(Q(q, "dy", 0), -1, 1),
                             Zoom = Mathf.Clamp(Q(q, "zoom", 1), 0.5f, 2f), Yaw = Mathf.Clamp(Q(q, "yaw", 0), -90, 90),
                             X = Q(q, "x", float.NaN), Y = Q(q, "y", float.NaN),
+                            Follow = (int)Q(q, "follow", -1),
                         });
                         body = Encoding.ASCII.GetBytes("{\"ok\":true}"); type = "application/json";
                     }

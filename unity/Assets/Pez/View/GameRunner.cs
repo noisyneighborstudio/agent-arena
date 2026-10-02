@@ -167,6 +167,7 @@ namespace Pez.View
             if (camGo.GetComponent<AudioListener>() == null) camGo.AddComponent<AudioListener>();
             Camera = camGo.GetComponent<RtsCamera>();
             if (Camera == null) Camera = camGo.AddComponent<RtsCamera>();
+            Camera.Follow = FollowPoint;
 
             Input = gameObject.AddComponent<PlayerInput>();
             Input.Runner = this;
@@ -276,6 +277,15 @@ namespace Pez.View
                 return c.ConnectAsync("127.0.0.1", port).Wait(300) && c.Connected;
             }
             catch { return false; }
+        }
+
+        /// <summary>One selected mobile unit: the main camera follows it until it's deselected (or dies, or slips out of sight).</summary>
+        Vector3? FollowPoint()
+        {
+            if (View == null || InMenu || View.Selected.Count != 1) return null;
+            var e = Game.World.Get(View.Selected.First());
+            if (e == null || e.IsStructure || e.IsMine) return null;
+            return View.Views.TryGetValue(e.Id, out var v) && v.Rig.Root.gameObject.activeInHierarchy ? v.Rig.Root.position : (Vector3?)null;
         }
 
         void StopGateway()

@@ -292,6 +292,16 @@ namespace Pez.Api
                     return Json.Write(ViewMap(w, ViewTeam(req, w)));
                 case "/api/view/frame":
                     return Json.Write(ViewFrame(w, ViewTeam(req, w)));
+                case "/api/view/unit":
+                    {
+                        // Details for one entity, as the viewing team knows it: everything about its own, what can be
+                        // seen about a visible enemy, nothing about anything hidden in fog.
+                        int team = ViewTeam(req, w);
+                        var e = w.Get(int.TryParse(req.QueryString["id"], out var uid) ? uid : 0);
+                        bool mine = e != null && e.Team == team;
+                        if (e == null || !(mine || team < 0 || w.IsVisibleTo(team, e))) { status = 404; return Json.Write(new JObj().Set("ok", false).Set("error", "not visible")); }
+                        return Json.Write(UnitDetails(w, e, mine || team < 0));
+                    }
                 case "/api/join":
                     {
                         int team = TeamParam(req, w);
@@ -415,6 +425,38 @@ namespace Pez.Api
             }
             return new JObj().Set("w", m.W).Set("h", m.H).Set("version", w.MapVersion).Set("tiles", tiles.ToString()).Set("ore", ore.ToString())
                 .Set("team", team).Set("flavor", team >= 0 ? w.Teams[team].Name : "Spectator");
+        }
+
+        static JObj UnitDetails(World w, Entity e, bool full)
+        {
+            var t = w.Teams[e.Team];
+            var d = e.Def;
+            var o = new JObj().Set("ok", true).Set("id", e.Id).Set("type", d.Key).Set("name", d.Name).Set("team", e.Team)
+                .Set("flavor", t.Name).Set("player", t.PlayerName ?? t.Controller)
+                .Set("hp", (int)e.Hp).Set("max_hp", d.MaxHp).Set("armor", d.Armor.ToString().ToLowerInvariant())
+                .Set("structure", e.IsStructure).Set("air", e.IsAir).Set("description", d.Description);
+            if (!e.IsStructure) o.Set("speed", d.Speed);
+            if (d.Weapon != null) o.Set("weapon", $"{d.Weapon.Name}: {d.Weapon.Damage} dmg, range {d.Weapon.Range}, every {d.Weapon.Cooldown}s");
+            if (!full) return o;
+            if (e.IsStructure)
+            {
+                o.Set("complete", e.IsComplete).Set("progress_pct", (int)(e.BuildProgress * 100));
+                if (d.Recipes.Length > 0) o.Set("working", e.Working);
+                if (d.Key == "deep_mine") { var dep = w.Map.DepositById(e.DepositId); if (dep != null) o.Set("deposit", $"{Defs.Ores[dep.Type]}: {(int)dep.Amount}/{(int)dep.Initial} left"); }
+                if (e.Rally.HasValue) o.Set("rally", StateView.Sector(w.Map, e.Rally.Value));
+                return o;
+            }
+            o.Set("order", e.OrderName).Set("x", Math.Round(e.Pos.X, 1)).Set("y", Math.Round(e.Pos.Y, 1)).Set("sector", StateView.Sector(w.Map, e.Pos));
+            if (e.Order != Order.Idle) o.Set("order_sector", StateView.Sector(w.Map, e.OrderPos));
+            var target = e.TargetId != 0 ? w.Get(e.TargetId) : null;
+            if (target != null && e.Order != Order.Idle) o.Set("target", $"{target.Def.Name} #{target.Id}");
+            if (d.UsesFuel) o.Set("fuel_pct", (int)(e.FuelFraction * 100)).Set("landed", e.Landed).Set("stranded", e.Stranded);
+            if (e.IsHarvester) o.Set("cargo", $"{e.Cargo}/{d.HarvestCapacity}{(e.CargoType >= 0 ? " " + Defs.Ores[e.CargoType] : "")}");
+            if (d.Capacity > 0) o.Set("passengers", $"{e.Passengers.Count}/{d.Capacity}");
+            if (e.Waypoints.Count > 0) o.Set("waypoints", e.Waypoints.Count).Set("patrol", e.WaypointLoop);
+            if (e.RetreatBelow > 0) o.Set("retreat_below_pct", (int)(e.RetreatBelow * 100)).Set("retreating", e.Retreating);
+            if (e.IsCarried) o.Set("inside", e.CarrierId);
+            return o;
         }
 
         static JObj ViewFrame(World w, int team)

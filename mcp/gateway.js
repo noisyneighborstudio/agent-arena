@@ -24,7 +24,7 @@ import { Readable } from "node:stream";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { randomUUID } from "node:crypto";
+import { randomUUID, randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -237,6 +237,7 @@ async function placeAndRegister(name, code, base) {
   const view_url = `${base}/view/${roomToken(room, r.view_token)}`;
   const token = roomToken(room, r.token);
   await markAllSeen(token); // they get the current list right here
+  const commander_url = `${view_url}?c=${newCommander(token)}`;
   const recent = (await changesForRoom(room)).slice(-5).reverse();
   const share = shareFor(room, base);
   return {
@@ -248,7 +249,8 @@ async function placeAndRegister(name, code, base) {
     map: r.map,
     ...share,
     view_url,
-    tell_your_human: `Watch me play live: ${view_url}\nTo bring a friend into this same game, send them this prompt for their agent: "${share.friend_prompt}"`,
+    commander_url,
+    tell_your_human: `Watch me play live: ${view_url}\nTo redirect me at any time, even mid-turn, use your private commander link (don't share it): ${commander_url} — type orders in Standing orders and press Send; they interrupt whatever I'm waiting on.\nTo bring a friend into this same game, send them this prompt for their agent: "${share.friend_prompt}"`,
     ...(notes.length ? { note: notes.join(" ") } : {}),
     whats_new: recent.map((c) => `${c.date} ${c.title}: ${c.text}`),
     keep_up: `Pezz gains capabilities over time. Check whats_new (MCP) or GET ${base}/changes at the start of each session, and read any 🆕 notice that appears in state or wait.`,
@@ -275,6 +277,27 @@ async function whoIs(view) {
     whoCache.set(view, who);
   }
   return { room, raw, team: who.team };
+}
+
+// ------------------------------------------------------------------ commander links
+// A player's human can redirect their agent at any time, even while it's blocked in a wait: the commander link (the
+// watch page plus a secret code) has a standing-orders box, and new orders cut the agent's wait short and reach it as
+// "NEW ORDERS FROM YOUR HUMAN COMMANDER". The plain watch link stays read-only, so it's safe to share.
+const COMMANDERS_FILE = process.env.PEZZ_COMMANDERS_FILE || path.join(CONFIG_DIR, "commanders.json");
+const commanders = new Map(Object.entries((() => { try { return JSON.parse(fs.readFileSync(COMMANDERS_FILE, "utf8")); } catch { return {}; } })()));
+function saveCommanders() {
+  while (commanders.size > 5000) commanders.delete(commanders.keys().next().value);
+  try { fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 }); fs.writeFileSync(COMMANDERS_FILE, JSON.stringify(Object.fromEntries(commanders)), { mode: 0o600 }); } catch {}
+}
+function newCommander(token) { const c = randomBytes(18).toString("hex"); commanders.set(c, token); saveCommanders(); return c; }
+async function sendOrders(view, code, text) {
+  const token = commanders.get(String(code ?? ""));
+  if (!token) { const e = new Error("unknown commander code"); e.status = 403; throw e; }
+  const who = await whoIs(view);
+  const mine = await seatOf(token);
+  if (mine.team !== who.team) { const e = new Error("that commander code is for another seat"); e.status = 403; throw e; }
+  const { room, raw } = parseToken(token);
+  return await gameAt(room, "/api/admin/orders", { method: "POST", token: raw, body: { text: String(text ?? "").slice(0, 600) } });
 }
 
 // ------------------------------------------------------------------ command feed
@@ -411,7 +434,8 @@ async function liveCam(res, view, q) {
   const who = await whoIs(view);
   if (!who.room.frames) return send(res, 200, { ok: false });
   const n = (k, d) => { const v = Number(q.get(k)); return Number.isFinite(v) ? v : d; };
-  const at = q.has("x") && q.has("y") ? `x=${n("x", 0)}&y=${n("y", 0)}` : `dx=${n("dx", 0)}&dy=${n("dy", 0)}&zoom=${n("zoom", 1)}&yaw=${n("yaw", 0)}`;
+  let at = q.has("x") && q.has("y") ? `x=${n("x", 0)}&y=${n("y", 0)}` : `dx=${n("dx", 0)}&dy=${n("dy", 0)}&zoom=${n("zoom", 1)}&yaw=${n("yaw", 0)}`;
+  if (q.has("follow")) at += `&follow=${Math.max(0, Math.floor(n("follow", 0)))}`; // ride along with a unit (0 = stop)
   try { await fetch(`${who.room.frames}/team/${who.team}/cam?${at}`); } catch {}
   return send(res, 200, { ok: true });
 }
@@ -682,6 +706,26 @@ const server = http.createServer(async (req, res) => {
     if (lm) return await liveFrame(res, lm[1]);
     const sm = p.match(new RegExp(`^/view/${V}/live\\.mjpg$`));
     if (sm) return await liveStream(res, sm[1]);
+    // Click on the live video: what's under it (only things the player can see), and details for one unit.
+    const om = p.match(new RegExp(`^/view/${V}/orders$`));
+    if (om && req.method === "POST") {
+      const b = (await readBody(req)) ?? {};
+      return send(res, 200, await sendOrders(om[1], b.c, b.text));
+    }
+    const pk = p.match(new RegExp(`^/view/${V}/pick$`));
+    if (pk) {
+      const who = await whoIs(pk[1]);
+      if (!who.room.frames) return send(res, 404, { ok: false, error: "no live renderer in this room" });
+      const u = Math.min(1, Math.max(0, Number(url.searchParams.get("u")) || 0)), v = Math.min(1, Math.max(0, Number(url.searchParams.get("v")) || 0));
+      try { return send(res, 200, await (await fetch(`${who.room.frames}/team/${who.team}/pick?u=${u}&v=${v}`)).json()); }
+      catch { return send(res, 502, { ok: false, error: "renderer didn't answer" }); }
+    }
+    const um = p.match(new RegExp(`^/view/${V}/unit/(\\d{1,9})$`));
+    if (um) {
+      const { room, raw } = parseToken(um[1]);
+      try { return send(res, 200, await gameAt(room, `/api/view/unit?view=${raw}&id=${um[2]}`)); }
+      catch (e) { return send(res, e.status === 404 ? 404 : 400, { ok: false, error: e.message }); }
+    }
     const fm = p.match(new RegExp(`^/view/${V}/feed$`));
     if (fm) {
       const { room, raw } = parseToken(fm[1]);

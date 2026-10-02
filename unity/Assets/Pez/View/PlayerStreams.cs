@@ -23,6 +23,8 @@ namespace Pez.View
         readonly Dictionary<int, (Vector3 target, float at)> directed = new Dictionary<int, (Vector3, float)>();
         // A viewer looking around takes over the stream camera; the director returns after 20 seconds of no input.
         readonly Dictionary<int, (Vector3 focus, float size, float yaw, float until)> manual = new Dictionary<int, (Vector3, float, float, float)>();
+        // A unit the viewer clicked: the stream rides along with it until they deselect it (or it dies or vanishes).
+        readonly Dictionary<int, int> follow = new Dictionary<int, int>();
         const float StreamPitch = 55f;
         /// <summary>The boards' framing, as on the main view (RtsCamera.BoardOrthoSize).</summary>
         float DefaultSize => RtsCamera.BoardOrthoSize;
@@ -44,9 +46,12 @@ namespace Pez.View
             var view = Runner.View;
             if (Runner.InMenu || view == null || cam == null) return;
             var w = Runner.Game.World;
+            while (FrameServer.PickOps.TryDequeue(out var pick)) { try { pick.Result = Pick(w, pick); } finally { pick.Done.Set(); } }
             while (FrameServer.CamOps.TryDequeue(out var op))
             {
                 if (op.Team < 0) { Runner.Camera.Nudge(op.Dx, op.Dy, op.Zoom, op.Yaw); continue; }
+                if (op.Follow == 0) follow.Remove(op.Team);
+                else if (op.Follow > 0) follow[op.Team] = op.Follow;
                 if (!state.TryGetValue(op.Team, out var st)) continue;
                 (Vector3 focus, float size, float yaw, float until) m = manual.TryGetValue(op.Team, out var cur) && Time.unscaledTime < cur.until ? cur : (st.focus, DefaultSize, 45f, 0f);
                 var right = Quaternion.Euler(0, m.yaw, 0) * Vector3.right;
@@ -81,6 +86,36 @@ namespace Pez.View
             }
         }
 
+        /// <summary>The camera pose a team's stream renders with right now.</summary>
+        (Vector3 focus, float size, float yaw) Pose(int team)
+        {
+            state.TryGetValue(team, out var s);
+            return manual.TryGetValue(team, out var m) && Time.unscaledTime < m.until ? (m.focus, m.size, m.yaw) : (s.focus, DefaultSize, 45f);
+        }
+
+        /// <summary>The entity under (u, v) of a team's stream, if that team can see it.</summary>
+        string Pick(World w, FrameServer.PickReq req)
+        {
+            var (focus, size, yaw) = Pose(req.Team);
+            var rot = Quaternion.Euler(StreamPitch, yaw, 0f);
+            cam.orthographic = true; cam.orthographicSize = size; cam.aspect = Width / (float)Height;
+            cam.transform.rotation = rot; cam.transform.position = focus - rot * Vector3.forward * 150f;
+            var ray = cam.ViewportPointToRay(new Vector3(req.U, 1f - req.V, 0f));
+            if (Mathf.Abs(ray.direction.y) < 1e-4f) return "{\"ok\":true,\"id\":0}";
+            var ground = ray.origin + ray.direction * (-ray.origin.y / ray.direction.y);
+            var p = WorldView.S(ground);
+            Entity best = null; float bd = float.MaxValue;
+            foreach (var e in w.Entities)
+            {
+                if (e.Dead || e.IsMine || e.IsCarried) continue;
+                if (e.Team != req.Team && !w.IsVisibleTo(req.Team, e)) continue; // nothing the player couldn't see
+                float d = e.DistFrom(p);
+                if (d <= (e.IsStructure ? 0.15f : 0.8f) && d < bd) { bd = d; best = e; }
+            }
+            return best == null ? "{\"ok\":true,\"id\":0}"
+                : $"{{\"ok\":true,\"id\":{best.Id},\"type\":\"{best.Def.Key}\",\"team\":{best.Team},\"structure\":{(best.IsStructure ? "true" : "false")}}}";
+        }
+
         Vector3 Director(World w, int team)
         {
             var t = w.Teams[team];
@@ -100,7 +135,17 @@ namespace Pez.View
             var s = state[team];
             float size = DefaultSize, yaw = 45f;
             Vector3 focus;
-            if (manual.TryGetValue(team, out var m) && Time.unscaledTime < m.until) { focus = m.focus; size = m.size; yaw = m.yaw; }
+            var followed = follow.TryGetValue(team, out var fid) ? w.Get(fid) : null;
+            if (followed != null && (followed.IsStructure || (followed.Team != team && !w.IsVisibleTo(team, followed)))) { follow.Remove(team); followed = null; }
+            if (fid != 0 && followed == null) follow.Remove(team); // died or left sight: stop following
+            if (manual.TryGetValue(team, out var m) && Time.unscaledTime < m.until) { size = m.size; yaw = m.yaw; }
+            if (followed != null)
+            {
+                float fdt = s.last == 0 ? 10f : Time.unscaledTime - s.last;
+                focus = Vector3.Lerp(s.focus, OverMap(w, WorldView.W(followed.Pos), size, yaw), 1f - Mathf.Exp(-fdt * 6f));
+                if (manual.ContainsKey(team)) manual[team] = (focus, size, yaw, Time.unscaledTime + 20f); // keep the viewer's zoom while following
+            }
+            else if (manual.TryGetValue(team, out m) && Time.unscaledTime < m.until) { focus = m.focus; size = m.size; yaw = m.yaw; }
             else
             {
                 if (!directed.TryGetValue(team, out var d) || Time.unscaledTime - d.at > 0.25f) directed[team] = d = (Director(w, team), Time.unscaledTime);

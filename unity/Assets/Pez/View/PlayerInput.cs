@@ -46,6 +46,8 @@ namespace Pez.View
 
         void Update()
         {
+            // Escape deselects (which also stops the camera following a unit), for players and spectators alike.
+            if (Runner != null && !Runner.InMenu && !Hud.Typing && Input.GetKeyDown(KeyCode.Escape) && PlacingKey == null && !attackMoveArmed && !mineArmed) View.Selected.Clear();
             if (Runner != null && !Runner.InMenu && Team < 0) { Dragging = false; ClearGhost(); Inspect(); return; }
             if (Runner == null || Runner.InMenu || Team < 0 || W.GameOver) { Dragging = false; ClearGhost(); return; }
             var mouse = (Vector2)Input.mousePosition;

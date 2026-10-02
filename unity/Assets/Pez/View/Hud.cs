@@ -1248,7 +1248,8 @@ namespace Pez.View
             bool fuelRow = one && e.Def.UsesFuel;
             var deposit = one && e.Def.Key == "deep_mine" ? W.Map.DepositById(e.DepositId) : null;
             if (deposit != null) fuelRow = true; // the reserve row sits where a vehicle's fuel would
-            float h = 14 + Mathf.Max(96, 26 + 8 + 12 + 8 + 20 + 8 + 18 + (fuelRow ? 8 + 12 : 0)) + 14;
+            string detail = one ? UnitDetail(e) : null;
+            float h = 14 + Mathf.Max(96, 26 + 8 + 12 + 8 + 20 + 8 + 18 + (fuelRow ? 8 + 12 : 0) + (detail != null ? 8 + 18 : 0)) + 14;
             var r = new Rect(x, SH - Edge - h, w, h);
             Panel(r);
             IconBox(new Rect(r.x + 14, r.y + 14, 128, 96), e.Def.Key, e.Def.Name, 8);
@@ -1296,6 +1297,12 @@ namespace Pez.View
                 : $"{e.Def.Speed:0.#} t/s" + (e.Def.Weapon != null ? $"  range {e.Def.Weapon.Range:0.#}  dmg {e.Def.Weapon.Damage:0}" : "") + $"  {e.Def.Armor.ToString().ToLowerInvariant()}";
             Text(new Rect(cx, y, cw, 18), Ellipsize(stats, fMono, 13, cw), fMono, 13, Muted);
             y += 18;
+            if (detail != null)
+            {
+                y += 8;
+                Text(new Rect(cx, y - 2, cw, 18), Ellipsize(detail, fSans, 13, cw), fSans, 13, Soft);
+                y += 18;
+            }
 
             if (fuelRow)
             {
@@ -1311,6 +1318,26 @@ namespace Pez.View
                 if (ff > 0.01f) Round(new Rect(fx, y + 2, Mathf.Max(8, fw * ff), 8), 4, fc);
                 Text(new Rect(fx + fw + 8, y - 3, vw + 4, 18), val, fMono, 13, Muted);
             }
+        }
+
+        /// <summary>The rest of what you'd want to know about one unit: whose it is and what it's up to.</summary>
+        string UnitDetail(Entity e)
+        {
+            var t = W.Teams[e.Team];
+            var parts = new List<string> { $"{t.Name} · {t.PlayerName ?? t.Controller}" };
+            if (!e.IsStructure)
+            {
+                var target = e.TargetId != 0 ? W.Get(e.TargetId) : null;
+                if (target != null && (e.Order == Order.Attack || e.Order == Order.Repair || e.Order == Order.Capture || e.Order == Order.Board || e.Order == Order.Refuel))
+                    parts.Add($"target {Pretty(target.Def.Key)} #{target.Id}");
+                if (e.Def.Capacity > 0) parts.Add($"carrying {e.Passengers.Count}/{e.Def.Capacity}");
+                if (e.Waypoints.Count > 0) parts.Add($"{e.Waypoints.Count} more waypoint{(e.Waypoints.Count == 1 ? "" : "s")}{(e.WaypointLoop ? " (patrol)" : "")}");
+                if (e.RetreatBelow > 0) parts.Add(e.Retreating ? "retreating" : $"retreats below {(int)(e.RetreatBelow * 100)}%");
+                if (e.IsCarried) parts.Add($"inside #{e.CarrierId}");
+                if (Runner.Camera != null && Runner.Camera.Following) parts.Add("camera following (Esc to stop)");
+            }
+            else if (e.Rally.HasValue) parts.Add($"rally {StateView.Sector(W.Map, e.Rally.Value)}");
+            return string.Join(" · ", parts);
         }
 
         // ------------------------------------------------------------------ world overlays: health bars, structure brackets

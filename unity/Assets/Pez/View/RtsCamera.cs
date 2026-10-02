@@ -43,6 +43,10 @@ namespace Pez.View
 
         public void LookAt(Vector3 p) { Focus = new Vector3(p.x, 0, p.z); }
 
+        /// <summary>While this returns a point, the camera rides along with it (a selected mobile unit) instead of panning.</summary>
+        public System.Func<Vector3?> Follow;
+        public bool Following { get; private set; }
+
         void Update()
         {
             float dt = Time.unscaledDeltaTime;
@@ -67,7 +71,10 @@ namespace Pez.View
                     if (m.y > Screen.height - edge) move += fwd;
                 }
             }
-            Focus += move.normalized * speed * dt;
+            var follow = Follow?.Invoke();
+            Following = follow.HasValue;
+            if (Following) Focus = Vector3.Lerp(Focus, new Vector3(follow.Value.x, 0, follow.Value.z), 1f - Mathf.Exp(-6f * dt));
+            else Focus += move.normalized * speed * dt;
 
             if (keys && Input.GetKey(KeyCode.Q)) Yaw += 70f * dt;
             if (keys && Input.GetKey(KeyCode.E)) Yaw -= 70f * dt;
@@ -78,7 +85,7 @@ namespace Pez.View
             // Middle-drag pans by grabbing the ground point.
             if (Input.GetMouseButtonDown(2)) { dragging = GroundPoint(Input.mousePosition, out dragAnchor); }
             if (Input.GetMouseButtonUp(2)) dragging = false;
-            if (dragging && GroundPoint(Input.mousePosition, out var now)) Focus += dragAnchor - now;
+            if (dragging && !Following && GroundPoint(Input.mousePosition, out var now)) Focus += dragAnchor - now;
 
             Distance = Mathf.Clamp(Distance, MinDist, MaxDist); // the API and stream viewers can set it directly
             if (Cam.orthographic) Focus = KeepOverMap(Focus, Distance, Cam.aspect, Yaw, Pitch, Bounds);
