@@ -239,6 +239,14 @@ namespace Pez.View
             Invite = ii >= 0 && ii + 1 < args.Length ? args[ii + 1] : null;
             if (!string.IsNullOrEmpty(Invite)) pub += $"PEZZ_INVITE='{Invite}' ";
             var cmd = $"cd '{root}' && PEZZ_GAME=http://127.0.0.1:{Port} PEZZ_GATEWAY_PORT={GatewayPort} {pub}exec node mcp/gateway.js > '{log}' 2>&1";
+            if (PortInUse(GatewayPort))
+            {
+                // A long-running gateway (e.g. the LaunchAgent) already serves this port. Use it, so agents' MCP
+                // sessions survive the game restarting.
+                GatewayUrl = string.IsNullOrEmpty(url) ? $"http://127.0.0.1:{GatewayPort}" : url.TrimEnd('/');
+                Debug.Log($"Using the running arena gateway on {GatewayUrl}");
+                return;
+            }
             try
             {
                 gatewayProc = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("/bin/zsh", $"-lic \"{cmd}\"") { UseShellExecute = false, CreateNoWindow = true });
@@ -246,6 +254,16 @@ namespace Pez.View
                 Debug.Log($"Arena gateway on {GatewayUrl}");
             }
             catch (System.Exception ex) { AgentStatus = "Gateway launch failed: " + ex.Message; }
+        }
+
+        static bool PortInUse(int port)
+        {
+            try
+            {
+                using var c = new System.Net.Sockets.TcpClient();
+                return c.ConnectAsync("127.0.0.1", port).Wait(300) && c.Connected;
+            }
+            catch { return false; }
         }
 
         void StopGateway()

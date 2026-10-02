@@ -19,6 +19,7 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -232,7 +233,25 @@ Humans can watch the whole arena, 45 seconds behind the live game, at ${base}/wa
 }
 
 // ------------------------------------------------------------------ MCP sessions
-const sessions = new Map(); // session id -> { transport, seat: { player, token, view } }
+// Sessions outlive this process: a session id we don't know (because the gateway restarted) is adopted rather than
+// refused, so connected agents carry on without reconnecting. Each session's seat token is saved (0600, outside the
+// repo) so the adopted session gets its team back; if that token died with an arena reset, the agent just joins again.
+const sessions = new Map(); // session id -> { transport, seat: { player, token } }
+const SESSION_FILE = process.env.PEZZ_SESSION_FILE || path.join(os.homedir(), ".config", "pezz", "gateway-sessions.json");
+const MAX_SESSIONS = 2000;
+const savedTokens = new Map(Object.entries((() => { try { return JSON.parse(fs.readFileSync(SESSION_FILE, "utf8")); } catch { return {}; } })()));
+let saveTimer = null;
+function saveSessions() {
+  for (const [id, s] of sessions) { savedTokens.delete(id); if (s.seat.token) savedTokens.set(id, s.seat.token); }
+  while (savedTokens.size > MAX_SESSIONS) savedTokens.delete(savedTokens.keys().next().value);
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    try {
+      fs.mkdirSync(path.dirname(SESSION_FILE), { recursive: true, mode: 0o700 });
+      fs.writeFileSync(SESSION_FILE, JSON.stringify(Object.fromEntries(savedTokens)), { mode: 0o600 });
+    } catch (e) { console.error("couldn't save sessions:", e.message); }
+  }, 500);
+}
 
 function mcpServerFor(seat, baseUrl) {
   const server = new McpServer({ name: "pezz-arena", version: "0.2.0" }, {
@@ -252,6 +271,7 @@ function mcpServerFor(seat, baseUrl) {
     try {
       const r = await join(name, invite, baseUrl);
       seat.token = r.token; seat.player = new Player(GAME, { token: r.token }, FRAMES);
+      saveSessions();
       return { content: [{ type: "text", text: JSON.stringify({ ...r, next: "Call get_rules once, then loop get_state → command → wait. Keep the token if you might need to rejoin after a disconnect." }, null, 1) }] };
     } catch (e) { return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true }; }
   });
@@ -263,6 +283,7 @@ function mcpServerFor(seat, baseUrl) {
       const p = new Player(GAME, { token }, FRAMES);
       await p.call("/api/alerts?since=0&min=critical"); // validates the token
       seat.token = token; seat.player = p;
+      saveSessions();
       return { content: [{ type: "text", text: "Rejoined. Call get_state." }] };
     } catch (e) { return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true }; }
   });
@@ -274,7 +295,8 @@ function mcpServerFor(seat, baseUrl) {
     if (!confirm) return { content: [{ type: "text", text: "Not left. Pass confirm=true to leave permanently." }] };
     try {
       const r = await game("/api/leave", { method: "POST", token: seat.token });
-      seat.player = null;
+      seat.player = null; seat.token = null;
+      saveSessions();
       return { content: [{ type: "text", text: r.result }] };
     } catch (e) { return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true }; }
   });
@@ -287,27 +309,41 @@ function mcpServerFor(seat, baseUrl) {
   return server;
 }
 
+/** A new session, or (given an id) one a client opened with an earlier gateway, restored with its seat if we saved it. */
+async function openSession(base, adoptId) {
+  const seat = {};
+  const token = adoptId && savedTokens.get(adoptId);
+  if (token) {
+    seat.token = token; seat.player = new Player(GAME, { token }, FRAMES);
+    seat.player.call("/api/alerts?since=0&min=critical").catch(() => { if (seat.token === token) { seat.player = null; seat.token = null; } });
+  }
+  const transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: () => adoptId || randomUUID(),
+    onsessioninitialized: (id) => sessions.set(id, { transport, seat }),
+  });
+  transport.onclose = () => { if (transport.sessionId) sessions.delete(transport.sessionId); };
+  await mcpServerFor(seat, base).connect(transport);
+  if (adoptId) {
+    // The client already did the initialize handshake with the previous gateway; carry on as if we had too.
+    const inner = transport._webStandardTransport;
+    inner._initialized = true; inner.sessionId = adoptId;
+    sessions.set(adoptId, { transport, seat });
+    while (sessions.size > MAX_SESSIONS) { const [oldest, o] = sessions.entries().next().value; sessions.delete(oldest); o.transport.close().catch(() => {}); }
+  }
+  return transport;
+}
+
 async function handleMcp(req, res, base) {
   const sid = req.headers["mcp-session-id"];
-  if (req.method === "POST") {
-    const body = await readBody(req);
-    let s = sid ? sessions.get(sid) : null;
-    if (!s) {
-      if (sid || !isInitializeRequest(body)) return send(res, 400, { jsonrpc: "2.0", error: { code: -32000, message: "No valid session; send an initialize request first" }, id: null });
-      const seat = {};
-      const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: () => randomUUID(),
-        onsessioninitialized: (id) => sessions.set(id, { transport, seat }),
-      });
-      transport.onclose = () => { if (transport.sessionId) sessions.delete(transport.sessionId); };
-      await mcpServerFor(seat, base).connect(transport);
-      return transport.handleRequest(req, res, body);
-    }
-    return s.transport.handleRequest(req, res, body);
+  const body = req.method === "POST" ? await readBody(req) : undefined;
+  let s = sid ? sessions.get(sid) : null;
+  if (!s) {
+    if (!sid && req.method === "POST" && isInitializeRequest(body)) return (await openSession(base)).handleRequest(req, res, body);
+    if (!sid || req.method === "DELETE" || !/^[\w-]{8,100}$/.test(sid)) // per spec, 404 tells the client to start a new session
+      return send(res, 404, { jsonrpc: "2.0", error: { code: -32001, message: "Session not found; send an initialize request to start a new one" }, id: null });
+    return (await openSession(base, sid)).handleRequest(req, res, body);
   }
-  const s = sid ? sessions.get(sid) : null;
-  if (!s) return send(res, 400, { error: "unknown MCP session" });
-  return s.transport.handleRequest(req, res);
+  return s.transport.handleRequest(req, res, body);
 }
 
 // ------------------------------------------------------------------ HTTP routes

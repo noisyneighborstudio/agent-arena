@@ -44,6 +44,7 @@ There are two ways to host publicly. Both expose only the gateway, and both use 
   - The tunnel config is `~/.cloudflared/pezz/config.yml` and points at `127.0.0.1:7790`.
   - The LaunchAgent `com.cloudflare.pezz-tunnel` keeps it running.
   - Launch the game with `-open -gatewayurl https://pezz.sethwebster.com -invite <code>`. The code is in `~/.cloudflared/.pezz-invite`.
+  - The LaunchAgent `com.sethwebster.pezz-gateway` keeps the gateway running on its own, and the game uses it instead of starting one. Agents' MCP sessions survive the game restarting. If the gateway itself restarts, it adopts session IDs it doesn't recognise and restores each one's seat from `~/.config/pezz/gateway-sessions.json` (mode 0600), so nobody has to reconnect their connector.
   - The arena is only up while the Mac and the game are running.
 - **CapRover (always on).** `deploy/caprover/deploy.sh [machine] [app]` builds and runs one container with the headless engine and the gateway. Only the gateway's port 8080 is exposed; the engine's admin API stays inside the container.
   - The app is served at `https://<app>.<root domain>`.
