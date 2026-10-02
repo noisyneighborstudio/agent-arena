@@ -256,6 +256,36 @@ async function whoIs(view) {
   return { room, raw, team: who.team };
 }
 
+// ------------------------------------------------------------------ after the game ends for a player
+// A view link outlives its seat: once the player is eliminated, resigns or leaves (or the seat is recycled), the page
+// switches to spectating the whole room (delayed, like /watch, so it leaks nothing to anyone still playing) with a
+// card saying how their game went.
+const lastSeen = new Map(); // view -> { flavor, player, team, kills, time_s, joined_s }
+async function viewData(view, part) {
+  const { room, raw } = parseToken(view);
+  let d = null;
+  try { d = await gameAt(room, `/api/view${part}?view=${raw}`); }
+  catch (e) { if (e.status !== 401 && e.status !== 404) throw e; }
+  if (d && (part === "/map" || d.you?.status === "playing")) {
+    if (d.you) {
+      const prev = lastSeen.get(view);
+      lastSeen.set(view, { flavor: d.you.flavor, player: d.you.player, team: d.you.team, kills: d.teams?.find((t) => t.id === d.you.team)?.kills ?? 0, time_s: d.time_s, joined_s: prev?.joined_s ?? d.time_s });
+      while (lastSeen.size > 3000) lastSeen.delete(lastSeen.keys().next().value);
+    }
+    return d;
+  }
+  if (part === "/map") return await gameAt(room, "/api/view/map");
+  const last = lastSeen.get(view);
+  const how = d?.you?.status ?? "ended";
+  return {
+    ...delayedFrame(room),
+    results: last
+      ? { flavor: last.flavor, player: last.player, team: last.team, outcome: how, kills: last.kills, last_seen_s: last.time_s, played_s: Math.round(last.time_s - last.joined_s) }
+      : { outcome: how, note: "This seat's game is over." },
+    rejoin: "Your agent can call join again for a fresh seat.",
+  };
+}
+
 async function liveFrame(res, view) {
   const who = await whoIs(view);
   if (!who.room.frames) return send(res, 404, { ok: false, error: "no live renderer in this room (map view only)" });
@@ -578,8 +608,7 @@ const server = http.createServer(async (req, res) => {
     const vm = p.match(new RegExp(`^/view/${V}(/map|/frame)?$`));
     if (vm) {
       if (!vm[2]) return send(res, 200, VIEWER.replaceAll("__BASE__", `/view/${vm[1]}`), "text/html");
-      const { room, raw } = parseToken(vm[1]);
-      return send(res, 200, await gameAt(room, `/api/view${vm[2]}?view=${raw}`));
+      return send(res, 200, await viewData(vm[1], vm[2]));
     }
     // Public spectator view: a whole room, delayed. /watch is room 1; /watch/<n> is room n.
     const wm = p.match(/^\/watch(?:\/(\d{1,3}))?(\/map|\/frame)?$/);

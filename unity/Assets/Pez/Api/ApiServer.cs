@@ -424,7 +424,9 @@ namespace Pez.Api
                 if (!known) continue;
                 var c = e.Center;
                 ents.Add(new List<object> { e.Id, e.Def.Key, e.Team, Math.Round(c.X, 2), Math.Round(c.Y, 2), (int)(100 * e.Hp / e.Def.MaxHp),
-                    Math.Round(e.Facing, 2), e.IsStructure ? (int)(e.BuildProgress * 100) : -1, e.IsStructure ? e.Def.SizeX : 0 });
+                    Math.Round(e.Facing, 2), e.IsStructure ? (int)(e.BuildProgress * 100) : -1, e.IsStructure ? e.Def.SizeX : 0,
+                    // fuel %: your own units only (spectators see all); -1 = not shown
+                    e.Def.UsesFuel && (team < 0 || e.Team == team) ? (int)(e.FuelFraction * 100) : -1 });
             }
             var shots = new List<object>();
             long since = w.Events.Count > 0 ? w.Events[w.Events.Count - 1].Seq - 400 : 0;

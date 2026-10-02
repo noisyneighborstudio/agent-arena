@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Pezz: your view</title>
 <style>
-  :root { --bg:#141113; --panel:rgba(20,17,19,.88); --cream:#ECE4D2; --muted:#9c9488; --amber:#FFA22E; --crit:#ff5a4a; }
+  :root { --bg:#2A2420; --panel:rgba(16,19,23,.9); --border:#2A3138; --cream:#ECE4D2; --muted:#9c9488; --amber:#FFA22E; --crit:#ECE4D2; }
   html,body { margin:0; height:100%; background:var(--bg); color:var(--cream); font:13px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; overflow:hidden; }
   canvas { position:absolute; inset:0; width:100%; height:100%; cursor:grab; }
   #live { object-fit:contain; background:#141113; display:none; user-select:none; }
@@ -13,7 +13,10 @@
   body.live #c { visibility:hidden; }
   #mode { cursor:pointer; color:var(--cream); text-decoration:underline; }
   canvas:active { cursor:grabbing; }
-  .panel { position:absolute; background:var(--panel); border:1px solid rgba(236,228,210,.12); border-radius:10px; padding:10px 12px; backdrop-filter:blur(6px); }
+  .panel { position:absolute; background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:10px 12px; backdrop-filter:blur(6px); }
+  #results { top:96px; left:50%; transform:translateX(-50%); display:none; text-align:center; min-width:320px; max-width:520px; border-top:4px solid; border-image:repeating-linear-gradient(45deg,#1e1b1d 0 6px,#ece4d2 6px 12px) 4; }
+  #results .big { font-size:18px; font-weight:700; margin:2px 0 6px; }
+  #results .stats { color:var(--muted); font-variant-numeric:tabular-nums; }
   #top { top:12px; left:12px; min-width:260px; }
   #top .who { font-size:16px; font-weight:700; display:flex; align-items:center; gap:8px; }
   .chip { width:12px; height:12px; border-radius:3px; display:inline-block; }
@@ -51,6 +54,7 @@
   <div id="orders"></div>
 </div>
 <div class="panel" id="alerts"></div>
+<div class="panel" id="results"></div>
 <div class="panel" id="teams"><div class="title">Commanders</div><div id="tl"></div></div>
 <div class="panel" id="chat"><div class="title">Arena chat</div><div id="cl"></div></div>
 <div class="panel" id="help"><span id="mode">Map view</span> · <b>L</b> live / map · drag to pan · scroll to zoom · <b>F</b> your base · <b>M</b> whole map</div>
@@ -100,6 +104,7 @@ function focusBase() {
 async function tick() {
   try {
     frame = await getJSON(`${BASE}/frame`);
+    showResults(frame.results, frame.rejoin);
     if (frame.waiting) { document.getElementById("who").textContent = frame.waiting; setTimeout(tick, 2000); return; }
     if (!map || frame.version !== mapVersion) await loadMap();
     if (frame.shroud) {
@@ -107,7 +112,7 @@ async function tick() {
       for (let y = 0; y < map.h; y++)
         for (let x = 0; x < map.w; x++) {
           const v = frame.shroud[y * map.w + x], p = ((map.h - 1 - y) * map.w + x) * 4;
-          img.data[p] = 12; img.data[p + 1] = 10; img.data[p + 2] = 14; img.data[p + 3] = v === "2" ? 0 : v === "1" ? 115 : 235;
+          img.data[p] = 30; img.data[p + 1] = 27; img.data[p + 2] = 29; img.data[p + 3] = v === "2" ? 0 : v === "1" ? 120 : 238; // licorice
         }
       s.putImageData(img, 0, 0);
     }
@@ -137,10 +142,22 @@ function hud() {
     const shown = frame.alerts.slice(0, 3);
     al.innerHTML = shown.map((a) => {
       const at = /\((\d+),(\d+)\)/.exec(a);
-      return `<div style="color:${a.startsWith("CRITICAL") ? "var(--crit)" : "var(--amber)"}" title="${esc(a)}"${at ? ` data-x="${at[1]}" data-y="${at[2]}"` : ""}>${esc(a.split(";")[0])}</div>`;
+      return `<div style="color:${a.startsWith("CRITICAL") ? "var(--cream);font-weight:700" : "var(--amber)"}" title="${esc(a)}"${at ? ` data-x="${at[1]}" data-y="${at[2]}"` : ""}>${esc(a.split(";")[0])}</div>`;
     }).join("") + (frame.alerts.length > shown.length ? `<div class="more">+${frame.alerts.length - shown.length} more</div>` : "");
   }
   else al.style.display = "none";
+}
+// After this player's game ends, the page keeps going as a delayed spectator view, with how it went.
+function showResults(r, rejoin) {
+  const el = document.getElementById("results");
+  if (!r) { el.style.display = "none"; return; }
+  if (liveMode) setMode(false);
+  const outcome = { eliminated: "Eliminated", resigned: "Resigned (no way left to make progress)", left: "Left the arena", ended: "Game over for this seat" }[r.outcome] ?? r.outcome;
+  const t = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+  el.style.display = "block";
+  el.innerHTML = `<div class="title">Your game</div><div class="big">${r.flavor ? `<span class="chip" style="background:${FLAVORS[(r.team ?? 0) % 8]}"></span> ${esc(r.flavor)} · ${esc(r.player ?? "")} · ` : ""}${esc(outcome)}</div>` +
+    (r.flavor ? `<div class="stats">${r.kills} kills · played ${t(r.played_s)} · last seen at ${t(r.last_seen_s)}</div>` : `<div class="stats">${esc(r.note ?? "")}</div>`) +
+    `<div class="stats" style="margin-top:6px">Now spectating the whole room${frame?.delay_s ? `, ${frame.delay_s}s behind` : ""}. ${esc(rejoin ?? "")}</div>`;
 }
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]); }
 
@@ -153,13 +170,13 @@ function draw() {
   requestAnimationFrame(draw);
   const dpr = devicePixelRatio || 1;
   if (cv.width !== innerWidth * dpr) { cv.width = innerWidth * dpr; cv.height = innerHeight * dpr; if (!fitted) fitAll(); }
-  ctx.fillStyle = "#141113"; ctx.fillRect(0, 0, cv.width, cv.height);
+  ctx.fillStyle = "#2A2420"; ctx.fillRect(0, 0, cv.width, cv.height);
   if (!map || !frame) return;
   const s = cam.scale;
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(terrainCanvas, sx(0), sy(map.h), map.w * s, map.h * s);
   // Sector grid A-H x 1-8.
-  ctx.strokeStyle = "rgba(236,228,210,.10)"; ctx.lineWidth = 1;
+  ctx.strokeStyle = "rgba(236,228,210,.06)"; ctx.lineWidth = 1;
   ctx.fillStyle = "rgba(236,228,210,.45)"; ctx.font = `${Math.max(10, s * 1.2)}px sans-serif`;
   for (let i = 0; i <= 8; i++) {
     const gx = sx(i * map.w / 8), gy = sy(i * map.h / 8);
@@ -201,7 +218,7 @@ function drawStructure(e, s) {
   if (im && w > 18) ctx.drawImage(im, px + w * 0.1, py + w * 0.22, w * 0.8, w * 0.6);
   ctx.globalAlpha = 1;
   if (build < 100) bar(px, py + w + 2, w, build / 100, "#FFA22E");
-  else if (hp < 100) bar(px, py + w + 2, w, hp / 100, hp > 50 ? "#7fd36b" : "#ff5a4a");
+  else if (hp < 100) hpBar(px, py + w + 2, w, hp);
 }
 
 function drawUnit(e, s, air) {
@@ -214,7 +231,17 @@ function drawUnit(e, s, air) {
   else ctx.arc(px, py, r, 0, Math.PI * 2);
   ctx.fill(); ctx.stroke();
   ctx.strokeStyle = "#ECE4D2"; ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px + Math.cos(facing) * r * 1.4, py - Math.sin(facing) * r * 1.4); ctx.stroke();
-  if (hp < 100 && s > 6) bar(px - r, py + r + 2, r * 2, hp / 100, hp > 50 ? "#7fd36b" : "#ff5a4a");
+  if (hp < 100 && s > 6) hpBar(px - r, py + r + 2, r * 2, hp);
+  const fuel = e[9];
+  if (fuel >= 0 && fuel < 100 && s > 6) bar(px - r, py + r + (hp < 100 ? 6 : 2), r * 2, fuel / 100, fuel < 30 ? "#FFA22E" : "#8FE4FF");
+}
+
+// Health in the art pack's status colours: cream, amber below 50%, hazard stripe below 25% (never team colours).
+function hpBar(x, y, w, hp) {
+  if (hp >= 25) return bar(x, y, w, hp / 100, hp >= 50 ? "#ECE4D2" : "#FFA22E");
+  bar(x, y, w, hp / 100, "#ECE4D2");
+  ctx.fillStyle = "#1E1B1D";
+  for (let k = 0; k < w * hp / 100; k += 4) ctx.fillRect(x + k, y, 2, 3);
 }
 
 function bar(x, y, w, f, color) { ctx.fillStyle = "rgba(0,0,0,.6)"; ctx.fillRect(x, y, w, 3); ctx.fillStyle = color; ctx.fillRect(x, y, w * f, 3); }
