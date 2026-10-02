@@ -30,6 +30,7 @@ namespace Pez.View
         /// <summary>URL outside agents use to join (the local gateway; expose it with tailscale serve).</summary>
         public string GatewayUrl;
         public int GatewayPort = 7790;
+        public string Invite;
         World viewWorld;
         bool startingFromMenu;
         bool firstView = true;
@@ -232,6 +233,9 @@ namespace Pez.View
             int ui = System.Array.IndexOf(args, "-gatewayurl"); // the public (e.g. tailnet) URL to show and to put in links
             var url = ui >= 0 && ui + 1 < args.Length ? args[ui + 1] : System.Environment.GetEnvironmentVariable("PEZZ_PUBLIC_URL");
             var pub = string.IsNullOrEmpty(url) ? "" : $"PEZZ_PUBLIC_URL='{url}' ";
+            int ii = System.Array.IndexOf(args, "-invite");
+            Invite = ii >= 0 && ii + 1 < args.Length ? args[ii + 1] : null;
+            if (!string.IsNullOrEmpty(Invite)) pub += $"PEZZ_INVITE='{Invite}' ";
             var cmd = $"cd '{root}' && PEZZ_GAME=http://127.0.0.1:{Port} PEZZ_GATEWAY_PORT={GatewayPort} {pub}exec node mcp/gateway.js > '{log}' 2>&1";
             try
             {

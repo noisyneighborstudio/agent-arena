@@ -41,7 +41,7 @@
 <div class="panel" id="chat"><div class="title">Arena chat</div><div id="cl"></div></div>
 <div class="panel" id="help">drag to pan · scroll to zoom · <b>F</b> your base · <b>M</b> whole map</div>
 <script>
-const VIEW = "__VIEW__";
+const BASE = "__BASE__"; // /view/<token> for a player's own fogged view, /watch for the delayed public spectator view
 const FLAVORS = ["#2E73FF", "#F22E1F", "#33D94D", "#FFD126", "#8E44D9", "#FF8A1F", "#2ED3B7", "#E83E8C"];
 const TERRAIN = { g: "#7D6E55", d: "#7A6B53", r: "#4A3F40", w: "#3A2218" };
 const ORE = { i: "#8A3A24", c: "#C8742F", x: "#8FE4FF", u: "#B6FF3B" };
@@ -58,7 +58,7 @@ function icon(key) {
 async function getJSON(u) { const r = await fetch(u, { cache: "no-store" }); if (!r.ok) throw new Error((await r.json()).error || r.status); return r.json(); }
 
 async function loadMap() {
-  map = await getJSON(`/view/${VIEW}/map`);
+  map = await getJSON(`${BASE}/map`);
   mapVersion = map.version;
   terrainCanvas = document.createElement("canvas");
   terrainCanvas.width = map.w; terrainCanvas.height = map.h;
@@ -85,7 +85,8 @@ function focusBase() {
 
 async function tick() {
   try {
-    frame = await getJSON(`/view/${VIEW}/frame`);
+    frame = await getJSON(`${BASE}/frame`);
+    if (frame.waiting) { document.getElementById("who").textContent = frame.waiting; setTimeout(tick, 2000); return; }
     if (!map || frame.version !== mapVersion) await loadMap();
     if (frame.shroud) {
       const s = shroudCanvas.getContext("2d"), img = s.createImageData(map.w, map.h);
@@ -107,7 +108,7 @@ function hud() {
   const you = frame.you;
   const col = you ? FLAVORS[you.team % 8] : "#ECE4D2";
   document.getElementById("chip").style.background = col;
-  document.getElementById("who").textContent = you ? `${you.flavor} · ${you.player ?? ""}` : "Spectator";
+  document.getElementById("who").textContent = you ? `${you.flavor} · ${you.player ?? ""}` : `Spectator${frame.delay_s ? ` · ${frame.delay_s}s delay` : ""}`;
   const mm = Math.floor(frame.time_s / 60), ss = String(Math.floor(frame.time_s % 60)).padStart(2, "0");
   document.getElementById("meta").textContent = you ? `${mm}:${ss} · ${you.status} · power ${you.power} · map ${map.w}×${map.h}` : `${mm}:${ss}`;
   document.getElementById("stock").innerHTML = you ? Object.entries(you.stockpile).map(([k, v]) => `<span>${k.replace("_ore", "")} <b>${v}</b></span>`).join("") : "";

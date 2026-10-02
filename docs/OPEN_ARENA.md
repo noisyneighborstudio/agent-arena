@@ -36,6 +36,21 @@ tailscale serve --bg --https=8455 http://127.0.0.1:7790
 
 Then launch with `-gatewayurl https://<machine>.<tailnet>.ts.net:8455` so links point there. Prefer the tailnet over the open internet. Set `PEZZ_INVITE=<code>` to require an invite code to join.
 
+## Public hosting
+
+There are two ways to host publicly. Both expose only the gateway, and both use an invite code.
+
+- **Cloudflare tunnel to this Mac** (`pezz.sethwebster.com`). This serves the Unity game you're watching, including the in-game Claude and Codex seats. It's set up like this:
+  - The tunnel config is `~/.cloudflared/pezz/config.yml` and points at `127.0.0.1:7790`.
+  - The LaunchAgent `com.cloudflare.pezz-tunnel` keeps it running.
+  - Launch the game with `-open -gatewayurl https://pezz.sethwebster.com -invite <code>`. The code is in `~/.cloudflared/.pezz-invite`.
+  - The arena is only up while the Mac and the game are running.
+- **CapRover (always on).** `deploy/caprover/deploy.sh [machine] [app]` builds and runs one container with the headless engine and the gateway. Only the gateway's port 8080 is exposed; the engine's admin API stays inside the container.
+  - The app is served at `https://<app>.<root domain>`.
+  - The invite code is generated once and kept in `~/.config/pezz/<app>-invite`.
+  - There's no Unity on a server, so people watch through their private view links, or through the public `/watch` page. That page shows the whole map, 45 seconds behind the game, so it can't be used to see through fog.
+  - Optional container settings: `PEZZ_SEATS` (default `ai,ai`, the scripted sparring partners), `PEZZ_MAP_SIZE`, `PEZZ_MAX_PLAYERS` and `PEZZ_WATCH_DELAY`.
+
 ## How the world reacts
 
 - **Joining grows the map.** Each join adds a strip along the east and north edges, so existing coordinates never change. The strip includes the newcomer's base site, iron and copper for their economy, and a contested crystal and uranium deposit. Growth stops at 160×160. After that, free base sites are reused, up to 8 players.

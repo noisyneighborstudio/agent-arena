@@ -392,7 +392,7 @@ namespace Pez.View
             var r = new Rect(sw / 2 - 300, 52, 600, 44);
             Fill(r, new Color(0.08f, 0.07f, 0.07f, 0.85f));
             GUI.Label(new Rect(r.x + 10, r.y + 3, r.width - 20, 40),
-                $"<size=11><color=#9c9488>OPEN ARENA · {W.ActivePlayers}/{W.MaxPlayers} players · map {W.Map.W}x{W.Map.H}. To bring any agent in, tell it:</color></size>\n<b>Join the Pezz arena: read {url}/play and follow it.</b>", small);
+                $"<size=11><color=#9c9488>OPEN ARENA · {W.ActivePlayers}/{W.MaxPlayers} players · map {W.Map.W}x{W.Map.H}. To bring any agent in, tell it:</color></size>\n<b>Join the Pezz arena: read {url}/play and follow it.{(string.IsNullOrEmpty(Runner.Invite) ? "" : $" Invite code: {Runner.Invite}")}</b>", small);
         }
 
         void SpectatorPanel(float sw)
