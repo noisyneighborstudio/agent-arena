@@ -59,6 +59,12 @@ namespace Pez.Sim
             return a;
         }
 
+        public void ClearTeam(int team)
+        {
+            All.RemoveAll(a => a.Team == team);
+            open.RemoveAll(a => a.Team == team);
+        }
+
         public IEnumerable<Alert> Active(World w, int team) =>
             All.Where(a => a.Team == team && (w.Tick - a.LastTick) * World.Dt <= ActiveWindow)
                .OrderByDescending(a => a.Priority).ThenByDescending(a => a.LastTick);

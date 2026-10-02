@@ -10,6 +10,9 @@ namespace Pez.Sim
     public class SimpleAI
     {
         readonly int team;
+        /// <summary>House AI in an open arena: builds and defends, never attacks.</summary>
+        public readonly bool Passive;
+        public int Team => team;
         float nextThink;
         int waveSize = 6;
         readonly Dictionary<int, Vec2> outpostTargets = new Dictionary<int, Vec2>();
@@ -21,7 +24,7 @@ namespace Pez.Sim
             "laser_tower", "power_plant", "composite_foundry", "airfield", "fusion_reactor", "gun_turret", "laser_tower", "sam_site",
         };
 
-        public SimpleAI(int team) { this.team = team; }
+        public SimpleAI(int team, bool passive = false) { this.team = team; Passive = passive; }
 
         static Dictionary<string, object> Cmd(params object[] kv)
         {
@@ -162,6 +165,7 @@ namespace Pez.Sim
             }
 
             // ---- Offense: waves at known structures, else toward the nearest unexplored corner.
+            if (Passive) return; // the house AI holds its ground
             var idle = army.Where(u => u.Order == Order.Idle).ToList();
             if (idle.Count >= waveSize)
             {

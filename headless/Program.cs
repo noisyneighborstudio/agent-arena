@@ -9,7 +9,8 @@ namespace Pez.Headless
 {
     /// <summary>
     /// pez-headless [--port 7777] [--controllers llm,ai] [--seed N] [--map-size 80] [--speed 1] [--selftest]
-    ///              [--open [--max-players 8] [--max-map-size 160]]   open arena: outside agents join through the gateway
+    ///              [--open [--max-players 8] [--max-map-size 160] [--house-ais 1] [--house-resign-above 5]]
+    ///              open arena: outside agents join through the gateway; scripted "house" seats are passive and make room
     /// Runs the game with no graphics. LLMs connect over the HTTP API (usually via the MCP server).
     /// --selftest plays AI vs AI as fast as possible and prints the result.
     /// </summary>
@@ -25,6 +26,8 @@ namespace Pez.Headless
                 Open = args.Contains("--open"),
                 MaxPlayers = int.Parse(Arg("--max-players", "8")),
                 MaxMapSize = int.Parse(Arg("--max-map-size", "160")),
+                HouseAIs = int.Parse(Arg("--house-ais", "1")),
+                HouseResignAbove = int.Parse(Arg("--house-resign-above", "5")),
                 Speed = float.Parse(Arg("--speed", "1"), System.Globalization.CultureInfo.InvariantCulture),
                 Controllers = Arg("--controllers", "llm,ai").Split(','),
             };

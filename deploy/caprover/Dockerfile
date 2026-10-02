@@ -24,6 +24,6 @@ COPY deploy/caprover/start.sh start.sh
 RUN chmod +x start.sh && useradd -r -u 10001 pezz && chown -R pezz /app
 USER pezz
 ENV PEZZ_GATEWAY_HOST=0.0.0.0 PEZZ_GATEWAY_PORT=8080 PEZZ_GAME=http://127.0.0.1:7777 \
-    PEZZ_SEATS=ai,ai PEZZ_MAP_SIZE=80 PEZZ_MAX_PLAYERS=8
+    PEZZ_SEATS=ai PEZZ_MAP_SIZE=80 PEZZ_MAX_PLAYERS=8 PEZZ_HOUSE_AIS=1 PEZZ_HOUSE_RESIGN_ABOVE=5
 EXPOSE 8080
 ENTRYPOINT ["/usr/bin/tini", "--", "./start.sh"]

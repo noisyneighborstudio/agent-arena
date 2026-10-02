@@ -137,8 +137,8 @@ namespace Pez.Api
             .Set("state", StateView.TeamState(w, Math.Min(wt.Team, w.Teams.Count - 1), wt.EventSince));
 
         // ---- Player tokens (open arena). Control tokens act for one team; view tokens only read its fogged view.
-        readonly Dictionary<string, (World world, int team)> controlTokens = new Dictionary<string, (World, int)>();
-        readonly Dictionary<string, (World world, int team)> viewTokens = new Dictionary<string, (World, int)>();
+        readonly Dictionary<string, (World world, int team, int seat)> controlTokens = new Dictionary<string, (World, int, int)>();
+        readonly Dictionary<string, (World world, int team, int seat)> viewTokens = new Dictionary<string, (World, int, int)>();
 
         static string NewToken()
         {
@@ -160,7 +160,7 @@ namespace Pez.Api
             var tok = TokenFrom(req);
             if (tok != null)
             {
-                if (!controlTokens.TryGetValue(tok, out var owner) || owner.world != w) throw new UnauthorizedAccessException("unknown or expired token; join again");
+                if (!controlTokens.TryGetValue(tok, out var owner) || owner.world != w || w.Teams[owner.team].Seat != owner.seat) throw new UnauthorizedAccessException("unknown or expired token; join again");
                 if (w.Teams[owner.team].Left) throw new UnauthorizedAccessException("you left this arena; join again to play");
                 return owner.team;
             }
@@ -176,7 +176,7 @@ namespace Pez.Api
             var vt = req.QueryString["view"];
             if (vt != null)
             {
-                if (!viewTokens.TryGetValue(vt, out var owner) || owner.world != w) throw new UnauthorizedAccessException("unknown or expired view link");
+                if (!viewTokens.TryGetValue(vt, out var owner) || owner.world != w || w.Teams[owner.team].Seat != owner.seat) throw new UnauthorizedAccessException("unknown or expired view link");
                 return owner.team;
             }
             if (TokenFrom(req) != null || req.QueryString["team"] != null) return TeamParam(req, w);
@@ -249,8 +249,8 @@ namespace Pez.Api
                         var team = w.AddTeam("llm", name, out var err);
                         if (team == null) { status = 409; return Json.Write(new JObj().Set("ok", false).Set("error", err)); }
                         var token = NewToken(); var view = NewToken();
-                        controlTokens[token] = (w, team.Id);
-                        viewTokens[view] = (w, team.Id);
+                        controlTokens[token] = (w, team.Id, team.Seat);
+                        viewTokens[view] = (w, team.Id, team.Seat);
                         Log($"Player joined: {name} as {team.Name} (team {team.Id}); map now {w.Map.W}x{w.Map.H}");
                         return Json.Write(new JObj().Set("ok", true).Set("token", token).Set("view_token", view)
                             .Set("team", team.Id).Set("flavor", team.Name).Set("name", name)
@@ -270,7 +270,7 @@ namespace Pez.Api
                         .Set("open", w.Open).Set("map", $"{w.Map.W}x{w.Map.H}").Set("max_map", w.MaxMapSize)
                         .Set("players", w.ActivePlayers).Set("max_players", w.MaxPlayers).Set("time_s", (float)Math.Round(w.Time, 1))
                         .Set("teams", w.Teams.Select(t => new JObj().Set("flavor", t.Name).Set("player", t.PlayerName ?? t.Controller)
-                            .Set("status", t.Left ? "left" : t.Defeated ? "eliminated" : "playing")
+                            .Set("status", t.Left ? "left" : t.Defeated ? "eliminated" : "playing").Set("house", t.House)
                             .Set("structures", w.Owned(t.Id).Count(e => e.IsStructure)).Set("kills", t.Stats.Kills)).ToList()));
                 case "/api/view/map":
                     return Json.Write(ViewMap(w, ViewTeam(req, w)));

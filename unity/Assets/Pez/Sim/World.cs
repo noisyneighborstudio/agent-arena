@@ -53,6 +53,10 @@ namespace Pez.Sim
         public bool[] Explored;
         /// <summary>Open arena: the player left for good (their base became salvage).</summary>
         public bool Left;
+        /// <summary>Open arena: a scripted house player that keeps the world populated.</summary>
+        public bool House;
+        /// <summary>Unique per occupant. Seats are recycled, so tokens bind to this, not just the team index.</summary>
+        public int Seat;
         public readonly List<ProdItem> StructureQueue = new List<ProdItem>();
         public readonly Dictionary<Producer, List<ProdItem>> UnitQueues = new Dictionary<Producer, List<ProdItem>>
         {
@@ -172,11 +176,21 @@ namespace Pez.Sim
             UpdateVisibility();
         }
 
-        Team CreateTeam(Vec2 spawn)
+        int seatCounter;
+
+        /// <summary>Create a team in a new slot, or in slot `reuse` (a seat whose player left or was eliminated).</summary>
+        Team CreateTeam(Vec2 spawn, int reuse = -1)
         {
-            int t = Teams.Count;
-            var team = new Team { Id = t, Name = Flavors[t % Flavors.Length], StartPos = spawn, Visible = new bool[Map.W * Map.H], Explored = new bool[Map.W * Map.H] };
-            Teams.Add(team);
+            int t = reuse >= 0 ? reuse : Teams.Count;
+            var team = new Team { Id = t, Name = Flavors[t % Flavors.Length], StartPos = spawn, Visible = new bool[Map.W * Map.H], Explored = new bool[Map.W * Map.H], Seat = ++seatCounter };
+            if (reuse >= 0)
+            {
+                // A fresh occupant: drop everything that referred to the old one.
+                Teams[t] = team;
+                Alerts.ClearTeam(t);
+                ForgetTeam(t);
+            }
+            else Teams.Add(team);
             // Enough raw ore for a power plant; everything after that has to be mined.
             team.Add("iron_ore", 500);
             team.Add("copper_ore", 150);
@@ -200,7 +214,14 @@ namespace Pez.Sim
         {
             error = null;
             if (!Open) { error = "this game is not open for joining"; return null; }
-            if (ActivePlayers >= MaxPlayers || Teams.Count >= Flavors.Length) { error = $"arena is full ({MaxPlayers} players)"; return null; }
+            if (ActivePlayers >= MaxPlayers) { error = $"arena is full ({MaxPlayers} players)"; return null; }
+            // Flavours (and colours) are capped at eight, so long-running arenas recycle the seats of departed players.
+            int reuse = -1;
+            if (Teams.Count >= Flavors.Length)
+            {
+                reuse = Teams.FindIndex(t => t.Left || t.Defeated);
+                if (reuse < 0) { error = $"arena is full ({Flavors.Length} seats)"; return null; }
+            }
             var bases = Teams.Where(t => !t.Left && !t.Defeated).Select(t => t.StartPos).ToList();
             Vec2 spawn;
             int size = Math.Max(Map.W, Map.H);
@@ -217,7 +238,7 @@ namespace Pez.Sim
                 if (free.Count == 0) { error = "arena is at its maximum size and every base site is taken"; return null; }
                 spawn = free[0];
             }
-            var team = CreateTeam(spawn);
+            var team = CreateTeam(spawn, reuse);
             team.Controller = controller;
             team.PlayerName = playerName;
             UpdatePower();
@@ -255,6 +276,14 @@ namespace Pez.Sim
         /// A player leaves for good. Their buildings, units and stockpile become salvage: ore piles on the old
         /// base's footprint that anyone's mining trucks can collect, first come, first served.
         /// </summary>
+        /// <summary>Other teams forget what they knew about this team's buildings (it's gone, or its seat is reused).</summary>
+        void ForgetTeam(int teamId)
+        {
+            foreach (var o in Teams)
+                foreach (var id in o.KnownEnemyStructures.Where(kv => kv.Value.team == teamId).Select(kv => kv.Key).ToList())
+                    o.KnownEnemyStructures.Remove(id);
+        }
+
         public string Leave(int teamId)
         {
             var t = Teams[teamId];
@@ -294,6 +323,7 @@ namespace Pez.Sim
             t.Left = true;
             t.Defeated = true;
             t.Stock.Clear();
+            ForgetTeam(teamId);
             MapVersion++;
             var where = StateView.Sector(Map, t.StartPos);
             string msg = $"{t.PlayerName ?? t.Name} ({t.Name}) left the arena. Their base at sector {where} is now about {(int)total} units of salvage ore. First come, first served.";
@@ -1355,6 +1385,7 @@ namespace Pez.Sim
                     team.Defeated = true;
                     foreach (var e in Entities.Where(e => !e.Dead && e.Team == team.Id).ToList()) { Emit("destroyed", e.Team, e.Id, 0, e.Center, key: e.Def.Key); Remove(e); }
                     Emit("defeated", team.Id, text: $"{team.Name} ({team.PlayerName ?? team.Controller}) has been eliminated");
+                    ForgetTeam(team.Id);
                 }
                 return;
             }

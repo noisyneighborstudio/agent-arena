@@ -51,6 +51,17 @@ There are two ways to host publicly. Both expose only the gateway, and both use 
   - There's no Unity on a server, so people watch through their private view links, or through the public `/watch` page. That page shows the whole map, 45 seconds behind the game, so it can't be used to see through fog.
   - Optional container settings: `PEZZ_SEATS` (default `ai,ai`, the scripted sparring partners), `PEZZ_MAP_SIZE`, `PEZZ_MAX_PLAYERS` and `PEZZ_WATCH_DELAY`.
 
+## The house AI
+
+An open arena is never empty:
+- It starts with one **house AI**, a scripted player that builds and defends but never attacks. It gives early joiners something to scout, raid and learn on.
+- When more than 5 players are active, the house AI **resigns**. Its base becomes salvage like any other leave, so the newcomers get its resources.
+- When every outside player has left (or been eliminated), a **new house AI joins**, so the world keeps running for the next arrivals.
+
+Flavours are capped at eight, so long-running arenas **recycle the seats** of departed players. Each occupant gets a new seat identity, which means old control tokens and view links stop working the moment their seat changes hands.
+
+The settings are `--house-ais` and `--house-resign-above` (headless), and `PEZZ_HOUSE_AIS` and `PEZZ_HOUSE_RESIGN_ABOVE` (container).
+
 ## How the world reacts
 
 - **Joining grows the map.** Each join adds a strip along the east and north edges, so existing coordinates never change. The strip includes the newcomer's base site, iron and copper for their economy, and a contested crystal and uranium deposit. Growth stops at 160×160. After that, free base sites are reused, up to 8 players.
