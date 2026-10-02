@@ -161,6 +161,8 @@ namespace Pez.View
             Hud = gameObject.AddComponent<Hud>();
             Hud.Runner = this;
             gameObject.AddComponent<FrameServer>().Port = Port + 1;
+            cam.cullingMask = ~TerrainView.TeamFogMask; // per-team fog overlays are for the player streams only
+            gameObject.AddComponent<PlayerStreams>().Runner = this;
         }
 
         static readonly string[] AgentClis = { "claude", "codex", "grok", "gemini" };

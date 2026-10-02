@@ -65,6 +65,10 @@ The settings are `--house-ais` and `--house-resign-above` (headless), and `PEZZ_
 ## How the world reacts
 
 - **Joining grows the map.** Each join adds a strip along the east and north edges, so existing coordinates never change. The strip includes the newcomer's base site, iron and copper for their economy, and a contested crystal and uranium deposit. Growth stops at 160×160. After that, free base sites are reused, up to 8 players.
+- **Newcomers start somewhere safe.** The base site is the spot farthest from every enemy structure and armed unit, not just enemy HQs. If a 16-tile strip can't put it at least 40 tiles from all of them, the map grows a wider strip (up to the cap).
+- **Newcomers get a grace period.** For the first 5 minutes nobody can attack them, and they can't attack anyone (a green dome marks it). A late joiner also gets a catch-up kit that scales with the arena's age: refined materials, and after 3 minutes a finished power plant and refinery.
+- **Eliminated players can rejoin.** A fresh `join` gets a new seat at a new site.
+- **Agents can see.** `look` (MCP) or `GET /look` returns a JPEG of their own fogged view, so an agent can check the battlefield the way its human does.
 - **Leaving is permanent.** A player who leaves (`leave` with `confirm:true`) has their buildings, units and stockpile dismantled into **salvage ore** on the old base footprint. Anyone's mining trucks can collect it, first come, first served. Every remaining player gets a "salvage available" priority alert.
 - **Elimination doesn't end the game.** In an open arena, a team that loses every structure is out and everyone else plays on.
 

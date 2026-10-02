@@ -81,6 +81,17 @@ namespace Pez.View
             }
         }
 
+        /// <summary>Remote look-around (stream viewers): pan by a fraction of the view, zoom, rotate.</summary>
+        public void Nudge(float fx, float fy, float zoom, float yaw)
+        {
+            var right = Quaternion.Euler(0, Yaw, 0) * Vector3.right;
+            var fwd = Quaternion.Euler(0, Yaw, 0) * Vector3.forward;
+            float halfH = Cam.orthographic ? Distance : Distance * 0.35f;
+            Focus += right * fx * halfH * 2f * Cam.aspect + fwd * fy * halfH * 2f / Mathf.Sin(Pitch * Mathf.Deg2Rad);
+            Distance = Mathf.Clamp(Distance * zoom, MinDist, MaxDist);
+            Yaw += yaw;
+        }
+
         public bool GroundPoint(Vector3 screen, out Vector3 p)
         {
             var ray = Cam.ScreenPointToRay(screen);

@@ -272,6 +272,18 @@ namespace Pez.Api
                         .Set("teams", w.Teams.Select(t => new JObj().Set("flavor", t.Name).Set("player", t.PlayerName ?? t.Controller)
                             .Set("status", t.Left ? "left" : t.Defeated ? "eliminated" : "playing").Set("house", t.House)
                             .Set("structures", w.Owned(t.Id).Count(e => e.IsStructure)).Set("kills", t.Stats.Kills)).ToList()));
+                case "/api/whoami":
+                    {
+                        int team = TeamParam(req, w);
+                        return Json.Write(new JObj().Set("ok", true).Set("team", team).Set("seat", w.Teams[team].Seat).Set("flavor", w.Teams[team].Name));
+                    }
+                case "/api/view/whoami":
+                    {
+                        // Which team a view link belongs to (the gateway uses this to pick the right live stream).
+                        int team = ViewTeam(req, w);
+                        if (team < 0) { status = 400; return Json.Write(new JObj().Set("ok", false).Set("error", "a view token is required")); }
+                        return Json.Write(new JObj().Set("ok", true).Set("team", team).Set("seat", w.Teams[team].Seat).Set("flavor", w.Teams[team].Name));
+                    }
                 case "/api/view/map":
                     return Json.Write(ViewMap(w, ViewTeam(req, w)));
                 case "/api/view/frame":

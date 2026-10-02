@@ -57,6 +57,8 @@ namespace Pez.Sim
         public bool House;
         /// <summary>Unique per occupant. Seats are recycled, so tokens bind to this, not just the team index.</summary>
         public int Seat;
+        /// <summary>Open arena newcomer protection: until this game time the team can't be hurt and can't attack.</summary>
+        public float ProtectedUntil;
         public readonly List<ProdItem> StructureQueue = new List<ProdItem>();
         public readonly Dictionary<Producer, List<ProdItem>> UnitQueues = new Dictionary<Producer, List<ProdItem>>
         {
@@ -86,6 +88,12 @@ namespace Pez.Sim
         public int MaxPlayers = 8;
         public int MaxMapSize = Map.MaxSize;
         public int GrowStep = 16;
+        /// <summary>A joiner's base goes at least this far from any enemy structure or armed unit, if the map can grow that far.</summary>
+        public float SafeJoinDistance = 40f;
+        /// <summary>Open arena: seconds of protection a joiner gets to set up before they can be attacked.</summary>
+        public float ProtectionSeconds = 300f;
+
+        public bool IsProtected(int team) => team >= 0 && team < Teams.Count && Teams[team].ProtectedUntil > Time;
         public static readonly string[] Flavors = { "Blueberry", "Cherry", "Lime", "Lemon", "Grape", "Orange", "Mint", "Raspberry" };
         public readonly List<Team> Teams = new List<Team>();
         public readonly Dictionary<int, Entity> ById = new Dictionary<int, Entity>();
@@ -223,29 +231,63 @@ namespace Pez.Sim
                 if (reuse < 0) { error = $"arena is full ({Flavors.Length} seats)"; return null; }
             }
             var bases = Teams.Where(t => !t.Left && !t.Defeated).Select(t => t.StartPos).ToList();
+            // Somewhere nobody can pounce on: away from every enemy structure and armed unit, not just their HQs.
+            var threats = Entities.Where(e => !e.Dead && e.Team >= 0 && (e.IsStructure || e.IsArmed)).Select(e => e.Pos).ToList();
+            threats.AddRange(bases);
             Vec2 spawn;
             int size = Math.Max(Map.W, Map.H);
             if (size + GrowStep <= MaxMapSize)
             {
-                var grown = Map.Grown(Map.W + GrowStep, Map.H + GrowStep, Tick * 7919 + Teams.Count, bases, out spawn);
-                ReplaceMap(grown);
+                // Grow one step; if that strip is still within reach of someone, grow a wider one (up to the cap).
+                Map best = null; Vec2 bestSpawn = default; float bestClear = -1f;
+                for (int grow = GrowStep; size + grow <= MaxMapSize; grow += GrowStep)
+                {
+                    var m = Map.Grown(Map.W + grow, Map.H + grow, Tick * 7919 + Teams.Count, bases, threats, out var sp, out float clear);
+                    if (clear > bestClear) { best = m; bestSpawn = sp; bestClear = clear; }
+                    if (clear >= SafeJoinDistance) break;
+                }
+                spawn = bestSpawn;
+                ReplaceMap(best);
             }
             else
             {
-                // At the size cap: reuse a site nobody holds.
+                // At the size cap: reuse the site nobody holds that's farthest from trouble.
                 var free = Map.Spawns.Where(s => bases.All(b => Vec2.Dist(b, s) > 16) && Map.Occupant[Map.Idx((int)s.X, (int)s.Y)] == 0)
-                                     .OrderByDescending(s => bases.Count == 0 ? 0 : bases.Min(b => Vec2.Dist(b, s))).ToList();
+                                     .OrderByDescending(s => Map.Clearance(s, threats)).ToList();
                 if (free.Count == 0) { error = "arena is at its maximum size and every base site is taken"; return null; }
                 spawn = free[0];
             }
             var team = CreateTeam(spawn, reuse);
             team.Controller = controller;
             team.PlayerName = playerName;
+            GiveCatchUp(team);
+            team.ProtectedUntil = Time + ProtectionSeconds;
             UpdatePower();
             UpdateVisibility();
             Emit("joined", team.Id, pos: spawn, text: $"{playerName} joined as {team.Name} at sector {StateView.Sector(Map, spawn)}. The map is now {Map.W}x{Map.H}.");
             Emit("chat", -1, text: $"{playerName} joined as {team.Name} at sector {StateView.Sector(Map, spawn)}.");
             return team;
+        }
+
+        /// <summary>
+        /// Late joiners get a head start that scales with the arena's age: refined materials, and once the arena is
+        /// a few minutes old, a finished power plant and mining refinery (with its free truck). Enough to reach
+        /// barracks, factory and defenses inside the protection window.
+        /// </summary>
+        void GiveCatchUp(Team team)
+        {
+            float minutes = MathF.Min(Time / 60f, 30f);
+            if (minutes < 0.5f) return;
+            team.Add("steel", 60 * minutes);
+            team.Add("copper", 30 * minutes);
+            team.Add("circuits", 8 * minutes);
+            team.Add("iron_ore", 20 * minutes);
+            if (minutes < 3f) return;
+            foreach (var key in new[] { "power_plant", "mining_refinery" })
+            {
+                var spot = FindPlacement(team.Id, key);
+                if (spot.HasValue) { SpawnStructure(team.Id, key, spot.Value, 1f); team.Stats.Count(key); }
+            }
         }
 
         void ReplaceMap(Map m)
@@ -962,7 +1004,7 @@ namespace Pez.Sim
             Entity trigger = null;
             Near(m.Pos, 1.5f, nearMine);
             foreach (var o in nearMine)
-                if (!o.Dead && o.Team != m.Team && !o.IsStructure && !o.IsAir && !o.IsCarried && !o.IsMine && Vec2.Dist(o.Pos, m.Pos) <= 0.35f + o.Def.Radius)
+                if (!o.Dead && o.Team != m.Team && !IsProtected(o.Team) && !o.IsStructure && !o.IsAir && !o.IsCarried && !o.IsMine && Vec2.Dist(o.Pos, m.Pos) <= 0.35f + o.Def.Radius)
                 { trigger = o; break; }
             if (trigger == null) return;
             Emit("hit", m.Team, m.Id, trigger.Id, m.Pos, key: "mine");
@@ -1023,6 +1065,7 @@ namespace Pez.Sim
             foreach (var o in nearTarget)
             {
                 if (o.Dead || o.Team == e.Team || o.IsCarried) continue;
+                if (IsProtected(o.Team) || IsProtected(e.Team)) continue; // newcomer protection: no fighting either way
                 if (e.Def.Weapon != null && !e.Def.Weapon.CanHit(o.Def)) continue;
                 float d = o.DistFrom(e.Pos);
                 if (d > radius) continue;
@@ -1092,6 +1135,7 @@ namespace Pez.Sim
         void Damage(Entity t, float amount, Entity src, int srcTeam = -1)
         {
             if (t.Dead) return;
+            if (IsProtected(t.Team)) return; // newcomer protection
             int team = src?.Team ?? srcTeam;
             t.Hp -= amount;
             if (src != null) t.LastAttackerId = src.Id;
@@ -1374,8 +1418,20 @@ namespace Pez.Sim
             }
         }
 
+        void CheckProtection()
+        {
+            foreach (var t in Teams)
+            {
+                if (t.ProtectedUntil <= 0 || t.ProtectedUntil > Time || t.Left) continue;
+                t.ProtectedUntil = 0;
+                Emit("chat", -1, text: $"{t.Name} ({t.PlayerName ?? t.Controller}) is no longer protected.");
+                Alerts.Raise(this, t.Id, "protection_ended", Priority.High, t.StartPos, hit: false);
+            }
+        }
+
         void CheckVictory()
         {
+            CheckProtection();
             if (Open)
             {
                 // An open arena never ends: teams that lose every structure are out, everyone else plays on.

@@ -21,14 +21,43 @@ namespace Pez.View
         TcpListener listener;
         Thread thread;
         volatile byte[] latest;
+
+        // Per-player live streams: frames are only rendered for teams someone requested in the last 10 seconds.
+        static readonly System.Collections.Concurrent.ConcurrentDictionary<int, byte[]> teamFrames = new System.Collections.Concurrent.ConcurrentDictionary<int, byte[]>();
+        static readonly System.Collections.Concurrent.ConcurrentDictionary<int, System.DateTime> teamWanted = new System.Collections.Concurrent.ConcurrentDictionary<int, System.DateTime>();
+        public static bool Wanted(int team) => teamWanted.TryGetValue(team, out var t) && (System.DateTime.UtcNow - t).TotalSeconds < 10;
+        static readonly System.Collections.Concurrent.ConcurrentDictionary<int, System.DateTime> frameAt = new System.Collections.Concurrent.ConcurrentDictionary<int, System.DateTime>();
+        public static void Submit(int team, byte[] jpg) { teamFrames[team] = jpg; frameAt[team] = System.DateTime.UtcNow; }
+        public static void Forget(int team) { teamFrames.TryRemove(team, out _); }
+
+        /// <summary>Camera input from a stream viewer: team -1 is the host's main view, 0-7 a player's own stream.</summary>
+        public struct CamOp { public int Team; public float Dx, Dy, Zoom, Yaw, X, Y; } // X/Y: absolute focus (NaN = keep)
+        public static readonly System.Collections.Concurrent.ConcurrentQueue<CamOp> CamOps = new System.Collections.Concurrent.ConcurrentQueue<CamOp>();
+
+        static float Q(string query, string key, float def)
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(query, "[?&]" + key + "=(-?[0-9.]+)");
+            return m.Success && float.TryParse(m.Groups[1].Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : def;
+        }
         volatile bool running;
         RenderTexture full, small;
         Texture2D readback;
 
         const string Page = @"<!doctype html><html><head><meta name=viewport content='width=device-width,initial-scale=1'><title>Pezz</title>
-<style>html,body{margin:0;background:#0b0c0e;height:100%;display:flex;align-items:center;justify-content:center}img{max-width:100vw;max-height:100vh}</style></head>
-<body><img id=f><script>
+<style>html,body{margin:0;background:#0b0c0e;height:100%;display:flex;align-items:center;justify-content:center;overflow:hidden}
+img{max-width:100vw;max-height:100vh;cursor:grab;user-select:none;-webkit-user-drag:none}img:active{cursor:grabbing}
+#h{position:fixed;bottom:10px;right:12px;color:#9c9488;font:12px -apple-system,sans-serif;background:rgba(20,17,19,.8);padding:6px 10px;border-radius:8px}</style></head>
+<body><img id=f draggable=false><div id=h>drag to pan · scroll to zoom · WASD/arrows pan · Q/E rotate</div><script>
 const img=document.getElementById('f');
+// Look around: input goes back to the game camera.
+let drag=null,acc={dx:0,dy:0,zoom:1,yaw:0},sending=false;
+function flush(){if(sending)return;const a=acc;if(!a.dx&&!a.dy&&a.zoom===1&&!a.yaw)return;acc={dx:0,dy:0,zoom:1,yaw:0};sending=true;
+fetch(`cam?dx=${a.dx.toFixed(4)}&dy=${a.dy.toFixed(4)}&zoom=${a.zoom.toFixed(3)}&yaw=${a.yaw.toFixed(1)}`).finally(()=>{sending=false;setTimeout(flush,30)});}
+img.addEventListener('mousedown',e=>{drag={x:e.clientX,y:e.clientY};e.preventDefault()});
+addEventListener('mouseup',()=>drag=null);
+addEventListener('mousemove',e=>{if(!drag)return;const r=img.getBoundingClientRect();acc.dx-=(e.clientX-drag.x)/r.width;acc.dy+=(e.clientY-drag.y)/r.height;drag={x:e.clientX,y:e.clientY};flush()});
+addEventListener('wheel',e=>{e.preventDefault();acc.zoom*=e.deltaY<0?0.9:1.11;flush()},{passive:false});
+addEventListener('keydown',e=>{const k=e.key.toLowerCase();const s=.08;if(k==='a'||k==='arrowleft')acc.dx-=s;if(k==='d'||k==='arrowright')acc.dx+=s;if(k==='w'||k==='arrowup')acc.dy+=s;if(k==='s'||k==='arrowdown')acc.dy-=s;if(k==='q')acc.yaw+=15;if(k==='e')acc.yaw-=15;flush()});
 async function loop(){try{const r=await fetch('frame.jpg?'+Date.now(),{cache:'no-store'});if(r.ok){const u=URL.createObjectURL(await r.blob());const old=img.src;img.src=u;if(old.startsWith('blob:'))URL.revokeObjectURL(old);}}catch(e){}setTimeout(loop,150);}
 loop();</script></body></html>";
 
@@ -102,7 +131,32 @@ loop();</script></body></html>";
                     var parts = line.ToString().Split(' ');
                     var path = parts.Length > 1 ? parts[1] : "/";
                     byte[] body; string status = "200 OK", type;
-                    if (path.Contains("frame.jpg"))
+                    var cm = System.Text.RegularExpressions.Regex.Match(path, @"^/(?:team/(\d+)/)?cam(\?.*)?$");
+                    var tm = System.Text.RegularExpressions.Regex.Match(path, @"^/team/(\d+)\.jpg");
+                    if (cm.Success)
+                    {
+                        // dx/dy: pan as a fraction of the view; zoom: multiplier; yaw: degrees.
+                        var q = cm.Groups[2].Value;
+                        CamOps.Enqueue(new CamOp
+                        {
+                            Team = cm.Groups[1].Success ? int.Parse(cm.Groups[1].Value) : -1,
+                            Dx = Mathf.Clamp(Q(q, "dx", 0), -1, 1), Dy = Mathf.Clamp(Q(q, "dy", 0), -1, 1),
+                            Zoom = Mathf.Clamp(Q(q, "zoom", 1), 0.5f, 2f), Yaw = Mathf.Clamp(Q(q, "yaw", 0), -90, 90),
+                            X = Q(q, "x", float.NaN), Y = Q(q, "y", float.NaN),
+                        });
+                        body = Encoding.ASCII.GetBytes("{\"ok\":true}"); type = "application/json";
+                    }
+                    else if (tm.Success)
+                    {
+                        int team = int.Parse(tm.Groups[1].Value);
+                        teamWanted[team] = System.DateTime.UtcNow;
+                        teamFrames.TryGetValue(team, out body);
+                        // A stream nobody watched for a while has a stale last frame: don't serve it.
+                        if (!frameAt.TryGetValue(team, out var at) || (System.DateTime.UtcNow - at).TotalSeconds > 2) body = null;
+                        type = "image/jpeg";
+                        if (body == null) { body = new byte[0]; status = "503 Service Unavailable"; }
+                    }
+                    else if (path.Contains("frame.jpg"))
                     {
                         body = latest;
                         type = "image/jpeg";

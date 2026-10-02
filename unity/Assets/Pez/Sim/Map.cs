@@ -131,9 +131,10 @@ namespace Pez.Sim
         /// <summary>
         /// A bigger copy of this map for a new player. Existing tiles keep their coordinates (nobody's positions
         /// change mid-game); the new strip along the east and north edges gets terrain, a base site with its own
-        /// iron and copper, and a neutral crystal and uranium deposit. The new site is always reachable.
+        /// iron and copper, and a neutral crystal and uranium deposit. The new site is always reachable. It goes where
+        /// it's farthest from every threat (enemy structures and armed units); clearance is that distance.
         /// </summary>
-        public Map Grown(int newW, int newH, int seed, IList<Vec2> bases, out Vec2 spawn)
+        public Map Grown(int newW, int newH, int seed, IList<Vec2> bases, IList<Vec2> threats, out Vec2 spawn, out float clearance)
         {
             var m = new Map(newW, newH);
             for (int y = 0; y < H; y++)
@@ -147,12 +148,13 @@ namespace Pez.Sim
             int oldW = W, oldH = H;
             bool InNew(int x, int y) => x >= oldW || y >= oldH;
 
-            // Base site: inset from the new edges, as far as possible from every existing base.
+            // Base site: inset from the new edges, as far as possible from every threat.
             const int inset = 9;
             var cands = new List<Vec2>();
             for (int x = inset; x <= newW - inset; x += 3) cands.Add(new Vec2(x, newH - inset));
             for (int y = inset; y <= newH - inset; y += 3) cands.Add(new Vec2(newW - inset, y));
-            spawn = cands.OrderByDescending(c => bases.Count == 0 ? 0 : bases.Min(b => Vec2.Dist(b, c))).First();
+            spawn = cands.OrderByDescending(c => Clearance(c, threats)).First();
+            clearance = Clearance(spawn, threats);
             var sp = spawn;
 
             // Terrain scatter, only in the new strip and clear of the new base.
@@ -191,6 +193,14 @@ namespace Pez.Sim
             m.Spawns.Add(sp);
             if (bases.Count > 0) m.EnsureConnected(bases[0], sp);
             return m;
+        }
+
+        /// <summary>Distance from p to the nearest threat (large when there are none).</summary>
+        public static float Clearance(Vec2 p, IList<Vec2> threats)
+        {
+            float best = 9999f;
+            foreach (var t in threats) best = MathF.Min(best, Vec2.Dist(t, p));
+            return best;
         }
 
         /// <summary>If b isn't reachable from a, carve a 2-wide dirt road between them.</summary>

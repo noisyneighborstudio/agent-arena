@@ -56,8 +56,26 @@ namespace Pez.View
             lastSeq = w.Events.Count > 0 ? w.Events[w.Events.Count - 1].Seq : 0;
         }
 
-        bool Shown(Entity e) => !e.IsCarried && (PovTeam < 0 || World.IsVisibleTo(PovTeam, e)) ||
-                                (e.IsStructure && World.Teams[PovTeam].KnownEnemyStructures.ContainsKey(e.Id));
+        bool Shown(Entity e) => ShownFor(e, PovTeam);
+
+        bool ShownFor(Entity e, int team) => !e.IsCarried && (team < 0 || World.IsVisibleTo(team, e) ||
+                                             (e.IsStructure && World.Teams[team].KnownEnemyStructures.ContainsKey(e.Id)));
+
+        /// <summary>
+        /// Temporarily show only what `team` can see (for a per-player stream render); call with PovTeam to restore.
+        /// Selection rings belong to the local player and are hidden in other teams' renders.
+        /// </summary>
+        public void SetPov(int team)
+        {
+            foreach (var v in Views.Values)
+            {
+                bool show = !v.E.Dead && ShownFor(v.E, team);
+                var go = v.Rig.Root.gameObject;
+                if (go.activeSelf != show) go.SetActive(show);
+                bool ring = team == PovTeam && Selected.Contains(v.E.Id);
+                if (v.Ring.gameObject.activeSelf != ring) v.Ring.gameObject.SetActive(ring);
+            }
+        }
 
         int mapVersion;
 
@@ -99,6 +117,29 @@ namespace Pez.View
 
             SyncProjectiles(alpha);
             if (Time.time >= nextFog) { nextFog = Time.time + 0.2f; Terrain.UpdateFog(w, PovTeam); }
+            SyncShields();
+        }
+
+        readonly Dictionary<int, Transform> shields = new Dictionary<int, Transform>();
+
+        /// <summary>A translucent, gently pulsing dome over each base under newcomer protection.</summary>
+        void SyncShields()
+        {
+            foreach (var t in World.Teams)
+            {
+                bool on = World.IsProtected(t.Id);
+                shields.TryGetValue(t.Id, out var dome);
+                if (!on) { if (dome != null) { Destroy(dome.gameObject); shields.Remove(t.Id); } continue; }
+                if (dome == null)
+                {
+                    var c = Mats.Team(t.Id); c.a = 0.13f;
+                    dome = Models.Part(transform, PrimitiveType.Sphere, W(t.StartPos), new Vector3(13f, 7f, 13f), Mats.Unlit(c, true));
+                    dome.GetComponent<Renderer>().shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                    shields[t.Id] = dome;
+                }
+                float k = 1f + Mathf.Sin(Time.time * 1.5f + t.Id) * 0.02f;
+                dome.localScale = new Vector3(13f, 7f, 13f) * k;
+            }
         }
 
         /// <summary>Nothing pops off the map: art-pack models sink or collapse (wrecks linger) before they're destroyed.</summary>

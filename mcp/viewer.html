@@ -8,6 +8,10 @@
   :root { --bg:#141113; --panel:rgba(20,17,19,.88); --cream:#ECE4D2; --muted:#9c9488; --amber:#FFA22E; --crit:#ff5a4a; }
   html,body { margin:0; height:100%; background:var(--bg); color:var(--cream); font:13px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; overflow:hidden; }
   canvas { position:absolute; inset:0; width:100%; height:100%; cursor:grab; }
+  #live { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; background:#141113; display:none; cursor:grab; user-select:none; -webkit-user-drag:none; }
+  body.live #live { display:block; }
+  body.live canvas { visibility:hidden; }
+  #mode { cursor:pointer; color:var(--cream); text-decoration:underline; }
   canvas:active { cursor:grabbing; }
   .panel { position:absolute; background:var(--panel); border:1px solid rgba(236,228,210,.12); border-radius:10px; padding:10px 12px; backdrop-filter:blur(6px); }
   #top { top:12px; left:12px; min-width:260px; }
@@ -30,6 +34,7 @@
 </head>
 <body>
 <canvas id="c"></canvas>
+<img id="live" alt="">
 <div class="panel" id="top">
   <div class="who"><span class="chip" id="chip"></span><span id="who">Connecting…</span></div>
   <div class="meta" id="meta"></div>
@@ -39,7 +44,7 @@
 <div class="panel" id="alerts"></div>
 <div class="panel" id="teams"><div class="title">Commanders</div><div id="tl"></div></div>
 <div class="panel" id="chat"><div class="title">Arena chat</div><div id="cl"></div></div>
-<div class="panel" id="help">drag to pan · scroll to zoom · <b>F</b> your base · <b>M</b> whole map</div>
+<div class="panel" id="help"><span id="mode">Map view</span> · <b>L</b> live / map · drag to pan · scroll to zoom · <b>F</b> your base · <b>M</b> whole map</div>
 <script>
 const BASE = "__BASE__"; // /view/<token> for a player's own fogged view, /watch for the delayed public spectator view
 const FLAVORS = ["#2E73FF", "#F22E1F", "#33D94D", "#FFD126", "#8E44D9", "#FF8A1F", "#2ED3B7", "#E83E8C"];
@@ -204,7 +209,43 @@ addEventListener("mouseup", () => (drag = null));
 addEventListener("mousemove", (e) => { if (!drag) return; const d = devicePixelRatio || 1; cam.x = drag.cx - (e.clientX - drag.x) * d / cam.scale; cam.y = drag.cy + (e.clientY - drag.y) * d / cam.scale; });
 cv.addEventListener("wheel", (e) => { e.preventDefault(); cam.scale = Math.max(2, Math.min(60, cam.scale * (e.deltaY < 0 ? 1.12 : 0.89))); }, { passive: false });
 addEventListener("keydown", (e) => { if (e.key === "f" || e.key === "F") focusBase(); if (e.key === "m" || e.key === "M") fitAll(); });
-tick(); draw();
+// High-res live stream of this player's own view, rendered by the game host (when it has a renderer).
+const liveImg = document.getElementById("live");
+let liveOk = false, liveMode = false, liveFails = 0;
+function setMode(live) {
+  liveMode = live && liveOk;
+  document.body.classList.toggle("live", liveMode);
+  document.getElementById("mode").textContent = liveMode ? "Live view (switch to map)" : liveOk ? "Map view (switch to live)" : "Map view";
+}
+async function liveLoop() {
+  if (!BASE.startsWith("/view/")) return; // the public spectator page has no personal stream
+  try {
+    const r = await fetch(`${BASE}/live.jpg?${Date.now()}`, { cache: "no-store" });
+    if (r.ok) {
+      const url = URL.createObjectURL(await r.blob());
+      const old = liveImg.src; liveImg.src = url; if (old.startsWith("blob:")) URL.revokeObjectURL(old);
+      if (!liveOk) { liveOk = true; setMode(true); }
+      liveFails = 0;
+    } else if (r.status === 404 && ++liveFails > 3) { liveOk = false; setMode(false); setTimeout(liveLoop, 15000); return; }
+  } catch { liveFails++; }
+  setTimeout(liveLoop, 150);
+}
+document.getElementById("mode").addEventListener("click", () => setMode(!liveMode));
+// In live mode, dragging and scrolling steer the stream's camera (it returns to following the action after 20s).
+let camAcc = { dx: 0, dy: 0, zoom: 1, yaw: 0 }, camBusy = false, camDrag = null;
+function camFlush() {
+  if (camBusy) return; const a = camAcc;
+  if (!a.dx && !a.dy && a.zoom === 1 && !a.yaw) return;
+  camAcc = { dx: 0, dy: 0, zoom: 1, yaw: 0 }; camBusy = true;
+  fetch(`${BASE}/cam?dx=${a.dx.toFixed(4)}&dy=${a.dy.toFixed(4)}&zoom=${a.zoom.toFixed(3)}&yaw=${a.yaw}`).finally(() => { camBusy = false; setTimeout(camFlush, 30); });
+}
+liveImg.addEventListener("mousedown", (e) => { camDrag = { x: e.clientX, y: e.clientY }; e.preventDefault(); });
+addEventListener("mouseup", () => (camDrag = null));
+addEventListener("mousemove", (e) => { if (!camDrag || !liveMode) return; const r = liveImg.getBoundingClientRect(); camAcc.dx -= (e.clientX - camDrag.x) / r.width; camAcc.dy += (e.clientY - camDrag.y) / r.height; camDrag = { x: e.clientX, y: e.clientY }; camFlush(); });
+liveImg.addEventListener("wheel", (e) => { e.preventDefault(); camAcc.zoom *= e.deltaY < 0 ? 0.9 : 1.11; camFlush(); }, { passive: false });
+addEventListener("keydown", (e) => { if (!liveMode) return; const k = e.key.toLowerCase(); if (k === "q") camAcc.yaw += 15; if (k === "e") camAcc.yaw -= 15; camFlush(); });
+addEventListener("keydown", (e) => { if (e.key === "l" || e.key === "L") setMode(!liveMode); });
+tick(); draw(); liveLoop();
 setTimeout(focusBase, 1500);
 </script>
 </body>

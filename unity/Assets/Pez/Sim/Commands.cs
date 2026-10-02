@@ -41,6 +41,8 @@ namespace Pez.Sim
                 if (w.GameOver) return Err("game is over");
                 if (w.Teams[team].Defeated) return Err("your team is defeated");
                 var type = c.Str("type", "").ToLowerInvariant();
+                if ((type == "attack" || type == "capture") && w.IsProtected(team))
+                    return Err($"you're under newcomer protection for {(int)(w.Teams[team].ProtectedUntil - w.Time)}s more and can't attack yet; use the time to build up");
                 switch (type)
                 {
                     case "build": return Build(w, team, c);
@@ -196,6 +198,7 @@ namespace Pez.Sim
             var target = w.Get((int)c.Num("target", 0));
             if (target == null) return Err("target not found (it may be destroyed)");
             if (target.Team == team) return Err("that is your own unit");
+            if (w.IsProtected(target.Team)) return Err($"that player is under newcomer protection for {(int)(w.Teams[target.Team].ProtectedUntil - w.Time)}s more");
             if (!w.IsVisibleTo(team, target)) return Err("target is not currently visible; use attack_move toward its last known position");
             var able = units.Where(u => u.Def.Weapon.CanHit(target.Def)).ToList();
             if (able.Count == 0) return Err($"none of those units can hit a {(target.IsAir ? "flying" : "ground")} {target.Def.Key}");
@@ -262,6 +265,7 @@ namespace Pez.Sim
             var t = w.Get((int)c.Num("target", 0));
             if (t == null || !t.IsStructure || t.Team == team) return Err("target must be an enemy structure");
             if (!w.IsVisibleTo(team, t)) return Err("target is not currently visible");
+            if (w.IsProtected(t.Team)) return Err("that player is under newcomer protection");
             if (!t.IsComplete) return Err("can't capture a structure that's still under construction");
             if (t.Hp > t.Def.MaxHp * World.CaptureThreshold)
                 return Err($"{t.Def.Key} #{t.Id} is at {(int)t.Hp}/{t.Def.MaxHp}; damage it below 50% before an engineer can capture it");

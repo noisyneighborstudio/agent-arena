@@ -27,9 +27,11 @@ namespace Pez.Sim
                 .Set("winner", w.Winner >= 0 ? w.Teams[w.Winner].Name : null)
                 .Set("you", new JObj()
                     .Set("team", team).Set("name", t.Name).Set("player", t.PlayerName)
+                    .Set("status", t.Left ? "left" : t.Defeated ? "eliminated: call join again for a new seat" : "playing")
                     .Set("stockpile", Stockpile(t))
                     .Set("power", $"{t.PowerProduced} produced / {t.PowerUsed} used" + (t.LowPower ? " (LOW POWER: production at half speed, build a power_plant)" : ""))
-                    .Set("start", $"{R(t.StartPos.X)},{R(t.StartPos.Y)}"))
+                    .Set("start", $"{R(t.StartPos.X)},{R(t.StartPos.Y)}")
+                    .Set("protection", w.IsProtected(team) ? $"newcomer protection for {(int)(t.ProtectedUntil - w.Time)}s more: you can't be attacked, and you can't attack" : "none"))
                 .Set("map", $"{w.Map.W}x{w.Map.H} tiles; x grows east, y grows north. Spectators see sectors A-H (west to east) by 1-8 (north to south), {w.Map.W / 8} tiles each; mention them in say messages if you like");
 
             // Alerts go near the top: they're what a commander should look at first.
@@ -39,8 +41,9 @@ namespace Pez.Sim
             o.Set("standing_orders", t.StandingOrders.Length == 0 ? "none" : t.StandingOrders);
             o.Set("orders_version", t.OrdersVersion);
 
-            var enemies = w.Teams.Where(x => x.Id != team).Select(x => new JObj()
+            var enemies = w.Teams.Where(x => x.Id != team && !x.Left).Select(x => new JObj()
                 .Set("team", x.Id).Set("name", x.Name).Set("player", x.PlayerName ?? x.Controller)
+                .Set("protected_for_s", w.IsProtected(x.Id) ? (int)(x.ProtectedUntil - w.Time) : 0)
                 .Set("defeated", x.Defeated)).ToList();
             o.Set("opponents", enemies);
             int explored = t.Explored.Count(b => b);

@@ -82,6 +82,7 @@ namespace Pez.Sim
             "stealth_detected" => "STEALTH BOMBER DETECTED",
             "units_lost" => "UNITS LOST",
             "salvage_available" => "SALVAGE AVAILABLE",
+            "protection_ended" => "YOUR NEWCOMER PROTECTION HAS ENDED",
             _ => "COMBAT",
         };
 

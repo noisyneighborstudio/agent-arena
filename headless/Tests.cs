@@ -47,6 +47,8 @@ namespace Pez.Headless
             MapSizes();
             OpenArena();
             HousePolicy();
+            NewcomerProtection();
+            SafeSpawn();
             Console.WriteLine(failures == 0 ? "\nAll tests passed." : $"\n{failures} test(s) FAILED.");
             return failures == 0 ? 0 : 1;
         }
@@ -452,6 +454,44 @@ namespace Pez.Headless
             Check(reused != null, "a departed player's slot went to a new occupant with a new seat id");
             Tick(2);
             Check(w.Errors == 0, $"no sim errors through joins, resigns and recycling ({w.LastError})");
+        }
+        static void SafeSpawn()
+        {
+            // Armies parked along the north and east edges, where the next strip would put a newcomer.
+            var w = new World(2, 7, 80) { Open = true, MaxMapSize = 160 };
+            var hq0 = w.Owned(0).First(e => e.IsStructure);
+            foreach (var p in new[] { new Vec2(9, 72), new Vec2(40, 74), new Vec2(72, 40), new Vec2(74, 9) })
+                for (int i = 0; i < 3; i++) At(w.SpawnUnit(0, "heavy_tank", hq0), p + new Vec2(i, 0));
+            var t = w.AddTeam("llm", "Camped", out _);
+            float clear = w.Entities.Where(e => !e.Dead && e.Team != t.Id && (e.IsStructure || e.IsArmed)).Min(e => Vec2.Dist(e.Pos, t.StartPos));
+            Check(t != null && clear >= w.SafeJoinDistance && w.Map.W > 96,
+                  $"with the edges camped, the map grows wider so the newcomer starts {clear:0} tiles from any enemy (map {w.Map.W}x{w.Map.H}, base {t.StartPos})");
+            Run(w, 5);
+            Check(w.Errors == 0, "the game runs on after a wide growth");
+        }
+        static void NewcomerProtection()
+        {
+            var w = new World(2, 7, 64) { Open = true, ProtectionSeconds = 60 };
+            Run(w, 600); // a 10-minute-old arena
+            var t = w.AddTeam("llm", "Late Joiner", out _);
+            Check(t.Amount("steel") >= 500 && w.Owned(t.Id).Any(e => e.Def.Key == "mining_refinery" && e.IsComplete) && w.Owned(t.Id).Any(e => e.Def.Key == "power_plant"),
+                  $"a late joiner gets a catch-up kit (steel {t.Amount("steel")}, circuits {t.Amount("circuits")}, refinery and power plant)");
+            var hq = w.Owned(t.Id).First(e => e.Def.Key == "command_center");
+            var raider = At(w.SpawnUnit(0, "heavy_tank", w.Owned(0).First(e => e.IsStructure)), hq.Center + new Vec2(4.5f, 0.5f));
+            w.UpdateVisibility();
+            var r = Commands.Execute(w, 0, Cmd("type", "attack", "units", new[] { raider.Id }, "target", hq.Id));
+            Check(!Ok(r) && r["error"].ToString().Contains("protection"), $"attacking a protected player is refused: {r["error"]}");
+            w.SetOrder(raider, Order.AttackMove, hq.Center);
+            Run(w, 20);
+            Check(hq.Hp == hq.Def.MaxHp, "units on attack-move don't harm a protected base");
+            var mine = w.SpawnUnit(t.Id, "light_tank", hq);
+            r = Commands.Execute(w, t.Id, Cmd("type", "attack", "units", new[] { mine.Id }, "target", raider.Id));
+            Check(!Ok(r) && r["error"].ToString().Contains("can't attack yet"), "a protected player can't attack either");
+            Run(w, 45);
+            Check(!w.IsProtected(t.Id) && w.Alerts.Active(w, t.Id).Any(a => a.Kind == "protection_ended"), "protection ends on time and the player is alerted");
+            w.SetOrder(raider, Order.Attack, hq.Center, hq.Id);
+            Run(w, 10);
+            Check(hq.Hp < hq.Def.MaxHp, "after protection the base can be attacked");
         }
     }
 }

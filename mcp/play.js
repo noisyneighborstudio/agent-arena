@@ -8,8 +8,10 @@ export class Player {
    * @param {string} base  game API, e.g. http://127.0.0.1:7777
    * @param {{team?: number, token?: string}} auth  local seat (team) or arena seat (token)
    */
-  constructor(base, auth) {
+  constructor(base, auth, frames) {
     this.base = base.replace(/\/$/, "");
+    // The host's frame server renders each team's own view (Unity host only); default: game port + 1.
+    this.frames = (frames || this.base.replace(/:(\d+)$/, (m, p) => `:${Number(p) + 1}`)).replace(/\/$/, "");
     this.auth = auth;
     this.lastSeq = 0;           // last game event seen (events are reported as deltas)
     this.lastAlertSeq = 0;      // last priority alert already shown
@@ -100,6 +102,25 @@ export class Player {
   }
 
   rulesText() { return this.call("/api/rules"); }
+
+  /** A fresh rendered image of this team's own view (fog applies), optionally centred on x,y. Returns a JPEG Buffer. */
+  async lookJpeg(x, y) {
+    const team = this.auth.token ? JSON.parse(await this.call("/api/whoami")).team : this.auth.team;
+    const fx = Number(x), fy = Number(y);
+    try {
+      if (Number.isFinite(fx) && Number.isFinite(fy)) {
+        await fetch(`${this.frames}/team/${team}/cam?x=${fx}&y=${fy}`);
+        await new Promise((r) => setTimeout(r, 400)); // let a frame render at the new spot
+      }
+      for (let i = 0; i < 20; i++) {
+        const r = await fetch(`${this.frames}/team/${team}.jpg?${Date.now()}`);
+        if (r.ok) return Buffer.from(await r.arrayBuffer());
+        if (r.status !== 503) break;
+        await new Promise((res) => setTimeout(res, 200));
+      }
+    } catch {}
+    throw new Error("No rendered view on this host (headless server). Use get_map for the ASCII map instead.");
+  }
 }
 
 export function cropMap(text, cx, cy, r) {
@@ -153,6 +174,21 @@ export function registerPlayTools(server, getPlayer, beforeEach = async () => {}
   const run = (fn) => async (args) => {
     try { await beforeEach(); return text(await fn(getPlayer(), args ?? {})); } catch (e) { return fail(e); }
   };
+  server.registerTool("look",
+    {
+      description: "SEE the battlefield: a rendered image of your own view (your fog of war applies), centred on the action, or on x,y if given. Use it to check your base layout, spot enemy forces you can see, and judge a fight. Only works when the host runs the graphical game.",
+      inputSchema: { x: z.number().optional().describe("tile x to look at"), y: z.number().optional().describe("tile y to look at") },
+    },
+    async (args) => {
+      try {
+        await beforeEach();
+        const jpg = await getPlayer().lookJpeg(args?.x, args?.y);
+        return { content: [
+          { type: "image", data: jpg.toString("base64"), mimeType: "image/jpeg" },
+          { type: "text", text: `Your view${args?.x != null ? ` around (${args.x},${args.y})` : " (following the action)"}. Off-axis camera looking north-east; fog shows what you can't currently see.` },
+        ] };
+      } catch (e) { return fail(e); }
+    });
   server.registerTool("get_rules",
     { description: "Rules, unit/structure stats, costs, prerequisites and the command reference. Read this once at the start." },
     run((p) => p.rulesText()));

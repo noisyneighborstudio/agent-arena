@@ -257,7 +257,7 @@ namespace Pez.View
                 }
             fogMesh = new Mesh { name = "fog" };
             fogMesh.vertices = verts; fogMesh.triangles = tris; fogMesh.colors = fogColors;
-            var go = new GameObject("Fog");
+            var go = new GameObject("Fog") { layer = MainFogLayer };
             go.transform.SetParent(transform, false);
             go.AddComponent<MeshFilter>().sharedMesh = fogMesh;
             var r = go.AddComponent<MeshRenderer>();
@@ -270,6 +270,55 @@ namespace Pez.View
         /// Shroud (never seen) is near-black and hides decorations; fog (seen before, not in sight now)
         /// is dimmed. team &lt; 0 reveals everything (spectator).
         /// </summary>
+        // Layers: the main view's fog, and one fog per team for the per-player live streams.
+        public const int MainFogLayer = 28, TeamFogLayerBase = 20;
+        public static int TeamFogMask => 0xFF << TeamFogLayerBase;
+        readonly Dictionary<int, (Mesh mesh, Color[] colors, float next)> teamFogs = new Dictionary<int, (Mesh, Color[], float)>();
+
+        /// <summary>Keep a team's own fog overlay current (for its live stream). Throttled to 4 updates a second.</summary>
+        public void UpdateTeamFog(World w, int team)
+        {
+            if (fogMesh == null || team < 0 || team > 7) return;
+            if (!teamFogs.TryGetValue(team, out var f))
+            {
+                var mesh = new Mesh { name = "fog" + team, vertices = fogMesh.vertices, triangles = fogMesh.triangles };
+                var go = new GameObject("Fog" + team) { layer = TeamFogLayerBase + team };
+                go.transform.SetParent(transform, false);
+                go.AddComponent<MeshFilter>().sharedMesh = mesh;
+                var r = go.AddComponent<MeshRenderer>();
+                r.sharedMaterial = Mats.Unlit(Color.white);
+                r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                f = (mesh, new Color[fogColors.Length], 0f);
+            }
+            if (Time.time < f.next) { teamFogs[team] = f; return; }
+            FillFog(w, team, f.colors);
+            f.mesh.colors = f.colors;
+            teamFogs[team] = (f.mesh, f.colors, Time.time + 0.25f);
+        }
+
+        void FillFog(World w, int team, Color[] colors)
+        {
+            var vis = w.Teams[team].Visible;
+            var exp = w.Teams[team].Explored;
+            int vw = map.W + 1;
+            for (int y = 0; y <= map.H; y++)
+                for (int x = 0; x <= map.W; x++)
+                {
+                    int seen = 0, known = 0, total = 0;
+                    for (int dy = -1; dy <= 0; dy++)
+                        for (int dx = -1; dx <= 0; dx++)
+                        {
+                            int tx = x + dx, ty = y + dy;
+                            if (!map.InBounds(tx, ty)) continue;
+                            total++;
+                            if (vis[map.Idx(tx, ty)]) seen++;
+                            if (exp[map.Idx(tx, ty)]) known++;
+                        }
+                    float a = total == 0 ? 0 : (1f - seen / (float)total) * 0.5f + (1f - known / (float)total) * 0.48f;
+                    colors[y * vw + x] = new Color(0.02f, 0.03f, 0.05f, a);
+                }
+        }
+
         public void UpdateFog(World w, int team)
         {
             var go = fogMesh == null ? null : transform.Find("Fog")?.gameObject;
