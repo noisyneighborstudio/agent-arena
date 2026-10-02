@@ -281,14 +281,16 @@ async function liveLoop() {
   try {
     const r = await fetch(`${BASE}/live.mjpg`, { cache: "no-store", signal: liveAbort.signal });
     if (r.ok) { liveFails = 0; await readFrames(r.body.getReader()); }
-    else if (r.status !== 429 && ++liveFails > 3) return pollLoop(); // no push stream from this host: poll stills
+    else if (++liveFails > 3) return pollLoop(); // no push stream for us right now: poll stills instead
   } catch { if (liveAbort.signal.aborted) return setTimeout(liveLoop, 0); liveFails++; }
   setTimeout(liveLoop, 1000); // the stream ended (the game restarted, the seat emptied): reconnect
 }
 // Fallback for hosts without the push stream: fetch one still at a time, as fast as they come.
 async function pollLoop() {
   let misses = 0;
+  const started = Date.now();
   for (;;) {
+    if (Date.now() - started > 30000) { liveFails = 0; return liveLoop(); } // try the push stream again
     if (!liveWanted()) { await new Promise((r) => setTimeout(r, 250)); continue; }
     try {
       const r = await fetch(`${BASE}/live.jpg?${Date.now()}`, { cache: "no-store" });

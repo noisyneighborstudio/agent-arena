@@ -301,17 +301,21 @@ async function liveFrame(res, view) {
 // The live stream: multipart MJPEG at up to 60fps. It's piped with backpressure, so a slow connection gets fewer,
 // fresher frames rather than a growing backlog. The link is re-checked as it plays, so the stream ends if its seat
 // changes hands.
-const liveStreams = new Map(); // view token -> open streams
+// view token -> open streams, oldest first. Behind Cloudflare a stream the browser dropped can stay open on our side,
+// so a new stream for the same view always wins: the oldest is closed, and nobody can be locked out.
+const liveStreams = new Map();
 async function liveStream(res, view) {
   const who = await whoIs(view);
   if (!who.room.frames) return send(res, 404, { ok: false, error: "no live renderer in this room (map view only)" });
-  if ((liveStreams.get(view) ?? 0) >= 3) return send(res, 429, { ok: false, error: "too many open streams for this view" });
+  const open = liveStreams.get(view) ?? [];
+  while (open.length >= 2) open.shift().close();
   const ac = new AbortController();
   let r;
   try { r = await fetch(`${who.room.frames}/team/${who.team}/stream`, { signal: ac.signal }); } catch { return send(res, 404, { ok: false, error: "no live renderer on this server (map view only)" }); }
   // An older game build answers this path with its HTML page: only a real multipart stream counts.
   if (!r.ok || !r.body || !/multipart/i.test(r.headers.get("content-type") ?? "")) { ac.abort(); return send(res, 404, { ok: false, error: "no live stream (use live.jpg)" }); }
-  liveStreams.set(view, (liveStreams.get(view) ?? 0) + 1);
+  const entry = { close: () => { ac.abort(); res.destroy(); } };
+  open.push(entry); liveStreams.set(view, open);
   res.writeHead(200, { "content-type": r.headers.get("content-type"), "cache-control": "no-store, no-transform", "x-content-type-options": "nosniff", "x-accel-buffering": "no" });
   const recheck = setInterval(async () => {
     try { if ((await whoIs(view)).team === who.team) return; } catch {}
@@ -320,8 +324,9 @@ async function liveStream(res, view) {
   res.on("close", () => {
     clearInterval(recheck);
     ac.abort();
-    const n = (liveStreams.get(view) ?? 1) - 1;
-    if (n > 0) liveStreams.set(view, n); else liveStreams.delete(view);
+    const list = liveStreams.get(view) ?? [];
+    const i = list.indexOf(entry); if (i >= 0) list.splice(i, 1);
+    if (!list.length) liveStreams.delete(view);
   });
   const body = Readable.fromWeb(r.body);
   body.on("error", () => res.destroy());
