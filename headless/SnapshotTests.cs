@@ -45,8 +45,58 @@ namespace Pez.Headless
             return $"at char {i}:\n  A …{a.Substring(from, Math.Min(260, a.Length - from))}\n  B …{b.Substring(from, Math.Min(260, b.Length - from))}";
         }
 
+        /// <summary>
+        /// Every field of the sim's state classes, sorted into "saved" (Snapshot.cs writes and reads it) or "not state"
+        /// (caches, scratch lists, hooks). A field added to the sim and not to either list fails here, so nobody adds
+        /// state that a restart would silently lose.
+        /// </summary>
+        static readonly Dictionary<Type, string> SavedFields = new Dictionary<Type, string>
+        {
+            [typeof(Entity)] = "Id Team Def Pos PrevPos Facing TurretFacing Hp Dead Origin BuildProgress Rally Order OrderPos GuardPos TargetId Path PathIdx Cooldown " +
+                "SpeedCap ProgressPos ProgressAt GhostUntil ProgressDist Waypoints WaypointLoop RetreatBelow Retreating RepathTimer Moving LastAttackerId LastHitTime " +
+                "LastCallForHelp Responding HomePos Cargo CargoType HarvestType HarvestTile WorkTimer DepositId Working CarrierId Passengers Fuel Landed Stranded " +
+                "AtDepot FuelWarned NoAutoRefuelUntil ResumeOrder ResumePos ResumeGuard ResumeTarget ResumeWaypoints ResumeSpeedCap MineQueue LastFiredAt " +
+                "Prospecting ProspectCenter ProspectRadius SkipSites SurveyFailure SurveyFailedAt ZoneId",
+            [typeof(Team)] = "Id Name Controller PlayerName StandingOrders OrdersVersion Stock Rates PowerProduced PowerUsed Detected Revealed Defeated StartPos " +
+                "Visible Explored Left Resigned StalledSince House Seat ProtectedUntil StructureQueue UnitQueues KnownEnemyStructures Surveyed SurveySites Zones " +
+                "SurfaceWarnedAt Stats",
+            [typeof(World)] = "Map Paths MapVersion Open MaxPlayers MaxMapSize GrowStep SafeJoinDistance ProtectionSeconds Teams ById Entities Projectiles Events " +
+                "EventCounts Alerts Tick GameOver Winner Errors LastError nextId nextSeq seatCounter rng rateSnapshot airWarned StallGrace ArenaChampion contested " +
+                "| ErrorLog loggedErrors cells cellsW cellsH nearTarget nearHelp nearMine nearSep nearVis",
+            [typeof(Map)] = "W H Tiles Ore OreType Occupant Spawns Deep OreScale nextDepositId | writable",
+            [typeof(SimpleAI)] = "team Passive nextThink waveSize outpostTargets nextProspect prospectRadius knownSurface",
+            [typeof(Game)] = "World Config Speed Paused ais accumulator nextHouseCheck ResumedFrom LastSaved | RenderFps",
+            [typeof(AlertLog)] = "All open nextSeq",
+            [typeof(Alert)] = "Seq Team Kind Priority Pos StartTick LastTick Count Victims Attackers Lost",
+            [typeof(GameEvent)] = "Seq Tick Type Team A B Pos Pos2 Key Text",
+            [typeof(Projectile)] = "Id Team SourceId TargetId Pos PrevPos TargetPos Weapon",
+            [typeof(DeepDeposit)] = "Id Pos Type Amount Initial MineId",
+            [typeof(ProdItem)] = "Key Progress StructureId",
+            [typeof(ZoneFlag)] = "ZoneId FlaggedBy FlaggedAt",
+            [typeof(TeamStats)] = "UnitsBuilt StructuresBuilt UnitsLost StructuresLost Kills OreMined Built",
+            [typeof(GameConfig)] = "Seed MapSize Speed Controllers Orders Open MaxPlayers MaxMapSize OreScale HouseAIs HouseResignAbove",
+        };
+
+        static void SnapshotCoversEveryField()
+        {
+            var missing = new List<string>();
+            foreach (var (type, listed) in SavedFields)
+            {
+                var known = new HashSet<string>(listed.Split(new[] { ' ', '|' }, StringSplitOptions.RemoveEmptyEntries));
+                foreach (var f in type.GetFields(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic))
+                {
+                    var name = f.Name.StartsWith("<") ? f.Name.Substring(1, f.Name.IndexOf('>') - 1) : f.Name; // auto-property backing fields
+                    if (!known.Contains(name)) missing.Add($"{type.Name}.{name}");
+                }
+            }
+            Check(missing.Count == 0, missing.Count == 0 ? "every field of the sim's state is either saved in a snapshot or marked as not state"
+                : $"new sim state not in the saved game: {string.Join(", ", missing)}. Save and load it in Sim/Snapshot.cs (missing = its default, for older " +
+                  "snapshots), then list it in SavedFields in headless/SnapshotTests.cs (after a | if it's a cache, not state)");
+        }
+
         static void Snapshots()
         {
+            SnapshotCoversEveryField();
             // ---- A busy mid-game: four seats (two scripted AIs fighting, two agent seats), several minutes in.
             var cfg = new GameConfig { Seed = 11, MapSize = 112, Controllers = new[] { "ai", "ai", "llm", "llm" } };
             var game = new Game(cfg);
@@ -81,13 +131,16 @@ namespace Pez.Headless
             t2.Surveyed.Add(dep.Id); t2.SurveySites.Add(dep.Pos);
             var mine = w.SpawnStructure(2, "deep_mine", Int2.Of(dep.Pos), 1f);
             mine.DepositId = dep.Id; dep.MineId = mine.Id; dep.Amount -= 123.25f;
+            t2.Zones[dep.Id] = new ZoneFlag { ZoneId = dep.Id, FlaggedBy = 12345, FlaggedAt = w.Time - 3.5f };
+            var surveyor = w.SpawnUnit(2, "geological_surveyor", factory);
+            var r5 = Commands.Execute(w, 2, Cmd("type", "prospect", "units", new[] { surveyor.Id }, "radius", 30));
             w.SetOrders(2, "Hold the ridge; expand east.");
             w.Teams[3].ProtectedUntil = w.Time + 200;
             var enemy = w.Owned(0).First(e => !e.IsStructure);
             w.Alerts.Raise(w, 2, "base_under_attack", Priority.Critical, hq.Center, hq, enemy);
             w.Emit("chat", 2, text: "Holding \"the ridge\" — ünïcode ok");
             Step(game, 3);
-            Check(Ok(r1) && Ok(r2) && Ok(r3) && Ok(r4), $"set up a mid-game scene ({r1["result"] ?? r1["error"]}; {r2["result"]}; {r3["result"]}; {r4["result"]})");
+            Check(Ok(r1) && Ok(r2) && Ok(r3) && Ok(r4) && Ok(r5), $"set up a mid-game scene ({r1["result"] ?? r1["error"]}; {r2["result"]}; {r3["result"]}; {r4["result"]}; {r5["result"] ?? r5["error"]})");
 
             var sw = System.Diagnostics.Stopwatch.StartNew();
             var json = Snap(game);
@@ -120,6 +173,9 @@ namespace Pez.Headless
             Check(tb.UnitQueues[Producer.Barracks].Count == 3 && tb.UnitQueues[Producer.Barracks][0].Progress == t2.UnitQueues[Producer.Barracks][0].Progress, "unit production queues survive");
             var dep2 = b.Map.DepositById(dep.Id);
             Check(dep2 != null && dep2.MineId == mine.Id && dep2.Amount == dep.Amount && b.Get(mine.Id)?.DepositId == dep.Id && tb.Surveyed.Contains(dep.Id), "deep mines, their deposits and survey results survive");
+            var sv2 = b.Get(surveyor.Id);
+            Check(tb.Zones.TryGetValue(dep.Id, out var zf) && zf.FlaggedBy == 12345 && zf.FlaggedAt == t2.Zones[dep.Id].FlaggedAt && sv2 != null && sv2.Prospecting == surveyor.Prospecting &&
+                  sv2.ProspectRadius == surveyor.ProspectRadius && surveyor.Prospecting, $"mining zone flags and a prospecting surveyor survive ({sv2?.OrderName})");
             Check(b.Alerts.Active(b, 2).Any(a => a.Kind == "base_under_attack" && a.Priority == Priority.Critical) && b.Alerts.LastSeq == w.Alerts.LastSeq, "active alerts survive");
             Check(b.IsProtected(3) && b.Teams[3].ProtectedUntil == w.Teams[3].ProtectedUntil, "newcomer protection survives");
             Check(b.Events.Any(e => e.Type == "chat" && e.Text.Contains("ünïcode")) && b.Events[b.Events.Count - 1].Seq == w.Events[w.Events.Count - 1].Seq, "recent events (with their sequence numbers) survive");

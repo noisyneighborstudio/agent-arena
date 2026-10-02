@@ -27,7 +27,8 @@ namespace Pez.Sim
     public static class Snapshot
     {
         public const string Format = "pezz-snapshot";
-        public const int Schema = 1;
+        /// <summary>1: first version. 2: mining zones, prospecting surveyors, drill rigs' zones, arena champion.</summary>
+        public const int Schema = 2;
         public const int MinReader = 1;
         /// <summary>Events kept: the last two minutes, plus recent chat, at most MaxEvents. Alerts: the last minute.</summary>
         const int MaxEvents = 1500;
@@ -97,6 +98,7 @@ namespace Pez.Sim
                 o.Set("known_enemy_structures", t.KnownEnemyStructures.Select(kv => (object)new List<object> { kv.Key, kv.Value.key, kv.Value.origin.X, kv.Value.origin.Y, kv.Value.team }).ToList());
             if (t.Surveyed.Count > 0) o.Set("surveyed", t.Surveyed.Cast<object>().ToList());
             if (t.SurveySites.Count > 0) o.Set("survey_sites", SnapIO.Vs(t.SurveySites));
+            if (t.Zones.Count > 0) o.Set("zones", t.Zones.Values.Select(z => (object)new List<object> { z.ZoneId, z.FlaggedBy, SnapIO.X(z.FlaggedAt) }).ToList());
             var s = t.Stats;
             o.Set("stats", new JObj().Put("units_built", s.UnitsBuilt).Put("structures_built", s.StructuresBuilt).Put("units_lost", s.UnitsLost)
                 .Put("structures_lost", s.StructuresLost).Put("kills", s.Kills).Put("ore_mined", s.OreMined)
@@ -141,6 +143,8 @@ namespace Pez.Sim
                     t.KnownEnemyStructures[(int)id] = (l[1]?.ToString(), new Int2(SnapIO.ToI(l[2]), SnapIO.ToI(l[3])), SnapIO.ToI(l[4]));
             foreach (var x in d.Arr("surveyed")) if (x is double id) t.Surveyed.Add((int)id);
             t.SurveySites.AddRange(SnapIO.ToVecs(d.Arr("survey_sites")));
+            foreach (var x in d.Arr("zones"))
+                if (x is List<object> l && l.Count >= 3) t.Zones[SnapIO.ToI(l[0])] = new ZoneFlag { ZoneId = SnapIO.ToI(l[0]), FlaggedBy = SnapIO.ToI(l[1]), FlaggedAt = SnapIO.ToF(l[2]) };
             var s = d.Obj("stats");
             if (s != null)
             {
@@ -182,6 +186,10 @@ namespace Pez.Sim
              .Put("resume_speed_cap", e.ResumeSpeedCap);
             if (e.ResumeWaypoints.Count > 0) o.Set("resume_waypoints", SnapIO.Vs(e.ResumeWaypoints));
             if (e.MineQueue.Count > 0) o.Set("mine_queue", SnapIO.Vs(e.MineQueue));
+            o.Put("last_fired_at", e.LastFiredAt, -999f)
+             .Put("prospecting", e.Prospecting).PutV("prospect_center", e.ProspectCenter).Put("prospect_radius", e.ProspectRadius)
+             .Put("survey_failure", e.SurveyFailure).Put("survey_failed_at", e.SurveyFailedAt).Put("zone", e.ZoneId);
+            if (e.SkipSites.Count > 0) o.Set("skip_sites", SnapIO.Vs(e.SkipSites));
             return o;
         }
 
@@ -219,6 +227,10 @@ namespace Pez.Sim
             d.Load("resume_speed_cap", ref e.ResumeSpeedCap);
             e.ResumeWaypoints.AddRange(SnapIO.ToVecs(d.Arr("resume_waypoints")));
             e.MineQueue.AddRange(SnapIO.ToVecs(d.Arr("mine_queue")));
+            d.Load("last_fired_at", ref e.LastFiredAt);
+            d.Load("prospecting", ref e.Prospecting); d.Load("prospect_center", ref e.ProspectCenter); d.Load("prospect_radius", ref e.ProspectRadius);
+            d.Load("survey_failure", ref e.SurveyFailure); d.Load("survey_failed_at", ref e.SurveyFailedAt); d.Load("zone", ref e.ZoneId);
+            e.SkipSites.AddRange(SnapIO.ToVecs(d.Arr("skip_sites")));
             return e;
         }
 
@@ -301,8 +313,8 @@ namespace Pez.Sim
     {
         internal JObj SaveState() => new JObj()
             .Set("team", team).Put("passive", Passive).Set("next_think", SnapIO.X(nextThink)).Set("wave_size", waveSize).Set("known_surface", knownSurface)
-            .Set("outpost_targets", outpostTargets.Select(kv => (object)new List<object> { kv.Key, SnapIO.X(kv.Value.X), SnapIO.X(kv.Value.Y) }).ToList())
-            .Set("rig_targets", rigTargets.Select(kv => (object)new List<object> { kv.Key, kv.Value }).ToList());
+            .Set("next_prospect", SnapIO.X(nextProspect)).Set("prospect_radius", prospectRadius)
+            .Set("outpost_targets", outpostTargets.Select(kv => (object)new List<object> { kv.Key, SnapIO.X(kv.Value.X), SnapIO.X(kv.Value.Y) }).ToList());
 
         internal static SimpleAI LoadState(D d)
         {
@@ -310,10 +322,9 @@ namespace Pez.Sim
             bool passive = false; d.Load("passive", ref passive);
             var ai = new SimpleAI(d.In("team"), passive);
             d.Load("next_think", ref ai.nextThink); d.Load("wave_size", ref ai.waveSize); d.Load("known_surface", ref ai.knownSurface);
+            d.Load("next_prospect", ref ai.nextProspect); d.Load("prospect_radius", ref ai.prospectRadius);
             foreach (var x in d.Arr("outpost_targets"))
                 if (x is List<object> l && l.Count >= 3) ai.outpostTargets[SnapIO.ToI(l[0])] = new Vec2(SnapIO.ToF(l[1]), SnapIO.ToF(l[2]));
-            foreach (var x in d.Arr("rig_targets"))
-                if (x is List<object> l && l.Count >= 2) ai.rigTargets[SnapIO.ToI(l[0])] = SnapIO.ToI(l[1]);
             return ai;
         }
     }
@@ -403,7 +414,7 @@ namespace Pez.Sim
                 .Put("open", Open).Set("max_players", MaxPlayers).Set("max_map_size", MaxMapSize).Set("grow_step", GrowStep)
                 .Set("safe_join_distance", SnapIO.X(SafeJoinDistance)).Set("protection_seconds", SnapIO.X(ProtectionSeconds)).Set("stall_grace", SnapIO.X(StallGrace))
                 .Set("next_id", nextId).Set("next_seq", nextSeq).Set("seat_counter", seatCounter).Set("rng", rng.State.ToString("x16"))
-                .Put("errors", Errors).Put("last_error", LastError)
+                .Put("errors", Errors).Put("last_error", LastError).Put("arena_champion", ArenaChampion).Put("contested", contested)
                 .Set("event_counts", EventCounts.Aggregate(new JObj(), (j, kv) => j.Set(kv.Key, kv.Value)))
                 .Set("rate_snapshot", rateSnapshot.Select(kv => (object)new JObj().Set("team", kv.Key).Set("stock", SnapIO.Floats(kv.Value))).ToList())
                 .Set("air_warned", airWarned.Select(kv => (object)new List<object> { kv.Key.team, kv.Key.id, SnapIO.X(kv.Value) }).ToList())
@@ -424,6 +435,7 @@ namespace Pez.Sim
             d.Load("open", ref w.Open); d.Load("max_players", ref w.MaxPlayers); d.Load("max_map_size", ref w.MaxMapSize); d.Load("grow_step", ref w.GrowStep);
             d.Load("safe_join_distance", ref w.SafeJoinDistance); d.Load("protection_seconds", ref w.ProtectionSeconds); d.Load("stall_grace", ref w.StallGrace);
             d.Load("errors", ref w.Errors); d.Load("last_error", ref w.LastError);
+            d.Load("arena_champion", ref w.ArenaChampion); d.Load("contested", ref w.contested);
 
             bool rebuildPower = false, rebuildVision = false;
             int i = 0;

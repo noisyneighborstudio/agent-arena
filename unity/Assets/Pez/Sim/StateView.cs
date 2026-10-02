@@ -383,7 +383,8 @@ namespace Pez.Sim
         /// 6: surveyors flag mining zones (mining_zones replaces deep_deposits), prospect (roaming surveys), drill (rig to a zone).
         /// </summary>
         /// 7: repair trucks refuel vehicles in the field; thinner fuel reserve in a fight; arena-cleared milestone.
-        public const int RulesVersion = 7;
+        /// 8: games survive host restarts (saved and resumed: same seats, tokens and world).
+        public const int RulesVersion = 8;
 
         public static JObj Rules()
         {
