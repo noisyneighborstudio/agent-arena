@@ -98,6 +98,7 @@ namespace Pez.Headless
             Console.WriteLine($"Fuel: {Count("low_fuel")} trips home to refuel, {Count("refuelled")} refuelled, {Count("stranded")} stranded, {Count("crashed")} crashed; " +
                               $"{w.Entities.Count(e => !e.Dead && e.Stranded)} still stranded.");
             Console.WriteLine($"Stalls: {w.Teams.Count(t => t.Resigned)} resigned: {string.Join(", ", w.Teams.Where(t => t.Resigned).Select(t => t.Name))}");
+            Console.WriteLine("Deep mining: " + string.Join(" | ", w.Teams.Select(t => $"{t.Name} {t.SurveySites.Count} surveys, {t.Zones.Count} zones flagged, {w.Owned(t.Id).Count(e => e.Def.Key == "deep_mine")} deep mines")));
             if (World.Profile) Console.WriteLine("Profile (s): " + string.Join(", ", World.Timings.OrderByDescending(kv => kv.Value).Select(kv => $"{kv.Key} {kv.Value:0.0}")));
             foreach (var t in w.Teams)
                 Console.WriteLine($"{t.Name} built: " + string.Join(", ", t.Stats.Built.Select(kv => $"{kv.Key} x{kv.Value}")));

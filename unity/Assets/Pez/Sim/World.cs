@@ -11,6 +11,14 @@ namespace Pez.Sim
         public int StructureId;  // structures: the foundation entity being built
     }
 
+    /// <summary>A surveyor's flag on a deep deposit: the team's mining zone, with the same id as the deposit.</summary>
+    public class ZoneFlag
+    {
+        public int ZoneId;
+        public int FlaggedBy;     // the surveyor's entity id
+        public float FlaggedAt;   // game time, seconds
+    }
+
     public class TeamStats
     {
         public int UnitsBuilt, StructuresBuilt, UnitsLost, StructuresLost, Kills, OreMined;
@@ -76,6 +84,8 @@ namespace Pez.Sim
         /// <summary>Deep deposits this team's surveyors have found (by deposit id), and where they've surveyed.</summary>
         public readonly HashSet<int> Surveyed = new HashSet<int>();
         public readonly List<Vec2> SurveySites = new List<Vec2>();
+        /// <summary>Mining zones: the flag a surveyor planted on each deep deposit it found (key = deposit id = zone id).</summary>
+        public readonly Dictionary<int, ZoneFlag> Zones = new Dictionary<int, ZoneFlag>();
         public float SurfaceWarnedAt = -999;
         public readonly TeamStats Stats = new TeamStats();
         public bool LowPower => PowerUsed > PowerProduced;
@@ -505,7 +515,7 @@ namespace Pez.Sim
         }
 
         /// <summary>Turn a deployable unit (Outpost Truck) into its structure where it stands.</summary>
-        public string Deploy(Entity u)
+        public string Deploy(Entity u, DeepDeposit want = null)
         {
             var key = u.Def.DeploysInto;
             if (key == null) return $"{u.Def.Key} can't deploy";
@@ -515,7 +525,8 @@ namespace Pez.Sim
             if (key == "deep_mine")
             {
                 // A drill rig only works on a deep deposit your surveyors have found, and one mine per deposit.
-                deposit = Map.Deep.Where(d => Teams[u.Team].Surveyed.Contains(d.Id) && Vec2.Dist(d.Pos, u.Pos) <= 3f)
+                deposit = want != null && Teams[u.Team].Surveyed.Contains(want.Id) && Vec2.Dist(want.Pos, u.Pos) <= 3f ? want
+                        : Map.Deep.Where(d => Teams[u.Team].Surveyed.Contains(d.Id) && Vec2.Dist(d.Pos, u.Pos) <= 3f)
                                   .OrderBy(d => Vec2.Dist(d.Pos, u.Pos)).FirstOrDefault();
                 if (deposit == null) return "no deep deposit your team has surveyed within 3 tiles: survey first, then drive the rig onto a deposit";
                 if (deposit.MineId != 0 && Get(deposit.MineId) != null) return $"deposit #{deposit.Id} already has a deep mine on it";
@@ -874,6 +885,9 @@ namespace Pez.Sim
                 case Order.Survey:
                     UpdateSurvey(e);
                     break;
+                case Order.Drill:
+                    UpdateDrill(e);
+                    break;
                 case Order.Refuel:
                     UpdateRefuelTrip(e);
                     if (e.IsArmed && !e.Dead) OpportunisticFire(e);
@@ -942,7 +956,7 @@ namespace Pez.Sim
             SetOrder(e, Order.Move, e.IsAir ? home.Center : DockPoint(home));
             e.Retreating = true;
             Emit("retreating", e.Team, e.Id, home.Id, e.Pos, key: e.Def.Key,
-                 text: $"{e.Def.Key} #{e.Id} fell below {(int)(e.RetreatBelow * 100)}% HP ({(int)e.Hp}/{e.Def.MaxHp}) and is pulling back to {home.Def.Key} #{home.Id}");
+                 text: $"{e.Def.Key} #{e.Id} fell below {StateView.Pct(e.RetreatBelow)}% HP ({(int)e.Hp}/{e.Def.MaxHp}) and is pulling back to {home.Def.Key} #{home.Id}");
         }
 
         void IdleCombat(Entity e)
@@ -1364,13 +1378,22 @@ namespace Pez.Sim
 
         // ------------------------------------------------------------------ deep mining
 
-        /// <summary>A surveyor drives to its spot, stands for SurveySeconds, and finds the deep deposits around it.</summary>
+        /// <summary>
+        /// A surveyor drives to its spot, stands for SurveySeconds, finds the deep deposits around it and plants a flag on
+        /// each (a mining zone for its team). On 'prospect' it then moves on to the next unsurveyed spot by itself.
+        /// </summary>
         void UpdateSurvey(Entity e)
         {
+            if (!Map.InBounds((int)e.OrderPos.X, (int)e.OrderPos.Y)) { SurveyFailed(e, $"the site is outside the {Map.W}x{Map.H} map"); return; }
             if (Vec2.Dist(e.Pos, e.OrderPos) > 0.6f)
             {
                 e.WorkTimer = 0;
-                if (FollowPath(e, e.OrderPos, 0.5f) && Vec2.Dist(e.Pos, e.OrderPos) > 2f) e.OrderPos = e.Pos; // unreachable: survey where it stopped
+                if (e.Stranded) { SurveyFailed(e, $"out of fuel, stranded at {(int)e.Pos.X},{(int)e.Pos.Y} (send a repair truck to refuel it)"); return; }
+                if (!FollowPath(e, e.OrderPos, 0.5f)) return;
+                // Stopped short. A few tiles off (the site itself is rock, water or a building) it surveys from there;
+                // further off it says why it can't get there instead of surveying the wrong ground.
+                if (Vec2.Dist(e.Pos, e.OrderPos) <= 3f) e.OrderPos = e.Pos;
+                else SurveyFailed(e, UnreachableWhy(e, e.OrderPos));
                 return;
             }
             e.Moving = false;
@@ -1380,13 +1403,174 @@ namespace Pez.Sim
             var team = Teams[e.Team];
             var found = Map.Deep.Where(d => Vec2.Dist(d.Pos, e.Pos) <= EntityDef.SurveyRadius).ToList();
             var fresh = found.Where(d => team.Surveyed.Add(d.Id)).ToList();
+            foreach (var d in found)
+                if (!team.Zones.ContainsKey(d.Id)) team.Zones[d.Id] = new ZoneFlag { ZoneId = d.Id, FlaggedBy = e.Id, FlaggedAt = Time };
             team.SurveySites.Add(e.Pos);
             if (team.SurveySites.Count > 200) team.SurveySites.RemoveAt(0);
-            string list = string.Join(", ", found.Select(d => $"#{d.Id} {Defs.Ores[d.Type]} at {(int)d.Pos.X},{(int)d.Pos.Y} ({(int)d.Amount} left{(d.MineId != 0 && Get(d.MineId) != null ? ", being mined" : "")})"));
-            Emit("surveyed", e.Team, e.Id, 0, e.Pos, key: e.Def.Key,
-                 text: found.Count == 0 ? $"surveyor #{e.Id} found no deep deposits within {EntityDef.SurveyRadius:0} tiles of {(int)e.Pos.X},{(int)e.Pos.Y}"
-                     : $"surveyor #{e.Id} found {found.Count} deep deposit(s){(fresh.Count < found.Count ? $" ({fresh.Count} new)" : "")}: {list}. Send a drill_rig onto one and deploy it.");
             e.WorkTimer = 0;
+            e.SurveyFailure = null;
+
+            // Prospecting: pick the next spot before reporting, so the report says where it's headed.
+            Vec2? next = e.Prospecting ? FindProspectSite(e, e.ProspectCenter, e.ProspectRadius) : null;
+            string list = string.Join(", ", found.Select(d => $"zone #{d.Id} {Defs.Ores[d.Type]} at {(int)d.Pos.X},{(int)d.Pos.Y} ({(int)d.Amount} left, {ZoneStatus(d, e.Team, out _)})"));
+            string then = !e.Prospecting ? ""
+                : next.HasValue ? $" Prospecting on: heading to {(int)next.Value.X},{(int)next.Value.Y}."
+                : $" Prospecting done: nothing unsurveyed left within {e.ProspectRadius:0} tiles of {(int)e.ProspectCenter.X},{(int)e.ProspectCenter.Y} that it can reach; it's idle (give it a new prospect area).";
+            Emit("surveyed", e.Team, e.Id, 0, e.Pos, key: e.Def.Key,
+                 text: (found.Count == 0 ? $"surveyor #{e.Id} found no deep deposits within {EntityDef.SurveyRadius:0} tiles of {(int)e.Pos.X},{(int)e.Pos.Y}."
+                     : $"surveyor #{e.Id} flagged {found.Count} mining zone(s){(fresh.Count < found.Count ? $" ({fresh.Count} new)" : "")}: {list}. Send a drill_rig with {{\"type\":\"drill\",\"units\":[RIG],\"zone\":{found[0].Id}}}.") + then);
+            if (next.HasValue) SetOrder(e, Order.Survey, next.Value); // Prospecting stays set
+            else { e.Prospecting = false; SetOrder(e, Order.Idle, e.Pos); }
+        }
+
+        string UnreachableWhy(Entity e, Vec2 site)
+        {
+            var t = Int2.Of(site);
+            var open = Paths.NearestPassable(t, 3);
+            if (!Map.Passable(open.X, open.Y))
+                return Map.TerrainPassable(t.X, t.Y) ? "the site is built over and there's no open ground within 3 tiles of it"
+                                                     : $"the site is {Map.Tiles[Map.Idx(t.X, t.Y)].ToString().ToLowerInvariant()} with no open ground within 3 tiles of it";
+            if (!ReachableFrom(e.Pos)[Map.Idx(open.X, open.Y)])
+                return $"no route over open ground from {(int)e.Pos.X},{(int)e.Pos.Y}: the site is cut off by rock, water or buildings";
+            return $"blocked on the way: stuck at {(int)e.Pos.X},{(int)e.Pos.Y}, {Vec2.Dist(e.Pos, site):0} tiles short";
+        }
+
+        /// <summary>The surveyor can't do its survey: say why. Prospecting, it skips that site and moves on if it can.</summary>
+        void SurveyFailed(Entity e, string why)
+        {
+            var site = e.OrderPos;
+            e.SurveyFailure = $"unable to reach the site {(int)site.X},{(int)site.Y}: {why}";
+            e.SurveyFailedAt = Time;
+            e.WorkTimer = 0;
+            Vec2? next = null;
+            if (e.Prospecting && !e.Stranded)
+            {
+                e.SkipSites.Add(site);
+                next = FindProspectSite(e, e.ProspectCenter, e.ProspectRadius);
+            }
+            Emit("survey_failed", e.Team, e.Id, 0, site, key: e.Def.Key,
+                 text: $"surveyor #{e.Id} was {e.SurveyFailure}." +
+                       (next.HasValue ? $" Prospecting on: heading to {(int)next.Value.X},{(int)next.Value.Y}." : e.Prospecting ? " It has stopped prospecting." : " It's waiting for orders."));
+            if (next.HasValue) { SetOrder(e, Order.Survey, next.Value); return; }
+            e.Prospecting = false;
+            SetOrder(e, Order.Idle, e.Pos);
+        }
+
+        /// <summary>Surveys closer together than this would mostly cover the same ground.</summary>
+        public const float ProspectSpacing = 18f;
+
+        /// <summary>
+        /// Where a prospecting surveyor goes next: the nearest spot it can drive to, within radius of centre, at least
+        /// ProspectSpacing from every survey its team has done and from where its team's other surveyors are headed,
+        /// and clear of known enemy bases. Null when there's nothing left.
+        /// </summary>
+        public Vec2? FindProspectSite(Entity e, Vec2 centre, float radius)
+        {
+            var team = Teams[e.Team];
+            var reach = ReachableFrom(e.Pos);
+            var taken = Owned(e.Team).Where(o => o != e && o.Def.Key == e.Def.Key &&
+                                                 (o.Order == Order.Survey || (o.Order == Order.Refuel && o.ResumeOrder == Order.Survey)))
+                                     .Select(o => o.Order == Order.Survey ? o.OrderPos : o.ResumePos).ToList();
+            var enemy = team.KnownEnemyStructures.Values.Select(k => new Vec2(k.origin.X + 1, k.origin.Y + 1)).ToList();
+            const float step = 9f, enemyClearance = 16f;
+            Vec2? best = null; float bestScore = float.MaxValue;
+            int n = (int)(radius / step);
+            for (int gy = -n; gy <= n; gy++)
+                for (int gx = -n; gx <= n; gx++)
+                {
+                    var p = centre + new Vec2(gx * step, gy * step);
+                    if (Vec2.Dist(p, centre) > radius) continue;
+                    int tx = (int)p.X, ty = (int)p.Y;
+                    if (tx < 2 || ty < 2 || tx >= Map.W - 2 || ty >= Map.H - 2) continue;
+                    var tile = Paths.NearestPassable(new Int2(tx, ty), 3);
+                    if (!Map.Passable(tile.X, tile.Y) || !reach[Map.Idx(tile.X, tile.Y)]) continue;
+                    var q = tile.Center;
+                    bool near = false;
+                    foreach (var s in team.SurveySites) if (Vec2.Dist(s, q) < ProspectSpacing) { near = true; break; }
+                    if (!near) foreach (var s in e.SkipSites) if (Vec2.Dist(s, q) < 3f) { near = true; break; }
+                    if (near || taken.Any(o => Vec2.Dist(o, q) < ProspectSpacing) || enemy.Any(x => Vec2.Dist(x, q) < enemyClearance)) continue;
+                    float score = Vec2.Dist(e.Pos, q) + 0.25f * Vec2.Dist(centre, q);
+                    if (score < bestScore) { bestScore = score; best = q; }
+                }
+            return best;
+        }
+
+        /// <summary>Tiles a ground unit at `from` can drive to (4-way flood fill over open ground).</summary>
+        bool[] ReachableFrom(Vec2 from)
+        {
+            var seen = new bool[Map.W * Map.H];
+            var s = Paths.NearestPassable(Int2.Of(from), 3);
+            if (!Map.InBounds(s.X, s.Y)) return seen;
+            var q = new Queue<int>();
+            int si = Map.Idx(s.X, s.Y);
+            seen[si] = true; q.Enqueue(si);
+            while (q.Count > 0)
+            {
+                int i = q.Dequeue(), x = i % Map.W, y = i / Map.W;
+                for (int k = 0; k < 4; k++)
+                {
+                    int nx = x + (k == 0 ? 1 : k == 1 ? -1 : 0), ny = y + (k == 2 ? 1 : k == 3 ? -1 : 0);
+                    if (!Map.Passable(nx, ny)) continue;
+                    int ni = Map.Idx(nx, ny);
+                    if (seen[ni]) continue;
+                    seen[ni] = true; q.Enqueue(ni);
+                }
+            }
+            return seen;
+        }
+
+        /// <summary>A mining zone's status for a team: free, yours (your deep mine on it), taken (someone else's), exhausted.</summary>
+        public string ZoneStatus(DeepDeposit d, int team, out Entity mine)
+        {
+            mine = d.MineId != 0 ? Get(d.MineId) : null;
+            if (d.Amount <= 0) return "exhausted";
+            if (mine == null) return "free";
+            return mine.Team == team ? "yours" : "taken";
+        }
+
+        /// <summary>Why a team's drill rig can't go to work on this deposit, or null if it can.</summary>
+        public string DrillBlocker(DeepDeposit d, int team)
+        {
+            if (d == null) return "that zone doesn't exist";
+            if (!Teams[team].Surveyed.Contains(d.Id)) return $"zone #{d.Id} isn't one of your mining zones (your surveyors haven't flagged it)";
+            switch (ZoneStatus(d, team, out var mine))
+            {
+                case "exhausted": return $"zone #{d.Id} is exhausted";
+                case "yours": return $"zone #{d.Id} already has your deep_mine #{mine.Id} on it (one mine per zone)";
+                case "taken": return $"zone #{d.Id} is taken: another team's deep mine is on it";
+            }
+            return null;
+        }
+
+        /// <summary>This team's drill rigs heading for a zone (including any on a refuel stop along the way).</summary>
+        public List<Entity> RigsBound(int team, int zone) =>
+            Owned(team).Where(e => e.ZoneId == zone && (e.Order == Order.Drill || (e.Order == Order.Refuel && e.ResumeOrder == Order.Drill))).ToList();
+
+        /// <summary>A drill rig on 'drill' drives to its zone and deploys into a deep mine on arrival.</summary>
+        void UpdateDrill(Entity e)
+        {
+            var d = Map.DepositById(e.ZoneId);
+            var why = DrillBlocker(d, e.Team);
+            if (why != null) { DrillFailed(e, why); return; }
+            e.OrderPos = d.Pos;
+            if (Vec2.Dist(e.Pos, d.Pos) > 1.2f)
+            {
+                if (!FollowPath(e, d.Pos, 1f)) return;
+                if (Vec2.Dist(e.Pos, d.Pos) > 3f) { DrillFailed(e, $"it can't reach {(int)d.Pos.X},{(int)d.Pos.Y}"); return; }
+            }
+            e.Moving = false;
+            int rig = e.Id, zone = d.Id;
+            why = Deploy(e, d);
+            if (why != null) { DrillFailed(e, why); return; }
+            Emit("drilled", e.Team, rig, d.MineId, d.Pos, key: "deep_mine",
+                 text: $"drill_rig #{rig} reached zone #{zone} and deployed into deep_mine #{d.MineId}: {Defs.Ores[d.Type]}, {(int)d.Amount} left");
+        }
+
+        void DrillFailed(Entity e, string why)
+        {
+            int zone = e.ZoneId;
+            Emit("drill_failed", e.Team, e.Id, zone, e.Pos, key: e.Def.Key, text: $"drill_rig #{e.Id} stopped short of zone #{zone}: {why}");
+            e.ZoneId = 0;
             SetOrder(e, Order.Idle, e.Pos);
         }
 
@@ -1496,7 +1680,7 @@ namespace Pez.Sim
                 {
                     e.FuelWarned = true;
                     var a = Alerts.Raise(this, e.Team, "low_fuel", e.IsAir ? Priority.High : Priority.Medium, e.Pos);
-                    a.Lost.Add($"{e.Def.Key} #{e.Id} ({(int)(e.FuelFraction * 100)}% fuel, nowhere to refuel: {(e.IsAir ? "build an airfield" : "needs a command center, outpost, refinery or factory, or a repair truck")})");
+                    a.Lost.Add($"{e.Def.Key} #{e.Id} ({StateView.Pct(e.FuelFraction)}% fuel, nowhere to refuel: {(e.IsAir ? "build an airfield" : "needs a command center, outpost, refinery or factory, or a repair truck")})");
                 }
                 return;
             }
@@ -1505,7 +1689,7 @@ namespace Pez.Sim
             if (e.Fuel > need) return;
             BeginRefuel(e, p);
             Emit("low_fuel", e.Team, e.Id, p.Id, e.Pos, key: e.Def.Key,
-                 text: $"{e.Def.Key} #{e.Id} is low on fuel ({(int)(e.FuelFraction * 100)}%) and is heading to {p.Def.Key} #{p.Id} to refuel; it picks up its {e.ResumeOrder.ToString().ToLowerInvariant()} order afterwards.");
+                 text: $"{e.Def.Key} #{e.Id} is low on fuel ({StateView.Pct(e.FuelFraction)}%) and is heading to {p.Def.Key} #{p.Id} to refuel; it picks up its {e.ResumeOrder.ToString().ToLowerInvariant()} order afterwards.");
         }
 
         bool OnPad(Entity e)

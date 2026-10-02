@@ -17,6 +17,77 @@ namespace Pez.Sim
             return $"{(char)('A' + col)}{8 - row}";
         }
 
+        /// <summary>
+        /// A fraction as a whole percentage, rounded (0.35 shows as 35, not 34 from float error). Never shows 100 for
+        /// something not quite full, or 0 for something not quite empty.
+        /// </summary>
+        public static int Pct(float fraction)
+        {
+            int p = (int)MathF.Round(fraction * 100f);
+            if (p >= 100 && fraction < 0.9999f) return 99;
+            if (p <= 0 && fraction > 0.0001f) return 1;
+            return p;
+        }
+
+        /// <summary>
+        /// What a geological surveyor is doing, as data: phase (traveling, surveying, refuelling, stranded, failed, idle),
+        /// mode (survey or prospect), the site, distance and ETA while traveling, seconds left while surveying, the
+        /// prospect area, and the reason its last survey failed. Null for anything that isn't a surveyor.
+        /// </summary>
+        public static JObj SurveyStatus(World w, Entity e)
+        {
+            if (e.Def.Key != "geological_surveyor") return null;
+            var o = new JObj();
+            bool refuel = e.Order == Order.Refuel && e.ResumeOrder == Order.Survey;
+            string phase;
+            if (e.Order == Order.Survey || refuel)
+            {
+                var site = refuel ? e.ResumePos : e.OrderPos;
+                o.Set("mode", e.Prospecting ? "prospect" : "survey").Set("site", new JObj().Set("x", (float)Math.Round(site.X, 1)).Set("y", (float)Math.Round(site.Y, 1)));
+                if (e.Prospecting) o.Set("area", new JObj().Set("x", (float)Math.Round(e.ProspectCenter.X, 1)).Set("y", (float)Math.Round(e.ProspectCenter.Y, 1)).Set("radius", (int)e.ProspectRadius));
+                float dist = Vec2.Dist(e.Pos, site);
+                if (e.Stranded) phase = "stranded";
+                else if (refuel) phase = "refuelling";
+                else if (dist <= 0.6f) { phase = "surveying"; o.Set("seconds_left", (float)Math.Round(MathF.Max(0, EntityDef.SurveySeconds - e.WorkTimer), 1)); }
+                else
+                {
+                    phase = "traveling";
+                    float left = dist;
+                    if (e.Path != null && e.PathIdx < e.Path.Count)
+                    {
+                        left = Vec2.Dist(e.Pos, e.Path[e.PathIdx]);
+                        for (int i = e.PathIdx + 1; i < e.Path.Count; i++) left += Vec2.Dist(e.Path[i - 1], e.Path[i]);
+                    }
+                    o.Set("distance", (int)MathF.Round(left)).Set("eta_s", (int)MathF.Ceiling(left / MathF.Max(0.1f, e.Def.Speed)));
+                }
+            }
+            else phase = e.SurveyFailure != null ? "failed" : "idle";
+            o.Set("phase", phase);
+            if (e.SurveyFailure != null) o.Set("last_failure", e.SurveyFailure).Set("failed_at_s", (float)Math.Round(e.SurveyFailedAt, 1));
+            return o;
+        }
+
+        /// <summary>SurveyStatus as a short phrase for the text state (null if not a surveyor).</summary>
+        public static string SurveyText(World w, Entity e)
+        {
+            var o = SurveyStatus(w, e);
+            if (o == null) return null;
+            string Pt(object p) { var j = (JObj)p; return $"{R(Convert.ToSingle(j["x"]))},{R(Convert.ToSingle(j["y"]))}"; }
+            string phase = (string)o["phase"];
+            string fail = o["last_failure"] != null ? $"last survey failed: {o["last_failure"]}" : null;
+            if (phase == "idle") return null;
+            if (phase == "failed") return fail;
+            string what = phase switch
+            {
+                "traveling" => $"traveling to {Pt(o["site"])}, {o["distance"]} tiles, ETA ~{o["eta_s"]}s",
+                "surveying" => $"surveying {Pt(o["site"])}, {o["seconds_left"]}s left",
+                "refuelling" => $"refuelling, then on to {Pt(o["site"])}",
+                _ => $"stranded on the way to {Pt(o["site"])}: out of fuel",
+            };
+            if ((string)o["mode"] == "prospect") { var a = (JObj)o["area"]; what = $"prospecting within {a["radius"]} tiles of {Pt(a)}: {what}"; }
+            return fail != null ? $"{what}; {fail}" : what;
+        }
+
         public static JObj TeamState(World w, int team, long sinceSeq = 0)
         {
             var t = w.Teams[team];
@@ -53,11 +124,11 @@ namespace Pez.Sim
                 .Select(e => $"#{e.Id} {e.Def.Key}: {(e.Working ? "working" : "IDLE (missing inputs)")}").ToList());
 
             var prod = new JObj();
-            prod.Set("structures", t.StructureQueue.Select(p => { var s = w.Get(p.StructureId); return $"{p.Key} #{p.StructureId} {(int)((s?.BuildProgress ?? 0) * 100)}%"; }).ToList());
+            prod.Set("structures", t.StructureQueue.Select(p => { var s = w.Get(p.StructureId); return $"{p.Key} #{p.StructureId} {Pct(s?.BuildProgress ?? 0)}%"; }).ToList());
             foreach (var kv in t.UnitQueues)
             {
                 var name = Defs.ProducerKey(kv.Key);
-                prod.Set(name, kv.Value.Select((p, i) => i == 0 ? $"{p.Key} {(int)(p.Progress / Defs.Get(p.Key).BuildTime * 100)}%" : p.Key).ToList());
+                prod.Set(name, kv.Value.Select((p, i) => i == 0 ? $"{p.Key} {Pct(p.Progress / Defs.Get(p.Key).BuildTime)}%" : p.Key).ToList());
             }
             o.Set("production", prod);
 
@@ -69,7 +140,7 @@ namespace Pez.Sim
             o.Set("my_structures", w.Owned(team).Where(e => e.IsStructure).Select(e =>
             {
                 var s = $"#{e.Id} {e.Def.Key} at {e.Origin.X},{e.Origin.Y} ({e.Def.SizeX}x{e.Def.SizeY}) hp {(int)e.Hp}/{e.Def.MaxHp}";
-                if (!e.IsComplete) s += $" BUILDING {(int)(e.BuildProgress * 100)}%";
+                if (!e.IsComplete) s += $" BUILDING {Pct(e.BuildProgress)}%";
                 if (w.Time - e.LastHitTime < 5) s += " UNDER ATTACK";
                 return s;
             }).ToList());
@@ -84,7 +155,7 @@ namespace Pez.Sim
                 if (e.IsAir) s += " (air)";
                 if (e.Def.UsesFuel)
                 {
-                    s += $" fuel {(int)(e.FuelFraction * 100)}%";
+                    s += $" fuel {Pct(e.FuelFraction)}%";
                     if (e.Stranded) s += " (OUT OF FUEL: can't move; send a repair truck)";
                     else if (e.Landed) s += " (landed, refuelling)";
                     else if (e.AtDepot && e.Fuel < e.Def.Fuel) s += " (refuelling)";
@@ -92,8 +163,11 @@ namespace Pez.Sim
                 if (e.IsCarried) s += $" (inside #{e.CarrierId})";
                 if (e.Def.Capacity > 0) s += $" carrying {e.Passengers.Count}/{e.Def.Capacity}" + (e.Passengers.Count > 0 ? ": " + string.Join(",", e.Passengers.Select(p => "#" + p)) : "");
                 if (e.Def.LaysMines && e.MineQueue.Count > 0) s += $" ({e.MineQueue.Count} mines to lay)";
+                var survey = SurveyText(w, e);
+                if (survey != null) s += $" ({survey})";
+                if (e.Order == Order.Drill) s += $" (to zone #{e.ZoneId})";
                 if (e.Waypoints.Count > 0) s += $" then {string.Join(" -> ", e.Waypoints.Select(p => $"{R(p.X)},{R(p.Y)}"))}{(e.WaypointLoop ? " (looping)" : "")}";
-                if (e.RetreatBelow > 0) s += e.Retreating ? " (RETREATING)" : $" (retreats below {(int)(e.RetreatBelow * 100)}% HP)";
+                if (e.RetreatBelow > 0) s += e.Retreating ? " (RETREATING)" : $" (retreats below {Pct(e.RetreatBelow)}% HP)";
                 return s;
             }).ToList());
 
@@ -112,9 +186,9 @@ namespace Pez.Sim
 
             o.Set("ore_fields", OreFields(w, t.Explored).Select(f => $"{f.type} around {f.cx},{f.cy}: {f.tiles} tiles, {f.total} units").ToList());
             var deep = w.Map.Deep.Where(d => t.Surveyed.Contains(d.Id)).ToList();
-            o.Set("deep_deposits", deep.Count == 0
-                ? (object)(t.SurveySites.Count == 0 ? "none surveyed yet: when surface ore runs low, train a geological_surveyor and 'survey' for deep deposits" : $"none found yet ({t.SurveySites.Count} survey(s) done)")
-                : deep.Select(d => $"#{d.Id} {Defs.Ores[d.Type]} at {(int)d.Pos.X},{(int)d.Pos.Y}: {(int)d.Amount}/{(int)d.Initial} left" + DeepOwner(w, d, team)).ToList());
+            o.Set("mining_zones", deep.Count == 0
+                ? (object)(t.SurveySites.Count == 0 ? "none flagged yet: when surface ore runs low, train a geological_surveyor and 'prospect' (or 'survey' a spot): it flags every deep deposit it finds as a mining zone" : $"none found yet ({t.SurveySites.Count} survey(s) done): prospect further out")
+                : deep.Select(d => ZoneLine(w, d, team)).ToList());
 
             o.Set("stats", new JObj()
                 .Set("kills", t.Stats.Kills).Set("units_lost", t.Stats.UnitsLost).Set("structures_lost", t.Stats.StructuresLost)
@@ -153,7 +227,7 @@ namespace Pez.Sim
                         if (e.Team == team) s = e.Text != null ? $"LOST your {e.Text}" : $"LOST your {e.Key} #{e.A}";
                         else if (w.Teams[team].Visible[w.Map.Idx((int)e.Pos.X, (int)e.Pos.Y)]) s = $"destroyed enemy {e.Key} #{e.A}";
                         break;
-                    case "low_fuel": case "stranded": case "refuelled": case "retreating": case "unstalled": case "surveyed": case "depleted":
+                    case "low_fuel": case "stranded": case "refuelled": case "retreating": case "unstalled": case "surveyed": case "depleted": case "drilled": case "drill_failed": case "survey_failed":
                         if (e.Team == team) s = e.Text; break;
                     case "defeated": case "game_over": s = e.Text; break;
                 }
@@ -165,11 +239,24 @@ namespace Pez.Sim
 
         public static List<Entity> RadarContacts(World w, int team) => w.RadarContacts(team);
 
-        static string DeepOwner(World w, DeepDeposit d, int team)
+        /// <summary>One mining zone (a flagged deep deposit) as a line: id, ore, where, how much, status, who flagged it.</summary>
+        static string ZoneLine(World w, DeepDeposit d, int team)
         {
-            var mine = d.MineId != 0 ? w.Get(d.MineId) : null;
-            if (mine == null) return d.Amount <= 0 ? " (exhausted)" : " (free: deploy a drill_rig on it)";
-            return mine.Team == team ? $" (your deep_mine #{mine.Id})" : w.IsVisibleTo(team, mine) ? $" (mined by team{mine.Team})" : " (taken)";
+            var status = w.ZoneStatus(d, team, out var mine);
+            string what = status switch
+            {
+                "exhausted" => "EXHAUSTED" + (mine != null && mine.Team == team ? $" (your deep_mine #{mine.Id} is idle: sell it)" : ""),
+                "yours" => $"yours: deep_mine #{mine.Id}",
+                "taken" => w.IsVisibleTo(team, mine) ? $"taken by team{mine.Team}" : "taken",
+                _ => "free",
+            };
+            if (status == "free")
+            {
+                var rigs = w.RigsBound(team, d.Id);
+                what += rigs.Count > 0 ? $", drill_rig #{rigs[0].Id} on its way" : $": send a rig with drill zone {d.Id}";
+            }
+            var flag = w.Teams[team].Zones.TryGetValue(d.Id, out var f) ? $" (flagged by surveyor #{f.FlaggedBy} at {f.FlaggedAt:0}s)" : "";
+            return $"zone #{d.Id} {Defs.Ores[d.Type]} at {(int)d.Pos.X},{(int)d.Pos.Y}: {(int)d.Amount}/{(int)d.Initial} left, {what}{flag}";
         }
 
         static string TeamLabel(World w, int team) => team >= 0 ? $"{w.Teams[team].Name} ({w.Teams[team].PlayerName ?? w.Teams[team].Controller})" : "server";
@@ -220,8 +307,9 @@ namespace Pez.Sim
         {
             { "command_center", 'C' }, { "outpost", 'O' }, { "power_plant", 'P' }, { "mining_refinery", 'R' }, { "barracks", 'B' }, { "factory", 'F' },
             { "gun_turret", 'T' }, { "electronics_plant", 'E' }, { "radar_dome", 'D' }, { "sam_site", 'S' }, { "optics_lab", 'L' }, { "enrichment_plant", 'N' },
-            { "laser_tower", 'Z' }, { "composite_foundry", 'K' }, { "fusion_reactor", 'U' }, { "airfield", 'A' },
+            { "laser_tower", 'Z' }, { "composite_foundry", 'K' }, { "fusion_reactor", 'U' }, { "airfield", 'A' }, { "deep_mine", 'Q' },
         };
+        static char GlyphFor(string key) => Glyph.TryGetValue(key, out var c) ? c : 'Y';
 
         /// <summary>ASCII map from the team's perspective. North (high y) is at the top.</summary>
         public static string AsciiMap(World w, int team)
@@ -235,11 +323,14 @@ namespace Pez.Sim
                 if (!w.Teams[team].Explored[i]) g[i] = ' ';
             }
             var vis = w.Teams[team].Visible;
+            // Your mining zones: the flags your surveyors planted on deep deposits.
+            foreach (var d in m.Deep)
+                if (w.Teams[team].Surveyed.Contains(d.Id) && d.Amount > 0 && m.InBounds((int)d.Pos.X, (int)d.Pos.Y)) g[m.Idx((int)d.Pos.X, (int)d.Pos.Y)] = '+';
             foreach (var kv in w.Teams[team].KnownEnemyStructures)
             {
                 var d = Defs.Get(kv.Value.key);
                 for (int y = 0; y < d.SizeY; y++) for (int x = 0; x < d.SizeX; x++)
-                        g[m.Idx(kv.Value.origin.X + x, kv.Value.origin.Y + y)] = char.ToLowerInvariant(Glyph[d.Key]);
+                        g[m.Idx(kv.Value.origin.X + x, kv.Value.origin.Y + y)] = char.ToLowerInvariant(GlyphFor(d.Key));
             }
             foreach (var e in w.Entities)
             {
@@ -248,7 +339,7 @@ namespace Pez.Sim
                 if (!mine && !w.IsVisibleTo(team, e)) continue;
                 if (e.IsStructure)
                 {
-                    char ch = Glyph[e.Def.Key];
+                    char ch = GlyphFor(e.Def.Key);
                     if (!mine) ch = char.ToLowerInvariant(ch);
                     for (int y = 0; y < e.Def.SizeY; y++) for (int x = 0; x < e.Def.SizeX; x++) g[m.Idx(e.Origin.X + x, e.Origin.Y + y)] = ch;
                 }
@@ -265,8 +356,8 @@ namespace Pez.Sim
                 g[m.Idx(t.X, t.Y)] = mine ? (e.IsHarvester ? 'm' : e.IsAir ? 'a' : e.Def.Armor == Armor.Vehicle ? 'v' : 'i') : (e.IsHarvester ? 'M' : e.IsAir ? 'W' : e.Def.Armor == Armor.Vehicle ? 'X' : 'x');
             }
             var sb = new StringBuilder();
-            sb.AppendLine("Legend: . open  # rock  ~ water  blank = unexplored | ore: $ iron_ore  % copper_ore  * crystal  ! uranium");
-            sb.AppendLine("YOUR structures: C command_center O outpost P power_plant R mining_refinery B barracks F factory T gun_turret E electronics_plant D radar_dome S sam_site L optics_lab N enrichment_plant Z laser_tower K composite_foundry U fusion_reactor A airfield (enemy: same letters lowercase)");
+            sb.AppendLine("Legend: . open  # rock  ~ water  blank = unexplored | ore: $ iron_ore  % copper_ore  * crystal  ! uranium  + your mining zone (flagged deep deposit)");
+            sb.AppendLine("YOUR structures: C command_center O outpost P power_plant R mining_refinery B barracks F factory T gun_turret E electronics_plant D radar_dome S sam_site L optics_lab N enrichment_plant Z laser_tower K composite_foundry U fusion_reactor A airfield Q deep_mine Y other (enemy: same letters lowercase)");
             sb.AppendLine("Units: yours i infantry v vehicle m mining_truck a aircraft ^ mine | enemy x infantry X vehicle M mining_truck W aircraft & mine | enemies outside your vision are hidden; enemy structures you've seen stay drawn");
             sb.Append("    ");
             for (int x = 0; x < m.W; x++) sb.Append(x % 10 == 0 ? (char)('0' + (x / 10) % 10) : ' ');
@@ -288,8 +379,9 @@ namespace Pez.Sim
         /// 3: fuel, refuel, together, waypoints, set_retreat, radar contacts, format=json, build options, resign when stalled.
         /// 4: deep mining (geological_surveyor, survey, drill_rig, deep_mine, deep_deposits).
         /// 5: a team's last command center falling spills its stockpile as salvage; infantry slower than vehicles.
+        /// 6: surveyors flag mining zones (mining_zones replaces deep_deposits), prospect (roaming surveys), drill (rig to a zone).
         /// </summary>
-        public const int RulesVersion = 5;
+        public const int RulesVersion = 6;
 
         public static JObj Rules()
         {
@@ -305,7 +397,7 @@ namespace Pez.Sim
                 "Aircraft ignore terrain. Only rockets, lasers, SAMs, gunships (and weakly, rifles/mg) can hit them. Stealth bombers are invisible except within 3 tiles of your units or inside your radar dome range.",
                 "Protect your command center: when a team's LAST command center is destroyed, its entire stockpile spills out as salvage ore on the footprint, and anyone's trucks can mine it (first come, first served). The team plays on with whatever else it has.",
                 "Infantry walk (0.8-1.05 tiles/s); every vehicle is faster. Use APCs, transport choppers or together:true to keep mixed groups together.",
-                "Deep mining: surface ore runs out. A geological_surveyor (factory) 'survey's a spot for 8s and finds the deep deposits within 12 tiles; they appear in deep_deposits for your team only. Drive a drill_rig onto one (within 3 tiles) and 'deploy' it into a deep_mine, which pumps 4 ore/s of that deposit's type straight into your stockpile until it runs dry (it needs 50 power). One mine per deposit.",
+                "Deep mining: surface ore runs out. A geological_surveyor (factory) surveys for deep deposits: wherever it finds one (within 12 tiles of where it stops for 8s) it plants a flag, and that deposit becomes one of your mining zones (mining_zones in state: id, ore, position, amount left, status free/yours/taken/exhausted, who flagged it and when; only your team sees them). 'survey' checks one spot; 'prospect' sets surveyors roaming on their own: survey, flag, move on to the nearest unsurveyed spot, until nothing is left in the area (x, y, radius) or you give another order. They refuel by themselves and steer clear of enemy bases you know about. Each surveyor shows its survey phase in my_units (traveling with distance and ETA, surveying with seconds left, refuelling, stranded, failed) and, when a survey can't be done, why (unreachable site, out of fuel, off the map). Then 'drill' sends a drill_rig to a zone ({\"type\":\"drill\",\"units\":[RIG],\"zone\":ID}, or omit zone for the nearest free one): it drives there and deploys into a deep_mine on arrival, which pumps 4 ore/s of that zone's ore straight into your stockpile (no trucks needed) until it runs dry (it needs 50 power). One mine per zone. A rig parked within 3 tiles of a zone can also just 'deploy'.",
                 "Radar: a radar_dome lists enemy aircraft within 28 tiles as radar_contacts (even beyond its sight) and raises an 'enemy aircraft on radar' alert, high priority when they're near your base.",
                 "Orders: move and attack_move take \"waypoints\" (and \"loop\":true to patrol) and \"together\":true (keep the slowest unit's pace). set_retreat makes units pull back to base on their own below an HP %.",
                 "Newcomer protection also reserves the newcomer's starting ore (16 tiles around their base): nobody else's trucks can mine it until protection ends.",

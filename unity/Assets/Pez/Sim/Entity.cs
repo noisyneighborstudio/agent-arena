@@ -2,7 +2,7 @@ using System.Collections.Generic;
 
 namespace Pez.Sim
 {
-    public enum Order { Idle, Move, AttackMove, Attack, Harvest, ReturnOre, Repair, Board, Capture, LayMines, Refuel, Survey }
+    public enum Order { Idle, Move, AttackMove, Attack, Harvest, ReturnOre, Repair, Board, Capture, LayMines, Refuel, Survey, Drill }
 
     public class Entity
     {
@@ -59,6 +59,18 @@ namespace Pez.Sim
         // Deep mines: the deposit underneath
         public int DepositId;
 
+        // Geological surveyors on 'prospect': after each survey they pick the next unsurveyed spot within
+        // ProspectRadius of ProspectCenter by themselves (the order stays Survey, so a refuel trip resumes it).
+        public bool Prospecting;
+        public Vec2 ProspectCenter;
+        public float ProspectRadius;
+        public readonly List<Vec2> SkipSites = new List<Vec2>();   // prospect sites it couldn't reach (not tried again)
+        // Why its last survey couldn't be done (null = no failure since its last survey order).
+        public string SurveyFailure;
+        public float SurveyFailedAt;
+        // Drill rigs on 'drill': the mining zone (deep deposit id) they're driving to and will deploy on.
+        public int ZoneId;
+
         // Converters / reactors: currently producing
         public bool Working;
 
@@ -101,7 +113,7 @@ namespace Pez.Sim
             return Vec2.Dist(p, new Vec2(cx, cy));
         }
 
-        public string OrderName => Order.ToString().ToLowerInvariant() switch
+        public string OrderName => Order == Order.Survey && Prospecting ? "prospect" : Order.ToString().ToLowerInvariant() switch
         {
             "attackmove" => "attack_move",
             "returnore" => "return_ore",

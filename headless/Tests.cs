@@ -54,6 +54,10 @@ namespace Pez.Headless
             ResignWhenStalled();
             WaitPacing();
             DeepMining();
+            Prospecting();
+            DrillDispatch();
+            SurveyProgress();
+            RoundedPercents();
             NoGridlock();
             LastHqSpills();
             AiGoesDeep();
@@ -212,7 +216,8 @@ namespace Pez.Headless
             Check(w.Teams[0].Surveyed.Contains(dep.Id) && !w.Teams[1].Surveyed.Contains(dep.Id) && w.Events.Any(e => e.Type == "surveyed" && e.Team == 0),
                   "the surveyor finds the deposit, for its own team only");
             var st = Json.Write(StateView.TeamState(w, 0));
-            Check(st.Contains("deep_deposits") && st.Contains($"#{dep.Id} "), "surveyed deposits show in the state");
+            Check(st.Contains("mining_zones") && st.Contains($"zone #{dep.Id} ") && st.Contains($"flagged by surveyor #{sv.Id}"), "surveyed deposits show in the state as flagged mining zones");
+            Check(w.Teams[0].Zones.TryGetValue(dep.Id, out var flag) && flag.FlaggedBy == sv.Id && sv.Order == Order.Idle, "a one-off survey plants its flags and then waits");
 
             // A drill rig only deploys on a surveyed deposit.
             var rig = At(w.SpawnUnit(0, "drill_rig", hq), dep.Pos + new Vec2(8, 0));
@@ -238,6 +243,187 @@ namespace Pez.Headless
             var truck = w.SpawnUnit(0, "mining_truck", hq);
             Run(w, 3);
             Check(w.Alerts.Active(w, 0).Any(a => a.Kind == "surface_ore_exhausted"), "running out of surface ore raises a 'survey for deep deposits' alert");
+            Check(w.Errors == 0, $"no sim errors ({w.LastError})");
+        }
+
+        static void Prospecting()
+        {
+            var w = new World(2, 7, 80);
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var t = w.Teams[0];
+            var sv = At(w.SpawnUnit(0, "geological_surveyor", hq), hq.Center + new Vec2(3, 3));
+            var sv2 = At(w.SpawnUnit(0, "geological_surveyor", hq), hq.Center + new Vec2(4, 3));
+            var r = Commands.Execute(w, 0, Cmd("type", "prospect", "units", new[] { sv.Id, sv2.Id }, "x", hq.Center.X, "y", hq.Center.Y, "radius", 36));
+            Check(Ok(r) && sv.OrderName == "prospect" && sv2.OrderName == "prospect", $"prospect: {r["result"] ?? r["error"]}");
+            Check(Vec2.Dist(sv.OrderPos, sv2.OrderPos) >= World.ProspectSpacing, $"two prospecting surveyors head for different spots ({sv.OrderPos} vs {sv2.OrderPos})");
+            var stUnits = Json.Write(StateView.TeamState(w, 0));
+            Check(stUnits.Contains("prospecting within 36 tiles"), "the unit list says a surveyor is prospecting");
+            var js = Json.Write(StateData.Team(w, 0));
+            Check(js.Contains("\"order\":\"prospect\"") && js.Contains("\"mode\":\"prospect\"") && js.Contains("\"phase\":\"traveling\""), "and so does the JSON state");
+            Run(w, 60);
+            Check(t.SurveySites.Count >= 4, $"prospecting surveyors move on by themselves after each survey ({t.SurveySites.Count} surveys in 60s)");
+            Run(w, 360);
+            float minGap = float.MaxValue;
+            for (int i = 0; i < t.SurveySites.Count; i++)
+                for (int j = i + 1; j < t.SurveySites.Count; j++) minGap = Math.Min(minGap, Vec2.Dist(t.SurveySites[i], t.SurveySites[j]));
+            Check(t.SurveySites.Count >= 6 && minGap > 15f, $"they cover distinct sites without repeats ({t.SurveySites.Count} sites, closest two {minGap:0.0} tiles apart)");
+            var inRange = w.Map.Deep.Where(d => t.SurveySites.Any(p => Vec2.Dist(p, d.Pos) <= EntityDef.SurveyRadius)).ToList();
+            Check(inRange.Count > 0 && inRange.All(d => t.Surveyed.Contains(d.Id) && t.Zones.TryGetValue(d.Id, out var f) && (f.FlaggedBy == sv.Id || f.FlaggedBy == sv2.Id)),
+                  $"every deposit near a surveyed site is flagged as a mining zone by the surveyor that found it ({inRange.Count} zones)");
+            Check(!w.Teams[1].Surveyed.Any() && !w.Teams[1].Zones.Any(), "flags are for the surveyor's team only");
+            Check(sv.Order == Order.Idle && !sv.Prospecting && sv2.Order == Order.Idle && w.Events.Any(e => e.Type == "surveyed" && e.Text.Contains("Prospecting done")),
+                  $"when nothing is left in the area they stop and say so ({sv.OrderName}, {sv2.OrderName})");
+            Check(t.SurveySites.All(p => Vec2.Dist(p, hq.Center) <= 36 + 4), "and they stay inside the area they were given");
+            var st = Json.Write(StateView.TeamState(w, 0));
+            var zjs = Json.Write(StateData.Team(w, 0));
+            Check(st.Contains("mining_zones") && st.Contains("free: send a rig with drill zone") && zjs.Contains("\"mining_zones\"") && zjs.Contains("\"flagged_by\":") && zjs.Contains("\"status\":\"free\""),
+                  "mining zones show in text and JSON state with status and who flagged them");
+            r = Commands.Execute(w, 0, Cmd("type", "prospect", "units", new[] { sv.Id }, "x", hq.Center.X, "y", hq.Center.Y, "radius", 20));
+            Check(!Ok(r) && r["error"].ToString().Contains("nothing unsurveyed"), $"prospecting an area already covered says so: {r["error"]}");
+            // Known enemy bases are avoided.
+            var enemyHq = w.Owned(1).First(e => e.Def.Key == "command_center");
+            t.KnownEnemyStructures[enemyHq.Id] = (enemyHq.Def.Key, enemyHq.Origin, 1);
+            var far = At(w.SpawnUnit(0, "geological_surveyor", hq), enemyHq.Center + new Vec2(-20, -20));
+            r = Commands.Execute(w, 0, Cmd("type", "prospect", "units", new[] { far.Id }, "x", enemyHq.Center.X, "y", enemyHq.Center.Y, "radius", 30));
+            Check(Ok(r) && Vec2.Dist(far.OrderPos, enemyHq.Center) >= 15f, $"prospecting steers clear of a known enemy base (first site {Vec2.Dist(far.OrderPos, enemyHq.Center):0} tiles from it)");
+            r = Commands.Execute(w, 0, Cmd("type", "survey", "units", new[] { far.Id }, "x", far.Pos.X, "y", far.Pos.Y));
+            Check(Ok(r) && !far.Prospecting && far.OrderName == "survey", "a one-off survey order ends prospecting");
+            Check(w.Errors == 0, $"no sim errors ({w.LastError})");
+        }
+
+        static void DrillDispatch()
+        {
+            var w = new World(2, 7, 80);
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var t = w.Teams[0];
+            var deps = w.Map.Deep.OrderBy(d => Vec2.Dist(d.Pos, hq.Center)).Take(4).ToList();
+            var sv = w.SpawnUnit(0, "geological_surveyor", hq);
+            foreach (var d in deps) { t.Surveyed.Add(d.Id); t.Zones[d.Id] = new ZoneFlag { ZoneId = d.Id, FlaggedBy = sv.Id, FlaggedAt = w.Time }; }
+            var zone = deps[0];
+            var rig = At(w.SpawnUnit(0, "drill_rig", hq), hq.Center + new Vec2(3, 3));
+            var r = Commands.Execute(w, 0, Cmd("type", "drill", "units", new[] { rig.Id }, "zone", 9999));
+            Check(!Ok(r) && r["error"].ToString().Contains("isn't one of your mining zones"), $"drill to an unknown zone: {r["error"]}");
+            var unflagged = w.Map.Deep.First(d => !t.Surveyed.Contains(d.Id));
+            r = Commands.Execute(w, 0, Cmd("type", "drill", "units", new[] { rig.Id }, "zone", unflagged.Id));
+            Check(!Ok(r) && r["error"].ToString().Contains("isn't one of your mining zones"), $"drill to a deposit your team hasn't flagged: {r["error"]}");
+            deps[3].Amount = 0;
+            r = Commands.Execute(w, 0, Cmd("type", "drill", "units", new[] { rig.Id }, "zone", deps[3].Id));
+            Check(!Ok(r) && r["error"].ToString().Contains("exhausted"), $"drill to an exhausted zone: {r["error"]}");
+
+            r = Commands.Execute(w, 0, Cmd("type", "drill", "units", new[] { rig.Id }, "zone", zone.Id));
+            Check(Ok(r) && rig.Order == Order.Drill && rig.ZoneId == zone.Id, $"drill: {r["result"] ?? r["error"]}");
+            Check(Json.Write(StateView.TeamState(w, 0)).Contains($"drill_rig #{rig.Id} on its way"), "the zone shows the rig on its way");
+            var rig2 = At(w.SpawnUnit(0, "drill_rig", hq), hq.Center + new Vec2(4, 2));
+            r = Commands.Execute(w, 0, Cmd("type", "drill", "units", new[] { rig2.Id }, "zone", zone.Id));
+            Check(!Ok(r) && r["error"].ToString().Contains("already on its way"), $"a second rig to the same zone: {r["error"]}");
+            for (int i = 0; i < 150 * World.TickRate && !rig.Dead; i++) w.Step();
+            var mine = w.Owned(0).FirstOrDefault(e => e.Def.Key == "deep_mine");
+            Check(rig.Dead && mine != null && mine.DepositId == zone.Id && zone.MineId == mine.Id && w.Events.Any(e => e.Type == "drilled" && e.Team == 0),
+                  $"the rig drives to the zone and deploys into a deep mine by itself (rig at {rig.Pos}, zone at {zone.Pos}, order {rig.OrderName})");
+            r = Commands.Execute(w, 0, Cmd("type", "drill", "units", new[] { rig2.Id }, "zone", zone.Id));
+            Check(!Ok(r) && r["error"].ToString().Contains("already has your deep_mine"), $"drill to a zone you already mine: {r["error"]}");
+            // Someone else's mine on a zone you flagged.
+            var other = deps[1];
+            w.Teams[1].Surveyed.Add(other.Id);
+            var enemyRig = At(w.SpawnUnit(1, "drill_rig", w.Owned(1).First(e => e.IsStructure)), other.Pos + new Vec2(0.5f, 0));
+            Check(w.Deploy(enemyRig) == null, "the other team drills a zone first");
+            r = Commands.Execute(w, 0, Cmd("type", "drill", "units", new[] { rig2.Id }, "zone", other.Id));
+            Check(!Ok(r) && r["error"].ToString().Contains("taken"), $"drill to a zone someone else mines: {r["error"]}");
+            var jz = Json.Write(StateData.Team(w, 0));
+            Check(jz.Contains("\"status\":\"taken\"") && jz.Contains("\"status\":\"yours\"") && jz.Contains("\"status\":\"exhausted\""), "zone statuses in the JSON state: yours, taken, exhausted");
+            // No zone given: the nearest free one.
+            r = Commands.Execute(w, 0, Cmd("type", "drill", "units", new[] { rig2.Id }));
+            Check(Ok(r) && rig2.Order == Order.Drill && rig2.ZoneId == deps[2].Id, $"drill without a zone takes the nearest free one: {r["result"] ?? r["error"]}");
+            // A rig whose zone gets taken while it's on the way stops and says why.
+            var rig3 = At(w.SpawnUnit(0, "drill_rig", hq), hq.Center + new Vec2(2, 4));
+            r = Commands.Execute(w, 0, Cmd("type", "drill", "units", new[] { rig3.Id }));
+            Check(!Ok(r) && r["error"].ToString().Contains("no free mining zones"), $"no free zone left: {r["error"]}");
+            deps[2].Amount = 0;
+            Run(w, 1);
+            Check(rig2.Order != Order.Drill && rig2.ZoneId == 0 && w.Events.Any(e => e.Type == "drill_failed" && e.A == rig2.Id && e.Text.Contains("exhausted")), $"a rig whose zone runs out on the way stops and says why ({rig2.OrderName}; {string.Join(" / ", w.Events.Where(e => e.Type == "drill_failed").Select(e => e.Text))})");
+            Check(w.Errors == 0, $"no sim errors ({w.LastError})");
+        }
+
+        static JObj UnitJson(World w, int team, int id) =>
+            ((List<object>)StateData.Team(w, team)["units"]).Cast<JObj>().First(u => Convert.ToInt32(u["id"]) == id);
+
+        static void SurveyProgress()
+        {
+            var w = new World(2, 7, 80);
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var sv = At(w.SpawnUnit(0, "geological_surveyor", hq), hq.Center + new Vec2(3, 3));
+            var site = w.Paths.NearestPassable(Int2.Of(sv.Pos + new Vec2(14, 2))).Center;
+            var r = Commands.Execute(w, 0, Cmd("type", "survey", "units", new[] { sv.Id }, "x", site.X, "y", site.Y));
+            Run(w, 0.5f);
+            var s = (JObj)UnitJson(w, 0, sv.Id)["survey"];
+            Check(Ok(r) && (string)s["phase"] == "traveling" && (string)s["mode"] == "survey" && Convert.ToInt32(s["distance"]) > 5 && Convert.ToInt32(s["eta_s"]) > 1,
+                  $"a surveyor on its way shows phase traveling with distance and ETA ({Json.Write(s)})");
+            Check(Json.Write(StateView.TeamState(w, 0)).Contains("traveling to "), "and the text state says so");
+            for (int i = 0; i < 40 * World.TickRate && Vec2.Dist(sv.Pos, sv.OrderPos) > 0.6f; i++) w.Step();
+            Run(w, 2);
+            s = (JObj)UnitJson(w, 0, sv.Id)["survey"];
+            Check((string)s["phase"] == "surveying" && Convert.ToSingle(s["seconds_left"]) < 7f && Convert.ToSingle(s["seconds_left"]) > 0, $"then surveying, with seconds left ({Json.Write(s)})");
+            Check(Json.Write(StateView.TeamState(w, 0)).Contains("s left"), "the text state counts down the survey");
+            Run(w, 8);
+            Check(sv.Order == Order.Idle && (string)((JObj)UnitJson(w, 0, sv.Id)["survey"])["phase"] == "idle", "and idle once it's done");
+
+            // A site walled in by rock: it says why instead of surveying where it stopped.
+            var walled = w.Paths.NearestPassable(Int2.Of(hq.Center + new Vec2(24, 18))).Center;
+            var wt = Int2.Of(walled);
+            for (int y = -5; y <= 5; y++) for (int x = -5; x <= 5; x++)
+                {
+                    int d = Math.Max(Math.Abs(x), Math.Abs(y));
+                    if ((d == 4 || d == 5) && w.Map.InBounds(wt.X + x, wt.Y + y)) w.Map.Tiles[w.Map.Idx(wt.X + x, wt.Y + y)] = Terrain.Rock;
+                }
+            int sites = w.Teams[0].SurveySites.Count;
+            r = Commands.Execute(w, 0, Cmd("type", "survey", "units", new[] { sv.Id }, "x", walled.X, "y", walled.Y));
+            for (int i = 0; i < 60 * World.TickRate && sv.Order == Order.Survey; i++) w.Step();
+            var fail = w.Events.LastOrDefault(e => e.Type == "survey_failed" && e.A == sv.Id);
+            s = (JObj)UnitJson(w, 0, sv.Id)["survey"];
+            Check(fail != null && fail.Text.Contains("unable to reach the site") && fail.Text.Contains("cut off") && w.Teams[0].SurveySites.Count == sites,
+                  $"an unreachable site raises an event with the reason and no survey is done: {fail?.Text}");
+            Check((string)s["phase"] == "failed" && s["last_failure"].ToString().Contains("cut off") && Json.Write(StateView.TeamState(w, 0)).Contains("last survey failed: unable to reach"),
+                  $"the failure shows on the surveyor in JSON and text ({Json.Write(s)})");
+            Check(StateView.EventsFor(w, 0, 0, 50).Any(t => t.Contains("unable to reach the site")), "and in the team's events");
+
+            // Out of fuel on the way.
+            r = Commands.Execute(w, 0, Cmd("type", "survey", "units", new[] { sv.Id }, "x", site.X + 10, "y", site.Y + 10));
+            Check(Ok(r) && (string)((JObj)UnitJson(w, 0, sv.Id)["survey"])["phase"] == "traveling" && ((JObj)UnitJson(w, 0, sv.Id)["survey"])["last_failure"] == null, "a new survey order clears the old failure");
+            sv.Fuel = 0.3f; sv.NoAutoRefuelUntil = w.Time + 60;
+            Run(w, 3);
+            fail = w.Events.LastOrDefault(e => e.Type == "survey_failed" && e.A == sv.Id);
+            Check(sv.Stranded && fail != null && fail.Text.Contains("out of fuel"), $"running dry on the way is reported: {fail?.Text}");
+            // A site off the map (e.g. left over from before a resize).
+            var sv2 = At(w.SpawnUnit(0, "geological_surveyor", hq), hq.Center + new Vec2(2, 5));
+            w.SetOrder(sv2, Order.Survey, new Vec2(w.Map.W + 40, 10));
+            Run(w, 0.2f);
+            fail = w.Events.LastOrDefault(e => e.Type == "survey_failed" && e.A == sv2.Id);
+            Check(fail != null && fail.Text.Contains("outside the") && sv2.Order == Order.Idle, $"a site outside the map is reported: {fail?.Text}");
+            // Prospecting skips a site it can't reach and moves on.
+            var sv3 = At(w.SpawnUnit(0, "geological_surveyor", hq), hq.Center + new Vec2(4, 5));
+            r = Commands.Execute(w, 0, Cmd("type", "prospect", "units", new[] { sv3.Id }, "radius", 30));
+            var first = sv3.OrderPos;
+            w.Map.Tiles[w.Map.Idx((int)first.X, (int)first.Y)] = Terrain.Rock; // not the cause of a failure: it's just 'survey from nearby'
+            Run(w, 40);
+            Check(Ok(r) && sv3.Prospecting && w.Teams[0].SurveySites.Count > sites, $"prospecting carries on past awkward sites ({sv3.OrderName}, {w.Teams[0].SurveySites.Count - sites} surveys)");
+            Check(w.Errors == 0, $"no sim errors ({w.LastError})");
+        }
+
+        static void RoundedPercents()
+        {
+            Check(StateView.Pct(0.35f) == 35 && StateView.Pct(0.999f) == 99 && StateView.Pct(0.002f) == 1 && StateView.Pct(1f) == 100 && StateView.Pct(0f) == 0 && StateView.Pct(0.574f) == 57,
+                  $"percentages round (0.35 -> {StateView.Pct(0.35f)}, 0.999 -> {StateView.Pct(0.999f)}, 0.002 -> {StateView.Pct(0.002f)})");
+            var w = new World(2, 7, 80);
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var tank = w.SpawnUnit(0, "light_tank", hq);
+            var r = Commands.Execute(w, 0, Cmd("type", "set_retreat", "units", new[] { tank.Id }, "below_pct", 35));
+            var u = UnitJson(w, 0, tank.Id);
+            string text = Json.Write(StateView.TeamState(w, 0));
+            Check(Ok(r) && r["result"].ToString().Contains("35%") && Convert.ToInt32(u["retreat_below_pct"]) == 35 && text.Contains("retreats below 35% HP"),
+                  $"set_retreat 35 shows as 35% everywhere (json {u["retreat_below_pct"]}, result: {r["result"]})");
+            tank.Fuel = tank.Def.Fuel * 0.35f;
+            u = UnitJson(w, 0, tank.Id);
+            Check(Convert.ToInt32(u["fuel_pct"]) == 35 && Json.Write(StateView.TeamState(w, 0)).Contains("fuel 35%"), $"fuel_pct rounds too ({u["fuel_pct"]})");
             Check(w.Errors == 0, $"no sim errors ({w.LastError})");
         }
 

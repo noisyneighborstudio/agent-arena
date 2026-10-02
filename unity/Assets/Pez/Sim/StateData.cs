@@ -44,7 +44,7 @@ namespace Pez.Sim
 
             o.Set("structures", mine.Where(e => e.IsStructure).Select(e => (object)new JObj()
                 .Set("id", e.Id).Set("type", e.Def.Key).Set("x", e.Origin.X).Set("y", e.Origin.Y).Set("w", e.Def.SizeX).Set("h", e.Def.SizeY)
-                .Set("hp", (int)e.Hp).Set("max_hp", e.Def.MaxHp).Set("complete", e.IsComplete).Set("progress_pct", (int)(e.BuildProgress * 100))
+                .Set("hp", (int)e.Hp).Set("max_hp", e.Def.MaxHp).Set("complete", e.IsComplete).Set("progress_pct", StateView.Pct(e.BuildProgress))
                 .Set("working", e.Def.Recipes.Length > 0 || e.Def.Key == "fusion_reactor" ? (object)e.Working : null)
                 .Set("under_attack", w.Time - e.LastHitTime < 5)).ToList());
 
@@ -56,13 +56,16 @@ namespace Pez.Sim
                     .Set("speed", e.Def.Speed);
                 if (e.OrderName != "idle") u.Set("order_x", R1(e.OrderPos.X)).Set("order_y", R1(e.OrderPos.Y));
                 if (e.Waypoints.Count > 0) u.Set("waypoints", e.Waypoints.Select(p => (object)Point(p)).ToList());
-                if (e.RetreatBelow > 0) u.Set("retreat_below_pct", (int)(e.RetreatBelow * 100));
+                if (e.RetreatBelow > 0) u.Set("retreat_below_pct", StateView.Pct(e.RetreatBelow));
                 if (e.IsCarried) u.Set("carried_by", e.CarrierId);
                 if (e.Def.Capacity > 0) u.Set("passengers", e.Passengers.Cast<object>().ToList()).Set("capacity", e.Def.Capacity);
                 if (e.IsHarvester) u.Set("cargo", e.Cargo).Set("cargo_type", e.CargoType >= 0 ? Defs.Ores[e.CargoType] : null)
                                     .Set("assigned_ore", e.HarvestType >= 0 ? Defs.Ores[e.HarvestType] : null);
-                if (e.Def.UsesFuel) u.Set("fuel_pct", (int)(e.FuelFraction * 100)).Set("stranded", e.Stranded).Set("landed", e.Landed);
+                if (e.Def.UsesFuel) u.Set("fuel_pct", StateView.Pct(e.FuelFraction)).Set("stranded", e.Stranded).Set("landed", e.Landed);
                 if (e.Def.LaysMines) u.Set("mines_queued", e.MineQueue.Count);
+                var survey = StateView.SurveyStatus(w, e);
+                if (survey != null) u.Set("survey", survey);
+                if (e.Order == Order.Drill) u.Set("zone", e.ZoneId);
                 return (object)u;
             }).ToList());
 
@@ -87,21 +90,25 @@ namespace Pez.Sim
             o.Set("ore_fields", StateView.OreFields(w, t.Explored).Select(f => (object)new JObj()
                 .Set("type", f.type).Set("x", f.cx).Set("y", f.cy).Set("tiles", f.tiles).Set("amount", f.total)).ToList());
 
-            o.Set("deep_deposits", w.Map.Deep.Where(d => t.Surveyed.Contains(d.Id)).Select(d =>
+            o.Set("mining_zones", w.Map.Deep.Where(d => t.Surveyed.Contains(d.Id)).Select(d =>
             {
-                var mine = d.MineId != 0 ? w.Get(d.MineId) : null;
-                return (object)new JObj().Set("id", d.Id).Set("type", Defs.Ores[d.Type]).Set("x", R1(d.Pos.X)).Set("y", R1(d.Pos.Y))
-                    .Set("amount", (int)d.Amount).Set("initial", (int)d.Initial)
-                    .Set("mine_id", mine != null && (mine.Team == team || w.IsVisibleTo(team, mine)) ? (object)mine.Id : null)
-                    .Set("status", mine == null ? (d.Amount <= 0 ? "exhausted" : "free") : mine.Team == team ? "yours" : "taken");
+                var status = w.ZoneStatus(d, team, out var dm);
+                t.Zones.TryGetValue(d.Id, out var f);
+                return (object)new JObj().Set("id", d.Id).Set("ore", Defs.Ores[d.Type]).Set("x", R1(d.Pos.X)).Set("y", R1(d.Pos.Y))
+                    .Set("amount", (int)d.Amount).Set("initial", (int)d.Initial).Set("status", status)
+                    .Set("mine_id", dm != null && (dm.Team == team || w.IsVisibleTo(team, dm)) ? (object)dm.Id : null)
+                    .Set("mine_team", dm != null && (dm.Team == team || w.IsVisibleTo(team, dm)) ? (object)dm.Team : null)
+                    .Set("rigs_en_route", w.RigsBound(team, d.Id).Select(r => (object)r.Id).ToList())
+                    .Set("flagged_by", f != null ? (object)f.FlaggedBy : null)
+                    .Set("flagged_at_s", f != null ? (object)R1(f.FlaggedAt) : null);
             }).ToList());
             o.Set("survey_sites", t.SurveySites.Select(p => (object)Point(p)).ToList());
 
             var prod = new JObj();
-            prod.Set("structures", t.StructureQueue.Select(p => { var s = w.Get(p.StructureId); return (object)new JObj().Set("type", p.Key).Set("id", p.StructureId).Set("progress_pct", (int)((s?.BuildProgress ?? 0) * 100)); }).ToList());
+            prod.Set("structures", t.StructureQueue.Select(p => { var s = w.Get(p.StructureId); return (object)new JObj().Set("type", p.Key).Set("id", p.StructureId).Set("progress_pct", StateView.Pct(s?.BuildProgress ?? 0)); }).ToList());
             foreach (var kv in t.UnitQueues)
                 prod.Set(Defs.ProducerKey(kv.Key), kv.Value.Select((p, i) => (object)new JObj().Set("type", p.Key)
-                    .Set("progress_pct", i == 0 ? (int)(p.Progress / Defs.Get(p.Key).BuildTime * 100) : 0)).ToList());
+                    .Set("progress_pct", i == 0 ? StateView.Pct(p.Progress / Defs.Get(p.Key).BuildTime) : 0)).ToList());
             o.Set("production", prod);
             o.Set("build_options", BuildOptions(w, team));
 

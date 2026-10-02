@@ -31,7 +31,9 @@ namespace Pez.Sim
   {""type"":""capture"", ""units"":[ENGINEER IDS], ""target"":ID}  engineer takes over an enemy structure below 50% HP (engineer is used up)
   {""type"":""lay_mines"", ""units"":[MINELAYER IDS], ""x"":X, ""y"":Y, ""count"":N}  lay up to 8 hidden mines around x,y (30 steel each)
   {""type"":""deploy"", ""units"":[IDS]}                   deploy an outpost_truck into an Outpost where it stands, or a drill_rig into a Deep Mine on a surveyed deep deposit within 3 tiles
-  {""type"":""survey"", ""units"":[SURVEYOR IDS], ""x"":X, ""y"":Y}  survey for deep ore deposits (8s, 12-tile radius; only your team sees what it finds)
+  {""type"":""survey"", ""units"":[SURVEYOR IDS], ""x"":X, ""y"":Y}  survey one spot for deep ore deposits (8s, 12-tile radius), flag each one found as a mining zone (only your team sees them), then wait
+  {""type"":""prospect"", ""units"":[SURVEYOR IDS], ""x"":X, ""y"":Y, ""radius"":R}  surveyors roam on their own: survey, flag what they find, move on to the nearest unsurveyed spot, until nothing is left within R tiles of x,y (all optional: default 40 tiles around each surveyor) or you give another order
+  {""type"":""drill"", ""units"":[DRILL RIG IDS], ""zone"":ID}  a drill_rig drives to that mining zone and deploys into a Deep Mine on arrival (omit zone: each rig takes the nearest free zone)
   {""type"":""rally"", ""structure_id"":ID, ""x"":X, ""y"":Y} where new units from that building go
   {""type"":""sell"", ""structure_id"":ID}                 sell for 50% refund
   {""type"":""cancel"", ""unit"":KEY}                       cancel the last queued unit of that type (full refund)
@@ -68,6 +70,8 @@ namespace Pez.Sim
                     case "refuel": return Refuel(w, team, c);
                     case "set_retreat": return SetRetreat(w, team, c);
                     case "survey": return Survey(w, team, c);
+                    case "prospect": return Prospect(w, team, c);
+                    case "drill": return Drill(w, team, c);
                     case "sell": return Sell(w, team, c);
                     case "cancel": return Cancel(w, team, c);
                     case "say":
@@ -215,7 +219,7 @@ namespace Pez.Sim
             return Ok($"{n} unit(s) {(order == Order.Idle ? "stopped" : order == Order.AttackMove ? "attack-moving" : "moving")}" +
                       (together ? $" together at {pace:0.0} tiles/s" : "") +
                       (waypoints.Count > 0 ? $", then {waypoints.Count} more waypoint(s){(loop ? " on a loop" : "")}" : "") +
-                      (low.Count > 0 ? $"; low fuel: {string.Join(", ", low.Select(u => $"#{u.Id} {(int)(u.FuelFraction * 100)}%"))} (they'll turn back to refuel when they must)" : ""));
+                      (low.Count > 0 ? $"; low fuel: {string.Join(", ", low.Select(u => $"#{u.Id} {StateView.Pct(u.FuelFraction)}%"))} (they'll turn back to refuel when they must)" : ""));
         }
 
         static JObj Attack(World w, int team, Dictionary<string, object> c)
@@ -350,8 +354,80 @@ namespace Pez.Sim
             float x = c.Num("x"), y = c.Num("y");
             if (float.IsNaN(x) || float.IsNaN(y)) return Err("x and y are required: where to survey");
             if (!w.Map.InBounds((int)x, (int)y)) return Err($"({x},{y}) is outside the {w.Map.W}x{w.Map.H} map");
-            foreach (var u in units) { w.SetOrder(u, Order.Survey, new Vec2(x, y)); u.WorkTimer = 0; }
-            return Ok($"{units.Count} surveyor(s) heading to {x},{y}; a survey takes {EntityDef.SurveySeconds:0}s and covers {EntityDef.SurveyRadius:0} tiles");
+            foreach (var u in units) { w.SetOrder(u, Order.Survey, new Vec2(x, y)); u.WorkTimer = 0; u.Prospecting = false; u.SurveyFailure = null; }
+            return Ok($"{units.Count} surveyor(s) heading to {x},{y}; a survey takes {EntityDef.SurveySeconds:0}s and covers {EntityDef.SurveyRadius:0} tiles, and every deposit found gets a flag (a mining zone in your state)");
+        }
+
+        public const float DefaultProspectRadius = 40f;
+
+        static JObj Prospect(World w, int team, Dictionary<string, object> c)
+        {
+            var units = ResolveUnits(w, team, c).Where(u => u.Def.Key == "geological_surveyor").ToList();
+            if (units.Count == 0) return Err("no surveyors given (train a geological_surveyor at a factory)");
+            float x = c.Num("x"), y = c.Num("y");
+            if (float.IsNaN(x) != float.IsNaN(y)) return Err("give both x and y (the centre of the area to prospect), or neither (around each surveyor)");
+            if (!float.IsNaN(x) && !w.Map.InBounds((int)x, (int)y)) return Err($"({x},{y}) is outside the {w.Map.W}x{w.Map.H} map");
+            float radius = c.Num("radius", DefaultProspectRadius);
+            if (float.IsNaN(radius) || radius < 6) return Err("radius must be at least 6 tiles");
+            radius = MathF.Min(radius, MathF.Max(w.Map.W, w.Map.H) * 1.5f);
+            var sent = new List<string>(); var none = new List<string>();
+            foreach (var u in units)
+            {
+                var centre = float.IsNaN(x) ? u.Pos : new Vec2(x, y);
+                u.SkipSites.Clear();
+                var site = w.FindProspectSite(u, centre, radius);
+                if (!site.HasValue) { none.Add($"#{u.Id}: nothing unsurveyed it can reach within {radius:0} tiles of {(int)centre.X},{(int)centre.Y}"); continue; }
+                w.SetOrder(u, Order.Survey, site.Value);
+                u.WorkTimer = 0; u.Prospecting = true; u.ProspectCenter = centre; u.ProspectRadius = radius; u.SurveyFailure = null;
+                sent.Add($"#{u.Id} starts at {(int)site.Value.X},{(int)site.Value.Y}");
+            }
+            if (sent.Count == 0) return Err(string.Join("; ", none) + ". Pick another area (x,y) or a bigger radius.");
+            return Ok($"{sent.Count} surveyor(s) prospecting within {radius:0} tiles ({string.Join(", ", sent)}): each survey takes {EntityDef.SurveySeconds:0}s, " +
+                      $"flags every deep deposit within {EntityDef.SurveyRadius:0} tiles as a mining zone, then they move on to the nearest unsurveyed spot until nothing is left or you give another order" +
+                      (none.Count > 0 ? "; " + string.Join("; ", none) : ""));
+        }
+
+        static JObj Drill(World w, int team, Dictionary<string, object> c)
+        {
+            var rigs = ResolveUnits(w, team, c).Where(u => u.Def.DeploysInto == "deep_mine").ToList();
+            if (rigs.Count == 0) return Err("no drill rigs given (train a drill_rig at a factory)");
+            var t = w.Teams[team];
+            string Desc(DeepDeposit d) => $"zone #{d.Id} ({Defs.Ores[d.Type]} at {(int)d.Pos.X},{(int)d.Pos.Y}, {(int)d.Amount} left)";
+            // Free zones nobody of ours is already driving to.
+            var open = w.Map.Deep.Where(d => t.Surveyed.Contains(d.Id) && w.DrillBlocker(d, team) == null &&
+                                             !w.RigsBound(team, d.Id).Any(r => !rigs.Contains(r))).ToList();
+            string FreeList() => open.Count == 0 ? "you have no free mining zones: survey or prospect with a geological_surveyor to flag some"
+                                                 : "free zones: " + string.Join(", ", open.OrderBy(d => Vec2.Dist(d.Pos, rigs[0].Pos)).Take(6).Select(d => $"#{d.Id} {Defs.Ores[d.Type]}"));
+            void Send(Entity rig, DeepDeposit d) { w.SetOrder(rig, Order.Drill, d.Pos); rig.ZoneId = d.Id; }
+
+            if (c.ContainsKey("zone"))
+            {
+                int id = (int)c.Num("zone", 0);
+                var d = w.Map.DepositById(id);
+                if (d == null || !t.Surveyed.Contains(id)) return Err($"zone #{id} isn't one of your mining zones; {FreeList()}");
+                var why = w.DrillBlocker(d, team);
+                if (why != null) return Err($"{why}; {FreeList()}");
+                var bound = w.RigsBound(team, id).Where(r => !rigs.Contains(r)).ToList();
+                if (bound.Count > 0) return Err($"drill_rig #{bound[0].Id} is already on its way to zone #{id} (one mine per zone); {FreeList()}");
+                var rig = rigs.OrderBy(r => Vec2.Dist(r.Pos, d.Pos)).First();
+                Send(rig, d);
+                foreach (var other in rigs.Where(r => r != rig && r.ZoneId == id && r.Order == Order.Drill)) w.SetOrder(other, Order.Idle, other.Pos);
+                return Ok($"drill_rig #{rig.Id} heading to {Desc(d)}, {Vec2.Dist(rig.Pos, d.Pos):0} tiles away; it deploys into a deep_mine on arrival" +
+                          (rigs.Count > 1 ? $". One mine per zone: {string.Join(", ", rigs.Where(r => r != rig).Select(r => "#" + r.Id))} not sent" : ""));
+            }
+
+            // No zone given: each rig takes the nearest free zone nobody else is heading for.
+            var results = new List<string>();
+            foreach (var rig in rigs)
+            {
+                var d = open.OrderBy(z => Vec2.Dist(z.Pos, rig.Pos)).FirstOrDefault();
+                if (d == null) { results.Add($"#{rig.Id}: no free zone left for it"); continue; }
+                open.Remove(d);
+                Send(rig, d);
+                results.Add($"#{rig.Id} heading to {Desc(d)}");
+            }
+            if (!results.Any(r => r.Contains("heading"))) return Err(FreeList());
+            return Ok(string.Join("; ", results) + "; each deploys into a deep_mine on arrival");
         }
 
         static JObj SetRetreat(World w, int team, Dictionary<string, object> c)
@@ -393,7 +469,7 @@ namespace Pez.Sim
                 if (u.Stranded) { stuck.Add($"#{u.Id} is out of fuel; send a repair truck to it with repair"); continue; }
                 if (p == null) { stuck.Add($"#{u.Id} has nowhere to refuel ({(u.IsAir ? "build an airfield" : "needs a command center, outpost, refinery, factory or a repair truck")})"); continue; }
                 w.BeginRefuel(u, p);
-                sent.Add($"#{u.Id} ({(int)(u.FuelFraction * 100)}%) to {p.Def.Key} #{p.Id}");
+                sent.Add($"#{u.Id} ({StateView.Pct(u.FuelFraction)}%) to {p.Def.Key} #{p.Id}");
             }
             if (sent.Count == 0) return Err(string.Join("; ", stuck));
             return Ok("refuelling: " + string.Join(", ", sent) + (stuck.Count > 0 ? "; " + string.Join("; ", stuck) : ""));
@@ -402,7 +478,7 @@ namespace Pez.Sim
         static JObj Deploy(World w, int team, Dictionary<string, object> c)
         {
             var units = ResolveUnits(w, team, c).Where(u => u.Def.DeploysInto != null).ToList();
-            if (units.Count == 0) return Err("no deployable units given (outpost_truck)");
+            if (units.Count == 0) return Err("no deployable units given (outpost_truck, drill_rig)");
             var results = new List<string>();
             foreach (var u in units)
             {

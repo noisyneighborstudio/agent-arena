@@ -462,7 +462,8 @@ namespace Pez.Api
             if (e.IsHarvester) o.Set("cargo", $"{e.Cargo}/{d.HarvestCapacity}{(e.CargoType >= 0 ? " " + Defs.Ores[e.CargoType] : "")}");
             if (d.Capacity > 0) o.Set("passengers", $"{e.Passengers.Count}/{d.Capacity}");
             if (e.Waypoints.Count > 0) o.Set("waypoints", e.Waypoints.Count).Set("patrol", e.WaypointLoop);
-            if (e.RetreatBelow > 0) o.Set("retreat_below_pct", (int)(e.RetreatBelow * 100)).Set("retreating", e.Retreating);
+            if (e.RetreatBelow > 0) o.Set("retreat_below_pct", StateView.Pct(e.RetreatBelow)).Set("retreating", e.Retreating);
+            if (StateView.SurveyStatus(w, e) is JObj survey) o.Set("survey", survey);
             if (e.IsCarried) o.Set("inside", e.CarrierId);
             return o;
         }
