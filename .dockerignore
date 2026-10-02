@@ -1,0 +1,8 @@
+**/._*
+**/.DS_Store
+**/bin
+**/obj
+**/node_modules
+unity/Library
+unity/Build
+arena/logs
