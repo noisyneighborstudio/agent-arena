@@ -64,3 +64,8 @@ print(f"{'unit':16} {'cost_se':>8} {'fit':>8} {'ratio':>6}  hp edps range speed"
 for r, p in zip(rows, pred):
     print(f"{r['key']:16} {r['se']:8.0f} {math.exp(p):8.0f} {r['se'] / math.exp(p):6.2f}  {r['hp']:.0f} {r['edps']:.1f} {r['rng']} {r['speed']}")
 print("rms log error %.3f" % math.sqrt(np.mean((pred - y) ** 2)))
+
+# Lanchester square-law cost-efficiency (hp x edps / cost^2) of the standard roster, relative to the light tank.
+lt = next(r for r in rows if r["key"] == "light_tank")
+ref = lt["hp"] * lt["edps"] / lt["se"] ** 2
+print("efficiency vs light_tank:", ", ".join(f"{r['key']} {r['hp'] * r['edps'] / r['se'] ** 2 / ref:.2f}" for r in rows))
