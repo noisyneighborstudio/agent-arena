@@ -6,10 +6,11 @@ This is an MVP spike. All the art is procedural, built from primitives, so the g
 
 ## What's in the game
 
-- **Economy:** harvesters mine ore, bring it to refineries and turn it into credits. Power plants supply power; low power halves production speed.
-- **Base building:** construction yard, power plant, refinery, barracks, war factory and gun turret, with prerequisites. Buildings rise in place while they're under construction.
-- **Units:** rifleman, rocket soldier, harvester, light tank and heavy tank. Weapons differ in range, cooldown and projectile, and do different damage against infantry, vehicles and structures. The heavy tank has splash damage.
-- **Combat:** A* pathfinding, move, attack-move, focus fire, auto-targeting, retaliation, and fog of war per team.
+- **Production-chain economy.** You start with a Command Center, one Mining Truck and a little raw ore. Trucks mine four ore types (iron, copper, crystal, uranium) into a team stockpile. Converter buildings refine ore into steel, copper, circuits, lenses, plasma and composite, and higher tiers cost those materials. Every building produces something. The full hierarchy is in [docs/TECH_TREE.md](docs/TECH_TREE.md).
+- **16 structures and 12 units.** The range runs from riflemen and light tanks to artillery, laser tanks, laser towers, SAM sites, gunships and stealth bombers.
+- **Territory.** You can only build within 6 tiles of your own structures. Outpost Trucks deploy into forward bases that claim remote ore fields.
+- **Fog of war.** The map starts black. Bases reveal a radius around themselves, units and trucks reveal what they pass, and radar domes reveal a wide area and detect stealth aircraft.
+- **Combat:** A* pathfinding, aircraft that ignore terrain, weapons that can or can't hit air, splash damage, projectiles, beams and artillery arcs.
 - **Win condition:** destroy every enemy structure.
 
 ## Layout
@@ -29,17 +30,23 @@ Humans, the scripted AI and LLMs all send their orders through the same `Command
 ## Play
 
 ```bash
-open unity/Build/Pez.app                      # menu: pick Human / Scripted AI / LLM per team
+open unity/Build/Pez.app                      # menu: pick Human / Scripted AI / Claude / Codex / External per team
 open unity/Build/Pez.app --args -team0 human -team1 ai -autostart
 ```
 
 Controls:
 
 - **Selecting:** left-click or drag-box to select. Ctrl+A selects all combat units.
-- **Orders:** right-click to move, attack, harvest or set a rally point. F then right-click attack-moves. X stops, Del sells.
+- **Orders:** right-click to move, attack or set a rally point. Right-clicking ore with trucks selected assigns them that ore type. F then right-click attack-moves. G deploys an Outpost Truck. X stops, Del sells.
 - **Camera:** WASD, arrow keys or the screen edge to pan, middle-drag to grab, Q/E to rotate, mouse wheel to zoom. Click the minimap to jump.
 
 ## Battle of the LLMs
+
+The easiest way: open the game, set Blue to **Claude** and Red to **Codex**, and press Start. The game launches both CLIs itself and switches to spectator mode. To start straight into a battle, run `open unity/Build/Pez.app --args -team0 claude -team1 codex -autostart`.
+
+**Watching from another machine:** the game streams its screen, read-only, at `http://127.0.0.1:7778/`. To reach it from your tailnet, run `tailscale serve --bg --https=8454 http://127.0.0.1:7778`. The stream has no authentication, and it can't control the game.
+
+From a terminal:
 
 ```bash
 # Headless (no graphics), fastest:
@@ -71,9 +78,9 @@ Then tell Claude something like "you're Red in Pez, crush me". You can also coac
 | tool | what it does |
 |---|---|
 | `get_rules` | stats, costs, prerequisites, command reference |
-| `get_state` | your credits, power, queues, structures and units with ids, visible enemies, ore fields, events since the last call |
+| `get_state` | your stockpile with rates, power, converter status, queues, what you can build and its cost, structures and units with ids, visible enemies, explored ore fields by type, events since the last call |
 | `get_map` | ASCII map from your team's view, with fog |
-| `command` | a batch of commands: `build`, `train`, `move`, `attack_move`, `attack`, `stop`, `harvest`, `rally`, `sell`, `cancel`, `say` |
+| `command` | a batch of commands: `build`, `train`, `move`, `attack_move`, `attack`, `stop`, `harvest` (optionally by `ore` type), `deploy`, `rally`, `sell`, `cancel`, `say` |
 | `wait` | lets the game run 1–30 seconds, then returns the new state |
 
 ### HTTP API (port 7777)
@@ -90,7 +97,8 @@ The API listens only on 127.0.0.1 and has no authentication. Any local process c
 ## Develop
 
 ```bash
-cd headless && dotnet run -- --selftest              # AI vs AI to the end, in under a second
+cd headless && dotnet run -- --selftest              # AI vs AI to the end in a few seconds, then reports what each side built
+cd headless && dotnet run -- --trace 2 --seed 23     # print one entity's state every second (debugging)
 cd headless && dotnet run -- --controllers llm,ai    # headless server for MCP clients
 /Applications/Unity/Hub/Editor/6000.3.25f1/Unity.app/Contents/MacOS/Unity \
   -batchmode -projectPath unity -executeMethod Pez.EditorTools.PezSetup.Build -quit
