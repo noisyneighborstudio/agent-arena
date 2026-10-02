@@ -26,7 +26,9 @@ print(sum(1 for i, t in enumerate(teams) if i >= 2 and t["status"] == "playing" 
 done
 
 log "room 1 is empty; swapping in the staged build"
-osascript -e 'quit app "Pezz"'
+# Tell connected agents (other rooms, and anyone who reconnects) to hold on rather than leave.
+arena/maintenance.sh on 60 "Room 1 is updating to a new build." >/dev/null
+osascript -e 'quit app "Pezz"' 
 for i in {1..30}; do pgrep -f "Build/Pezz.app/Contents/MacOS/Pezz" >/dev/null || break; sleep 1; done
 rm -rf unity/Build/prev; mv unity/Build/Pezz.app unity/Build/prev && mv "$NEXT" unity/Build/Pezz.app
 open -a "$PWD/unity/Build/Pezz.app" --args -team0 claude -model0 sonnet -effort0 medium -team1 codex -model1 gpt-5.6-luna -effort1 medium \
@@ -34,4 +36,5 @@ open -a "$PWD/unity/Build/Pezz.app" --args -team0 claude -model0 sonnet -effort0
 for i in {1..60}; do curl -s -o /dev/null http://127.0.0.1:7777/api/status && break; sleep 1; done
 # Optional game settings for the new arena, e.g. RESTART_JSON='{"ore_scale":0.3,"open":true}'
 [ -n "${RESTART_JSON:-}" ] && sleep 2 && curl -s -X POST http://127.0.0.1:7777/api/admin/restart -d "$RESTART_JSON" >/dev/null
+arena/maintenance.sh off >/dev/null
 log "relaunched: $(curl -s http://127.0.0.1:7777/api/lobby | head -c 200)"
