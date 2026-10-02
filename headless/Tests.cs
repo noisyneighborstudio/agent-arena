@@ -37,6 +37,7 @@ namespace Pez.Headless
             Medic();
             Alerts();
             InterruptibleWait();
+            CommanderOrders();
             Console.WriteLine(failures == 0 ? "\nAll tests passed." : $"\n{failures} test(s) FAILED.");
             return failures == 0 ? 0 : 1;
         }
@@ -183,6 +184,43 @@ namespace Pez.Headless
             took = (DateTime.UtcNow - t0).TotalSeconds;
             r = (Dictionary<string, object>)Json.Parse(body);
             Check(r["interrupted"] is bool b2 && !b2 && took >= 1.4 && took < 4, $"with nothing happening, wait runs its full time ({took:0.0}s)");
+            stop = true;
+            api.Stop();
+        }
+        static void CommanderOrders()
+        {
+            var game = new Game(new GameConfig { Seed = 7, Controllers = new[] { "llm", "llm" }, Orders = new[] { "Rush with infantry.", "" } });
+            var w = game.World;
+            Check(w.Teams[0].StandingOrders == "Rush with infantry." && w.Teams[0].OrdersVersion == 1, "initial orders from the game config are applied");
+            var st = Json.Write(StateView.TeamState(w, 0));
+            Check(st.Contains("\"standing_orders\":\"Rush with infantry.\""), "get_state carries standing_orders");
+            Check(Json.Write(StateView.TeamState(w, 1)).Contains("\"standing_orders\":\"none\""), "the other team sees only its own (none)");
+
+            var api = new ApiServer(7798);
+            api.Start();
+            bool stop = false, sent = false;
+            var loop = new Thread(() =>
+            {
+                var sw = System.Diagnostics.Stopwatch.StartNew(); double last = 0;
+                while (!stop)
+                {
+                    double now = sw.Elapsed.TotalSeconds;
+                    game.Advance((float)(now - last)); last = now;
+                    if (now > 1.5 && !sent) { sent = true; game.World.SetOrders(1, "Expand to the uranium in the middle."); }
+                    api.Pump(game);
+                    Thread.Sleep(5);
+                }
+            }) { IsBackground = true };
+            loop.Start();
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(40) };
+            var t0 = DateTime.UtcNow;
+            var body = http.GetStringAsync("http://127.0.0.1:7798/api/wait?team=1&seconds=20&orders_version=0").Result;
+            double took = (DateTime.UtcNow - t0).TotalSeconds;
+            var r = (Dictionary<string, object>)Json.Parse(body);
+            Check(r["interrupted"] is bool b && b && took < 5, $"new orders cut a 20s wait short ({took:0.0}s)");
+            Check(r["orders_changed"] is bool oc && oc && body.Contains("Expand to the uranium"), "the wait result carries the new orders");
+            var post = http.PostAsync("http://127.0.0.1:7798/api/admin/orders?team=0", new StringContent("{\"text\":\"Turtle.\"}")).Result.Content.ReadAsStringAsync().Result;
+            Check(post.Contains("\"orders_version\":2") && post.Contains("Turtle."), "POST /api/admin/orders replaces orders and bumps the version");
             stop = true;
             api.Stop();
         }

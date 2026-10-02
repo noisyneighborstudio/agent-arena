@@ -23,10 +23,19 @@ namespace Pez.View
         int Team => Runner.HumanTeam;
         float Scale => Mathf.Max(1f, Screen.height / 1080f);
 
+        /// <summary>True while a text field has keyboard focus, so camera keys and hotkeys stand down.</summary>
+        public static bool Typing;
+        public bool ShowOrders;
+        Rect ordersRect;
+        readonly Dictionary<int, string> drafts = new Dictionary<int, string>();
+        Vector2 ordersScroll;
+
+        bool IsAgentTeam(int t) => t >= 0 && t < W.Teams.Count && W.Teams[t].Controller == "llm";
+
         public bool IsOverUi(Vector2 mouse)
         {
             var gui = new Vector2(mouse.x, Screen.height - mouse.y) / Scale;
-            return Runner.InMenu || sideRect.Contains(gui) || miniRect.Contains(gui);
+            return Runner.InMenu || sideRect.Contains(gui) || miniRect.Contains(gui) || (OrdersVisible && ordersRect.Contains(gui));
         }
 
         void Styles()
@@ -55,6 +64,11 @@ namespace Pez.View
             if (Runner == null || Runner.Game == null) return;
             Styles();
             GUI.matrix = Matrix4x4.Scale(new Vector3(Scale, Scale, 1));
+            // Clicking the battlefield (outside the orders panel) takes focus away from any text box.
+            var ev0 = Event.current;
+            if (ev0.type == EventType.MouseDown && !Runner.InMenu && !ordersRect.Contains(ev0.mousePosition)) GUIUtility.keyboardControl = 0;
+            if (ev0.type == EventType.KeyDown && ev0.keyCode == KeyCode.Escape) GUIUtility.keyboardControl = 0;
+            Typing = GUIUtility.keyboardControl != 0;
             float sw = Screen.width / Scale, sh = Screen.height / Scale;
 
             if (Runner.InMenu) { Menu(sw, sh); return; }
@@ -65,6 +79,7 @@ namespace Pez.View
             Feed(sh);
             if (Team >= 0) { Sidebar(sw, sh); Selection(sw, sh); }
             else { sideRect = Rect.zero; SpectatorPanel(sw); }
+            OrdersPanel(sw, sh);
             Minimap(sw, sh);
             DragBox();
             if (W.GameOver)
@@ -84,7 +99,7 @@ namespace Pez.View
         void Menu(float sw, float sh)
         {
             Fill(new Rect(0, 0, sw, sh), new Color(0.02f, 0.03f, 0.04f, 0.72f));
-            var r = new Rect(sw / 2 - 330, sh / 2 - 230, 660, 460);
+            var r = new Rect(sw / 2 - 330, sh / 2 - 300, 660, 600);
             Fill(r, new Color(0.08f, 0.09f, 0.1f, 0.95f));
             GUILayout.BeginArea(new Rect(r.x + 24, r.y + 18, r.width - 48, r.height - 36));
             var big = new GUIStyle(title) { fontSize = 40 };
@@ -100,6 +115,18 @@ namespace Pez.View
                 int next = GUILayout.Toolbar(System.Math.Max(0, cur), new[] { "Human", "Scripted AI", "Claude", "Codex", "External" });
                 if (next != cur) cfg.Controllers[t] = ControllerOptions[next];
                 GUILayout.EndHorizontal();
+                if (cfg.Controllers[t] != "human" && cfg.Controllers[t] != "ai")
+                {
+                    // Standing orders for this team's LLM, delivered with its first look at the game.
+                    if (cfg.Orders == null || cfg.Orders.Length < cfg.Controllers.Length) cfg.Orders = new string[cfg.Controllers.Length];
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Space(84);
+                    GUILayout.BeginVertical();
+                    GUILayout.Label("<size=11><color=#aaa>Commander's orders (optional), e.g. \"rush with infantry\" or \"turtle and tech to stealth bombers\"</color></size>", small);
+                    cfg.Orders[t] = GUILayout.TextArea(cfg.Orders[t] ?? "", new GUIStyle(GUI.skin.textArea) { wordWrap = true }, GUILayout.Height(44));
+                    GUILayout.EndVertical();
+                    GUILayout.EndHorizontal();
+                }
                 GUILayout.Space(4);
             }
             GUILayout.Space(8);
@@ -161,6 +188,8 @@ namespace Pez.View
             foreach (var e in W.Events.Skip(System.Math.Max(0, W.Events.Count - 400)))
                 if (e.Type == "chat" || e.Type == "defeated" || e.Type == "game_over")
                     lines.Add((e.Tick * World.Dt, e.Type == "chat" ? $"{TeamTag(e.Team)}: {e.Text}" : $"<b>{e.Text}</b>"));
+                else if (e.Type == "orders")
+                    lines.Add((e.Tick * World.Dt, $"<color=#9fd7ff><b>Commander → {TeamTag(e.Team)}</b>: {e.Text}</color>"));
             foreach (var c in Runner.CommandFeed) lines.Add((c.time, $"<size=12><color=#aaa>{TeamTag(c.team)} ▸ {c.text}</color></size>"));
             // Priority alarms in the feed: spectators see both sides' alarms (and how fast each commander reacts).
             foreach (var a in W.Alerts.All)
@@ -274,6 +303,41 @@ namespace Pez.View
                 GUI.Label(new Rect(x, by, 250, 60), $"<color=#ff7755>{input.LastError}</color>", small);
             else
                 GUI.Label(new Rect(x, by, 250, 92), "<size=10><color=#999>Click: build/train (shift x5, right-click cancel). Right-click map: move/attack/mine/rally. F+right-click: attack-move. G: deploy. X: stop. Del: sell. WASD/edge pan, Q/E rotate, wheel zoom.</color></size>", small);
+        }
+
+        bool OrdersVisible => !Runner.InMenu && W.Teams.Any(t => t.Controller == "llm") && (Team < 0 || ShowOrders);
+
+        /// <summary>Write or change standing orders for LLM teams mid-game. Always shown when spectating; O toggles it when playing.</summary>
+        void OrdersPanel(float sw, float sh)
+        {
+            var agentTeams = W.Teams.Where(t => t.Controller == "llm").ToList();
+            if (agentTeams.Count == 0) { ordersRect = Rect.zero; return; }
+            if (Team >= 0 && GUI.Button(new Rect(8, 32 + W.Teams.Count * 20, 150, 22), ShowOrders ? "Hide orders (O)" : "LLM orders (O)")) ShowOrders = !ShowOrders;
+            if (!OrdersVisible) { ordersRect = Rect.zero; return; }
+            float w = 300, x = Team < 0 ? sw - w - 10 : 8, y = Team < 0 ? 400 : 60 + W.Teams.Count * 20;
+            float h = Mathf.Min(sh - y - 200, 30 + agentTeams.Count * 190);
+            ordersRect = new Rect(x, y, w, h);
+            Fill(ordersRect, new Color(0.05f, 0.06f, 0.07f, 0.88f));
+            GUILayout.BeginArea(new Rect(x + 10, y + 6, w - 20, h - 12));
+            GUILayout.Label("<b>COMMANDER'S ORDERS</b>  <size=11><color=#aaa>standing instructions for each LLM</color></size>", label);
+            ordersScroll = GUILayout.BeginScrollView(ordersScroll);
+            foreach (var t in agentTeams)
+            {
+                GUILayout.Label($"<color=#{Hex(Mats.Team(t.Id))}><b>{t.Name}</b></color> {t.PlayerName ?? "LLM"}", label);
+                GUILayout.Label($"<size=11><color=#ccc>Current: {(t.StandingOrders.Length == 0 ? "<i>none</i>" : t.StandingOrders)}</color></size>", small);
+                if (!drafts.ContainsKey(t.Id)) drafts[t.Id] = t.StandingOrders;
+                drafts[t.Id] = GUILayout.TextArea(drafts[t.Id], new GUIStyle(GUI.skin.textArea) { wordWrap = true }, GUILayout.Height(56));
+                GUILayout.BeginHorizontal();
+                GUI.enabled = drafts[t.Id].Trim() != t.StandingOrders;
+                if (GUILayout.Button("Send")) { W.SetOrders(t.Id, drafts[t.Id]); GUIUtility.keyboardControl = 0; }
+                GUI.enabled = t.StandingOrders.Length > 0;
+                if (GUILayout.Button("Clear")) { W.SetOrders(t.Id, ""); drafts[t.Id] = ""; GUIUtility.keyboardControl = 0; }
+                GUI.enabled = true;
+                GUILayout.EndHorizontal();
+                GUILayout.Space(8);
+            }
+            GUILayout.EndScrollView();
+            GUILayout.EndArea();
         }
 
         void SpectatorPanel(float sw)

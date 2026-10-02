@@ -51,6 +51,8 @@ namespace Pez.View
             Cam.GroundPoint(mouse, out var ground);
             var tile = new Int2(Mathf.FloorToInt(ground.x), Mathf.FloorToInt(ground.z));
 
+            if (Hud.Typing) return; // keystrokes belong to the orders text box
+            if (Input.GetKeyDown(KeyCode.O) && Runner.Hud != null) Runner.Hud.ShowOrders = !Runner.Hud.ShowOrders;
             if (Input.GetKeyDown(KeyCode.Escape)) { PlacingKey = null; attackMoveArmed = false; }
             if (Input.GetKeyDown(KeyCode.F)) attackMoveArmed = true;
             if (Input.GetKeyDown(KeyCode.X)) { var u = SelectedUnits(); if (u.Count > 0) Exec("type", "stop", "units", u); }

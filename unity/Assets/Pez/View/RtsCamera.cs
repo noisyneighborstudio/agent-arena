@@ -24,14 +24,15 @@ namespace Pez.View
         void Update()
         {
             float dt = Time.unscaledDeltaTime;
+            bool keys = !Hud.Typing; // don't pan while someone is typing orders
             var fwd = Quaternion.Euler(0, Yaw, 0) * Vector3.forward;
             var right = Quaternion.Euler(0, Yaw, 0) * Vector3.right;
             float speed = Distance * 1.1f;
             var move = Vector3.zero;
-            if (Input.GetKey(KeyCode.W) || Input.GetKey(KeyCode.UpArrow)) move += fwd;
-            if (Input.GetKey(KeyCode.S) || Input.GetKey(KeyCode.DownArrow)) move -= fwd;
-            if (Input.GetKey(KeyCode.D) || Input.GetKey(KeyCode.RightArrow)) move += right;
-            if (Input.GetKey(KeyCode.A) && !Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.LeftArrow)) move -= right;
+            if (keys && (Input.GetKey(KeyCode.W) || Input.GetKey(KeyCode.UpArrow))) move += fwd;
+            if (keys && (Input.GetKey(KeyCode.S) || Input.GetKey(KeyCode.DownArrow))) move -= fwd;
+            if (keys && (Input.GetKey(KeyCode.D) || Input.GetKey(KeyCode.RightArrow))) move += right;
+            if (keys && (Input.GetKey(KeyCode.A) && !Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.LeftArrow))) move -= right;
             if (EdgePan && Application.isFocused)
             {
                 var m = Input.mousePosition;
@@ -46,8 +47,8 @@ namespace Pez.View
             }
             Focus += move.normalized * speed * dt;
 
-            if (Input.GetKey(KeyCode.Q)) Yaw += 70f * dt;
-            if (Input.GetKey(KeyCode.E)) Yaw -= 70f * dt;
+            if (keys && Input.GetKey(KeyCode.Q)) Yaw += 70f * dt;
+            if (keys && Input.GetKey(KeyCode.E)) Yaw -= 70f * dt;
 
             float scroll = Input.mouseScrollDelta.y;
             if (Mathf.Abs(scroll) > 0.01f) Distance = Mathf.Clamp(Distance * (1f - scroll * 0.1f), MinDist, MaxDist);

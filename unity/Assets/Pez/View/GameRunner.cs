@@ -9,7 +9,7 @@ namespace Pez.View
     /// <summary>
     /// Owns the Game, the HTTP API and the view. Created automatically at startup (see Bootstrap),
     /// so the project needs no authored scene content.
-    /// Command line: -team0 human|ai|claude|codex|llm -team1 ... -model0 sonnet -effort0 medium -seed N -port 7777 -speed 1 -autostart
+    /// Command line: -team0 human|ai|claude|codex|llm -team1 ... -model0 sonnet -effort0 medium -orders0 "text" -seed N -port 7777 -speed 1 -autostart
     /// </summary>
     public class GameRunner : MonoBehaviour
     {
@@ -54,6 +54,7 @@ namespace Pez.View
                 Seed = int.Parse(Arg("-seed", Random.Range(1, 99999).ToString())),
                 Speed = float.Parse(Arg("-speed", "1"), System.Globalization.CultureInfo.InvariantCulture),
                 Controllers = new[] { Arg("-team0", "human"), Arg("-team1", "ai") },
+                Orders = new[] { Arg("-orders0", ""), Arg("-orders1", "") },
             };
         }
 
@@ -163,7 +164,7 @@ namespace Pez.View
             startingFromMenu = true;
             // The sim only knows "llm"; which CLI plays is the launcher's business.
             var simControllers = cfg.Controllers.Select(c => AgentClis.Contains(c) ? "llm" : c).ToArray();
-            Game.Restart(new GameConfig { Seed = cfg.Seed, Speed = cfg.Speed, MapSize = cfg.MapSize, Controllers = simControllers });
+            Game.Restart(new GameConfig { Seed = cfg.Seed, Speed = cfg.Speed, MapSize = cfg.MapSize, Controllers = simControllers, Orders = (string[])cfg.Orders?.Clone() });
             InMenu = false;
             if (cfg.Controllers.Any(c => AgentClis.Contains(c))) LaunchAgents(cfg.Controllers);
         }
@@ -252,7 +253,7 @@ namespace Pez.View
             if (Game.World != viewWorld) RebuildView();
             if (!InMenu)
             {
-                if (UnityEngine.Input.GetKeyDown(KeyCode.Pause) || (UnityEngine.Input.GetKeyDown(KeyCode.P) && HumanTeam < 0)) Game.Paused = !Game.Paused;
+                if (UnityEngine.Input.GetKeyDown(KeyCode.Pause) || (UnityEngine.Input.GetKeyDown(KeyCode.P) && HumanTeam < 0 && !Hud.Typing)) Game.Paused = !Game.Paused;
                 Game.Advance(Time.deltaTime);
             }
             View.Sync(Game.Alpha);

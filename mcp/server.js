@@ -17,6 +17,7 @@ let joined = false;
 let lastSeq = 0;       // last game event seen (events are reported as deltas)
 let lastAlertSeq = 0;  // last priority alert already shown to the model
 let lastTick = 0;      // detects a game restart, which resets the server's sequence numbers
+let lastOrdersVersion = 0; // last version of the human commander's standing orders already shown
 
 async function call(path, { method = "GET", body } = {}) {
   const sep = path.includes("?") ? "&" : "?";
@@ -44,7 +45,7 @@ async function ensureJoined() {
 const text = (t) => ({ content: [{ type: "text", text: t }] });
 
 function noteState(s) {
-  if (s.tick < lastTick) { lastSeq = 0; lastAlertSeq = 0; } // new game
+  if (s.tick < lastTick) { lastSeq = 0; lastAlertSeq = 0; lastOrdersVersion = 0; } // new game
   lastTick = s.tick;
   lastSeq = s.last_event_seq ?? lastSeq;
 }
@@ -55,18 +56,26 @@ function banner(alerts, lead) {
   return `⚠️ ${lead}\n${alerts.map((a) => `- [#${a.seq}] ${a.text}`).join("\n")}\n\n`;
 }
 
-/** Priority alerts (high or critical) the model hasn't been shown yet. */
-async function unseenAlerts() {
+function ordersBanner(version, text) {
+  if (version <= lastOrdersVersion) return "";
+  lastOrdersVersion = version;
+  return text
+    ? `📣 NEW ORDERS FROM YOUR HUMAN COMMANDER (these take precedence over your own plans; follow them until they change):\n${text}\n\n`
+    : "📣 Your human commander has cleared their standing orders. Use your own judgment.\n\n";
+}
+
+/** Priority alerts (high or critical) the model hasn't been shown yet, plus any new commander's orders. */
+async function unseen() {
   const r = JSON.parse(await call(`/api/alerts?since=${lastAlertSeq}&min=high`));
-  if (r.last_alert_seq < lastAlertSeq) { lastAlertSeq = 0; return unseenAlerts(); } // new game
-  return r.new_alerts;
+  if (r.last_alert_seq < lastAlertSeq || r.orders_version < lastOrdersVersion) { lastAlertSeq = 0; lastOrdersVersion = 0; return unseen(); } // new game
+  return { alerts: r.new_alerts, orders: ordersBanner(r.orders_version, r.standing_orders) };
 }
 
 async function stateText() {
-  const alerts = await unseenAlerts();
+  const u = await unseen();
   const s = JSON.parse(await call(`/api/state?since=${lastSeq}`));
   noteState(s);
-  return banner(alerts, "PRIORITY ALERT: deal with this before continuing your plan:") + JSON.stringify(s, null, 1);
+  return u.orders + banner(u.alerts, "PRIORITY ALERT: deal with this before continuing your plan:") + JSON.stringify(s, null, 1);
 }
 
 const server = new McpServer({ name: "pez-rts", version: "0.1.0" });
@@ -81,7 +90,7 @@ server.registerTool(
   "get_state",
   {
     description:
-      "Your team's view of the battlefield: stockpile (ores and materials with per-second rates), power, converter status, production queues, what you can build and its cost, your structures and units (with ids), visible enemies, explored ore fields by type, and events since your last get_state/wait. Coordinates are tile x,y (x east, y north).",
+      "Your team's view of the battlefield: your human commander's standing_orders (follow them), active priority alerts, stockpile (ores and materials with per-second rates), power, converter status, production queues, what you can build and its cost, your structures and units (with ids), visible enemies, explored ore fields by type, and events since your last get_state/wait. Coordinates are tile x,y (x east, y north).",
   },
   async () => {
     await ensureJoined();
@@ -132,8 +141,8 @@ server.registerTool(
   async ({ commands }) => {
     await ensureJoined();
     const result = await call("/api/command", { method: "POST", body: { commands } });
-    const alerts = await unseenAlerts();
-    return text(banner(alerts, "NEW PRIORITY ALERT since your last look:") + result);
+    const u = await unseen();
+    return text(u.orders + banner(u.alerts, "NEW PRIORITY ALERT since your last look:") + result);
   },
 );
 
@@ -151,12 +160,13 @@ server.registerTool(
   },
   async ({ seconds, interrupt_on }) => {
     await ensureJoined();
-    const r = JSON.parse(await call(`/api/wait?seconds=${seconds}&since=${lastAlertSeq}&events_since=${lastSeq}&min=${interrupt_on ?? "high"}`));
+    const r = JSON.parse(await call(`/api/wait?seconds=${seconds}&since=${lastAlertSeq}&events_since=${lastSeq}&orders_version=${lastOrdersVersion}&min=${interrupt_on ?? "high"}`));
     noteState(r.state);
-    const head = r.interrupted
+    const orders = ordersBanner(r.state.orders_version, r.state.standing_orders === "none" ? "" : r.state.standing_orders);
+    const head = r.new_alerts?.length
       ? banner(r.new_alerts, `PRIORITY ALERT: your wait was cut short after ${r.waited_s}s of ${seconds}s. Respond to this first:`)
-      : `Waited ${r.waited_s}s. No new priority alerts.\n\n`;
-    return text(head + JSON.stringify(r.state, null, 1));
+      : r.interrupted ? `Your wait was cut short after ${r.waited_s}s of ${seconds}s by new orders.\n\n` : `Waited ${r.waited_s}s. No new priority alerts.\n\n`;
+    return text(orders + head + JSON.stringify(r.state, null, 1));
   },
 );
 

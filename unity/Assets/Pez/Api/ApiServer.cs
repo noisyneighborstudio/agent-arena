@@ -29,6 +29,7 @@ namespace Pez.Api
             public World World;
             public int Team;
             public long AlertSince, EventSince;
+            public int OrdersSince = -1;
             public Priority Min;
             public bool Interruptible;
             public DateTime Started, Deadline;
@@ -114,7 +115,9 @@ namespace Pez.Api
                 var w = game.World;
                 bool restarted = w != wt.World;
                 var fresh = restarted ? new List<Alert>() : w.Alerts.Since(wt.Team, wt.AlertSince, wt.Min).ToList();
-                bool interrupt = wt.Interruptible && fresh.Count > 0;
+                // New commander's orders also end the wait: the model should read them right away.
+                bool newOrders = !restarted && wt.OrdersSince >= 0 && w.Teams[wt.Team].OrdersVersion > wt.OrdersSince;
+                bool interrupt = wt.Interruptible && (fresh.Count > 0 || newOrders);
                 if (!interrupt && !restarted && now < wt.Deadline && !w.GameOver) continue;
                 waiters.RemoveAt(i);
                 Respond(wt.Ctx, 200, Json.Write(WaitResult(w, wt, interrupt, fresh, now)), "application/json");
@@ -125,6 +128,7 @@ namespace Pez.Api
             .Set("interrupted", interrupted)
             .Set("waited_s", (float)Math.Round((now - wt.Started).TotalSeconds, 1))
             .Set("new_alerts", StateView.AlertsJson(w, fresh.OrderByDescending(a => a.Priority)))
+            .Set("orders_changed", wt.OrdersSince >= 0 && w.Teams.Count > wt.Team && w.Teams[wt.Team].OrdersVersion > wt.OrdersSince)
             .Set("state", StateView.TeamState(w, Math.Min(wt.Team, w.Teams.Count - 1), wt.EventSince));
 
         static int TeamParam(HttpListenerRequest req, World w)
@@ -147,7 +151,7 @@ namespace Pez.Api
                 case "":
                 case "/api":
                     contentType = "text/plain";
-                    return "Pez RTS control API\n\nGET  /api/rules\nGET  /api/state?team=N[&since=SEQ]\nGET  /api/map?team=N\nGET  /api/alerts?team=N[&since=SEQ&min=medium|high|critical]\nGET  /api/wait?team=N&seconds=S[&since=ALERT_SEQ&events_since=SEQ&min=high|critical|none]  (returns early on a new priority alert)\nPOST /api/command?team=N   body: {\"commands\":[...]} | [...] | {...}\nPOST /api/join?team=N      body: {\"name\":\"Claude\"}\nGET  /api/status\nPOST /api/admin/restart    body: {\"seed\":1,\"controllers\":[\"llm\",\"llm\"],\"speed\":1}\nPOST /api/admin/speed      body: {\"speed\":0.5}\n\n" + Commands.Help;
+                    return "Pez RTS control API\n\nGET  /api/rules\nGET  /api/state?team=N[&since=SEQ]\nGET  /api/map?team=N\nGET  /api/alerts?team=N[&since=SEQ&min=medium|high|critical]\nGET  /api/wait?team=N&seconds=S[&since=ALERT_SEQ&events_since=SEQ&min=high|critical|none]  (returns early on a new priority alert)\nPOST /api/command?team=N   body: {\"commands\":[...]} | [...] | {...}\nPOST /api/join?team=N      body: {\"name\":\"Claude\"}\nGET  /api/status\nPOST /api/admin/restart    body: {\"seed\":1,\"controllers\":[\"llm\",\"llm\"],\"speed\":1}\nPOST /api/admin/speed      body: {\"speed\":0.5}\nPOST /api/admin/orders?team=N  body: {\"text\":\"standing orders for that team's commander\"}\n\n" + Commands.Help;
                 case "/api/rules":
                     return Json.Write(StateView.Rules());
                 case "/api/state":
@@ -162,6 +166,7 @@ namespace Pez.Api
                         long since = long.TryParse(req.QueryString["since"], out var s) ? s : 0;
                         var min = ParsePriority(req.QueryString["min"], Priority.Medium);
                         return Json.Write(new JObj().Set("last_alert_seq", w.Alerts.LastSeq)
+                            .Set("orders_version", w.Teams[team].OrdersVersion).Set("standing_orders", w.Teams[team].StandingOrders)
                             .Set("new_alerts", StateView.AlertsJson(w, w.Alerts.Since(team, since, min).OrderByDescending(a => a.Priority)))
                             .Set("active", StateView.AlertsJson(w, w.Alerts.Active(w, team))));
                     }
@@ -175,6 +180,7 @@ namespace Pez.Api
                         {
                             Ctx = p.Ctx, World = w, Team = team,
                             AlertSince = long.TryParse(req.QueryString["since"], out var a1) ? a1 : w.Alerts.LastSeq,
+                            OrdersSince = int.TryParse(req.QueryString["orders_version"], out var ov) ? ov : -1,
                             EventSince = long.TryParse(req.QueryString["events_since"], out var e1) ? e1 : 0,
                             Min = ParsePriority(req.QueryString["min"], Priority.High),
                             Interruptible = req.QueryString["min"] != "none",
@@ -222,6 +228,8 @@ namespace Pez.Api
                         var cfg = new GameConfig { Seed = (int)(d?.Num("seed", game.Config.Seed) ?? game.Config.Seed), Speed = d?.Num("speed", game.Speed) ?? game.Speed };
                         if (d != null && d.TryGetValue("controllers", out var cs) && cs is List<object> cl2) cfg.Controllers = cl2.Select(x => x.ToString()).ToArray();
                         else cfg.Controllers = game.Config.Controllers;
+                        if (d != null && d.TryGetValue("orders", out var os) && os is List<object> ol) cfg.Orders = ol.Select(x => x?.ToString() ?? "").ToArray();
+                        else cfg.Orders = game.Config.Orders;
                         game.Restart(cfg);
                         return Json.Write(new JObj().Set("ok", true).Set("seed", cfg.Seed).Set("controllers", cfg.Controllers.ToList()));
                     }
@@ -237,6 +245,17 @@ namespace Pez.Api
                         var d = Json.Parse(p.Body ?? "{}") as Dictionary<string, object>;
                         OnCamera?.Invoke(d);
                         return Json.Write(new JObj().Set("ok", OnCamera != null));
+                    }
+                case "/api/admin/orders":
+                    {
+                        // Human commander -> team. GET reads, POST {"text": "..."} replaces (empty clears).
+                        int team = TeamParam(req, w);
+                        if (method == "POST")
+                        {
+                            var d = Json.Parse(p.Body ?? "{}") as Dictionary<string, object>;
+                            w.SetOrders(team, d?.Str("text") ?? "");
+                        }
+                        return Json.Write(new JObj().Set("ok", true).Set("team", team).Set("standing_orders", w.Teams[team].StandingOrders).Set("orders_version", w.Teams[team].OrdersVersion));
                     }
                 case "/api/admin/speed":
                     {

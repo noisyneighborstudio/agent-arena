@@ -29,6 +29,8 @@ namespace Pez.Sim
             var active = w.Alerts.Active(w, team).ToList();
             o.Set("alerts", active.Count == 0 ? (object)"none" : active.Select(a => $"[#{a.Seq}] {AlertLog.Describe(w, a)}").ToList());
             o.Set("last_alert_seq", w.Alerts.LastSeq);
+            o.Set("standing_orders", t.StandingOrders.Length == 0 ? "none" : t.StandingOrders);
+            o.Set("orders_version", t.OrdersVersion);
 
             var enemies = w.Teams.Where(x => x.Id != team).Select(x => new JObj()
                 .Set("team", x.Id).Set("name", x.Name).Set("player", x.PlayerName ?? x.Controller)
@@ -108,6 +110,7 @@ namespace Pez.Sim
                 switch (e.Type)
                 {
                     case "chat": s = $"{ts} {(e.Team == team ? "you" : TeamLabel(w, e.Team))} said: {e.Text}"; break;
+                    case "orders": if (e.Team == team) s = $"{ts} your commander issued new standing orders: {e.Text}"; break;
                     case "built": if (e.Team == team) s = $"{ts} {e.Key} #{e.A} completed"; break;
                     case "trained": if (e.Team == team) s = $"{ts} {e.Key} #{e.A} ready"; break;
                     case "under_attack": if (e.Team == team) s = $"{ts} your {e.Key} #{e.A} is under attack"; break;

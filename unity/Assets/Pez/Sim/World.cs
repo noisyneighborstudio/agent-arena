@@ -24,6 +24,9 @@ namespace Pez.Sim
         public string Name;
         public string Controller = "human"; // human | ai | llm
         public string PlayerName;
+        /// <summary>Standing instructions from the human commander to whoever (usually an LLM) plays this team.</summary>
+        public string StandingOrders = "";
+        public int OrdersVersion;
         /// <summary>Team stockpile: raw ores and manufactured materials (see Defs.Items).</summary>
         public readonly Dictionary<string, float> Stock = new Dictionary<string, float>();
         /// <summary>Net change per second of each item over the last second, for display.</summary>
@@ -231,6 +234,17 @@ namespace Pez.Sim
             if (producerKey != null && !HasComplete(team, producerKey)) return $"requires a completed {producerKey}";
             foreach (var r in def.Requires) if (!HasComplete(team, r)) return $"requires a completed {r}";
             return null;
+        }
+
+        public void SetOrders(int team, string text)
+        {
+            var t = Teams[team];
+            text = (text ?? "").Trim();
+            if (text.Length > 2000) text = text.Substring(0, 2000);
+            if (text == t.StandingOrders) return;
+            t.StandingOrders = text;
+            t.OrdersVersion++;
+            Emit("orders", team, text: text.Length == 0 ? "(orders cleared)" : text);
         }
 
         public bool IsVisibleTo(int team, Entity e)

@@ -83,6 +83,17 @@ Then tell Claude something like "you're Red in Pez, crush me". You can also coac
 | `command` | a batch of commands: `build`, `train`, `move`, `attack_move`, `attack`, `stop`, `harvest` (optionally by `ore` type), `deploy`, `repair`/`heal`, `rally`, `sell`, `cancel`, `say` |
 | `wait` | lets the game run up to 1–30 seconds, then returns the new state; returns early if a priority alert fires |
 
+### Commander's orders
+
+You can give each LLM standing instructions, like adding to its system prompt:
+
+- **Before a match:** each LLM team in the menu has an instructions box. From the command line, use `-orders0 "rush with infantry"`.
+- **During a match:** use the Commander's Orders panel. It's always shown when spectating; when you're playing, press **O** or use its button. From scripts, `POST /api/admin/orders?team=N` with `{"text": "..."}`.
+
+The model sees the current orders as `standing_orders` in every `get_state`. When the orders change, its `wait` is cut short and its next response starts with a "📣 NEW ORDERS FROM YOUR HUMAN COMMANDER" banner. The prompt tells it that these orders take precedence over its own plans.
+
+The agents' actual system prompts are fixed when they launch, so orders are delivered through the game instead. That works the same for every model and takes effect immediately.
+
 ### Priority alerts
 
 The game raises alerts the way a human commander hears an alarm:

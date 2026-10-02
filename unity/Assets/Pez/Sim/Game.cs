@@ -9,6 +9,8 @@ namespace Pez.Sim
         public float Speed = 1f;
         /// <summary>Per team: human | ai | llm</summary>
         public string[] Controllers = { "human", "ai" };
+        /// <summary>Per team: initial standing orders for an LLM commander (may be null/empty).</summary>
+        public string[] Orders = { "", "" };
     }
 
     /// <summary>Owns a World plus who controls each team, and advances it in real time.</summary>
@@ -33,6 +35,7 @@ namespace Pez.Sim
             {
                 World.Teams[i].Controller = cfg.Controllers[i];
                 if (cfg.Controllers[i] == "ai") { ais.Add(new SimpleAI(i)); World.Teams[i].PlayerName = "Scripted AI"; }
+                if (cfg.Orders != null && i < cfg.Orders.Length && !string.IsNullOrWhiteSpace(cfg.Orders[i])) World.SetOrders(i, cfg.Orders[i]);
             }
             accumulator = 0;
         }
