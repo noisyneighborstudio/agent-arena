@@ -1,0 +1,86 @@
+using System.Collections.Generic;
+
+namespace Pez.Sim
+{
+    public enum Order { Idle, Move, AttackMove, Attack, Harvest, ReturnOre }
+
+    public class Entity
+    {
+        public int Id;
+        public int Team;
+        public EntityDef Def;
+        public Vec2 Pos, PrevPos;
+        public float Facing;          // radians, body
+        public float TurretFacing;    // radians, weapon
+        public float Hp;
+        public bool Dead;
+
+        // Structures
+        public Int2 Origin;
+        public float BuildProgress = 1f;   // 0..1, structures only
+        public Vec2? Rally;
+        public bool IsComplete => BuildProgress >= 1f;
+
+        // Units
+        public Order Order;
+        public Vec2 OrderPos;
+        public Vec2 GuardPos;
+        public int TargetId;
+        public List<Vec2> Path;
+        public int PathIdx;
+        public float Cooldown;
+        public float RepathTimer;
+        public bool Moving;
+        public int LastAttackerId;
+        public float LastHitTime = -999;
+
+        // Harvesters
+        public int Cargo;
+        public Int2? HarvestTile;
+        public float WorkTimer;
+
+        public bool IsStructure => Def.IsStructure;
+        public bool IsArmed => Def.Weapon != null;
+        public bool IsHarvester => Def.HarvestCapacity > 0;
+
+        public Vec2 Center => IsStructure ? new Vec2(Origin.X + Def.SizeX / 2f, Origin.Y + Def.SizeY / 2f) : Pos;
+
+        /// <summary>Distance from a point to this entity's body (footprint edge for structures).</summary>
+        public float DistFrom(Vec2 p)
+        {
+            if (!IsStructure) return System.MathF.Max(0, Vec2.Dist(p, Pos) - Def.Radius);
+            float cx = System.MathF.Max(Origin.X, System.MathF.Min(p.X, Origin.X + Def.SizeX));
+            float cy = System.MathF.Max(Origin.Y, System.MathF.Min(p.Y, Origin.Y + Def.SizeY));
+            return Vec2.Dist(p, new Vec2(cx, cy));
+        }
+
+        public string OrderName => Order.ToString().ToLowerInvariant() switch
+        {
+            "attackmove" => "attack_move",
+            "returnore" => "return_ore",
+            var s => s
+        };
+    }
+
+    public class Projectile
+    {
+        public int Id;
+        public int Team;
+        public int SourceId;
+        public int TargetId;
+        public Vec2 Pos, PrevPos, TargetPos;
+        public WeaponDef Weapon;
+    }
+
+    public class GameEvent
+    {
+        public long Seq;
+        public int Tick;
+        public string Type;    // shot, fire, hit, destroyed, built, trained, placed, sold, chat, defeated, game_over, under_attack
+        public int Team = -1;  // team the event mainly concerns (-1 = global)
+        public int A, B;       // entity ids (source, target)
+        public Vec2 Pos, Pos2;
+        public string Key;
+        public string Text;
+    }
+}
