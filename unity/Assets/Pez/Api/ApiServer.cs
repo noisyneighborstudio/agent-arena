@@ -441,14 +441,20 @@ namespace Pez.Api
                     e.Def.UsesFuel && (team < 0 || e.Team == team) ? (int)(e.FuelFraction * 100) : -1 });
             }
             var shots = new List<object>();
-            long since = w.Events.Count > 0 ? w.Events[w.Events.Count - 1].Seq - 400 : 0;
-            foreach (var ev in w.Events)
+            // Tracers matter for an instant; blasts, deaths, boarding and salvage stay listed long enough that a late poll
+            // (background tab, slow link, the 0.5 s spectator buffer) still sees them. The viewer dedupes by seq.
+            for (int i = w.Events.Count - 1; i >= 0; i--)
             {
-                if (ev.Seq < since || w.Tick - ev.Tick > 10) continue;
-                if (ev.Type != "shot" && ev.Type != "fire" && ev.Type != "hit" && ev.Type != "destroyed") continue;
+                var ev = w.Events[i];
+                int age = w.Tick - ev.Tick;
+                if (age > 3 * World.TickRate) break;
+                int keep = ev.Type == "shot" || ev.Type == "fire" ? 10 : ev.Type == "hit" ? 20
+                         : ev.Type == "destroyed" || ev.Type == "boarded" || ev.Type == "salvaged" ? 3 * World.TickRate : -1;
+                if (age > keep) continue;
                 if (team >= 0 && ev.Team != team && !w.Teams[team].Visible[m.Idx(Math.Clamp((int)ev.Pos.X, 0, m.W - 1), Math.Clamp((int)ev.Pos.Y, 0, m.H - 1))]) continue;
-                shots.Add(new List<object> { ev.Seq, ev.Type, Math.Round(ev.Pos.X, 1), Math.Round(ev.Pos.Y, 1), Math.Round(ev.Pos2.X, 1), Math.Round(ev.Pos2.Y, 1), ev.Team });
+                shots.Add(new List<object> { ev.Seq, ev.Type, Math.Round(ev.Pos.X, 1), Math.Round(ev.Pos.Y, 1), Math.Round(ev.Pos2.X, 1), Math.Round(ev.Pos2.Y, 1), ev.Team, ev.A });
             }
+            shots.Reverse();
             var o = new JObj().Set("tick", w.Tick).Set("time_s", (float)Math.Round(w.Time, 1)).Set("version", w.MapVersion)
                 .Set("teams", w.Teams.Select(t => new JObj().Set("id", t.Id).Set("flavor", t.Name).Set("player", t.PlayerName ?? t.Controller)
                     .Set("status", t.Resigned ? "resigned" : t.Left ? "left" : t.Defeated ? "eliminated" : "playing").Set("kills", t.Stats.Kills)

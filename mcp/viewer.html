@@ -192,8 +192,10 @@ function lookAt(x, y) {
 
 async function tick() {
   try {
+    const prev = frame;
     frame = await getJSON(`${BASE}/frame`);
     showResults(frame.results, frame.rejoin);
+    noteVanished(prev, frame);
     if (frame.waiting) { document.getElementById("where").textContent = frame.waiting; setTimeout(tick, 2000); return; }
     if (!map || frame.version !== mapVersion) await loadMap();
     if (frame.shroud) {
@@ -367,7 +369,15 @@ mini.addEventListener("click", (ev) => {
 const sx = (x) => cv.width / 2 + (x - cam.x) * cam.scale;
 const sy = (y) => cv.height / 2 - (y - cam.y) * cam.scale;
 
-const seenFx = new Set(), bursts = [];
+const seenFx = new Set(), bursts = [], ghosts = [];
+// A unit that leaves the picture (boarding, slipping into fog, salvage, a death whose burst fell between polls)
+// fades and shrinks where it was last seen instead of blinking away.
+function noteVanished(prev, next) {
+  if (!prev?.entities || !next?.entities) return;
+  const ids = new Set(next.entities.map((e) => e[0])), t = performance.now();
+  for (const e of prev.entities) if (e[8] === 0 && !ids.has(e[0])) ghosts.push({ e, t });
+  while (ghosts.length > 200) ghosts.shift();
+}
 function draw() {
   requestAnimationFrame(draw);
   const dpr = devicePixelRatio || 1;
@@ -411,6 +421,11 @@ function draw() {
     ctx.beginPath(); ctx.arc(sx(b.x), sy(b.y), s * (b.big ? 1.6 : 0.6) * (0.4 + k), 0, Math.PI * 2); ctx.fill();
   }
   if (seenFx.size > 4000) seenFx.clear();
+  for (let i = ghosts.length - 1; i >= 0; i--) {
+    const k = (now - ghosts[i].t) / 700;
+    if (k >= 1) { ghosts.splice(i, 1); continue; }
+    ctx.globalAlpha = 1 - k; drawUnit(ghosts[i].e, s * (1 - 0.6 * k), AIR.has(ghosts[i].e[1])); ctx.globalAlpha = 1;
+  }
   if (frame.shroud) { ctx.imageSmoothingEnabled = true; ctx.drawImage(shroudCanvas, sx(0), sy(map.h), map.w * s, map.h * s); }
   // Selection: cream dashed ring for every team (HUD kit).
   const sel = selected && ents.find((e) => e[0] === selected);
