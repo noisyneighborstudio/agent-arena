@@ -7,7 +7,7 @@
 //
 // Players: claude | codex | grok | gemini | ai | human | external (human/external only make sense with --attach)
 // Options: --attach (use the game already running at --url, e.g. Unity), --no-restart (join the current game as-is),
-//          --url, --speed, --seed, --minutes, --model-<player> <model>
+//          --url, --speed, --seed, --minutes, --model-<player> <model>, --effort-<player> <low|medium|high|...>
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -77,12 +77,14 @@ function agentCommand(team, player, continuation) {
   const env = mcpEnv(team, player);
   const p = prompt(team, player, continuation);
   const model = opt(`model-${player}`);
+  const effort = opt(`effort-${player}`);
   switch (player) {
     case "claude": {
       const cfg = path.join(dir, "mcp.json");
       fs.writeFileSync(cfg, JSON.stringify({ mcpServers: { pez: { command: "node", args: [MCP_SERVER], env } } }, null, 2));
       const args = ["-p", p, "--mcp-config", cfg, "--strict-mcp-config", "--allowedTools", "mcp__pez", "--tools", "", "--output-format", "stream-json", "--verbose"];
       if (model) args.push("--model", model);
+      if (effort) args.push("--effort", effort);
       return ["claude", args, dir];
     }
     case "codex": {
@@ -91,6 +93,7 @@ function agentCommand(team, player, continuation) {
         "-c", `mcp_servers.pez.command="node"`, "-c", `mcp_servers.pez.args=["${MCP_SERVER}"]`, "-c", `mcp_servers.pez.env=${toml(env)}`,
         "-c", `mcp_servers.pez.default_tools_approval_mode="approve"`, "-c", `approval_policy="never"`, "-c", `mcp_servers.pez.tool_timeout_sec=60`];
       if (model) args.push("-m", model);
+      if (effort) args.push("-c", `model_reasoning_effort="${effort}"`);
       args.push(p);
       return ["codex", args, dir];
     }
@@ -144,7 +147,7 @@ async function main() {
   await waitForServer();
   const controllers = players.map((p) => (p === "ai" ? "ai" : p === "human" ? "human" : "llm"));
   if (!flag("no-restart")) await api("/api/admin/restart", { seed: SEED, speed: SPEED, controllers });
-  console.log(`Pez arena: ${players.map((p, i) => `${TEAM_NAMES[i]}=${DISPLAY[p] ?? p}`).join(" vs ")} | seed ${SEED} | speed ${SPEED} | logs ${path.relative(ROOT, LOGDIR)}`);
+  console.log(`Pez arena: ${players.map((p, i) => `${TEAM_NAMES[i]}=${DISPLAY[p] ?? p}${opt(`model-${p}`) ? ` (${opt(`model-${p}`)}${opt(`effort-${p}`) ? " " + opt(`effort-${p}`) : ""})` : ""}`).join(" vs ")} | seed ${SEED} | speed ${SPEED} | logs ${path.relative(ROOT, LOGDIR)}`);
 
   const agents = players.map((p, i) => (NO_AGENT.includes(p) ? null : runAgent(i, p)));
   const started = Date.now();

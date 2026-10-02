@@ -9,7 +9,7 @@ namespace Pez.View
     /// <summary>
     /// Owns the Game, the HTTP API and the view. Created automatically at startup (see Bootstrap),
     /// so the project needs no authored scene content.
-    /// Command line: -team0 human|ai|llm -team1 ... -seed N -port 7777 -speed 1 -autostart
+    /// Command line: -team0 human|ai|claude|codex|llm -team1 ... -model0 sonnet -effort0 medium -seed N -port 7777 -speed 1 -autostart
     /// </summary>
     public class GameRunner : MonoBehaviour
     {
@@ -186,10 +186,20 @@ namespace Pez.View
             var root = RepoRoot();
             if (root == null) { AgentStatus = "Can't find arena/battle.mjs; launch with -repo /path/to/pez"; Debug.LogError(AgentStatus); return; }
             var players = string.Join(" ", controllers.Select(c => c == "llm" ? "external" : c));
+            // Per-team model/effort (-model0 sonnet -effort0 medium) map to the arena's per-player flags.
+            var args = System.Environment.GetCommandLineArgs();
+            string Arg(string name) { int i = System.Array.IndexOf(args, name); return i >= 0 && i + 1 < args.Length ? args[i + 1] : null; }
+            var extra = "";
+            for (int t = 0; t < controllers.Length; t++)
+            {
+                if (!AgentClis.Contains(controllers[t])) continue;
+                if (Arg($"-model{t}") is string m) extra += $" --model-{controllers[t]} {m}";
+                if (Arg($"-effort{t}") is string ef) extra += $" --effort-{controllers[t]} {ef}";
+            }
             var log = System.IO.Path.Combine(root, "arena", "logs", "unity-agents.log");
             System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(log));
             // A login+interactive shell picks up the user's PATH (node, claude, codex) even when launched from Finder.
-            var cmd = $"cd '{root}' && exec node arena/battle.mjs {players} --attach --no-restart --url http://127.0.0.1:{Port} --minutes 120 > '{log}' 2>&1";
+            var cmd = $"cd '{root}' && exec node arena/battle.mjs {players}{extra} --attach --no-restart --url http://127.0.0.1:{Port} --minutes 120 > '{log}' 2>&1";
             try
             {
                 agentProc = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("/bin/zsh", $"-lic \"{cmd}\"") { UseShellExecute = false, CreateNoWindow = true });
