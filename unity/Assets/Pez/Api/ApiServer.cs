@@ -439,7 +439,12 @@ namespace Pez.Api
             }
             var o = new JObj().Set("tick", w.Tick).Set("time_s", (float)Math.Round(w.Time, 1)).Set("version", w.MapVersion)
                 .Set("teams", w.Teams.Select(t => new JObj().Set("id", t.Id).Set("flavor", t.Name).Set("player", t.PlayerName ?? t.Controller)
-                    .Set("status", t.Resigned ? "resigned" : t.Left ? "left" : t.Defeated ? "eliminated" : "playing").Set("kills", t.Stats.Kills)).ToList())
+                    .Set("status", t.Resigned ? "resigned" : t.Left ? "left" : t.Defeated ? "eliminated" : "playing").Set("kills", t.Stats.Kills)
+                    // Spectators (delayed) see everyone's size; a player only sees their own (in "you").
+                    .Set("units", team < 0 ? (object)w.Entities.Count(e => !e.Dead && e.Team == t.Id && !e.IsStructure && !e.IsMine) : null)
+                    .Set("structures", team < 0 ? (object)w.Entities.Count(e => !e.Dead && e.Team == t.Id && e.IsStructure) : null)
+                    .Set("power", team < 0 ? $"{t.PowerUsed}/{t.PowerProduced}" : null)
+                    .Set("steel", team < 0 ? (object)t.Amount("steel") : null)).ToList())
                 .Set("entities", ents).Set("effects", shots)
                 .Set("chat", w.Events.Where(e => e.Type == "chat").Reverse().Take(8).Reverse()
                     .Select(e => $"{(e.Team >= 0 ? w.Teams[e.Team].Name : "arena")}: {e.Text}").ToList());
@@ -448,8 +453,17 @@ namespace Pez.Api
             {
                 var t = w.Teams[team];
                 o.Set("you", new JObj().Set("team", team).Set("flavor", t.Name).Set("player", t.PlayerName).Set("stockpile", StateView.Stockpile(t))
-                    .Set("power", $"{t.PowerUsed}/{t.PowerProduced}").Set("status", t.Resigned ? "resigned" : t.Left ? "left" : t.Defeated ? "eliminated" : "playing"));
+                    .Set("power", $"{t.PowerUsed}/{t.PowerProduced}").Set("status", t.Resigned ? "resigned" : t.Left ? "left" : t.Defeated ? "eliminated" : "playing")
+                    .Set("power_used", t.PowerUsed).Set("power_produced", t.PowerProduced).Set("steel", t.Amount("steel"))
+                    .Set("units", w.Entities.Count(e => !e.Dead && e.Team == team && !e.IsStructure && !e.IsMine))
+                    .Set("structures", w.Entities.Count(e => !e.Dead && e.Team == team && e.IsStructure))
+                    .Set("kills", t.Stats.Kills).Set("protected_for_s", w.IsProtected(team) ? (int)(t.ProtectedUntil - w.Time) : 0)
+                    .Set("production", t.StructureQueue.Select(p => { var s0 = w.Get(p.StructureId); return (object)new JObj().Set("type", p.Key).Set("pct", (int)((s0?.BuildProgress ?? 0) * 100)); })
+                        .Concat(t.UnitQueues.Values.Where(q => q.Count > 0).Select(q => (object)new JObj().Set("type", q[0].Key)
+                            .Set("count", q.Count(x => x.Key == q[0].Key)).Set("pct", (int)(q[0].Progress / Defs.Get(q[0].Key).BuildTime * 100)))).ToList()));
                 o.Set("alerts", w.Alerts.Active(w, team).Take(4).Select(a => AlertLog.Describe(w, a)).ToList());
+                o.Set("alert_items", w.Alerts.Active(w, team).Take(4).Select(a => (object)new JObj().Set("priority", a.Priority.ToString().ToLowerInvariant())
+                    .Set("label", AlertLog.Label(a.Kind)).Set("sector", StateView.Sector(w.Map, a.Pos)).Set("x", (int)a.Pos.X).Set("y", (int)a.Pos.Y)).ToList());
                 o.Set("standing_orders", t.StandingOrders);
             }
             return o;

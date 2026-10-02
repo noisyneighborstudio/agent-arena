@@ -4,74 +4,158 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Pezz: your view</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
-  :root { --bg:#2A2420; --panel:rgba(16,19,23,.9); --border:#2A3138; --cream:#ECE4D2; --muted:#9c9488; --amber:#FFA22E; --crit:#ECE4D2; }
-  html,body { margin:0; height:100%; background:var(--bg); color:var(--cream); font:13px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; overflow:hidden; }
-  canvas { position:absolute; inset:0; width:100%; height:100%; cursor:grab; }
-  #live { object-fit:contain; background:#141113; display:none; user-select:none; }
-  body.live #live { display:block; }
-  body.live #c { visibility:hidden; }
-  #mode { cursor:pointer; color:var(--cream); text-decoration:underline; }
-  canvas:active { cursor:grabbing; }
-  .panel { position:absolute; background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:10px 12px; backdrop-filter:blur(6px); }
-  #results { top:96px; left:50%; transform:translateX(-50%); display:none; text-align:center; min-width:320px; max-width:520px; border-top:4px solid; border-image:repeating-linear-gradient(45deg,#1e1b1d 0 6px,#ece4d2 6px 12px) 4; }
-  #results .big { font-size:18px; font-weight:700; margin:2px 0 6px; }
-  #results .stats { color:var(--muted); font-variant-numeric:tabular-nums; }
-  #top { top:12px; left:12px; min-width:260px; }
-  #top .who { font-size:16px; font-weight:700; display:flex; align-items:center; gap:8px; }
-  .chip { width:12px; height:12px; border-radius:3px; display:inline-block; }
-  #top .meta { color:var(--muted); margin-top:2px; }
-  #stock { display:grid; grid-template-columns:1fr 1fr; gap:2px 14px; margin-top:8px; font-variant-numeric:tabular-nums; }
-  #stock span b { font-weight:600; }
-  #teams { top:12px; right:12px; min-width:220px; }
-  #teams div { display:flex; justify-content:space-between; gap:10px; padding:1px 0; }
-  #teams .out { opacity:.45; text-decoration:line-through; }
-  #alerts { top:12px; left:50%; transform:translateX(-50%); max-width:560px; display:none; border-left:6px solid; border-image:repeating-linear-gradient(45deg,#1e1b1d 0 6px,#ece4d2 6px 12px) 6; }
-  #alerts div { padding:1px 0; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:pointer; }
-  #alerts div:hover { text-decoration:underline; }
-  #alerts .more { color:var(--muted); cursor:default; text-decoration:none !important; font-size:12px; }
-  #chat { bottom:12px; left:12px; max-width:520px; color:var(--muted); }
-  #chat div { padding:1px 0; }
-  #help { bottom:12px; right:12px; color:var(--muted); font-size:12px; }
-  /* Phones and narrow windows: stack the panels instead of overlapping them. */
-  @media (max-width: 720px) {
-    #teams { top:auto; bottom:12px; left:12px; right:12px; min-width:0; }
-    #teams #tl { display:grid; grid-template-columns:1fr 1fr; column-gap:16px; }
-    #alerts { top:104px; left:12px; right:12px; transform:none; max-width:none; }
-    #help, #chat { display:none; }
+  /* The art pack's HUD (design/HUD.dc.html, HUD kit): panels rgba(16,19,23,.9), border #2A3138, radius 12, status never
+     uses team hues. Laid out for 1920x1080 and scaled to the window by --k. */
+  :root { --bg:#2A2420; --panel:rgba(16,19,23,.9); --border:#2A3138; --line:#3A4047; --btn:#22282E; --ink:#E8EBEE; --cream:#ECE4D2; --muted:#9BA5AE; --soft:#C5CCD2; --amber:#FFA22E; --k:1; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--ink); font:14px/1.45 "IBM Plex Sans",-apple-system,"Segoe UI",sans-serif; overflow:hidden; }
+  canvas#c, canvas#live { position:absolute; inset:0; width:100%; height:100%; }
+  canvas#c { cursor:grab; } canvas#c:active { cursor:grabbing; }
+  #live { object-fit:contain; background:var(--bg); display:none; user-select:none; cursor:grab; }
+  body.live #live { display:block; } body.live #c { visibility:hidden; }
+  .mono { font-family:"IBM Plex Mono",monospace; }
+  .head { font-family:"Chakra Petch",sans-serif; font-weight:600; font-size:13px; letter-spacing:.14em; color:var(--muted); text-transform:uppercase; }
+  .panel { background:var(--panel); border:1px solid var(--border); border-radius:12px; box-sizing:border-box; }
+  .hud { position:absolute; zoom:var(--k); }
+  .chip { width:10px; height:10px; border-radius:3px; display:inline-block; flex:none; }
+  .sec { font-family:"IBM Plex Mono",monospace; background:var(--btn); padding:1px 5px; border-radius:4px; }
+  button { font:inherit; color:var(--ink); }
+
+  /* Top bar */
+  #top { left:16px; top:16px; right:16px; height:60px; display:flex; align-items:center; gap:12px; }
+  #brand { height:60px; padding:0 20px; display:flex; align-items:center; gap:16px; }
+  #brand .word { font-family:"Chakra Petch",sans-serif; font-weight:700; font-size:24px; letter-spacing:.04em; }
+  #brand .rule { width:1px; height:28px; background:var(--border); }
+  #clock { font-family:"IBM Plex Mono",monospace; font-size:22px; font-weight:500; }
+  #where { font-size:14px; color:var(--muted); white-space:nowrap; }
+  #teams { flex-grow:1; display:flex; justify-content:center; gap:10px; overflow:hidden; min-width:0; }
+  .card { height:60px; padding:0 16px 0 0; display:flex; align-items:center; gap:14px; overflow:hidden; flex:none; }
+  .card .stripe { width:8px; align-self:stretch; }
+  .card .nm { display:flex; flex-direction:column; gap:2px; }
+  .card .nm b { font-weight:600; font-size:16px; } .card .nm span { font-size:13px; color:var(--muted); }
+  .card .stat { display:flex; align-items:center; gap:6px; font-family:"IBM Plex Mono",monospace; font-size:15px; }
+  .card .stat svg { width:16px; height:16px; }
+  .card.out { opacity:.45; } .card.out .nm b { text-decoration:line-through; }
+  .card.mini { padding-right:14px; } .card.mini .nm b { font-size:14px; }
+  #vs { font-family:"Chakra Petch",sans-serif; font-weight:600; font-size:15px; color:var(--muted); align-self:center; }
+  #modes { height:60px; padding:8px; display:flex; align-items:center; gap:6px; }
+  #modes button { min-width:64px; height:44px; border:0; border-radius:8px; background:var(--btn); font-family:"IBM Plex Mono",monospace; font-size:15px; cursor:pointer; }
+  #modes button.on { background:var(--cream); color:#101317; font-weight:500; }
+  #modes button:disabled { opacity:.35; cursor:default; }
+  #modes .rule { width:1px; height:28px; background:var(--border); margin:0 6px; }
+  #mode { font-size:14px; color:var(--muted); padding-right:8px; white-space:nowrap; }
+
+  /* Alert banner (HUD kit: CRITICAL hazard chip, HIGH amber, INFO grey) */
+  #alert { left:50%; top:92px; transform:translateX(-50%); display:none; align-items:stretch; background:rgba(16,19,23,.92); border:1px solid var(--line); border-radius:10px; overflow:hidden; cursor:pointer; max-width:760px; }
+  #alert .tab { width:28px; flex:none; }
+  #alert .tab.critical { background:repeating-linear-gradient(135deg,#1E1B1D 0 7px,#ECE4D2 7px 14px); }
+  #alert .tab.high { background:var(--amber); } #alert .tab.medium { background:#4A525A; }
+  #alert .body { padding:10px 18px; display:flex; align-items:center; gap:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #alert .lvl { font-family:"Chakra Petch",sans-serif; font-weight:700; font-size:14px; letter-spacing:.12em; }
+  #alert .more { color:var(--muted); font-size:13px; }
+
+  /* Right column: minimap, then building now / stockpile / standing orders */
+  #right { right:16px; top:92px; width:384px; display:flex; flex-direction:column; gap:12px; }
+  #mm { padding:12px; } #mm canvas { width:360px; height:360px; display:block; cursor:pointer; }
+  #side { padding:16px; display:flex; flex-direction:column; gap:14px; }
+  .row { display:flex; align-items:center; gap:12px; }
+  .row img { width:56px; height:42px; border-radius:6px; background:#101317; object-fit:cover; flex:none; }
+  .bar { height:6px; border-radius:3px; background:var(--border); } .bar > div { height:6px; border-radius:3px; background:var(--cream); }
+  .split { display:flex; justify-content:space-between; font-size:14px; }
+  .split .mono { color:var(--muted); }
+  #stock { display:grid; grid-template-columns:1fr 1fr; gap:4px 18px; font-family:"IBM Plex Mono",monospace; font-size:13px; }
+  #stock span { display:flex; justify-content:space-between; color:var(--muted); } #stock b { color:var(--ink); font-weight:500; }
+  #orders { font-size:14px; line-height:1.5; color:var(--soft); }
+  .note { font-size:13px; color:var(--muted); }
+
+  /* Command feed (bottom-left) */
+  #feed { left:16px; bottom:16px; width:560px; padding:14px 16px; display:flex; flex-direction:column; gap:10px; }
+  #feedrows { display:grid; grid-template-columns:52px 8px 1fr auto; column-gap:10px; row-gap:10px; align-items:start; font-size:14px; line-height:1.45; max-height:260px; overflow:hidden; }
+  #feedrows .t { font-family:"IBM Plex Mono",monospace; color:var(--muted); }
+  #feedrows .s { width:8px; height:18px; border-radius:2px; }
+  .pill { font-size:12px; border-radius:10px; padding:1px 8px; white-space:nowrap; }
+  .pill.done { color:var(--muted); border:1px solid var(--line); } .pill.failed { color:#101317; background:var(--amber); }
+  #help { font-size:13px; color:var(--muted); }
+
+  /* Selection card (bottom-centre) */
+  #sel { left:600px; bottom:16px; width:520px; padding:14px; display:none; gap:16px; align-items:center; }
+  #sel img { width:128px; height:96px; border-radius:8px; background:#101317; object-fit:cover; }
+  #sel .big { font-family:"Chakra Petch",sans-serif; font-weight:600; font-size:20px; }
+  #sel .bar, #sel .bar > div { height:8px; border-radius:4px; }
+
+  /* After this player's game ends */
+  #results { left:50%; top:150px; transform:translateX(-50%); display:none; text-align:center; min-width:360px; max-width:560px; padding:16px 20px; }
+  #results .big { font-family:"Chakra Petch",sans-serif; font-size:22px; font-weight:700; margin:4px 0 8px; display:flex; gap:10px; align-items:center; justify-content:center; }
+  #results .stats { color:var(--muted); }
+
+  /* Narrow windows and phones: brand, alert, minimap and results only */
+  @media (max-width: 900px) {
+    #teams, #feed, #sel, #side, #modes .rule, #where { display:none; }
+    #right { top:auto; bottom:16px; width:auto; }
+    #mm canvas { width:200px; height:200px; }
+    #alert { top:84px; max-width:92vw; }
   }
-  #orders { margin-top:8px; color:var(--muted); font-size:12px; max-width:320px; }
-  .title { letter-spacing:.08em; font-size:11px; color:var(--muted); text-transform:uppercase; margin-bottom:4px; }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
 <canvas id="live"></canvas>
-<div class="panel" id="top">
-  <div class="who"><span class="chip" id="chip"></span><span id="who">Connecting…</span></div>
-  <div class="meta" id="meta"></div>
-  <div id="stock"></div>
-  <div id="orders"></div>
+
+<div class="hud" id="top">
+  <div class="panel" id="brand"><span class="word">PEZ</span><span class="rule"></span><span id="clock">0:00</span><span id="where">Connecting…</span></div>
+  <div id="teams"></div>
+  <div class="panel" id="modes">
+    <button id="bLive" title="Live view (L)">Live</button><button id="bMap" class="on" title="Tactical map (L)">Map</button>
+    <span class="rule"></span><span id="mode">Map view</span>
+  </div>
 </div>
-<div class="panel" id="alerts"></div>
-<div class="panel" id="results"></div>
-<div class="panel" id="teams"><div class="title">Commanders</div><div id="tl"></div></div>
-<div class="panel" id="chat"><div class="title">Arena chat</div><div id="cl"></div></div>
-<div class="panel" id="help"><span id="mode">Map view</span> · <b>L</b> live / map · drag to pan · scroll to zoom · <b>F</b> your base · <b>M</b> whole map</div>
+<div class="hud" id="alert"></div>
+<div class="hud" id="right">
+  <div class="panel" id="mm"><canvas id="mini" width="720" height="720"></canvas></div>
+  <div class="panel" id="side">
+    <div id="prodbox"><div class="head" style="margin-bottom:10px">Building now</div><div id="prod" style="display:flex;flex-direction:column;gap:10px"></div></div>
+    <div><div class="head" style="margin-bottom:8px">Stockpile</div><div id="stock"></div></div>
+    <div><div class="head" style="margin-bottom:8px">Standing orders</div><div id="orders"></div></div>
+  </div>
+</div>
+<div class="hud panel" id="feed">
+  <div class="split" style="align-items:baseline"><div class="head" id="feedtitle">Command feed</div><span id="help">L live / map · F base · M whole map</span></div>
+  <div id="feedrows"></div>
+</div>
+<div class="hud panel" id="sel"></div>
+<div class="hud panel" id="results"></div>
+
 <script>
 const BASE = "__BASE__"; // /view/<token> for a player's own fogged view, /watch for the delayed public spectator view
 const FLAVORS = ["#2E73FF", "#F22E1F", "#33D94D", "#FFD126", "#8E44D9", "#3A2F9E", "#0F8C8A", "#8E1B4A"];
 const TERRAIN = { g: "#7D6E55", d: "#7A6B53", r: "#4A3F40", w: "#3A2218" };
 const ORE = { i: "#8A3A24", c: "#C8742F", x: "#8FE4FF", u: "#B6FF3B" };
 const AIR = new Set(["gunship", "stealth_bomber", "recon_drone", "transport_chopper"]);
+const ICON = {
+  power: '<svg viewBox="0 0 16 16"><path d="M9 1 L3 9 H8 L7 15 L13 7 H8 Z" fill="none" stroke="#ECE4D2" stroke-width="1.5" stroke-linejoin="round"/></svg>',
+  steel: '<svg viewBox="0 0 16 16"><rect x="2" y="5" width="12" height="7" rx="3" fill="none" stroke="#ECE4D2" stroke-width="1.5"/></svg>',
+  units: '<svg viewBox="0 0 16 16"><rect x="3" y="6" width="10" height="7" rx="2" fill="none" stroke="#ECE4D2" stroke-width="1.5"/><rect x="5.5" y="3" width="5" height="4" rx="1.5" fill="none" stroke="#ECE4D2" stroke-width="1.5"/></svg>',
+  kills: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5" fill="none" stroke="#ECE4D2" stroke-width="1.5"/><path d="M8 1v4M8 11v4M1 8h4M11 8h4" stroke="#ECE4D2" stroke-width="1.5"/></svg>',
+};
+const SPECTATOR = !BASE.startsWith("/view/");
 const cv = document.getElementById("c"), ctx = cv.getContext("2d");
+const mini = document.getElementById("mini"), mctx = mini.getContext("2d");
 let map = null, frame = null, mapVersion = -1, terrainCanvas = null, shroudCanvas = document.createElement("canvas");
-let cam = { x: 40, y: 40, scale: 8 }, fitted = false;
+let cam = { x: 40, y: 40, scale: 8 }, fitted = false, selected = 0;
+const pretty = (k) => String(k).replaceAll("_", " ").replace(/^./, (c) => c.toUpperCase());
+const clock = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+const num = (n) => Number(n).toLocaleString("en-US");
+function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]); }
 const icons = {};
 function icon(key) {
   if (!(key in icons)) { const im = new Image(); im.src = `/icons/${key}.png`; icons[key] = im; im.onerror = () => (icons[key] = null); }
   return icons[key] && icons[key].complete && icons[key].naturalWidth ? icons[key] : null;
 }
+// Scale the 1920x1080 layout to the window.
+function fit() { document.documentElement.style.setProperty("--k", Math.max(0.55, Math.min(1.2, Math.min(innerWidth / 1920, innerHeight / 1000))).toFixed(3)); }
+addEventListener("resize", fit); fit();
 
 async function getJSON(u) { const r = await fetch(u, { cache: "no-store" }); if (!r.ok) throw new Error((await r.json()).error || r.status); return r.json(); }
 
@@ -100,12 +184,16 @@ function focusBase() {
   const hq = frame.entities.find((e) => e[2] === frame.you.team && e[1] === "command_center") || frame.entities.find((e) => e[2] === frame.you.team);
   if (hq) { cam.x = hq[3]; cam.y = hq[4]; cam.scale = Math.max(cam.scale, 14); }
 }
+function lookAt(x, y) {
+  if (liveMode) fetch(`${BASE}/cam?x=${x}&y=${y}`);
+  else { cam.x = x + 0.5; cam.y = y + 0.5; cam.scale = Math.max(cam.scale, 14); }
+}
 
 async function tick() {
   try {
     frame = await getJSON(`${BASE}/frame`);
     showResults(frame.results, frame.rejoin);
-    if (frame.waiting) { document.getElementById("who").textContent = frame.waiting; setTimeout(tick, 2000); return; }
+    if (frame.waiting) { document.getElementById("where").textContent = frame.waiting; setTimeout(tick, 2000); return; }
     if (!map || frame.version !== mapVersion) await loadMap();
     if (frame.shroud) {
       const s = shroudCanvas.getContext("2d"), img = s.createImageData(map.w, map.h);
@@ -118,50 +206,159 @@ async function tick() {
     }
     hud();
   } catch (e) {
-    document.getElementById("who").textContent = `Not connected: ${e.message}`;
+    document.getElementById("where").textContent = `Not connected: ${e.message}`;
   }
   setTimeout(tick, 250);
 }
 
+// ---- HUD panels
 function hud() {
   const you = frame.you;
-  const col = you ? FLAVORS[you.team % 8] : "#ECE4D2";
-  document.getElementById("chip").style.background = col;
-  document.getElementById("who").textContent = you ? `${you.flavor} · ${you.player ?? ""}` : `Spectator${frame.delay_s ? ` · ${frame.delay_s}s delay` : ""}`;
-  const mm = Math.floor(frame.time_s / 60), ss = String(Math.floor(frame.time_s % 60)).padStart(2, "0");
-  document.getElementById("meta").textContent = you ? `${mm}:${ss} · ${you.status} · power ${you.power} · map ${map.w}×${map.h}` : `${mm}:${ss}`;
-  document.getElementById("stock").innerHTML = you ? Object.entries(you.stockpile).map(([k, v]) => `<span>${k.replace("_ore", "")} <b>${v}</b></span>`).join("") : "";
-  document.getElementById("orders").textContent = you?.standing_orders ? `Orders: ${you.standing_orders}` : "";
-  document.getElementById("tl").innerHTML = frame.teams.map((t) =>
-    `<div class="${t.status !== "playing" ? "out" : ""}"><span><span class="chip" style="background:${FLAVORS[t.id % 8]}"></span> ${esc(t.flavor)} <span style="color:var(--muted)">${esc(t.player ?? "")}</span></span><span>${t.kills}</span></div>`).join("");
-  document.getElementById("cl").innerHTML = (frame.chat || []).slice(-6).map((c) => `<div>${esc(c)}</div>`).join("");
-  const al = document.getElementById("alerts");
-  // One short line per alert (the agent-facing detail is in the tooltip); click to look there.
-  if (frame.alerts?.length) {
-    al.style.display = "block";
-    const shown = frame.alerts.slice(0, 3);
-    al.innerHTML = shown.map((a) => {
-      const at = /\((\d+),(\d+)\)/.exec(a);
-      return `<div style="color:${a.startsWith("CRITICAL") ? "var(--cream);font-weight:700" : "var(--amber)"}" title="${esc(a)}"${at ? ` data-x="${at[1]}" data-y="${at[2]}"` : ""}>${esc(a.split(";")[0])}</div>`;
-    }).join("") + (frame.alerts.length > shown.length ? `<div class="more">+${frame.alerts.length - shown.length} more</div>` : "");
-  }
-  else al.style.display = "none";
+  const playing = frame.teams.filter((t) => t.status === "playing").length;
+  document.getElementById("clock").textContent = clock(frame.time_s);
+  document.getElementById("where").textContent = `${SPECTATOR || frame.results ? `Spectating${frame.delay_s ? ` · ${frame.delay_s}s delay` : ""}` : `${you?.flavor ?? ""}`} · ${playing} playing${map ? ` · ${map.w}×${map.h}` : ""}`;
+  teamCards(you);
+  alertBanner();
+  sidePanel(you);
+  if (!SPECTATOR && !frame.results) feedPanel(); else chatPanel();
+  selectionCard();
 }
+
+function teamCards(you) {
+  const el = document.getElementById("teams");
+  const cards = [];
+  const stat = (k, v) => `<div class="stat">${ICON[k]}${v}</div>`;
+  const ordered = you ? [frame.teams.find((t) => t.id === you.team), ...frame.teams.filter((t) => t.id !== you.team)].filter(Boolean) : frame.teams;
+  ordered.forEach((t, i) => {
+    const mine = you && t.id === you.team;
+    const full = mine || (SPECTATOR && t.units != null && frame.teams.length <= 4);
+    const stats = mine
+      ? stat("power", you.power_used != null ? `${you.power_used}/${you.power_produced}` : String(you.power ?? "?"))
+        + stat("steel", num(you.steel ?? parseInt(you.stockpile?.steel ?? "0", 10) ?? 0)) + (you.units != null ? stat("units", you.units) : "")
+      : full ? stat("power", t.power) + stat("steel", num(t.steel)) + stat("units", t.units) : stat("kills", t.kills);
+    cards.push(`<div class="panel card ${full ? "" : "mini"} ${t.status !== "playing" ? "out" : ""}"><span class="stripe" style="background:${FLAVORS[t.id % 8]}"></span>` +
+      `<div class="nm"><b>${esc(t.flavor)}</b><span>${esc(t.player ?? "")}</span></div>${stats}</div>`);
+    if (mine && ordered.length > 1) cards.push(`<span id="vs">VS</span>`);
+  });
+  el.innerHTML = cards.join("");
+}
+
+function alertBanner() {
+  const el = document.getElementById("alert");
+  const items = frame.alert_items?.length ? frame.alert_items
+    : (frame.alerts ?? []).map((a) => { const m = /^(\w+) (.+?) at \((\d+),(\d+)\) sector (\w\d)/.exec(a) || []; return { priority: (m[1] || "high").toLowerCase(), label: m[2] || a.split(";")[0], x: +m[3], y: +m[4], sector: m[5] }; });
+  if (!items.length || frame.results) { el.style.display = "none"; return; }
+  const a = items[0];
+  el.style.display = "flex";
+  el.dataset.x = a.x; el.dataset.y = a.y;
+  el.innerHTML = `<span class="tab ${a.priority}"></span><div class="body"><span class="lvl">${a.priority === "critical" ? "CRITICAL" : a.priority === "high" ? "HIGH" : "INFO"}</span>` +
+    `<span>${esc(pretty(String(a.label).toLowerCase()))}${a.sector ? ` at <span class="mono">${a.sector}</span>` : ""}</span>` +
+    (items.length > 1 ? `<span class="more">+${items.length - 1} more</span>` : "") + `</div>`;
+}
+
+function sidePanel(you) {
+  const prod = you?.production ?? [];
+  document.getElementById("prodbox").style.display = you ? "block" : "none";
+  document.getElementById("prod").innerHTML = prod.length
+    ? prod.map((p) => `<div class="row"><img src="/icons/${p.type}.png" alt="" onerror="this.style.visibility='hidden'"><div style="flex-grow:1;display:flex;flex-direction:column;gap:6px">` +
+        `<div class="split"><span>${esc(pretty(p.type))}${p.count > 1 ? ` ×${p.count}` : ""}</span><span class="mono">${p.pct}%</span></div><div class="bar"><div style="width:${Math.min(100, p.pct)}%"></div></div></div></div>`).join("")
+    : `<div class="note">${you?.production ? "Nothing in production." : "Production shows up here on the latest game build."}</div>`;
+  const st = you?.stockpile ?? {};
+  document.getElementById("stock").innerHTML = Object.entries(st).map(([k, v]) => `<span>${k.replace("_ore", " ore")} <b>${esc(String(v).split(" ")[0])}</b></span>`).join("") || `<span>—</span>`;
+  const orders = frame.standing_orders ?? you?.standing_orders;
+  document.getElementById("orders").innerHTML = SPECTATOR ? `<span class="note">Each commander's human can set standing orders for their agent.</span>`
+    : orders ? esc(orders) : `<span class="note">None yet: your agent is using its own judgment.</span>` +
+      (you?.protected_for_s ? `<div class="note" style="margin-top:8px">Newcomer protection: ${clock(you.protected_for_s)} left.</div>` : "");
+}
+
+let feedItems = [], feedAt = 0;
+async function feedPanel() {
+  document.getElementById("feedtitle").textContent = "Command feed";
+  if (Date.now() - feedAt > 1500) { feedAt = Date.now(); try { feedItems = (await getJSON(`${BASE}/feed`)).items; } catch {} }
+  const col = frame.you ? FLAVORS[frame.you.team % 8] : "#ECE4D2";
+  const rows = feedItems.slice(-6).map((f) => {
+    const t = Math.max(0, frame.time_s - (Date.now() - f.at) / 1000);
+    const text = esc(f.text).replace(/\[([A-H][1-8])\]/g, '<span class="sec">$1</span>');
+    return `<span class="t">${clock(t)}</span><span class="s" style="background:${col}"></span><span title="${esc(f.error ?? "")}">${text}</span><span class="pill ${f.ok ? "done" : "failed"}">${f.ok ? "done" : "failed"}</span>`;
+  });
+  document.getElementById("feedrows").innerHTML = rows.join("") || `<span></span><span></span><span class="note">Your agent's orders will appear here.</span><span></span>`;
+}
+function chatPanel() {
+  document.getElementById("feedtitle").textContent = "Arena chat";
+  document.getElementById("feedrows").innerHTML = (frame.chat || []).slice(-6).map((c) => {
+    const who = c.split(":")[0], t = frame.teams.find((x) => x.flavor === who);
+    return `<span class="t"></span><span class="s" style="background:${t ? FLAVORS[t.id % 8] : "#4A525A"}"></span><span>${esc(c)}</span><span></span>`;
+  }).join("");
+}
+
+function selectionCard() {
+  const el = document.getElementById("sel");
+  const e = selected && frame.entities.find((x) => x[0] === selected);
+  if (!e || liveMode) { el.style.display = "none"; return; }
+  const [, key, team, , , hp, , build, , fuel] = e;
+  const hpCol = hp >= 50 ? "#E8EBEE" : hp >= 25 ? "#FFA22E" : "repeating-linear-gradient(135deg,#1E1B1D 0 5px,#ECE4D2 5px 10px)";
+  el.style.display = "flex";
+  el.innerHTML = `<img src="/icons/${key}.png" alt="" onerror="this.style.visibility='hidden'"><div style="flex-grow:1;display:flex;flex-direction:column;gap:8px">` +
+    `<div style="display:flex;align-items:center;gap:8px"><span class="chip" style="background:${FLAVORS[team % 8]}"></span><span class="big">${esc(pretty(key))}</span><span class="note">#${selected}</span></div>` +
+    `<div style="display:flex;align-items:center;gap:10px"><div class="bar" style="flex-grow:1"><div style="width:${hp}%;background:${hpCol}"></div></div><span class="mono note">${hp}%</span></div>` +
+    (build >= 0 && build < 100 ? `<div class="note">Building: ${build}%</div>` : "") +
+    (fuel >= 0 ? `<div style="display:flex;align-items:center;gap:10px"><span class="note" style="width:34px">fuel</span><div class="bar" style="flex-grow:1"><div style="width:${fuel}%;background:${fuel < 30 ? "#FFA22E" : "#8FE4FF"}"></div></div><span class="mono note">${fuel}%</span></div>` : "") +
+    `<div class="note">${frame.teams.find((t) => t.id === team)?.flavor ?? ""} · click empty ground to deselect</div></div>`;
+}
+
 // After this player's game ends, the page keeps going as a delayed spectator view, with how it went.
 function showResults(r, rejoin) {
   const el = document.getElementById("results");
   if (!r) { el.style.display = "none"; return; }
   if (liveMode) setMode(false);
   const outcome = { eliminated: "Eliminated", resigned: "Resigned (no way left to make progress)", left: "Left the arena", ended: "Game over for this seat" }[r.outcome] ?? r.outcome;
-  const t = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
   el.style.display = "block";
-  el.innerHTML = `<div class="title">Your game</div><div class="big">${r.flavor ? `<span class="chip" style="background:${FLAVORS[(r.team ?? 0) % 8]}"></span> ${esc(r.flavor)} · ${esc(r.player ?? "")} · ` : ""}${esc(outcome)}</div>` +
-    (r.flavor ? `<div class="stats">${r.kills} kills · played ${t(r.played_s)} · last seen at ${t(r.last_seen_s)}</div>` : `<div class="stats">${esc(r.note ?? "")}</div>`) +
-    `<div class="stats" style="margin-top:6px">Now spectating the whole room${frame?.delay_s ? `, ${frame.delay_s}s behind` : ""}. ${esc(rejoin ?? "")}</div>`;
+  el.innerHTML = `<div class="head">Your game</div><div class="big">${r.flavor ? `<span class="chip" style="background:${FLAVORS[(r.team ?? 0) % 8]};width:14px;height:14px"></span>${esc(r.flavor)} · ${esc(r.player ?? "")} · ` : ""}${esc(outcome)}</div>` +
+    (r.flavor ? `<div class="stats mono">${r.kills} kills · played ${clock(r.played_s)} · last seen ${clock(r.last_seen_s)}</div>` : `<div class="stats">${esc(r.note ?? "")}</div>`) +
+    `<div class="stats" style="margin-top:8px">Now spectating the whole room${frame?.delay_s ? `, ${frame.delay_s}s behind` : ""}. ${esc(rejoin ?? "")}</div>`;
 }
-function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]); }
 
-// World (x east, y north) -> screen.
+// ---- Minimap: north up, sectors A-H x 1-8, your view box; click to look there.
+function drawMini() {
+  const W = mini.width, pad = 40, S = W - pad;
+  mctx.fillStyle = "#101317"; mctx.fillRect(0, 0, W, W);
+  if (!map || !frame) return;
+  const k = S / Math.max(map.w, map.h), ox = pad, oy = pad;
+  mctx.imageSmoothingEnabled = false;
+  mctx.drawImage(terrainCanvas, ox, oy, map.w * k, map.h * k);
+  if (frame.shroud) { mctx.imageSmoothingEnabled = true; mctx.drawImage(shroudCanvas, ox, oy, map.w * k, map.h * k); }
+  for (const e of frame.entities) {
+    const [, key, team, x, y, , , , size] = e;
+    if (key === "mine") continue;
+    mctx.fillStyle = FLAVORS[team % 8];
+    const r = size > 0 ? Math.max(5, size * k) : 5;
+    mctx.fillRect(ox + x * k - r / 2, oy + (map.h - y) * k - r / 2, r, r);
+  }
+  mctx.strokeStyle = "#3A4047"; mctx.lineWidth = 2; mctx.strokeRect(ox, oy, map.w * k, map.h * k);
+  mctx.fillStyle = "#9BA5AE"; mctx.font = "20px 'IBM Plex Mono', monospace"; mctx.textAlign = "center";
+  for (let i = 0; i < 8; i++) {
+    mctx.fillText("ABCDEFGH"[i], ox + (i + 0.5) * map.w * k / 8, 26);
+    mctx.fillText(String(i + 1), 18, oy + (i + 0.5) * map.h * k / 8 + 7);
+  }
+  if (!liveMode) {
+    // The map view's visible area.
+    const x0 = cam.x - cv.width / 2 / cam.scale, x1 = cam.x + cv.width / 2 / cam.scale, y0 = cam.y - cv.height / 2 / cam.scale, y1 = cam.y + cv.height / 2 / cam.scale;
+    const cx0 = Math.max(0, x0), cx1 = Math.min(map.w, x1), cy0 = Math.max(0, y0), cy1 = Math.min(map.h, y1);
+    if (cx1 > cx0 && cy1 > cy0) {
+      mctx.strokeStyle = "#ECE4D2"; mctx.lineWidth = 3;
+      mctx.strokeRect(ox + cx0 * k, oy + (map.h - cy1) * k, (cx1 - cx0) * k, (cy1 - cy0) * k);
+    }
+  }
+}
+mini.addEventListener("click", (ev) => {
+  if (!map) return;
+  const r = mini.getBoundingClientRect(), W = mini.width, pad = 40, k = (W - pad) / Math.max(map.w, map.h);
+  const px = (ev.clientX - r.left) / r.width * W, py = (ev.clientY - r.top) / r.height * W;
+  const x = Math.round((px - pad) / k), y = Math.round(map.h - (py - pad) / k);
+  if (x >= 0 && y >= 0 && x < map.w && y < map.h) lookAt(x, y);
+});
+
+// ---- Tactical map (World x east, y north -> screen)
 const sx = (x) => cv.width / 2 + (x - cam.x) * cam.scale;
 const sy = (y) => cv.height / 2 - (y - cam.y) * cam.scale;
 
@@ -170,26 +367,24 @@ function draw() {
   requestAnimationFrame(draw);
   const dpr = devicePixelRatio || 1;
   if (cv.width !== innerWidth * dpr) { cv.width = innerWidth * dpr; cv.height = innerHeight * dpr; if (!fitted) fitAll(); }
+  drawMini();
   ctx.fillStyle = "#2A2420"; ctx.fillRect(0, 0, cv.width, cv.height);
   if (!map || !frame) return;
   const s = cam.scale;
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(terrainCanvas, sx(0), sy(map.h), map.w * s, map.h * s);
-  // Sector grid A-H x 1-8.
   ctx.strokeStyle = "rgba(236,228,210,.06)"; ctx.lineWidth = 1;
-  ctx.fillStyle = "rgba(236,228,210,.45)"; ctx.font = `${Math.max(10, s * 1.2)}px sans-serif`;
+  ctx.fillStyle = "rgba(236,228,210,.45)"; ctx.font = `${Math.max(10, s * 1.2)}px "IBM Plex Mono", monospace`;
   for (let i = 0; i <= 8; i++) {
     const gx = sx(i * map.w / 8), gy = sy(i * map.h / 8);
     ctx.beginPath(); ctx.moveTo(gx, sy(0)); ctx.lineTo(gx, sy(map.h)); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(sx(0), gy); ctx.lineTo(sx(map.w), gy); ctx.stroke();
-    if (i < 8) { ctx.fillText("ABCDEFGH"[i], gx + 4, sy(map.h) + 14); ctx.fillText(String(8 - i), sx(0) + 4, gy - 4 + (i === 0 ? 0 : 0)); }
+    if (i < 8) { ctx.fillText("ABCDEFGH"[i], gx + 4, sy(map.h) + 14); ctx.fillText(String(8 - i), sx(0) + 4, gy - 4); }
   }
-  // Structures, then ground units, then aircraft.
   const ents = frame.entities;
   for (const e of ents) if (e[8] > 0) drawStructure(e, s);
   for (const e of ents) if (e[8] === 0 && !AIR.has(e[1])) drawUnit(e, s);
   for (const e of ents) if (AIR.has(e[1])) drawUnit(e, s, true);
-  // Shots and blasts.
   for (const f of frame.effects) {
     const [seq, type, x, y, x2, y2] = f;
     if (type === "shot") { ctx.strokeStyle = "rgba(255,226,140,.8)"; ctx.lineWidth = Math.max(1, s * 0.06); ctx.beginPath(); ctx.moveTo(sx(x), sy(y)); ctx.lineTo(sx(x2), sy(y2)); ctx.stroke(); }
@@ -203,8 +398,14 @@ function draw() {
     ctx.beginPath(); ctx.arc(sx(b.x), sy(b.y), s * (b.big ? 1.6 : 0.6) * (0.4 + k), 0, Math.PI * 2); ctx.fill();
   }
   if (seenFx.size > 4000) seenFx.clear();
-  // Fog: unexplored is near black; explored but not in sight is dimmed.
   if (frame.shroud) { ctx.imageSmoothingEnabled = true; ctx.drawImage(shroudCanvas, sx(0), sy(map.h), map.w * s, map.h * s); }
+  // Selection: cream dashed ring for every team (HUD kit).
+  const sel = selected && ents.find((e) => e[0] === selected);
+  if (sel) {
+    const r = sel[8] > 0 ? sel[8] * s * 0.75 : Math.max(6, s * 0.6);
+    ctx.setLineDash([Math.max(3, s * 0.25), Math.max(3, s * 0.2)]); ctx.strokeStyle = "#ECE4D2"; ctx.lineWidth = Math.max(1.5, s * 0.08);
+    ctx.beginPath(); ctx.arc(sx(sel[3]), sy(sel[4]), r, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+  }
 }
 
 function drawStructure(e, s) {
@@ -243,22 +444,29 @@ function hpBar(x, y, w, hp) {
   ctx.fillStyle = "#1E1B1D";
   for (let k = 0; k < w * hp / 100; k += 4) ctx.fillRect(x + k, y, 2, 3);
 }
-
 function bar(x, y, w, f, color) { ctx.fillStyle = "rgba(0,0,0,.6)"; ctx.fillRect(x, y, w, 3); ctx.fillStyle = color; ctx.fillRect(x, y, w * f, 3); }
 
-// Pan and zoom.
+// Pan, zoom and pick on the tactical map.
 let drag = null;
-cv.addEventListener("mousedown", (e) => (drag = { x: e.clientX, y: e.clientY, cx: cam.x, cy: cam.y }));
-addEventListener("mouseup", () => (drag = null));
-addEventListener("mousemove", (e) => { if (!drag) return; const d = devicePixelRatio || 1; cam.x = drag.cx - (e.clientX - drag.x) * d / cam.scale; cam.y = drag.cy + (e.clientY - drag.y) * d / cam.scale; });
-cv.addEventListener("wheel", (e) => { e.preventDefault(); cam.scale = Math.max(2, Math.min(60, cam.scale * (e.deltaY < 0 ? 1.12 : 0.89))); }, { passive: false });
-document.getElementById("alerts").addEventListener("click", (e) => {
-  const d = e.target.closest("[data-x]");
-  if (!d) return;
-  const x = Number(d.dataset.x), y = Number(d.dataset.y);
-  if (liveMode) fetch(`${BASE}/cam?x=${x}&y=${y}`);
-  else { cam.x = x + 0.5; cam.y = y + 0.5; cam.scale = Math.max(cam.scale, 14); }
+cv.addEventListener("mousedown", (e) => (drag = { x: e.clientX, y: e.clientY, cx: cam.x, cy: cam.y, moved: false }));
+addEventListener("mouseup", (e) => {
+  if (drag && !drag.moved && e.target === cv && frame) {
+    const d = devicePixelRatio || 1, wx = cam.x + (e.clientX * d - cv.width / 2) / cam.scale, wy = cam.y - (e.clientY * d - cv.height / 2) / cam.scale;
+    let best = 0, bd = 1.6;
+    for (const en of frame.entities) { const dd = Math.hypot(en[3] - wx, en[4] - wy) - (en[8] > 0 ? en[8] / 2 : 0); if (dd < bd) { bd = dd; best = en[0]; } }
+    selected = best;
+  }
+  drag = null;
 });
+addEventListener("mousemove", (e) => {
+  if (!drag) return;
+  if (Math.abs(e.clientX - drag.x) + Math.abs(e.clientY - drag.y) > 3) drag.moved = true;
+  const d = devicePixelRatio || 1; cam.x = drag.cx - (e.clientX - drag.x) * d / cam.scale; cam.y = drag.cy + (e.clientY - drag.y) * d / cam.scale;
+});
+cv.addEventListener("wheel", (e) => { e.preventDefault(); cam.scale = Math.max(2, Math.min(60, cam.scale * (e.deltaY < 0 ? 1.12 : 0.89))); }, { passive: false });
+document.getElementById("alert").addEventListener("click", (e) => { const d = e.currentTarget.dataset; if (d.x && d.x !== "NaN") lookAt(Number(d.x), Number(d.y)); });
+document.getElementById("bLive").addEventListener("click", () => setMode(true));
+document.getElementById("bMap").addEventListener("click", () => setMode(false));
 addEventListener("keydown", (e) => { if (e.key === "f" || e.key === "F") focusBase(); if (e.key === "m" || e.key === "M") fitAll(); });
 // High-res live stream of this player's own view, rendered by the game host (when it has a renderer). It arrives as
 // MJPEG at up to 60fps over one long request; frames are decoded off the main thread, and any that arrive while the
@@ -268,7 +476,10 @@ let liveOk = false, liveMode = false, liveFails = 0, liveAbort = null, liveFps =
 function setMode(live) {
   liveMode = live && liveOk;
   document.body.classList.toggle("live", liveMode);
-  document.getElementById("mode").textContent = liveMode ? `Live view${liveFps ? ` · ${liveFps} fps` : ""} (switch to map)` : liveOk ? "Map view (switch to live)" : "Map view";
+  document.getElementById("mode").textContent = liveMode ? `Live${liveFps ? ` · ${liveFps} fps` : ""}` : liveOk ? "Map view" : SPECTATOR ? "Spectator map" : "Map view (no live video yet)";
+  document.getElementById("bLive").classList.toggle("on", liveMode);
+  document.getElementById("bMap").classList.toggle("on", !liveMode);
+  document.getElementById("bLive").disabled = !liveOk;
   if (!liveWanted()) liveAbort?.abort(); // don't pull video nobody is looking at
 }
 setInterval(() => { liveFps = liveShown; liveShown = 0; if (liveMode) setMode(true); }, 1000);
@@ -334,7 +545,6 @@ async function showFrame(jpg) {
   }
   decoding = false;
 }
-document.getElementById("mode").addEventListener("click", () => setMode(!liveMode));
 // In live mode, dragging and scrolling steer the stream's camera (it returns to following the action after 20s).
 let camAcc = { dx: 0, dy: 0, zoom: 1, yaw: 0 }, camBusy = false, camDrag = null;
 function camFlush() {
@@ -349,7 +559,7 @@ addEventListener("mousemove", (e) => { if (!camDrag || !liveMode) return; const 
 liveImg.addEventListener("wheel", (e) => { e.preventDefault(); camAcc.zoom *= e.deltaY < 0 ? 0.9 : 1.11; camFlush(); }, { passive: false });
 addEventListener("keydown", (e) => { if (!liveMode) return; const k = e.key.toLowerCase(); if (k === "q") camAcc.yaw += 15; if (k === "e") camAcc.yaw -= 15; camFlush(); });
 addEventListener("keydown", (e) => { if (e.key === "l" || e.key === "L") setMode(!liveMode); });
-tick(); draw(); liveLoop();
+setMode(false); tick(); draw(); liveLoop();
 setTimeout(focusBase, 1500);
 </script>
 </body>

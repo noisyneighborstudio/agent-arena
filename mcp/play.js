@@ -101,6 +101,7 @@ export class Player {
 
   async commandJson(commands) {
     const result = await this.call("/api/command", { method: "POST", body: { commands } });
+    this.onCommands?.(commands, result);
     const u = await this.unseen();
     if (u.alerts?.length) this.lastAlertSeq = Math.max(this.lastAlertSeq, ...u.alerts.map((a) => a.seq));
     let parsed; try { parsed = JSON.parse(result); } catch { parsed = result; }
@@ -116,6 +117,7 @@ export class Player {
 
   async commandText(commands) {
     const result = await this.call("/api/command", { method: "POST", body: { commands } });
+    this.onCommands?.(commands, result);
     const u = await this.unseen();
     return u.orders + this.banner(u.alerts, "NEW PRIORITY ALERT since your last look:") + result;
   }

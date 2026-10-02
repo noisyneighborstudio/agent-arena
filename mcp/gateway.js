@@ -91,7 +91,7 @@ function saveSeen() {
 }
 async function rulesOf(room) {
   if (room.rulesAt && Date.now() - room.rulesAt < 30000) return room.rulesVersion;
-  try { room.rulesVersion = (await gameAt(room, "/api/lobby")).rules_version; } catch {}
+  try { const l = await gameAt(room, "/api/lobby"); room.rulesVersion = l.rules_version; room.mapSize = l.map; } catch {}
   room.rulesAt = Date.now();
   return room.rulesVersion;
 }
@@ -239,7 +239,7 @@ async function placeAndRegister(name, code, base) {
 const httpPlayers = new Map();
 function playerFor(token) {
   let p = httpPlayers.get(token);
-  if (!p) { const { room, raw } = parseToken(token); p = new Player(room.game, { token: raw }, room.frames); p.room = room; p.news = () => takeNews(token); httpPlayers.set(token, p); }
+  if (!p) { const { room, raw } = parseToken(token); p = new Player(room.game, { token: raw }, room.frames); p.room = room; p.news = () => takeNews(token); p.onCommands = (c, r) => recordCommands(token, c, r); httpPlayers.set(token, p); }
   return p;
 }
 
@@ -254,6 +254,56 @@ async function whoIs(view) {
     whoCache.set(view, who);
   }
   return { room, raw, team: who.team };
+}
+
+// ------------------------------------------------------------------ command feed
+// What each player's agent ordered, for their own view page (the HUD's command feed). Keyed by room and seat, so a
+// recycled seat starts a fresh feed.
+const feeds = new Map(); // "room:seat" -> [{ at, time_s, text, ok }]
+const seatCache = new Map(); // control token -> { seat, team, at }
+async function seatOf(token) {
+  let c = seatCache.get(token);
+  if (!c || Date.now() - c.at > 30000) {
+    const { room, raw } = parseToken(token);
+    const r = await gameAt(room, "/api/whoami", { token: raw });
+    c = { seat: r.seat, team: r.team, at: Date.now() };
+    seatCache.set(token, c);
+  }
+  return c;
+}
+function sectorOf(room, x, y) {
+  const [w, h] = String(room.mapSize ?? "80x80").split("x").map(Number);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !w) return null;
+  const col = Math.max(0, Math.min(7, Math.floor(x / (w / 8)))), row = Math.max(0, Math.min(7, Math.floor((h - 1 - y) / (h / 8))));
+  return "ABCDEFGH"[col] + (row + 1);
+}
+function describeCommand(room, c) {
+  const n = Array.isArray(c.units) ? `${c.units.length} unit${c.units.length === 1 ? "" : "s"}` : c.units ? `${c.units} units` : "";
+  const at = sectorOf(room, Number(c.x), Number(c.y));
+  const where = at ? ` to [${at}]` : "";
+  switch (c.type) {
+    case "build": return `Build ${String(c.structure ?? "").replaceAll("_", " ")}${at ? ` at [${at}]` : ""}`;
+    case "train": return `Train ${c.count ?? 1}× ${String(c.unit ?? "").replaceAll("_", " ")}`;
+    case "say": return `Says: "${String(c.text ?? "").slice(0, 80)}"`;
+    case "attack": return `${n} attack #${c.target}`;
+    case "move": case "attack_move": return `${n} ${c.type === "move" ? "move" : "attack-move"}${where}${c.waypoints?.length ? ` +${c.waypoints.length} waypoints` : ""}${c.together ? " together" : ""}`;
+    default: return `${c.type.replaceAll("_", " ")}${n ? ` ${n}` : ""}${where}`;
+  }
+}
+async function recordCommands(token, commands, result) {
+  try {
+    const { room } = parseToken(token);
+    const { seat } = await seatOf(token);
+    await rulesOf(room); // refreshes the room's map size, for sector names
+    let results = [];
+    try { results = JSON.parse(result).results ?? []; } catch {}
+    const key = `${room.id}:${seat}`;
+    const list = feeds.get(key) ?? [];
+    commands.forEach((c, i) => list.push({ at: Date.now(), text: describeCommand(room, c), ok: results[i]?.ok !== false, error: results[i]?.ok === false ? String(results[i].error ?? "").slice(0, 120) : undefined }));
+    while (list.length > 30) list.shift();
+    feeds.set(key, list);
+    while (feeds.size > 500) feeds.delete(feeds.keys().next().value);
+  } catch {}
 }
 
 // ------------------------------------------------------------------ after the game ends for a player
@@ -448,6 +498,7 @@ function seatFromToken(seat, token) {
   const { room, raw } = parseToken(token);
   seat.token = token; seat.player = new Player(room.game, { token: raw }, room.frames);
   seat.player.news = () => takeNews(token);
+  seat.player.onCommands = (c, r) => recordCommands(token, c, r);
 }
 
 /** Every room, and who's in it. */
@@ -608,6 +659,12 @@ const server = http.createServer(async (req, res) => {
     if (lm) return await liveFrame(res, lm[1]);
     const sm = p.match(new RegExp(`^/view/${V}/live\\.mjpg$`));
     if (sm) return await liveStream(res, sm[1]);
+    const fm = p.match(new RegExp(`^/view/${V}/feed$`));
+    if (fm) {
+      const { room, raw } = parseToken(fm[1]);
+      let seat = null; try { seat = (await gameAt(room, `/api/view/whoami?view=${raw}`)).seat; } catch {}
+      return send(res, 200, { items: seat == null ? [] : (feeds.get(`${room.id}:${seat}`) ?? []).slice(-12) });
+    }
     const cm = p.match(new RegExp(`^/view/${V}/cam$`));
     if (cm) return await liveCam(res, cm[1], url.searchParams);
     const vm = p.match(new RegExp(`^/view/${V}(/map|/frame)?$`));
