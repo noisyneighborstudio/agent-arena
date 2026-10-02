@@ -87,9 +87,9 @@ namespace Pez.Sim
         public bool Open;
         public int MaxPlayers = 8;
         public int MaxMapSize = Map.MaxSize;
-        public int GrowStep = 16;
+        public int GrowStep = 32;
         /// <summary>A joiner's base goes at least this far from any enemy structure or armed unit, if the map can grow that far.</summary>
-        public float SafeJoinDistance = 40f;
+        public float SafeJoinDistance = 56f;
         /// <summary>Open arena: seconds of protection a joiner gets to set up before they can be attacked.</summary>
         public float ProtectionSeconds = 300f;
 

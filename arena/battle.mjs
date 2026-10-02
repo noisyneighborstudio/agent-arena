@@ -27,7 +27,7 @@ if (players.length < 2) {
 const URL_BASE = opt("url", "http://127.0.0.1:7777");
 const SPEED = Number(opt("speed", "1"));
 const SEED = Number(opt("seed", String(Math.floor(Math.random() * 100000))));
-const MAP_SIZE = Number(opt("map-size", "80")); // 48-160 tiles per side
+const MAP_SIZE = Number(opt("map-size", "80")); // 48-320 tiles per side
 const MINUTES = Number(opt("minutes", "30"));
 const TEAM_NAMES = ["Blueberry", "Cherry", "Lime", "Lemon"];
 const DISPLAY = { claude: "Claude", codex: "Codex", grok: "Grok", gemini: "Gemini", ai: "Scripted AI", human: "Human", external: "External" };

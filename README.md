@@ -46,7 +46,7 @@ Humans, the scripted AI and LLMs all send their orders through the same `Command
 
 ```bash
 open unity/Build/Pezz.app                      # menu: pick Human / Scripted AI / Claude / Codex / External per team
-open unity/Build/Pezz.app --args -team0 human -team1 ai -autostart -mapsize 112   # map 48–160 tiles per side
+open unity/Build/Pezz.app --args -team0 human -team1 ai -autostart -mapsize 112   # map 48–320 tiles per side
 ```
 
 Controls:
@@ -106,7 +106,7 @@ Tick **Open arena** in the menu, launch with `-open`, or run `node arena/battle.
 
 How it works:
 - Each player gets a secret control token and a private, read-only web view of the battlefield from their side.
-- Each join grows the map and adds ore, up to 160×160 and 8 players.
+- Each join grows the map and adds ore, up to 320×320 and 8 players per room.
 - A permanent leave turns that player's base into salvage ore, first come, first served.
 - The gateway exposes only player actions, sanitises cross-agent text and rate-limits requests.
 

@@ -24,10 +24,19 @@
   #teams div { display:flex; justify-content:space-between; gap:10px; padding:1px 0; }
   #teams .out { opacity:.45; text-decoration:line-through; }
   #alerts { top:12px; left:50%; transform:translateX(-50%); max-width:560px; display:none; border-left:6px solid; border-image:repeating-linear-gradient(45deg,#1e1b1d 0 6px,#ece4d2 6px 12px) 6; }
-  #alerts div { padding:2px 0; }
+  #alerts div { padding:1px 0; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:pointer; }
+  #alerts div:hover { text-decoration:underline; }
+  #alerts .more { color:var(--muted); cursor:default; text-decoration:none !important; font-size:12px; }
   #chat { bottom:12px; left:12px; max-width:520px; color:var(--muted); }
   #chat div { padding:1px 0; }
   #help { bottom:12px; right:12px; color:var(--muted); font-size:12px; }
+  /* Phones and narrow windows: stack the panels instead of overlapping them. */
+  @media (max-width: 720px) {
+    #teams { top:auto; bottom:12px; left:12px; right:12px; min-width:0; }
+    #teams #tl { display:grid; grid-template-columns:1fr 1fr; column-gap:16px; }
+    #alerts { top:104px; left:12px; right:12px; transform:none; max-width:none; }
+    #help, #chat { display:none; }
+  }
   #orders { margin-top:8px; color:var(--muted); font-size:12px; max-width:320px; }
   .title { letter-spacing:.08em; font-size:11px; color:var(--muted); text-transform:uppercase; margin-bottom:4px; }
 </style>
@@ -122,7 +131,15 @@ function hud() {
     `<div class="${t.status !== "playing" ? "out" : ""}"><span><span class="chip" style="background:${FLAVORS[t.id % 8]}"></span> ${esc(t.flavor)} <span style="color:var(--muted)">${esc(t.player ?? "")}</span></span><span>${t.kills}</span></div>`).join("");
   document.getElementById("cl").innerHTML = (frame.chat || []).slice(-6).map((c) => `<div>${esc(c)}</div>`).join("");
   const al = document.getElementById("alerts");
-  if (frame.alerts?.length) { al.style.display = "block"; al.innerHTML = frame.alerts.map((a) => `<div style="color:${a.startsWith("CRITICAL") ? "var(--crit)" : "var(--amber)"}">${esc(a)}</div>`).join(""); }
+  // One short line per alert (the agent-facing detail is in the tooltip); click to look there.
+  if (frame.alerts?.length) {
+    al.style.display = "block";
+    const shown = frame.alerts.slice(0, 3);
+    al.innerHTML = shown.map((a) => {
+      const at = /\((\d+),(\d+)\)/.exec(a);
+      return `<div style="color:${a.startsWith("CRITICAL") ? "var(--crit)" : "var(--amber)"}" title="${esc(a)}"${at ? ` data-x="${at[1]}" data-y="${at[2]}"` : ""}>${esc(a.split(";")[0])}</div>`;
+    }).join("") + (frame.alerts.length > shown.length ? `<div class="more">+${frame.alerts.length - shown.length} more</div>` : "");
+  }
   else al.style.display = "none";
 }
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]); }
@@ -208,6 +225,13 @@ cv.addEventListener("mousedown", (e) => (drag = { x: e.clientX, y: e.clientY, cx
 addEventListener("mouseup", () => (drag = null));
 addEventListener("mousemove", (e) => { if (!drag) return; const d = devicePixelRatio || 1; cam.x = drag.cx - (e.clientX - drag.x) * d / cam.scale; cam.y = drag.cy + (e.clientY - drag.y) * d / cam.scale; });
 cv.addEventListener("wheel", (e) => { e.preventDefault(); cam.scale = Math.max(2, Math.min(60, cam.scale * (e.deltaY < 0 ? 1.12 : 0.89))); }, { passive: false });
+document.getElementById("alerts").addEventListener("click", (e) => {
+  const d = e.target.closest("[data-x]");
+  if (!d) return;
+  const x = Number(d.dataset.x), y = Number(d.dataset.y);
+  if (liveMode) fetch(`${BASE}/cam?x=${x}&y=${y}`);
+  else { cam.x = x + 0.5; cam.y = y + 0.5; cam.scale = Math.max(cam.scale, 14); }
+});
 addEventListener("keydown", (e) => { if (e.key === "f" || e.key === "F") focusBase(); if (e.key === "m" || e.key === "M") fitAll(); });
 // High-res live stream of this player's own view, rendered by the game host (when it has a renderer).
 const liveImg = document.getElementById("live");

@@ -46,9 +46,9 @@ namespace Pez.Sim
             return TryGenerate(w, h, seed);
         }
 
-        public const int MinSize = 48, MaxSize = 160;
+        public const int MinSize = 48, MaxSize = 320;
         /// <summary>Menu presets. Any size between MinSize and MaxSize works through the API and command line.</summary>
-        public static readonly (string name, int size)[] Presets = { ("Small", 56), ("Medium", 80), ("Large", 112), ("Huge", 144) };
+        public static readonly (string name, int size)[] Presets = { ("Small", 56), ("Medium", 80), ("Large", 112), ("Huge", 160), ("Vast", 240) };
 
         static Map TryGenerate(int w, int h, int seed)
         {
@@ -189,6 +189,19 @@ namespace Pez.Sim
             m.OreField(rng, (int)mid.X, (int)mid.Y, 2, 90, 170, Crystal);
             var mid2 = Vec2.Lerp(sp, centre, 0.55f) - side * 5f;
             m.OreField(rng, (int)mid2.X, (int)mid2.Y, 1, 70, 130, Uranium);
+            // Wider strips get extra neutral deposits scattered through the new ground, so it's worth expanding into.
+            int extra = (int)(area * 1.5f);
+            for (int i = 0, tries = 0; i < extra && tries < 200; tries++)
+            {
+                bool east = rng.NextDouble() < 0.5;
+                int cx = east ? oldW + 4 + rng.Next(Math.Max(1, newW - oldW - 8)) : 6 + rng.Next(newW - 12);
+                int cy = east ? 6 + rng.Next(newH - 12) : oldH + 4 + rng.Next(Math.Max(1, newH - oldH - 8));
+                var c = new Vec2(cx, cy);
+                if (Vec2.Dist(c, sp) < 16 || bases.Any(b => Vec2.Dist(c, b) < 16)) continue;
+                int roll = rng.Next(4);
+                m.OreField(rng, cx, cy, roll < 2 ? 2 : 1, 120, 260, roll == 0 ? Iron : roll == 1 ? Copper : roll == 2 ? Crystal : Uranium);
+                i++;
+            }
 
             m.Spawns.Add(sp);
             if (bases.Count > 0) m.EnsureConnected(bases[0], sp);

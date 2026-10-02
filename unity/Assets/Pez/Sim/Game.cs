@@ -29,6 +29,8 @@ namespace Pez.Sim
         public GameConfig Config { get; private set; }
         public float Speed;
         public bool Paused;
+        /// <summary>Frames per second the host is drawing at (0 on headless servers), for monitoring.</summary>
+        public float RenderFps;
         readonly List<SimpleAI> ais = new List<SimpleAI>();
         float accumulator, nextHouseCheck;
 

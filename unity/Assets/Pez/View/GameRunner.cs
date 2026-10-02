@@ -321,6 +321,7 @@ namespace Pez.View
                 if (UnityEngine.Input.GetKeyDown(KeyCode.Pause) || (UnityEngine.Input.GetKeyDown(KeyCode.P) && HumanTeam < 0 && !Hud.Typing)) Game.Paused = !Game.Paused;
                 Game.Advance(Time.deltaTime);
             }
+            if (Time.unscaledDeltaTime > 0) Game.RenderFps = Mathf.Lerp(Game.RenderFps, 1f / Time.unscaledDeltaTime, 0.05f);
             View.Sync(Game.Alpha);
         }
 

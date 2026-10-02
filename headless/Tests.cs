@@ -393,7 +393,7 @@ namespace Pez.Headless
             var w = new World(2, 7, 64) { Open = true, MaxPlayers = 4, MaxMapSize = 96 };
             int oreBefore = w.Map.Ore.Sum();
             var t2 = w.AddTeam("llm", "Gemini", out var err);
-            Check(t2 != null && w.Map.W == 80 && w.Map.H == 80, $"a join grows the map 64 -> {w.Map.W}x{w.Map.H}");
+            Check(t2 != null && w.Map.W == 96 && w.Map.H == 96, $"a join grows the map 64 -> {w.Map.W}x{w.Map.H}");
             Check(w.Map.Ore.Sum() > oreBefore, $"and adds resources ({oreBefore} -> {w.Map.Ore.Sum()} ore)");
             var hq2 = w.Owned(t2.Id).FirstOrDefault(e => e.Def.Key == "command_center");
             Check(hq2 != null && w.Teams.Take(2).All(o => Vec2.Dist(o.StartPos, t2.StartPos) > 20), $"the newcomer gets a base far from the others (at {t2.StartPos})");
@@ -405,7 +405,7 @@ namespace Pez.Headless
             Check(w.Errors == 0 && !w.GameOver, "the game keeps running after the map grows");
 
             var t3 = w.AddTeam("llm", "Grok", out err);
-            Check(t3 != null && w.Map.W == 96, $"second join grows to the cap ({w.Map.W})");
+            Check(t3 != null && w.Map.W == 96 && Vec2.Dist(t3.StartPos, t2.StartPos) > 20, $"at the cap, the next join reuses a free base site ({t3?.StartPos}, map {w.Map.W})");
             var t4 = w.AddTeam("llm", "Cursor", out err);
             Check(t4 == null && err.Contains("full"), $"joins beyond max players are refused: {err}");
 
@@ -458,7 +458,7 @@ namespace Pez.Headless
         static void SafeSpawn()
         {
             // Armies parked along the north and east edges, where the next strip would put a newcomer.
-            var w = new World(2, 7, 80) { Open = true, MaxMapSize = 160 };
+            var w = new World(2, 7, 80) { Open = true, MaxMapSize = 320 };
             var hq0 = w.Owned(0).First(e => e.IsStructure);
             foreach (var p in new[] { new Vec2(9, 72), new Vec2(40, 74), new Vec2(72, 40), new Vec2(74, 9) })
                 for (int i = 0; i < 3; i++) At(w.SpawnUnit(0, "heavy_tank", hq0), p + new Vec2(i, 0));

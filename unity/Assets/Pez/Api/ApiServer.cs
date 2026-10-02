@@ -363,6 +363,14 @@ namespace Pez.Api
                         if (d.TryGetValue("paused", out var pz) && pz is bool pb) game.Paused = pb;
                         return Json.Write(new JObj().Set("ok", true).Set("speed", game.Speed).Set("paused", game.Paused));
                     }
+                case "/api/admin/kick":
+                    {
+                        // Host-only (the gateway never forwards /api/admin): remove a seat as if it had left.
+                        var d = Json.Parse(p.Body ?? "{}") as Dictionary<string, object>;
+                        int team = (int)d.Num("team", -1);
+                        if (team < 0 || team >= w.Teams.Count || w.Teams[team].Left) { status = 400; return Json.Write(new JObj().Set("ok", false).Set("error", "no such active team")); }
+                        return Json.Write(new JObj().Set("ok", true).Set("result", w.Leave(team)));
+                    }
                 default:
                     status = 404;
                     return Json.Write(new JObj().Set("ok", false).Set("error", "not found; GET / for help"));
@@ -448,7 +456,7 @@ namespace Pez.Api
                 .Set("tick", w.Tick).Set("time_s", (float)Math.Round(w.Time, 1))
                 .Set("speed", game.Speed).Set("paused", game.Paused).Set("map_size", w.Map.W)
                 .Set("game_over", w.GameOver).Set("winner", w.Winner)
-                .Set("sim_errors", w.Errors).Set("last_sim_error", w.LastError)
+                .Set("sim_errors", w.Errors).Set("last_sim_error", w.LastError).Set("render_fps", MathF.Round(game.RenderFps, 1))
                 .Set("teams", w.Teams.Select(t => new JObj()
                     .Set("team", t.Id).Set("name", t.Name).Set("controller", t.Controller).Set("player", t.PlayerName)
                     .Set("stockpile", StateView.Stockpile(t)).Set("defeated", t.Defeated)

@@ -2,6 +2,7 @@
 // and the public gateway (gateway.js). A Player knows how to reach the game for its team and keeps the
 // little bit of memory needed to show events, alerts and commander's orders as deltas.
 import { z } from "zod";
+import { renderView } from "./render.js";
 
 export class Player {
   /**
@@ -11,7 +12,8 @@ export class Player {
   constructor(base, auth, frames) {
     this.base = base.replace(/\/$/, "");
     // The host's frame server renders each team's own view (Unity host only); default: game port + 1.
-    this.frames = (frames || this.base.replace(/:(\d+)$/, (m, p) => `:${Number(p) + 1}`)).replace(/\/$/, "");
+    // null means there's no renderer (a headless room), so look draws a map picture instead.
+    this.frames = frames === null ? null : (frames || this.base.replace(/:(\d+)$/, (m, p) => `:${Number(p) + 1}`)).replace(/\/$/, "");
     this.auth = auth;
     this.lastSeq = 0;           // last game event seen (events are reported as deltas)
     this.lastAlertSeq = 0;      // last priority alert already shown
@@ -103,10 +105,22 @@ export class Player {
 
   rulesText() { return this.call("/api/rules"); }
 
-  /** A fresh rendered image of this team's own view (fog applies), optionally centred on x,y. Returns a JPEG Buffer. */
-  async lookJpeg(x, y) {
+  /**
+   * A fresh image of this team's own view (fog applies), optionally centred on x,y: the host's high-res render, or
+   * on a headless room a top-down map picture. Returns { data, mime, note }.
+   */
+  async look(x, y) {
+    const fx = x == null ? NaN : Number(x), fy = y == null ? NaN : Number(y);
+    if (!this.frames) {
+      const v = renderView(await this.call("/api/map"), fx, fy);
+      return { data: v.png, mime: "image/png", note: `Top-down map of your view, north up, x ${v.x0}-${v.x1}, y ${v.y0}-${v.y1}, one square per tile. Green is yours, red is enemy (solid blocks are buildings, small squares are units); orange/brown iron and copper ore, cyan crystal, light green uranium, blue water, dark grey rock, black unexplored. This room has no 3D renderer.` };
+    }
+    return { data: await this.lookJpeg(fx, fy), mime: "image/jpeg", note: "Off-axis camera looking north-east; fog shows what you can't currently see." };
+  }
+
+  /** The host's rendered image of this team's own view, optionally centred on x,y. Returns a JPEG Buffer. */
+  async lookJpeg(fx, fy) {
     const team = this.auth.token ? JSON.parse(await this.call("/api/whoami")).team : this.auth.team;
-    const fx = Number(x), fy = Number(y);
     try {
       if (Number.isFinite(fx) && Number.isFinite(fy)) {
         await fetch(`${this.frames}/team/${team}/cam?x=${fx}&y=${fy}`);
@@ -176,16 +190,16 @@ export function registerPlayTools(server, getPlayer, beforeEach = async () => {}
   };
   server.registerTool("look",
     {
-      description: "SEE the battlefield: a rendered image of your own view (your fog of war applies), centred on the action, or on x,y if given. Use it to check your base layout, spot enemy forces you can see, and judge a fight. Only works when the host runs the graphical game.",
+      description: "SEE the battlefield: a rendered image of your own view (your fog of war applies), centred on the action, or on x,y if given. Use it to check your base layout, spot enemy forces you can see, and judge a fight. On the main room it's the high-res 3D render; on overflow rooms it's a top-down map picture.",
       inputSchema: { x: z.number().optional().describe("tile x to look at"), y: z.number().optional().describe("tile y to look at") },
     },
     async (args) => {
       try {
         await beforeEach();
-        const jpg = await getPlayer().lookJpeg(args?.x, args?.y);
+        const v = await getPlayer().look(args?.x, args?.y);
         return { content: [
-          { type: "image", data: jpg.toString("base64"), mimeType: "image/jpeg" },
-          { type: "text", text: `Your view${args?.x != null ? ` around (${args.x},${args.y})` : " (following the action)"}. Off-axis camera looking north-east; fog shows what you can't currently see.` },
+          { type: "image", data: v.data.toString("base64"), mimeType: v.mime },
+          { type: "text", text: `Your view${args?.x != null ? ` around (${args.x},${args.y})` : ""}. ${v.note}` },
         ] };
       } catch (e) { return fail(e); }
     });
