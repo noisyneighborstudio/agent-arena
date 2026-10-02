@@ -54,6 +54,7 @@ namespace Pez.Headless
             ResignWhenStalled();
             WaitPacing();
             DeepMining();
+            NoGridlock();
             AiGoesDeep();
             Console.WriteLine(failures == 0 ? "\nAll tests passed." : $"\n{failures} test(s) FAILED.");
             return failures == 0 ? 0 : 1;
@@ -250,8 +251,51 @@ namespace Pez.Headless
             Tick(420);
             var t = w.Teams[0];
             Check(t.Surveyed.Count > 0 || t.SurveySites.Count > 0, $"the scripted AI surveys when its surface ore runs out ({t.SurveySites.Count} surveys, {t.Surveyed.Count} deposits)");
-            Check(w.Owned(0).Any(e => e.Def.Key == "deep_mine"), $"and puts a deep mine on what it finds ({w.Owned(0).Count(e => e.Def.Key == "drill_rig")} rigs)");
+            var rigs = w.Owned(0).Where(e => e.Def.Key == "drill_rig").ToList();
+            var freeDeps = w.Map.Deep.Where(d => t.Surveyed.Contains(d.Id) && d.Amount > 0 && d.MineId == 0).ToList();
+            Check(w.Owned(0).Any(e => e.Def.Key == "deep_mine"), $"and puts a deep mine on what it finds ({rigs.Count} rigs: {string.Join("; ", rigs.Select(r => $"{r.Pos} {r.OrderName}"))}; free deposits {freeDeps.Count}: {string.Join(" ", freeDeps.Take(3).Select(d => d.Pos.ToString()))}; steel {t.Amount("steel")}, factory queue {string.Join(",", t.UnitQueues[Producer.Factory].Select(q => q.Key))}, built {(t.Stats.Built.TryGetValue("drill_rig", out var nb) ? nb : 0)})");
             Check(w.Errors == 0, $"no sim errors ({w.LastError})");
+        }
+
+        static void NoGridlock()
+        {
+            // A truck docking at a refinery with idle tanks parked all over the dock still unloads.
+            var w = new World(2, 7, 80);
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var refinery = w.SpawnStructure(0, "mining_refinery", w.FindPlacement(0, "mining_refinery").Value, 1f);
+            var dock = w.DockPoint(refinery);
+            for (int i = 0; i < 6; i++) { var tk = At(w.SpawnUnit(0, "heavy_tank", hq), dock + new Vec2((i % 3 - 1) * 0.9f, -(i / 3) * 0.9f)); w.SetOrder(tk, Order.Idle, tk.Pos); }
+            foreach (var o in w.Owned(0).Where(e => e.IsHarvester).ToList()) w.Remove(o);
+            var truck = At(w.SpawnUnit(0, "mining_truck", refinery), dock + new Vec2(7, -1));
+            truck.Cargo = 150; truck.CargoType = 0; w.SetOrder(truck, Order.ReturnOre, truck.Pos);
+            // Make the refinery the only drop-off so it has to dock there.
+            Run(w, 25);
+            Check(truck.Cargo == 0, $"a truck docking through a crowd of parked tanks still unloads (cargo left {truck.Cargo}, truck at {truck.Pos}, dock {dock}, order {truck.OrderName}, moving {truck.Moving}, ghost {truck.GhostUntil:0.0} t {w.Time:0.0})");
+
+            // Two vehicles meeting head-on in a one-tile corridor both get through.
+            var w2 = new World(2, 7, 80);
+            int cy = 40;
+            for (int x = 10; x <= 60; x++) for (int y = cy - 8; y <= cy + 8; y++) { int i = w2.Map.Idx(x, y); w2.Map.Tiles[i] = Terrain.Grass; w2.Map.Ore[i] = 0; }
+            for (int x = 20; x <= 50; x++) for (int y = cy - 3; y <= cy + 3; y++) if (y != cy) w2.Map.Tiles[w2.Map.Idx(x, y)] = Terrain.Rock;
+            for (int x = 20; x <= 50; x++) w2.Map.Tiles[w2.Map.Idx(x, cy)] = Terrain.Dirt;
+            var hq2 = w2.Owned(0).First(e => e.Def.Key == "command_center");
+            var a = At(w2.SpawnUnit(0, "heavy_tank", hq2), new Vec2(18.5f, cy + 0.5f));
+            var b = At(w2.SpawnUnit(0, "light_tank", hq2), new Vec2(52.5f, cy + 0.5f));
+            w2.SetOrder(a, Order.Move, new Vec2(54.5f, cy + 0.5f));
+            w2.SetOrder(b, Order.Move, new Vec2(16.5f, cy + 0.5f));
+            Run(w2, 60);
+            Check(Vec2.Dist(a.Pos, new Vec2(54.5f, cy + 0.5f)) < 1.5f && Vec2.Dist(b.Pos, new Vec2(16.5f, cy + 0.5f)) < 1.5f,
+                  $"two tanks meeting head-on in a 1-tile corridor both get through (at {a.Pos} and {b.Pos}; a order {a.OrderName} moving {a.Moving} ghost {a.GhostUntil:0.0} t {w2.Time:0}; b order {b.OrderName})");
+
+            // A tank driving through a parked crowd arrives.
+            var w3 = new World(2, 7, 80);
+            var hq3 = w3.Owned(0).First(e => e.Def.Key == "command_center");
+            for (int i = 0; i < 16; i++) { var tk = At(w3.SpawnUnit(0, "heavy_tank", hq3), new Vec2(40 + (i % 4) * 0.8f, 40 + (i / 4) * 0.8f)); w3.SetOrder(tk, Order.Idle, tk.Pos); }
+            var runner = At(w3.SpawnUnit(0, "light_tank", hq3), new Vec2(34, 41));
+            w3.SetOrder(runner, Order.Move, new Vec2(48, 41.2f));
+            Run(w3, 25);
+            Check(Vec2.Dist(runner.Pos, new Vec2(48, 41.2f)) < 1.5f, $"a tank driving through a parked crowd arrives (at {runner.Pos})");
+            Check(w.Errors == 0 && w2.Errors == 0 && w3.Errors == 0, "no sim errors");
         }
 
         static void RepairTruck()
@@ -319,8 +363,7 @@ namespace Pez.Headless
         static Entity Enemy(World w, string key, Vec2 at)
         {
             var e = w.SpawnUnit(1, key, w.Owned(1).First(x => x.Def.Key == "command_center"));
-            e.Pos = e.PrevPos = e.GuardPos = at;
-            return e;
+            return At(e, at);
         }
 
         static void Alerts()
@@ -437,7 +480,8 @@ namespace Pez.Headless
             api.Stop();
         }
         static Entity Mine0(World w, string key) => w.SpawnUnit(0, key, w.Owned(0).First(x => x.Def.Key == "command_center"));
-        static Entity At(Entity e, Vec2 p) { e.Pos = e.PrevPos = e.GuardPos = p; return e; }
+        // Place a unit for a scenario: it stands where it's put (a fresh unit's "roll clear of the door" move is dropped).
+        static Entity At(Entity e, Vec2 p) { e.Pos = e.PrevPos = e.GuardPos = p; if (e.Order == Order.Move) { e.Order = Order.Idle; e.Path = null; } return e; }
 
         static void Transports()
         {

@@ -455,6 +455,13 @@ namespace Pez.Sim
             e.Fuel = def.Fuel;
             if (e.IsHarvester) SetOrder(e, Order.Harvest, e.Pos);
             else if (at.Rally.HasValue) SetOrder(e, Order.Move, at.Rally.Value);
+            else if (!def.IsAir)
+            {
+                // Roll a few tiles clear of the door so new units don't park in front of it (or a refinery's dock).
+                var clear = Paths.NearestPassable(Int2.Of(e.Pos + new Vec2((float)(rng.NextDouble() - 0.5) * 4f, -3f))).Center;
+                SetOrder(e, Order.Move, clear);
+                e.GuardPos = clear;
+            }
             return e;
         }
 
@@ -679,7 +686,7 @@ namespace Pez.Sim
                 try
                 {
                     if (e.IsMine) { MineTick(e); continue; }
-                    if (!e.IsStructure) { CheckRetreat(e); UpdateUnit(e); if (e.Def.UsesFuel && !e.Dead) UpdateFuel(e); }
+                    if (!e.IsStructure) { CheckRetreat(e); UpdateUnit(e); if (e.Def.UsesFuel && !e.Dead) UpdateFuel(e); if (!e.Dead) CheckJam(e); }
                     else if (e.IsArmed && e.IsComplete) UpdateTurret(e);
                 }
                 catch (Exception ex)
@@ -1620,6 +1627,46 @@ namespace Pez.Sim
             e.Moving = true;
         }
 
+        /// <summary>
+        /// No two units may stay locked together: a unit that's trying to move but has made no real progress for 2s
+        /// passes through other units for the next 3s (and replans its route) until it's clear.
+        /// </summary>
+        void CheckJam(Entity e)
+        {
+            if (e.IsAir || e.IsMine || e.Stranded) return;
+            // Progress means getting closer to where it's headed: being shoved backwards doesn't count.
+            var goal = e.Path != null && e.Path.Count > 0 ? e.Path[e.Path.Count - 1]
+                     : e.Order == Order.Harvest && e.HarvestTile.HasValue ? e.HarvestTile.Value.Center : e.OrderPos;
+            float d = Vec2.Dist(e.Pos, goal);
+            if (!e.Moving) { e.ProgressPos = e.Pos; e.ProgressDist = d; e.ProgressAt = Time; return; }
+            if (Time - e.ProgressAt < 2f) return;
+            if (e.ProgressDist - d < 0.3f && Time >= e.GhostUntil)
+            {
+                e.GhostUntil = Time + 3f;
+                e.Path = null; e.RepathTimer = 0;
+            }
+            e.ProgressPos = e.Pos; e.ProgressDist = d; e.ProgressAt = Time;
+        }
+
+        /// <summary>An idle unit in a moving friendly's way steps aside (and makes that spot its new post).</summary>
+        void GiveWay(Entity idle, Entity mover)
+        {
+            if (idle.Order != Order.Idle || idle.Moving || idle.Team != mover.Team || Time < idle.GhostUntil - 2.5f) return;
+            var dir = mover.Path != null && mover.PathIdx < mover.Path.Count ? mover.Path[mover.PathIdx] - mover.Pos : idle.Pos - mover.Pos;
+            if (dir.LengthSq < 1e-4f) dir = new Vec2(1, 0);
+            var side = new Vec2(-dir.Y, dir.X).Normalized * (((idle.Id & 1) == 0) ? 1.6f : -1.6f);
+            foreach (var s in new[] { side, side * -1f, side + dir.Normalized * 1.2f })
+            {
+                var spot = idle.Pos + s;
+                var t = Int2.Of(spot);
+                if (!Map.Passable(t.X, t.Y)) continue;
+                SetOrder(idle, Order.Move, spot);
+                idle.GuardPos = spot;
+                idle.GhostUntil = Time + 0.5f; // marks that it just gave way (no ping-pong)
+                return;
+            }
+        }
+
         void Separate()
         {
             for (int i = 0; i < Entities.Count; i++)
@@ -1631,6 +1678,7 @@ namespace Pez.Sim
                 {
                     if (b.Id <= a.Id) continue; // each pair once
                     if (b.Dead || b.IsStructure || b.IsCarried || b.IsMine || a.IsAir != b.IsAir) continue;
+                    if (Time < a.GhostUntil && a.Moving || Time < b.GhostUntil && b.Moving) continue; // unjamming: pass through
                     float min = a.Def.Radius + b.Def.Radius;
                     var d = b.Pos - a.Pos;
                     float dsq = d.LengthSq;
@@ -1638,6 +1686,8 @@ namespace Pez.Sim
                     float len = MathF.Sqrt(dsq);
                     var n = len > 1e-4f ? d / len : new Vec2(1, 0);
                     float push = (min - len) * 0.25f;
+                    // Idle units get out of a moving friendly's way rather than wedging it.
+                    if (a.Moving && !b.Moving) GiveWay(b, a); else if (b.Moving && !a.Moving) GiveWay(a, b);
                     // Stationary units yield to moving ones a bit more.
                     float wa = a.Moving ? 0.35f : 0.65f, wb = b.Moving ? 0.35f : 0.65f;
                     TryNudge(a, n * (-push * wa * 2));

@@ -143,6 +143,9 @@ namespace Pez.Sim
                               (t.SurfaceWarnedAt > 0 && w.Time - t.SurfaceWarnedAt < 300);
             // Past the electronics plant it prospects anyway: deep mines are the economy's second stage.
             bool prospect = w.HasComplete(team, "electronics_plant") && t.Amount("steel") > 400;
+            // With the surface dry and no deep mine yet, the economy comes first: no army spending until a rig is on its way.
+            bool economyFirst = surfaceDry && !mine.Any(e => e.Def.Key == "deep_mine" || e.Def.Key == "drill_rig") &&
+                                !t.UnitQueues[Producer.Factory].Any(q => q.Key == "drill_rig") && w.HasComplete(team, "electronics_plant");
             if (w.HasComplete(team, "factory") && (surfaceDry || prospect || mine.Any(e => e.Def.Key == "deep_mine")))
             {
                 var free = w.Map.Deep.Where(d => t.Surveyed.Contains(d.Id) && d.Amount > 0 && (d.MineId == 0 || w.Get(d.MineId) == null))
@@ -187,6 +190,7 @@ namespace Pez.Sim
             // ---- Army
             void Train(Producer p, params string[] options)
             {
+                if (economyFirst) return;
                 if (!w.HasComplete(team, Defs.ProducerKey(p)) || t.UnitQueues[p].Count >= 2) return;
                 foreach (var u in options)
                     if (w.MissingPrereq(team, Defs.Get(u)) == null && Affordable(u)) { Do(w, "type", "train", "unit", u); return; }

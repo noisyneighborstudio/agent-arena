@@ -30,6 +30,9 @@ namespace Pez.Sim
         public int PathIdx;
         public float Cooldown;
         public float SpeedCap;        // moving as a group: no faster than the slowest member (0 = own speed)
+        // Anti-jam: where it was when progress was last checked, and until when it may pass through other units.
+        public Vec2 ProgressPos;
+        public float ProgressAt, GhostUntil, ProgressDist;
         // Queued waypoints for move / attack_move (taken in order; with WaypointLoop, forever, as a patrol).
         public readonly List<Vec2> Waypoints = new List<Vec2>();
         public bool WaypointLoop;
