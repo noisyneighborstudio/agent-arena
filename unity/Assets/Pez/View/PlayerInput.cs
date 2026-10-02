@@ -8,7 +8,7 @@ namespace Pez.View
     /// <summary>
     /// Mouse/keyboard control for the human team. Every action becomes a Commands.Execute call,
     /// exactly what an LLM would send over the API.
-    /// Left click/drag: select. Right click: move / attack / harvest / rally. F + right click: attack-move.
+    /// Left click/drag: select. Right click: move / attack / harvest / rally, or repair/heal a damaged friendly with repair trucks/medics. F + right click: attack-move.
     /// X: stop. G: deploy outpost truck. Delete: sell. Ctrl+A: select all combat units. Esc: cancel placement.
     /// </summary>
     public class PlayerInput : MonoBehaviour
@@ -103,7 +103,15 @@ namespace Pez.View
                 if (units.Count > 0)
                 {
                     var unitEntities = units.Select(W.Get).Where(e => e != null).ToList();
-                    if (target != null && target.Team != Team && W.IsVisibleTo(Team, target)) Exec("type", "attack", "units", units, "target", target.Id);
+                    var healers = unitEntities.Where(e => e.Def.RepairRate > 0 && target != null && World.CanTend(e, target)).Select(e => e.Id).ToList();
+                    if (healers.Count > 0)
+                    {
+                        // Medics/repair trucks tend the target; everyone else moves up beside it.
+                        Exec("type", "repair", "units", healers, "target", target.Id);
+                        var rest = units.Except(healers).ToList();
+                        if (rest.Count > 0) Exec("type", "move", "units", rest, "x", ground.x, "y", ground.z);
+                    }
+                    else if (target != null && target.Team != Team && W.IsVisibleTo(Team, target)) Exec("type", "attack", "units", units, "target", target.Id);
                     else if (W.Map.OreAt(tile.X, tile.Y) > 0 && unitEntities.Any(e => e.IsHarvester)) Exec("type", "harvest", "units", units, "x", ground.x, "y", ground.z);
                     else Exec("type", attackMoveArmed ? "attack_move" : "move", "units", units, "x", ground.x, "y", ground.z);
                     Fx.MuzzleFlash(new Vector3(ground.x, 0.05f, ground.z), 0.08f); // click marker

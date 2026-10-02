@@ -53,6 +53,10 @@ namespace Pez.Sim
         public Producer Produces;
         public string[] Requires = new string[0];
         public int HarvestCapacity;   // mining trucks only
+        public float RepairRate;      // HP/s restored: repair trucks fix machines, medics heal infantry
+        public bool Medic;            // heals infantry (free) instead of repairing machines (costs steel)
+        public float RepairRange = 1.5f;
+        public const float RepairSteelPerHp = 0.1f;
         public bool DropOff;          // trucks can unload ore here
         public Recipe[] Recipes = new Recipe[0];
         public string DeploysInto;    // e.g. outpost_truck -> outpost
@@ -124,9 +128,11 @@ namespace Pez.Sim
             Add(new EntityDef { Key = "mining_truck", Name = "Mining Truck", Description = "Mines ore (150 per trip, one type at a time) and unloads at the nearest drop-off.", Cost = C("iron_ore", 200), BuildTime = 8, MaxHp = 900, Armor = Armor.Vehicle, Speed = 1.8f, Radius = 0.5f, Sight = 5, HarvestCapacity = 150, BuiltBy = Producer.CommandCenter });
             Add(new EntityDef { Key = "rifleman", Name = "Rifleman", Description = "Cheap anti-infantry. Weak vs armor, can plink aircraft.", Cost = C("steel", 40), BuildTime = 4, MaxHp = 125, Armor = Armor.Infantry, Speed = 1.5f, Radius = 0.2f, Weapon = Rifle, BuiltBy = Producer.Barracks });
             Add(new EntityDef { Key = "rocket_soldier", Name = "Rocket Soldier", Description = "Anti-armor and anti-air infantry.", Cost = C("steel", 80, "copper", 30), BuildTime = 6, MaxHp = 125, Armor = Armor.Infantry, Speed = 1.3f, Radius = 0.2f, Weapon = Rocket, BuiltBy = Producer.Barracks });
+            Add(new EntityDef { Key = "medic", Name = "Medic", Description = "Unarmed. Heals friendly infantry for free (15 HP/s). Auto-heals wounded infantry within 6 tiles when idle.", Cost = C("steel", 60, "copper", 20), BuildTime = 5, MaxHp = 100, Armor = Armor.Infantry, Speed = 1.6f, Radius = 0.2f, Sight = 6, RepairRate = 15, Medic = true, BuiltBy = Producer.Barracks });
             Add(new EntityDef { Key = "laser_trooper", Name = "Laser Trooper", Description = "Elite beam infantry; good against everything.", Cost = C("steel", 80, "lenses", 30), BuildTime = 8, MaxHp = 180, Armor = Armor.Infantry, Speed = 1.4f, Radius = 0.2f, Weapon = Laser, BuiltBy = Producer.Barracks, Requires = new[] { "optics_lab" } });
             Add(new EntityDef { Key = "scout_buggy", Name = "Scout Buggy", Description = "Very fast, long sight, machine gun.", Cost = C("steel", 100, "copper", 20), BuildTime = 5, MaxHp = 220, Armor = Armor.Vehicle, Speed = 4f, Radius = 0.35f, Sight = 9, Weapon = MachineGun, BuiltBy = Producer.Factory });
             Add(new EntityDef { Key = "light_tank", Name = "Light Tank", Description = "Fast all-round tank. Can't hit aircraft.", Cost = C("steel", 200, "copper", 40), BuildTime = 8, MaxHp = 400, Armor = Armor.Vehicle, Speed = 2.6f, Radius = 0.45f, Weapon = Cannon, BuiltBy = Producer.Factory });
+            Add(new EntityDef { Key = "repair_truck", Name = "Repair Truck", Description = "Unarmed. Repairs friendly vehicles, aircraft and structures (30 HP/s, costs 1 steel per 10 HP). Auto-repairs anything damaged within 6 tiles when idle.", Cost = C("steel", 180, "copper", 60), BuildTime = 8, MaxHp = 500, Armor = Armor.Vehicle, Speed = 2.2f, Radius = 0.45f, Sight = 6, RepairRate = 30, BuiltBy = Producer.Factory });
             Add(new EntityDef { Key = "outpost_truck", Name = "Outpost Truck", Description = "Drive to a remote ore field and 'deploy' it into an Outpost.", Cost = C("steel", 400, "copper", 100, "circuits", 50), BuildTime = 12, MaxHp = 800, Armor = Armor.Vehicle, Speed = 1.4f, Radius = 0.55f, Sight = 6, DeploysInto = "outpost", BuiltBy = Producer.Factory, Requires = new[] { "electronics_plant" } });
             Add(new EntityDef { Key = "heavy_tank", Name = "Heavy Tank", Description = "Slow, heavily armored, splash damage.", Cost = C("steel", 400, "circuits", 80), BuildTime = 13, MaxHp = 950, Armor = Armor.Vehicle, Speed = 1.6f, Radius = 0.55f, Weapon = HeavyCannon, BuiltBy = Producer.Factory, Requires = new[] { "electronics_plant" } });
             Add(new EntityDef { Key = "artillery", Name = "Artillery", Description = "Range 11 splash shells. Fragile; keep it behind your tanks.", Cost = C("steel", 300, "circuits", 100), BuildTime = 12, MaxHp = 300, Armor = Armor.Vehicle, Speed = 1.3f, Radius = 0.5f, Sight = 7, Weapon = Shell, BuiltBy = Producer.Factory, Requires = new[] { "electronics_plant" } });

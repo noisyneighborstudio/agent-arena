@@ -7,7 +7,7 @@ This is an MVP spike. All the art is procedural, built from primitives, so the g
 ## What's in the game
 
 - **Production-chain economy.** You start with a Command Center, one Mining Truck and a little raw ore. Trucks mine four ore types (iron, copper, crystal, uranium) into a team stockpile. Converter buildings refine ore into steel, copper, circuits, lenses, plasma and composite, and higher tiers cost those materials. Every building produces something. The full hierarchy is in [docs/TECH_TREE.md](docs/TECH_TREE.md).
-- **16 structures and 12 units.** The range runs from riflemen and light tanks to artillery, laser tanks, laser towers, SAM sites, gunships and stealth bombers.
+- **16 structures and 14 units.** The range runs from riflemen, medics, light tanks and repair trucks to artillery, laser tanks, laser towers, SAM sites, gunships and stealth bombers.
 - **Territory.** You can only build within 6 tiles of your own structures. Outpost Trucks deploy into forward bases that claim remote ore fields.
 - **Fog of war.** The map starts black. Bases reveal a radius around themselves, units and trucks reveal what they pass, and radar domes reveal a wide area and detect stealth aircraft.
 - **Combat:** A* pathfinding, aircraft that ignore terrain, weapons that can or can't hit air, splash damage, projectiles, beams and artillery arcs.
@@ -37,7 +37,7 @@ open unity/Build/Pez.app --args -team0 human -team1 ai -autostart
 Controls:
 
 - **Selecting:** left-click or drag-box to select. Ctrl+A selects all combat units.
-- **Orders:** right-click to move, attack or set a rally point. Right-clicking ore with trucks selected assigns them that ore type. F then right-click attack-moves. G deploys an Outpost Truck. X stops, Del sells.
+- **Orders:** right-click to move, attack or set a rally point. With Repair Trucks or Medics selected, right-clicking a damaged friendly unit or building repairs or heals it. Right-clicking ore with trucks selected assigns them that ore type. F then right-click attack-moves. G deploys an Outpost Truck. X stops, Del sells.
 - **Camera:** WASD, arrow keys or the screen edge to pan, middle-drag to grab, Q/E to rotate, mouse wheel to zoom. Click the minimap to jump.
 
 ## Battle of the LLMs
@@ -80,7 +80,7 @@ Then tell Claude something like "you're Red in Pez, crush me". You can also coac
 | `get_rules` | stats, costs, prerequisites, command reference |
 | `get_state` | your stockpile with rates, power, converter status, queues, what you can build and its cost, structures and units with ids, visible enemies, explored ore fields by type, events since the last call |
 | `get_map` | ASCII map from your team's view, with fog |
-| `command` | a batch of commands: `build`, `train`, `move`, `attack_move`, `attack`, `stop`, `harvest` (optionally by `ore` type), `deploy`, `rally`, `sell`, `cancel`, `say` |
+| `command` | a batch of commands: `build`, `train`, `move`, `attack_move`, `attack`, `stop`, `harvest` (optionally by `ore` type), `deploy`, `repair`/`heal`, `rally`, `sell`, `cancel`, `say` |
 | `wait` | lets the game run 1–30 seconds, then returns the new state |
 
 ### HTTP API (port 7777)
@@ -98,6 +98,7 @@ The API listens only on 127.0.0.1 and has no authentication. Any local process c
 
 ```bash
 cd headless && dotnet run -- --selftest              # AI vs AI to the end in a few seconds, then reports what each side built
+cd headless && dotnet run -- --test                  # scenario tests (repair truck, medic)
 cd headless && dotnet run -- --trace 2 --seed 23     # print one entity's state every second (debugging)
 cd headless && dotnet run -- --controllers llm,ai    # headless server for MCP clients
 /Applications/Unity/Hub/Editor/6000.3.25f1/Unity.app/Contents/MacOS/Unity \
@@ -109,6 +110,6 @@ The sim sources must stay C# 9 so Unity can compile them. The headless csproj en
 ## Next steps
 
 - Real art: swap `Models.Build` for imported meshes, keeping the `Rig` handles. Move to URP with post-processing.
-- Audio, unit veterancy, repair, walls, an MCV, superweapons, tech tiers, more maps.
+- Audio, unit veterancy, walls, an MCV, superweapons, tech tiers, more maps.
 - Per-team API tokens, so an LLM can only control its own team.
 - Replays: the sim is deterministic apart from its RNG seeding, so recording commands is enough.

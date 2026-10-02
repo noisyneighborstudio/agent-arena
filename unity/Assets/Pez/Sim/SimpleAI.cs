@@ -122,6 +122,14 @@ namespace Pez.Sim
                 }
             }
 
+            // ---- Keep a couple of repair trucks (they auto-repair whatever is damaged near them)
+            if (w.HasComplete(team, "factory") && mine.Count(e => e.Def.Key == "repair_truck") < 2 &&
+                !t.UnitQueues[Producer.Factory].Any(p => p.Key == "repair_truck") && t.Amount("steel") > 300 && Affordable("repair_truck"))
+                Do(w, "type", "train", "unit", "repair_truck");
+            if (w.HasComplete(team, "barracks") && mine.Count(e => e.Def.Key == "medic") < 2 &&
+                !t.UnitQueues[Producer.Barracks].Any(p => p.Key == "medic") && t.Amount("steel") > 200 && Affordable("medic"))
+                Do(w, "type", "train", "unit", "medic");
+
             // ---- Army
             void Train(Producer p, params string[] options)
             {

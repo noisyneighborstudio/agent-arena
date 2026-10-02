@@ -2,7 +2,7 @@ using System.Collections.Generic;
 
 namespace Pez.Sim
 {
-    public enum Order { Idle, Move, AttackMove, Attack, Harvest, ReturnOre }
+    public enum Order { Idle, Move, AttackMove, Attack, Harvest, ReturnOre, Repair }
 
     public class Entity
     {

@@ -368,8 +368,8 @@ namespace Pez.View
             float size = Team >= 0 ? MiniSize : SideW - 20;
             miniRect = new Rect(sw - size - (Team >= 0 ? (SideW - size) / 2 : 10), 10, size, size);
             Fill(new Rect(miniRect.x - 2, miniRect.y - 2, size + 4, size + 4), new Color(1f, 0.6f, 0.15f, 0.7f));
-            // Texture row 0 is south; GUI y grows down, so flip vertically.
-            GUI.DrawTextureWithTexCoords(miniRect, minimap, new Rect(0, 1, 1, -1));
+            // Texture row 0 (south) already draws at the bottom of the rect, matching the camera marker math below.
+            GUI.DrawTexture(miniRect, minimap);
             // Camera focus marker
             var f = Runner.Camera.Focus;
             var mp = new Vector2(miniRect.x + f.x / m.W * size, miniRect.y + (1 - f.z / m.H) * size);

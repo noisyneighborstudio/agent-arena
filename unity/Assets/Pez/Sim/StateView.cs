@@ -61,7 +61,7 @@ namespace Pez.Sim
             o.Set("my_units", w.Owned(team).Where(e => !e.IsStructure).Select(e =>
             {
                 var s = $"#{e.Id} {e.Def.Key} at {R(e.Pos.X)},{R(e.Pos.Y)} hp {(int)e.Hp}/{e.Def.MaxHp} {e.OrderName}";
-                if (e.Order == Order.Attack) s += $" #{e.TargetId}";
+                if (e.Order == Order.Attack || e.Order == Order.Repair) s += $" #{e.TargetId}";
                 if (e.IsHarvester) s += $" cargo {e.Cargo}/{e.Def.HarvestCapacity}{(e.CargoType >= 0 ? " " + Defs.Ores[e.CargoType] : "")}{(e.HarvestType >= 0 ? $" (assigned {Defs.Ores[e.HarvestType]})" : "")}";
                 if (e.IsAir) s += " (air)";
                 return s;
@@ -232,6 +232,7 @@ namespace Pez.Sim
                 "Typical opening: power_plant -> more mining_trucks -> mining_refinery -> barracks/factory -> electronics_plant. Raw ore pays for the first buildings; everything later needs refined materials.",
                 "Assign trucks to the ore you need with harvest + ore. Crystal and uranium sit in the contested middle.",
                 "Expand: build an outpost_truck at the factory, drive it to a remote ore field and deploy it. Outposts are drop-off points and let you build defenses there.",
+                "Repair trucks (factory) fix vehicles, aircraft and structures for steel; medics (barracks) heal infantry for free. Both auto-tend anything damaged within 6 tiles when idle, so park them behind your army.",
                 "Aircraft ignore terrain. Only rockets, lasers, SAMs, gunships (and weakly, rifles/mg) can hit them. Stealth bombers are invisible except within 3 tiles of your units or inside your radar dome range.",
                 "Keep power produced >= power used or production and refining halve.",
                 "Rockets beat vehicles, rifles beat infantry, tanks are all-round. Heavy tanks splash.",

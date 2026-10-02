@@ -462,6 +462,10 @@ namespace Pez.Sim
             {
                 case Order.Idle:
                     if (e.IsArmed) IdleCombat(e);
+                    else if (e.Def.RepairRate > 0) IdleRepair(e);
+                    break;
+                case Order.Repair:
+                    UpdateRepair(e);
                     break;
                 case Order.Move:
                     if (FollowPath(e, e.OrderPos, 0.3f)) SetOrder(e, Order.Idle, e.Pos);
@@ -517,18 +521,65 @@ namespace Pez.Sim
                 e.Path = null;
                 FireAt(e, t);
             }
-            else
+            else Chase(e, t);
+        }
+
+        /// <summary>Close on a (possibly moving) entity, repathing once a second.</summary>
+        void Chase(Entity e, Entity t)
+        {
+            if (e.IsAir) { StepToward(e, t.Center); return; }
+            e.RepathTimer -= Dt;
+            if (e.Path == null || e.RepathTimer <= 0)
             {
-                if (e.IsAir) { StepToward(e, t.Center); return; }
-                e.RepathTimer -= Dt;
-                if (e.Path == null || e.RepathTimer <= 0)
-                {
-                    e.Path = Paths.Find(e.Pos, t.Center);
-                    e.PathIdx = 0;
-                    e.RepathTimer = 1f;
-                }
-                AdvancePath(e);
+                e.Path = Paths.Find(e.Pos, t.Center);
+                e.PathIdx = 0;
+                e.RepathTimer = 1f;
             }
+            AdvancePath(e);
+        }
+
+        // ------------------------------------------------------------------ repair
+
+        /// <summary>Medics heal infantry; repair trucks fix everything else. Neither works on itself.</summary>
+        public static bool CanTend(Entity healer, Entity t) =>
+            t != healer && !t.Dead && t.Team == healer.Team && t.IsComplete && t.Hp < t.Def.MaxHp - 0.5f &&
+            (healer.Def.Medic ? t.Def.Armor == Armor.Infantry : t.Def.Armor != Armor.Infantry);
+
+        void IdleRepair(Entity e)
+        {
+            e.Moving = false;
+            if ((Tick + e.Id) % 10 != 0) return; // scanning every tick is wasteful
+            Entity best = null; float bd = 6f;
+            foreach (var o in Entities)
+            {
+                if (!CanTend(e, o)) continue;
+                float d = o.DistFrom(e.Pos);
+                if (d < bd) { bd = d; best = o; }
+            }
+            if (best != null) SetOrder(e, Order.Repair, best.Center, best.Id);
+        }
+
+        void UpdateRepair(Entity e)
+        {
+            var t = Get(e.TargetId);
+            if (t == null || !CanTend(e, t)) { SetOrder(e, Order.Idle, e.Pos); return; }
+            if (t.DistFrom(e.Pos) > e.Def.RepairRange) { Chase(e, t); return; }
+            e.Moving = false;
+            e.Path = null;
+            e.TurretFacing = RotateToward(e.TurretFacing, (t.Center - e.Pos).Angle, 6f * Dt);
+            var team = Teams[e.Team];
+            float hp = MathF.Min(e.Def.RepairRate * Dt, t.Def.MaxHp - t.Hp);
+            if (!e.Def.Medic)
+            {
+                // Repairs burn steel; with none in the stockpile the truck just waits.
+                float steel = team.Stock.TryGetValue("steel", out var s) ? s : 0;
+                hp = MathF.Min(hp, steel / EntityDef.RepairSteelPerHp);
+                if (hp <= 0) return;
+                team.Add("steel", -hp * EntityDef.RepairSteelPerHp);
+            }
+            t.Hp += hp;
+            e.WorkTimer += Dt;
+            if (e.WorkTimer >= 0.4f) { e.WorkTimer = 0; Emit(e.Def.Medic ? "heal" : "repair", e.Team, e.Id, t.Id, e.Pos, t.Center); }
         }
 
         Entity AcquireTarget(Entity e, float radius)

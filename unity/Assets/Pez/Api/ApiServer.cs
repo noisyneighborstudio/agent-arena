@@ -32,7 +32,7 @@ namespace Pez.Api
         public Action<int, string, string> OnCommand;
         /// <summary>Host-provided screenshot hook (Unity only): saves a PNG to the given path.</summary>
         public Action<string> OnScreenshot;
-        /// <summary>Host-provided camera hook: {"x","y","distance","yaw"}.</summary>
+        /// <summary>Host-provided camera hook: {"x","y","distance","yaw","edge_pan":false}.</summary>
         public Action<Dictionary<string, object>> OnCamera;
 
         public ApiServer(int port) { Port = port; }

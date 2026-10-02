@@ -225,6 +225,16 @@ namespace Pez.View
                         Fx.MuzzleFlash(MuzzleOf(ev.A, ev.Pos), ev.Key == "heavy_cannon" ? 0.2f : 0.13f);
                         Kick(ev.A, 0.08f);
                         break;
+                    case "repair":
+                    case "heal":
+                        {
+                            bool heal = ev.Type == "heal";
+                            var from = MuzzleOf(ev.A, ev.Pos);
+                            var to = W(ev.Pos2, HeightOf(ev.B, heal ? 0.3f : 0.5f));
+                            Fx.Beam(from, to, heal ? new Color(0.3f, 1f, 0.45f, 0.8f) : new Color(1f, 0.75f, 0.25f, 0.9f), heal ? 0.05f : 0.035f);
+                            if (!heal) Fx.MuzzleFlash(to, 0.05f); // welding sparks
+                            break;
+                        }
                     case "hit":
                         {
                             float size = ev.Key == "bombs" ? 1.6f : ev.Key == "artillery" ? 0.9f : ev.Key == "heavy_cannon" ? 0.55f : ev.Key == "rocket" || ev.Key == "sam" ? 0.45f : 0.3f;

@@ -70,6 +70,7 @@ namespace Pez.View
                     if (!float.IsNaN(d.Num("distance"))) Camera.Distance = d.Num("distance");
                     if (!float.IsNaN(d.Num("yaw"))) Camera.Yaw = d.Num("yaw");
                     if (d.Str("menu") == "close") InMenu = false;
+                    if (d.TryGetValue("edge_pan", out var ep) && ep is bool on) Camera.EdgePan = on;
                 };
                 Api.Start();
             }

@@ -20,6 +20,8 @@ namespace Pez.Sim
   {""type"":""stop"", ""units"":[IDS]}
   {""type"":""harvest"", ""units"":[IDS], ""x"":X, ""y"":Y}  send mining trucks to ore near x,y (they stick to that ore type)
   {""type"":""harvest"", ""units"":[IDS], ""ore"":""crystal""}  send mining trucks to the nearest ore of a type (iron_ore, copper_ore, crystal, uranium; ""any"" to reset)
+  {""type"":""repair"", ""units"":[IDS], ""target"":ID}     repair trucks fix a damaged friendly vehicle, aircraft or structure (costs steel)
+  {""type"":""heal"", ""units"":[IDS], ""target"":ID}       medics heal a wounded friendly infantry unit (free); same as repair
   {""type"":""deploy"", ""units"":[IDS]}                   deploy an outpost_truck into an Outpost where it stands
   {""type"":""rally"", ""structure_id"":ID, ""x"":X, ""y"":Y} where new units from that building go
   {""type"":""sell"", ""structure_id"":ID}                 sell for 50% refund
@@ -45,6 +47,8 @@ namespace Pez.Sim
                     case "stop": return UnitOrder(w, team, c, Order.Idle);
                     case "harvest": return UnitOrder(w, team, c, Order.Harvest);
                     case "deploy": return Deploy(w, team, c);
+                    case "repair":
+                    case "heal": return Repair(w, team, c);
                     case "rally": return Rally(w, team, c);
                     case "sell": return Sell(w, team, c);
                     case "cancel": return Cancel(w, team, c);
@@ -220,6 +224,23 @@ namespace Pez.Sim
             w.Emit("destroyed", team, s.Id, 0, s.Center, key: s.Def.Key);
             w.Remove(s);
             return Ok($"sold {s.Def.Key} for {refund}");
+        }
+
+        static JObj Repair(World w, int team, Dictionary<string, object> c)
+        {
+            var healers = ResolveUnits(w, team, c).Where(u => u.Def.RepairRate > 0).ToList();
+            if (healers.Count == 0) return Err("no repair trucks or medics given");
+            var target = w.Get((int)c.Num("target", 0));
+            if (target == null || target.Team != team) return Err("target must be one of your own units or structures");
+            if (!target.IsComplete) return Err("that structure is still under construction");
+            if (target.Hp >= target.Def.MaxHp - 0.5f) return Err($"{target.Def.Key} #{target.Id} is already at full health");
+            // Medics take infantry, repair trucks take machines; whoever can't help is left alone.
+            var able = healers.Where(h => World.CanTend(h, target)).ToList();
+            if (able.Count == 0)
+                return Err(target.Def.Armor == Armor.Infantry ? "only medics can heal infantry" : "only repair trucks can repair vehicles, aircraft and structures");
+            foreach (var u in able) w.SetOrder(u, Order.Repair, target.Center, target.Id);
+            return Ok($"{able.Count} {(target.Def.Armor == Armor.Infantry ? "medic(s) healing" : "repair truck(s) repairing")} {target.Def.Key} #{target.Id} ({(int)target.Hp}/{target.Def.MaxHp})" +
+                      (able.Count < healers.Count ? $"; {healers.Count - able.Count} can't work on that" : ""));
         }
 
         static JObj Deploy(World w, int team, Dictionary<string, object> c)

@@ -57,9 +57,11 @@ The Command Center builds every structure. A new structure must be placed within
 | Mining Truck | 200 iron_ore | command_center | mines ore |
 | Rifleman | 40 steel | barracks | cheap anti-infantry, weak AA |
 | Rocket Soldier | 80 steel, 30 copper | barracks | anti-armor, anti-air |
+| Medic | 60 steel, 20 copper | barracks | heals infantry for free (15 HP/s); auto-heals nearby wounded |
 | Laser Trooper | 80 steel, 30 lenses | barracks, optics_lab | elite infantry, hits air |
 | Scout Buggy | 100 steel, 20 copper | factory | fast, long sight |
 | Light Tank | 200 steel, 40 copper | factory | all-rounder |
+| Repair Truck | 180 steel, 60 copper | factory | repairs vehicles, aircraft and structures (30 HP/s, 1 steel per 10 HP); auto-repairs nearby damage |
 | Outpost Truck | 400 steel, 100 copper, 50 circuits | factory, electronics_plant | deploys into an Outpost |
 | Heavy Tank | 400 steel, 80 circuits | factory, electronics_plant | armor, splash |
 | Artillery | 300 steel, 100 circuits | factory, electronics_plant | range 11, splash, fragile |

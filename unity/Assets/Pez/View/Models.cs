@@ -76,6 +76,7 @@ namespace Pez.View
                 case "rifleman":
                 case "rocket_soldier":
                 case "laser_trooper":
+                case "medic":
                     {
                         float s = 0.85f;
                         Part(b, PrimitiveType.Capsule, new Vector3(0, 0.22f * s, 0), new Vector3(0.16f, 0.2f, 0.12f) * s, teamMat);
@@ -84,6 +85,13 @@ namespace Pez.View
                         rig.Turret = Empty(b, "arms", new Vector3(0, 0.32f * s, 0));
                         if (key == "rifleman")
                             rig.Barrel = Part(rig.Turret, PrimitiveType.Cube, new Vector3(0.06f, 0, 0.12f), new Vector3(0.03f, 0.04f, 0.26f), dark);
+                        else if (key == "medic")
+                        {
+                            // White pack with a red cross on the back, no weapon.
+                            Part(b, PrimitiveType.Cube, new Vector3(0, 0.27f * s, -0.08f), new Vector3(0.14f, 0.16f, 0.07f) * s, Mats.Lit(new Color(0.92f, 0.92f, 0.9f), 0.3f, 0));
+                            Part(b, PrimitiveType.Cube, new Vector3(0, 0.27f * s, -0.12f), new Vector3(0.1f, 0.03f, 0.01f) * s, Mats.Glow(new Color(1f, 0.1f, 0.1f), 1.5f));
+                            Part(b, PrimitiveType.Cube, new Vector3(0, 0.27f * s, -0.12f), new Vector3(0.03f, 0.1f, 0.01f) * s, Mats.Glow(new Color(1f, 0.1f, 0.1f), 1.5f));
+                        }
                         else if (key == "laser_trooper")
                         {
                             rig.Barrel = Part(rig.Turret, PrimitiveType.Cube, new Vector3(0.06f, 0, 0.13f), new Vector3(0.045f, 0.05f, 0.28f), Mats.Lit(new Color(0.85f, 0.88f, 0.9f), 0.8f, 0.6f));
@@ -238,6 +246,18 @@ namespace Pez.View
                     break;
 
                 // ---- New units
+                case "repair_truck":
+                    Part(b, PrimitiveType.Cube, new Vector3(-0.25f, 0.12f, 0), new Vector3(0.15f, 0.24f, 0.95f), track);
+                    Part(b, PrimitiveType.Cube, new Vector3(0.25f, 0.12f, 0), new Vector3(0.15f, 0.24f, 0.95f), track);
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.28f, 0), new Vector3(0.52f, 0.14f, 1.0f), teamMat);
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.46f, 0.32f), new Vector3(0.42f, 0.22f, 0.28f), Mats.Lit(new Color(0.2f, 0.3f, 0.4f), 0.9f, 0.4f));
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.42f, -0.2f), new Vector3(0.46f, 0.16f, 0.5f), Mats.Lit(new Color(0.95f, 0.75f, 0.1f), 0.4f, 0.3f));
+                    Part(b, PrimitiveType.Sphere, new Vector3(0.15f, 0.6f, 0.42f), Vector3.one * 0.07f, Mats.Glow(new Color(1f, 0.6f, 0.1f), 3f));
+                    // Crane arm that swings to face whatever it's repairing.
+                    rig.Turret = Empty(b, "crane", new Vector3(0, 0.52f, -0.25f));
+                    Part(rig.Turret, PrimitiveType.Cube, new Vector3(0, 0.12f, 0.2f), new Vector3(0.06f, 0.06f, 0.55f), steel, new Vector3(-20, 0, 0));
+                    rig.Barrel = Part(rig.Turret, PrimitiveType.Sphere, new Vector3(0, 0.22f, 0.48f), Vector3.one * 0.08f, Mats.Glow(new Color(1f, 0.85f, 0.4f), 2.5f));
+                    break;
                 case "outpost_truck":
                     Part(b, PrimitiveType.Cube, new Vector3(-0.28f, 0.13f, 0), new Vector3(0.16f, 0.26f, 1.1f), track);
                     Part(b, PrimitiveType.Cube, new Vector3(0.28f, 0.13f, 0), new Vector3(0.16f, 0.26f, 1.1f), track);

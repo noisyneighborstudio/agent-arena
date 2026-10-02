@@ -63,6 +63,13 @@ namespace Pez.EditorTools
             EditorUtility.SetDirty(mat);
         }
 
+        static string OutPath()
+        {
+            var args = System.Environment.GetCommandLineArgs();
+            int i = System.Array.IndexOf(args, "-pezOut");
+            return i >= 0 && i + 1 < args.Length ? args[i + 1] : "Build/Pez.app";
+        }
+
         [MenuItem("Pez/Build macOS")]
         public static void Build()
         {
@@ -70,7 +77,8 @@ namespace Pez.EditorTools
             var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
             {
                 scenes = new[] { ScenePath },
-                locationPathName = "Build/Pez.app",
+                // -pezOut lets you build beside a running copy without clobbering it.
+                locationPathName = OutPath(),
                 target = BuildTarget.StandaloneOSX,
                 options = BuildOptions.None,
             });
