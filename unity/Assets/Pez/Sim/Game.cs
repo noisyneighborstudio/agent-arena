@@ -5,8 +5,7 @@ namespace Pez.Sim
     public class GameConfig
     {
         public int Seed = 1337;
-        public int MapSize = 64;
-        public int StartCredits = 5000;
+        public int MapSize = 80;
         public float Speed = 1f;
         /// <summary>Per team: human | ai | llm</summary>
         public string[] Controllers = { "human", "ai" };
@@ -28,7 +27,7 @@ namespace Pez.Sim
         {
             Config = cfg;
             Speed = cfg.Speed;
-            World = new World(cfg.Controllers.Length, cfg.Seed, cfg.MapSize, cfg.StartCredits);
+            World = new World(cfg.Controllers.Length, cfg.Seed, cfg.MapSize);
             ais.Clear();
             for (int i = 0; i < cfg.Controllers.Length; i++)
             {
@@ -44,14 +43,15 @@ namespace Pez.Sim
             if (Paused || World.GameOver) return 0;
             accumulator += realDt * Speed;
             int steps = 0;
-            while (accumulator >= World.Dt && steps < 10)
+            // Generous catch-up so a throttled frame rate (window hidden, App Nap) doesn't slow the game clock.
+            while (accumulator >= World.Dt && steps < 100)
             {
                 accumulator -= World.Dt;
                 foreach (var ai in ais) ai.Update(World);
                 World.Step();
                 steps++;
             }
-            if (steps == 10) accumulator = 0; // don't spiral if we fall behind
+            if (steps == 100) accumulator = 0; // don't spiral if we fall far behind
             return steps;
         }
 

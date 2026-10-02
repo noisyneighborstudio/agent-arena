@@ -34,14 +34,20 @@ namespace Pez.Sim
         public int LastAttackerId;
         public float LastHitTime = -999;
 
-        // Harvesters
+        // Mining trucks
         public int Cargo;
+        public int CargoType = -1;   // index into Defs.Ores while carrying
+        public int HarvestType = -1; // preferred ore type, -1 = nearest of any
         public Int2? HarvestTile;
         public float WorkTimer;
+
+        // Converters / reactors: currently producing
+        public bool Working;
 
         public bool IsStructure => Def.IsStructure;
         public bool IsArmed => Def.Weapon != null;
         public bool IsHarvester => Def.HarvestCapacity > 0;
+        public bool IsAir => Def.IsAir;
 
         public Vec2 Center => IsStructure ? new Vec2(Origin.X + Def.SizeX / 2f, Origin.Y + Def.SizeY / 2f) : Pos;
 

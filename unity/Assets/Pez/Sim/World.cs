@@ -13,7 +13,9 @@ namespace Pez.Sim
 
     public class TeamStats
     {
-        public int UnitsBuilt, StructuresBuilt, UnitsLost, StructuresLost, Kills, OreHarvested, CreditsSpent;
+        public int UnitsBuilt, StructuresBuilt, UnitsLost, StructuresLost, Kills, OreMined;
+        public readonly Dictionary<string, int> Built = new Dictionary<string, int>();
+        public void Count(string key) => Built[key] = (Built.TryGetValue(key, out var n) ? n : 0) + 1;
     }
 
     public class Team
@@ -22,16 +24,35 @@ namespace Pez.Sim
         public string Name;
         public string Controller = "human"; // human | ai | llm
         public string PlayerName;
-        public int Credits;
+        /// <summary>Team stockpile: raw ores and manufactured materials (see Defs.Items).</summary>
+        public readonly Dictionary<string, float> Stock = new Dictionary<string, float>();
+        /// <summary>Net change per second of each item over the last second, for display.</summary>
+        public readonly Dictionary<string, float> Rates = new Dictionary<string, float>();
         public int PowerProduced, PowerUsed;
+        /// <summary>Enemy stealth units this team can currently see.</summary>
+        public readonly HashSet<int> Detected = new HashSet<int>();
+
+        public int Amount(string item) => Stock.TryGetValue(item, out var v) ? (int)v : 0;
+        public void Add(string item, float n) => Stock[item] = (Stock.TryGetValue(item, out var v) ? v : 0) + n;
+        public string Missing(Dictionary<string, int> cost)
+        {
+            var lacking = cost.Where(kv => Amount(kv.Key) < kv.Value).Select(kv => $"{kv.Key} {Amount(kv.Key)}/{kv.Value}").ToList();
+            return lacking.Count == 0 ? null : "not enough " + string.Join(", ", lacking);
+        }
+        public void Pay(Dictionary<string, int> cost, float factor = 1f) { foreach (var kv in cost) Add(kv.Key, -kv.Value * factor); }
         public bool Defeated;
         public Vec2 StartPos;
+        /// <summary>Tiles currently in sight of any of this team's entities.</summary>
         public bool[] Visible;
+        /// <summary>Tiles this team has ever seen. Everything else is shroud.</summary>
+        public bool[] Explored;
         public readonly List<ProdItem> StructureQueue = new List<ProdItem>();
         public readonly Dictionary<Producer, List<ProdItem>> UnitQueues = new Dictionary<Producer, List<ProdItem>>
         {
+            { Producer.CommandCenter, new List<ProdItem>() },
             { Producer.Barracks, new List<ProdItem>() },
-            { Producer.WarFactory, new List<ProdItem>() },
+            { Producer.Factory, new List<ProdItem>() },
+            { Producer.Airfield, new List<ProdItem>() },
         };
         /// <summary>Enemy structures this team has seen: id -> (key, origin, team).</summary>
         public readonly Dictionary<int, (string key, Int2 origin, int team)> KnownEnemyStructures = new Dictionary<int, (string, Int2, int)>();
@@ -59,20 +80,22 @@ namespace Pez.Sim
         long nextSeq = 1;
         const int MaxEvents = 4000;
 
-        public World(int teamCount = 2, int seed = 1337, int size = 64, int startCredits = 5000)
+        public World(int teamCount = 2, int seed = 1337, int size = 80)
         {
             Map = Map.Generate(size, size, seed);
             Paths = new Pathfinder(Map);
             string[] names = { "Blue", "Red", "Green", "Yellow" };
             for (int t = 0; t < teamCount; t++)
             {
-                var team = new Team { Id = t, Name = names[t], Credits = startCredits, StartPos = Map.Spawns[t], Visible = new bool[Map.W * Map.H] };
+                var team = new Team { Id = t, Name = names[t], StartPos = Map.Spawns[t], Visible = new bool[Map.W * Map.H], Explored = new bool[Map.W * Map.H] };
                 Teams.Add(team);
+                // Enough raw ore for a power plant; everything after that has to be mined.
+                team.Add("iron_ore", 500);
+                team.Add("copper_ore", 150);
                 var s = Int2.Of(team.StartPos);
-                var cy = SpawnStructure(t, "construction_yard", new Int2(s.X - 1, s.Y - 1), 1f);
-                // Starting escort.
-                for (int i = 0; i < 3; i++) SpawnUnit(t, "rifleman", cy);
-                SpawnUnit(t, "light_tank", cy);
+                var hq = SpawnStructure(t, "command_center", new Int2(s.X - 1, s.Y - 1), 1f);
+                SpawnUnit(t, "mining_truck", hq);
+                for (int i = 0; i < 2; i++) SpawnUnit(t, "rifleman", hq);
             }
             UpdatePower();
             UpdateVisibility();
@@ -123,11 +146,15 @@ namespace Pez.Sim
         {
             var def = Defs.Get(key);
             var e = NewEntity(team, def);
-            // Exit just below the producer's footprint.
-            var exit = new Int2(at.Origin.X + at.Def.SizeX / 2, at.Origin.Y - 1);
-            var tile = Paths.NearestPassable(exit);
             var jitter = new Vec2((float)(rng.NextDouble() - 0.5) * 0.6f, (float)(rng.NextDouble() - 0.5) * 0.6f);
-            e.Pos = e.PrevPos = tile.Center + jitter;
+            if (def.IsAir) e.Pos = e.PrevPos = at.Center + jitter;
+            else
+            {
+                // Exit just below the producer's footprint.
+                var exit = new Int2(at.Origin.X + at.Def.SizeX / 2, at.Origin.Y - 1);
+                var tile = Paths.NearestPassable(exit);
+                e.Pos = e.PrevPos = tile.Center + jitter;
+            }
             e.Facing = e.TurretFacing = -MathF.PI / 2;
             e.GuardPos = e.Pos;
             if (e.IsHarvester) SetOrder(e, Order.Harvest, e.Pos);
@@ -140,7 +167,24 @@ namespace Pez.Sim
         void OnStructureComplete(Entity e)
         {
             UpdatePower();
-            if (e.Def.Key == "refinery") SpawnUnit(e.Team, "harvester", e);
+            if (e.Def.Key == "mining_refinery") SpawnUnit(e.Team, "mining_truck", e);
+        }
+
+        /// <summary>Turn a deployable unit (Outpost Truck) into its structure where it stands.</summary>
+        public string Deploy(Entity u)
+        {
+            var key = u.Def.DeploysInto;
+            if (key == null) return $"{u.Def.Key} can't deploy";
+            var def = Defs.Get(key);
+            var t = Int2.Of(u.Pos);
+            var origin = new Int2(t.X - (def.SizeX - 1) / 2, t.Y - (def.SizeY - 1) / 2);
+            var why = CanPlace(u.Team, key, origin.X, origin.Y, requireNear: false);
+            if (why != null) return $"can't deploy here: {why}";
+            Remove(u);
+            var s = SpawnStructure(u.Team, key, origin, 1f);
+            Teams[u.Team].Stats.Count(key);
+            Emit("built", u.Team, s.Id, pos: s.Center, key: key);
+            return null;
         }
 
         public void Remove(Entity e)
@@ -182,13 +226,7 @@ namespace Pez.Sim
         public string MissingPrereq(int team, EntityDef def)
         {
             if (def.BuiltBy == Producer.None) return $"{def.Key} cannot be built";
-            var producerKey = def.BuiltBy switch
-            {
-                Producer.ConstructionYard => "construction_yard",
-                Producer.Barracks => "barracks",
-                Producer.WarFactory => "war_factory",
-                _ => null
-            };
+            var producerKey = Defs.ProducerKey(def.BuiltBy);
             if (producerKey != null && !HasComplete(team, producerKey)) return $"requires a completed {producerKey}";
             foreach (var r in def.Requires) if (!HasComplete(team, r)) return $"requires a completed {r}";
             return null;
@@ -197,6 +235,7 @@ namespace Pez.Sim
         public bool IsVisibleTo(int team, Entity e)
         {
             if (e.Team == team) return true;
+            if (e.Def.Stealth) return Teams[team].Detected.Contains(e.Id);
             var vis = Teams[team].Visible;
             if (!e.IsStructure) { var t = Int2.Of(e.Pos); return Map.InBounds(t.X, t.Y) && vis[Map.Idx(t.X, t.Y)]; }
             for (int y = 0; y < e.Def.SizeY; y++)
@@ -206,7 +245,7 @@ namespace Pez.Sim
         }
 
         /// <summary>Returns null if placement is valid, else the reason.</summary>
-        public string CanPlace(int team, string key, int ox, int oy, int padding = 0)
+        public string CanPlace(int team, string key, int ox, int oy, int padding = 0, bool requireNear = true)
         {
             var def = Defs.Get(key);
             if (def == null || !def.IsStructure) return $"unknown structure '{key}'";
@@ -222,8 +261,9 @@ namespace Pez.Sim
                     if (!Map.TerrainPassable(tx, ty)) return $"tile ({tx},{ty}) is {Map.Tiles[i].ToString().ToLowerInvariant()}";
                     if (Map.Ore[i] > 0) return $"tile ({tx},{ty}) has ore on it";
                 }
-            // Must be near an existing friendly structure.
-            const int reach = 5;
+            if (!requireNear) return null;
+            // Must be near an existing friendly structure: territory grows outward from your bases.
+            const int reach = 6;
             bool near = Entities.Any(s => !s.Dead && s.Team == team && s.IsStructure &&
                 ox <= s.Origin.X + s.Def.SizeX - 1 + reach && ox + def.SizeX - 1 >= s.Origin.X - reach &&
                 oy <= s.Origin.Y + s.Def.SizeY - 1 + reach && oy + def.SizeY - 1 >= s.Origin.Y - reach);
@@ -267,7 +307,10 @@ namespace Pez.Sim
             if (o == Order.Harvest && e.IsHarvester)
             {
                 var t = Int2.Of(pos);
-                e.HarvestTile = Map.OreAt(t.X, t.Y) > 0 ? t : (Int2?)null;
+                bool onOre = Map.OreAt(t.X, t.Y) > 0;
+                e.HarvestTile = onOre ? t : (Int2?)null;
+                // Ordering a truck onto a specific ore makes it stick to that type.
+                if (onOre) e.HarvestType = Map.OreType[Map.Idx(t.X, t.Y)];
             }
         }
 
@@ -280,6 +323,7 @@ namespace Pez.Sim
             foreach (var e in Entities) e.PrevPos = e.Pos;
             foreach (var p in Projectiles) p.PrevPos = p.Pos;
 
+            UpdateEconomy();
             UpdateProduction();
             for (int i = 0; i < Entities.Count; i++)
             {
@@ -303,8 +347,62 @@ namespace Pez.Sim
             {
                 if (e.Dead || !e.IsStructure || !e.IsComplete) continue;
                 var t = Teams[e.Team];
+                if (e.Def.Key == "fusion_reactor" && !e.Working) continue; // out of plasma
                 if (e.Def.Power > 0) t.PowerProduced += e.Def.Power; else t.PowerUsed -= e.Def.Power;
             }
+        }
+
+        readonly Dictionary<int, Dictionary<string, float>> rateSnapshot = new Dictionary<int, Dictionary<string, float>>();
+
+        /// <summary>Converter buildings turn inputs into outputs; fusion reactors burn plasma.</summary>
+        void UpdateEconomy()
+        {
+            bool powerChanged = false;
+            foreach (var e in Entities)
+            {
+                if (e.Dead || !e.IsStructure || !e.IsComplete) continue;
+                var team = Teams[e.Team];
+                if (e.Def.Key == "fusion_reactor")
+                {
+                    float burn = 0.1f * Dt;
+                    bool fueled = (team.Stock.TryGetValue("plasma", out var pl) ? pl : 0) >= burn;
+                    if (fueled) team.Add("plasma", -burn);
+                    if (fueled != e.Working) { e.Working = fueled; powerChanged = true; }
+                    continue;
+                }
+                if (e.Def.Recipes.Length == 0) continue;
+                float speed = team.LowPower ? 0.5f : 1f;
+                bool any = false;
+                foreach (var r in e.Def.Recipes)
+                {
+                    float cycles = r.Rate * Dt * speed;
+                    // Run as much of this tick's cycles as the stockpile allows.
+                    float frac = 1f;
+                    foreach (var kv in r.Inputs)
+                    {
+                        float have = team.Stock.TryGetValue(kv.Key, out var v) ? v : 0;
+                        frac = MathF.Min(frac, have / (kv.Value * cycles));
+                    // (Recipes with no inputs, like the command center's trickle, always run.)
+                    }
+                    if (frac <= 0.001f) continue;
+                    frac = MathF.Min(1f, frac);
+                    foreach (var kv in r.Inputs) team.Add(kv.Key, -kv.Value * cycles * frac);
+                    foreach (var kv in r.Outputs) team.Add(kv.Key, kv.Value * cycles * frac);
+                    any = true;
+                }
+                e.Working = any;
+            }
+            if (powerChanged) UpdatePower();
+
+            // Per-second net rates, from a stock snapshot each second.
+            if (Tick % TickRate == 0)
+                foreach (var t in Teams)
+                {
+                    if (rateSnapshot.TryGetValue(t.Id, out var prev))
+                        foreach (var item in Defs.Items)
+                            t.Rates[item] = (t.Stock.TryGetValue(item, out var now) ? now : 0) - (prev.TryGetValue(item, out var p) ? p : 0);
+                    rateSnapshot[t.Id] = new Dictionary<string, float>(t.Stock);
+                }
         }
 
         void UpdateProduction()
@@ -314,8 +412,8 @@ namespace Pez.Sim
                 if (team.Defeated) continue;
                 float rate = team.LowPower ? 0.5f : 1f;
 
-                // Structures: one at a time per team, needs a construction yard.
-                if (team.StructureQueue.Count > 0 && HasComplete(team.Id, "construction_yard"))
+                // Structures: one at a time per team, needs a command center.
+                if (team.StructureQueue.Count > 0 && HasComplete(team.Id, "command_center"))
                 {
                     var item = team.StructureQueue[0];
                     var s = Get(item.StructureId);
@@ -330,6 +428,7 @@ namespace Pez.Sim
                         {
                             team.StructureQueue.RemoveAt(0);
                             team.Stats.StructuresBuilt++;
+                            team.Stats.Count(s.Def.Key);
                             Emit("built", team.Id, s.Id, pos: s.Center, key: s.Def.Key);
                             OnStructureComplete(s);
                         }
@@ -350,6 +449,7 @@ namespace Pez.Sim
                         q.RemoveAt(0);
                         var u = SpawnUnit(team.Id, item.Key, producer);
                         team.Stats.UnitsBuilt++;
+                        team.Stats.Count(item.Key);
                         Emit("trained", team.Id, u.Id, pos: u.Pos, key: u.Def.Key);
                     }
                 }
@@ -365,7 +465,7 @@ namespace Pez.Sim
                     break;
                 case Order.Move:
                     if (FollowPath(e, e.OrderPos, 0.3f)) SetOrder(e, Order.Idle, e.Pos);
-                    if (e.IsArmed && e.Def.Armor == Armor.Vehicle) OpportunisticFire(e);
+                    if (e.IsArmed && (e.Def.Armor == Armor.Vehicle || e.IsAir)) OpportunisticFire(e);
                     break;
                 case Order.AttackMove:
                     {
@@ -377,7 +477,7 @@ namespace Pez.Sim
                 case Order.Attack:
                     {
                         var t = Get(e.TargetId);
-                        if (t == null || t.Team == e.Team || !IsVisibleTo(e.Team, t)) { SetOrder(e, Order.Idle, e.Pos); break; }
+                        if (t == null || t.Team == e.Team || !IsVisibleTo(e.Team, t) || !e.Def.Weapon.CanHit(t.Def)) { SetOrder(e, Order.Idle, e.Pos); break; }
                         Engage(e, t);
                         break;
                     }
@@ -419,6 +519,7 @@ namespace Pez.Sim
             }
             else
             {
+                if (e.IsAir) { StepToward(e, t.Center); return; }
                 e.RepathTimer -= Dt;
                 if (e.Path == null || e.RepathTimer <= 0)
                 {
@@ -436,6 +537,7 @@ namespace Pez.Sim
             foreach (var o in Entities)
             {
                 if (o.Dead || o.Team == e.Team) continue;
+                if (e.Def.Weapon != null && !e.Def.Weapon.CanHit(o.Def)) continue;
                 float d = o.DistFrom(e.Pos);
                 if (d > radius) continue;
                 if (!IsVisibleTo(e.Team, o)) continue;
@@ -494,7 +596,7 @@ namespace Pez.Sim
                     if (t != null) Damage(t, p.Weapon.Damage * p.Weapon.Multiplier(t.Def.Armor), src, p.Team);
                     if (p.Weapon.SplashRadius > 0)
                         foreach (var o in Entities.ToList())
-                            if (!o.Dead && o != t && o.Team != p.Team && o.DistFrom(p.Pos) < p.Weapon.SplashRadius)
+                            if (!o.Dead && o != t && o.Team != p.Team && p.Weapon.CanHit(o.Def) && o.DistFrom(p.Pos) < p.Weapon.SplashRadius)
                                 Damage(o, p.Weapon.Damage * 0.4f * p.Weapon.Multiplier(o.Def.Armor), src, p.Team);
                 }
                 else p.Pos += to.Normalized * step;
@@ -507,11 +609,11 @@ namespace Pez.Sim
             int team = src?.Team ?? srcTeam;
             t.Hp -= amount;
             if (src != null) t.LastAttackerId = src.Id;
-            if (Time - t.LastHitTime > 10f && t.IsStructure)
+            if (Time - t.LastHitTime > 10f && (t.IsStructure || t.IsHarvester))
                 Emit("under_attack", t.Team, t.Id, src?.Id ?? 0, t.Center, key: t.Def.Key);
             t.LastHitTime = Time;
             // Retaliate if idle.
-            if (src != null && !t.IsStructure && t.IsArmed && t.Order == Order.Idle && !src.Dead)
+            if (src != null && !t.IsStructure && t.IsArmed && t.Order == Order.Idle && !src.Dead && t.Def.Weapon.CanHit(src.Def) && IsVisibleTo(t.Team, src))
                 SetOrder(t, Order.Attack, src.Pos, src.Id);
             if (t.Hp <= 0)
             {
@@ -530,12 +632,16 @@ namespace Pez.Sim
             if (e.Order == Order.Harvest)
             {
                 if (e.Cargo >= cap) { e.Order = Order.ReturnOre; e.Path = null; return; }
-                if (!e.HarvestTile.HasValue || Map.OreAt(e.HarvestTile.Value.X, e.HarvestTile.Value.Y) <= 0)
+                // A partly loaded truck can only take more of the same ore.
+                int want = e.Cargo > 0 ? e.CargoType : e.HarvestType;
+                bool tileGood = e.HarvestTile.HasValue && Map.OreAt(e.HarvestTile.Value.X, e.HarvestTile.Value.Y) > 0 &&
+                                (want < 0 || Map.OreType[Map.Idx(e.HarvestTile.Value.X, e.HarvestTile.Value.Y)] == want);
+                if (!tileGood)
                 {
                     var from = e.HarvestTile.HasValue ? e.HarvestTile.Value.Center : e.Pos;
-                    // Spread harvesters out: avoid tiles another harvester is already working.
-                    e.HarvestTile = Map.NearestOre(from, 40, t => !Entities.Any(o => o != e && !o.Dead && o.IsHarvester && o.HarvestTile.HasValue && o.HarvestTile.Value.Equals(t)))
-                                    ?? Map.NearestOre(from, 60);
+                    // Spread trucks out: avoid tiles another truck is already working.
+                    e.HarvestTile = Map.NearestOre(from, 40, t => !Entities.Any(o => o != e && !o.Dead && o.IsHarvester && o.HarvestTile.HasValue && o.HarvestTile.Value.Equals(t)), want)
+                                    ?? Map.NearestOre(from, 80, null, want);
                     e.Path = null;
                     if (!e.HarvestTile.HasValue)
                     {
@@ -552,16 +658,16 @@ namespace Pez.Sim
                 {
                     e.WorkTimer = 0;
                     int i = Map.Idx(tile.X, tile.Y);
-                    int take = Math.Min(Math.Min(12, Map.Ore[i]), cap - e.Cargo);
+                    int take = Math.Min(Math.Min(4, Map.Ore[i]), cap - e.Cargo);
                     Map.Ore[i] -= take;
-                    e.Cargo += take;
+                    if (take > 0) { e.Cargo += take; e.CargoType = Map.OreType[i]; }
                     e.TurretFacing += 0.3f; // spin the cutter for the view
                 }
                 return;
             }
 
             // ReturnOre
-            var refinery = Entities.Where(s => !s.Dead && s.Team == e.Team && s.IsStructure && s.IsComplete && s.Def.Key == "refinery")
+            var refinery = Entities.Where(s => !s.Dead && s.Team == e.Team && s.IsStructure && s.IsComplete && s.Def.DropOff)
                                    .OrderBy(s => Vec2.DistSq(s.Center, e.Pos)).FirstOrDefault();
             if (refinery == null) { e.Moving = false; return; }
             var dock = DockPoint(refinery);
@@ -571,11 +677,11 @@ namespace Pez.Sim
             if (e.WorkTimer >= 0.1f)
             {
                 e.WorkTimer = 0;
-                int give = Math.Min(30, e.Cargo);
+                int give = Math.Min(10, e.Cargo);
                 e.Cargo -= give;
-                Teams[e.Team].Credits += give;
-                Teams[e.Team].Stats.OreHarvested += give;
-                if (e.Cargo <= 0) { e.Order = Order.Harvest; e.Path = null; }
+                if (e.CargoType >= 0) Teams[e.Team].Add(Defs.Ores[e.CargoType], give);
+                Teams[e.Team].Stats.OreMined += give;
+                if (e.Cargo <= 0) { e.CargoType = -1; e.Order = Order.Harvest; e.Path = null; }
             }
         }
 
@@ -587,6 +693,7 @@ namespace Pez.Sim
         bool FollowPath(Entity e, Vec2 dest, float tolerance)
         {
             if (Vec2.Dist(e.Pos, dest) <= tolerance) { e.Moving = false; e.Path = null; return true; }
+            if (e.IsAir) { StepToward(e, dest); return false; }
             if (e.Path == null)
             {
                 e.Path = Paths.Find(e.Pos, dest);
@@ -635,7 +742,16 @@ namespace Pez.Sim
             var next = e.Pos + d / len * step;
             var nt = Int2.Of(next);
             var ct = Int2.Of(e.Pos);
-            if (Map.Passable(nt.X, nt.Y) || !Map.Passable(ct.X, ct.Y)) e.Pos = next;
+            if (e.IsAir) { if (Map.InBounds(nt.X, nt.Y)) e.Pos = next; }
+            else if (Map.Passable(nt.X, nt.Y) || !Map.Passable(ct.X, ct.Y)) e.Pos = next;
+            else
+            {
+                // Blocked (usually clipping a corner): slide along whichever axis is free.
+                var sx = new Vec2(next.X, e.Pos.Y); var sy = new Vec2(e.Pos.X, next.Y);
+                var tx = Int2.Of(sx); var ty = Int2.Of(sy);
+                if (Map.Passable(tx.X, tx.Y) && MathF.Abs(d.X) >= 0.01f) e.Pos = new Vec2(e.Pos.X + MathF.Sign(d.X) * step, e.Pos.Y);
+                else if (Map.Passable(ty.X, ty.Y) && MathF.Abs(d.Y) >= 0.01f) e.Pos = new Vec2(e.Pos.X, e.Pos.Y + MathF.Sign(d.Y) * step);
+            }
             e.Moving = true;
         }
 
@@ -648,7 +764,7 @@ namespace Pez.Sim
                 for (int j = i + 1; j < Entities.Count; j++)
                 {
                     var b = Entities[j];
-                    if (b.Dead || b.IsStructure) continue;
+                    if (b.Dead || b.IsStructure || a.IsAir != b.IsAir) continue;
                     float min = a.Def.Radius + b.Def.Radius;
                     var d = b.Pos - a.Pos;
                     float dsq = d.LengthSq;
@@ -668,7 +784,7 @@ namespace Pez.Sim
         {
             var next = e.Pos + delta;
             var t = Int2.Of(next);
-            if (Map.Passable(t.X, t.Y)) e.Pos = next;
+            if (e.IsAir ? Map.InBounds(t.X, t.Y) : Map.Passable(t.X, t.Y)) e.Pos = next;
         }
 
         static float AngleDiff(float a, float b)
@@ -708,8 +824,20 @@ namespace Pez.Sim
                         for (int x = (int)c.X - r; x <= (int)c.X + r; x++)
                         {
                             if (!Map.InBounds(x, y)) continue;
-                            if (Vec2.DistSq(new Vec2(x + 0.5f, y + 0.5f), c) <= rr) team.Visible[Map.Idx(x, y)] = true;
+                            if (Vec2.DistSq(new Vec2(x + 0.5f, y + 0.5f), c) <= rr) { int vi = Map.Idx(x, y); team.Visible[vi] = true; team.Explored[vi] = true; }
                         }
+                }
+                // Stealth units are only seen up close or inside one of this team's radar domes.
+                team.Detected.Clear();
+                foreach (var s in Entities)
+                {
+                    if (s.Dead || !s.Def.Stealth || s.Team == team.Id) continue;
+                    foreach (var o in Entities)
+                    {
+                        if (o.Dead || o.Team != team.Id) continue;
+                        float range = o.Def.Key == "radar_dome" && o.IsComplete ? 16f : 3f;
+                        if (Vec2.DistSq(o.Center, s.Pos) <= range * range) { team.Detected.Add(s.Id); break; }
+                    }
                 }
                 // Remember enemy structures that are in view; forget ones seen to be gone.
                 foreach (var e in Entities)

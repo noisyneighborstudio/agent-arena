@@ -24,6 +24,7 @@ namespace Pez.Headless
                 Controllers = Arg("--controllers", "llm,ai").Split(','),
             };
             if (args.Contains("--selftest")) return SelfTest(cfg, int.Parse(Arg("--max-minutes", "30")));
+            if (args.Contains("--trace")) return Trace(cfg, int.Parse(Arg("--trace", "1")), float.Parse(Arg("--seconds", "60")));
 
             var game = new Game(cfg);
             var api = new ApiServer(int.Parse(Arg("--port", "7777"))) { Log = Console.WriteLine };
@@ -51,6 +52,23 @@ namespace Pez.Headless
             }
         }
 
+        /// <summary>Debug aid: run AI vs AI and print one entity's state every second.</summary>
+        static int Trace(GameConfig cfg, int id, float seconds)
+        {
+            cfg.Controllers = cfg.Controllers.Select(_ => "ai").ToArray();
+            var game = new Game(cfg);
+            var w = game.World;
+            while (w.Time < seconds)
+            {
+                game.Advance(World.Dt);
+                if (w.Tick % World.TickRate != 0) continue;
+                var e = w.Get(id);
+                if (e == null) { Console.WriteLine($"{w.Time:0}s #{id} gone"); break; }
+                Console.WriteLine($"{w.Time,4:0}s #{id} {e.Def.Key} pos {e.Pos} order {e.Order} moving {e.Moving} path {(e.Path == null ? "null" : $"{e.PathIdx}/{e.Path.Count}")} tile {(e.HarvestTile.HasValue ? e.HarvestTile.Value.ToString() : "-")} cargo {e.Cargo} type {e.HarvestType}/{e.CargoType} repath {e.RepathTimer:0.0}");
+            }
+            return 0;
+        }
+
         static int SelfTest(GameConfig cfg, int maxMinutes)
         {
             cfg.Controllers = cfg.Controllers.Select(_ => "ai").ToArray();
@@ -62,9 +80,11 @@ namespace Pez.Headless
             {
                 game.Advance(World.Dt / cfg.Speed);
                 if (w.Tick % (60 * World.TickRate) == 0)
-                    Console.WriteLine($"t={w.Time / 60:0}m " + string.Join(" | ", w.Teams.Select(t => $"{t.Name}: ${t.Credits} pow {t.PowerProduced}/{t.PowerUsed} S{w.Owned(t.Id).Count(e => e.IsStructure)} U{w.Owned(t.Id).Count(e => !e.IsStructure)} K{t.Stats.Kills} ore{t.Stats.OreHarvested}")));
+                    Console.WriteLine($"t={w.Time / 60:0}m " + string.Join(" | ", w.Teams.Select(t => $"{t.Name}: steel {t.Amount("steel")} circ {t.Amount("circuits")} plasma {t.Amount("plasma")} pow {t.PowerProduced}/{t.PowerUsed} S{w.Owned(t.Id).Count(e => e.IsStructure)} U{w.Owned(t.Id).Count(e => !e.IsStructure)} K{t.Stats.Kills} ore{t.Stats.OreMined}")));
             }
             Console.WriteLine($"Simulated {w.Time / 60:0.0} game-minutes in {sw.Elapsed.TotalSeconds:0.0}s real.");
+            foreach (var t in w.Teams)
+                Console.WriteLine($"{t.Name} built: " + string.Join(", ", t.Stats.Built.Select(kv => $"{kv.Key} x{kv.Value}")));
             Console.WriteLine(Json.Write(ApiServer.Status(game)));
             Console.WriteLine(StateView.AsciiMap(w, 0));
             return w.GameOver ? 0 : 2;

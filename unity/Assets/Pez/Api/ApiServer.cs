@@ -30,6 +30,10 @@ namespace Pez.Api
         public Action<string> Log = _ => { };
         /// <summary>Raised on the game thread when a command batch is executed: (team, command json, result json).</summary>
         public Action<int, string, string> OnCommand;
+        /// <summary>Host-provided screenshot hook (Unity only): saves a PNG to the given path.</summary>
+        public Action<string> OnScreenshot;
+        /// <summary>Host-provided camera hook: {"x","y","distance","yaw"}.</summary>
+        public Action<Dictionary<string, object>> OnCamera;
 
         public ApiServer(int port) { Port = port; }
 
@@ -145,7 +149,7 @@ namespace Pez.Api
                             results.Add(r);
                             OnCommand?.Invoke(team, Json.Write(cmd), Json.Write(r));
                         }
-                        return Json.Write(new JObj().Set("results", results).Set("credits", w.Teams[team].Credits).Set("time_s", (float)Math.Round(w.Time, 1)));
+                        return Json.Write(new JObj().Set("results", results).Set("stockpile", StateView.Stockpile(w.Teams[team])).Set("time_s", (float)Math.Round(w.Time, 1)));
                     }
                 case "/api/admin/restart":
                     {
@@ -155,6 +159,19 @@ namespace Pez.Api
                         else cfg.Controllers = game.Config.Controllers;
                         game.Restart(cfg);
                         return Json.Write(new JObj().Set("ok", true).Set("seed", cfg.Seed).Set("controllers", cfg.Controllers.ToList()));
+                    }
+                case "/api/admin/screenshot":
+                    {
+                        if (OnScreenshot == null) { status = 501; return "{\"ok\":false,\"error\":\"no renderer (headless)\"}"; }
+                        var file = req.QueryString["path"] ?? Path.Combine(Path.GetTempPath(), $"pez-{DateTime.Now:HHmmss}.png");
+                        OnScreenshot(file);
+                        return Json.Write(new JObj().Set("ok", true).Set("path", file).Set("note", "written at end of frame"));
+                    }
+                case "/api/admin/camera":
+                    {
+                        var d = Json.Parse(p.Body ?? "{}") as Dictionary<string, object>;
+                        OnCamera?.Invoke(d);
+                        return Json.Write(new JObj().Set("ok", OnCamera != null));
                     }
                 case "/api/admin/speed":
                     {
@@ -178,9 +195,9 @@ namespace Pez.Api
                 .Set("game_over", w.GameOver).Set("winner", w.Winner)
                 .Set("teams", w.Teams.Select(t => new JObj()
                     .Set("team", t.Id).Set("name", t.Name).Set("controller", t.Controller).Set("player", t.PlayerName)
-                    .Set("credits", t.Credits).Set("defeated", t.Defeated)
+                    .Set("stockpile", StateView.Stockpile(t)).Set("defeated", t.Defeated)
                     .Set("structures", w.Owned(t.Id).Count(e => e.IsStructure)).Set("units", w.Owned(t.Id).Count(e => !e.IsStructure))
-                    .Set("kills", t.Stats.Kills).Set("ore_harvested", t.Stats.OreHarvested)).ToList())
+                    .Set("kills", t.Stats.Kills).Set("ore_mined", t.Stats.OreMined)).ToList())
                 .Set("chat", w.Events.Where(e => e.Type == "chat").Reverse().Take(10).Reverse()
                     .Select(e => $"[{e.Tick * World.Dt:0}s] {(e.Team >= 0 ? w.Teams[e.Team].Name : "server")}: {e.Text}").ToList());
         }

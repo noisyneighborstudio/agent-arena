@@ -20,28 +20,34 @@ namespace Pez.Sim
                 .Set("winner", w.Winner >= 0 ? w.Teams[w.Winner].Name : null)
                 .Set("you", new JObj()
                     .Set("team", team).Set("name", t.Name).Set("player", t.PlayerName)
-                    .Set("credits", t.Credits)
+                    .Set("stockpile", Stockpile(t))
                     .Set("power", $"{t.PowerProduced} produced / {t.PowerUsed} used" + (t.LowPower ? " (LOW POWER: production at half speed, build a power_plant)" : ""))
                     .Set("start", $"{R(t.StartPos.X)},{R(t.StartPos.Y)}"))
                 .Set("map", $"{w.Map.W}x{w.Map.H} tiles; x grows east, y grows north");
 
             var enemies = w.Teams.Where(x => x.Id != team).Select(x => new JObj()
                 .Set("team", x.Id).Set("name", x.Name).Set("player", x.PlayerName ?? x.Controller)
-                .Set("start", $"{R(x.StartPos.X)},{R(x.StartPos.Y)}").Set("defeated", x.Defeated)).ToList();
+                .Set("defeated", x.Defeated)).ToList();
             o.Set("opponents", enemies);
+            int explored = t.Explored.Count(b => b);
+            o.Set("explored", $"{explored * 100 / t.Explored.Length}% of the map. Enemy bases are hidden until you scout them; bases start near map corners.");
+
+            o.Set("converters", w.Owned(team).Where(e => e.IsStructure && e.IsComplete && (e.Def.Recipes.Length > 0 || e.Def.Key == "fusion_reactor"))
+                .Select(e => $"#{e.Id} {e.Def.Key}: {(e.Working ? "working" : "IDLE (missing inputs)")}").ToList());
 
             var prod = new JObj();
             prod.Set("structures", t.StructureQueue.Select(p => { var s = w.Get(p.StructureId); return $"{p.Key} #{p.StructureId} {(int)((s?.BuildProgress ?? 0) * 100)}%"; }).ToList());
             foreach (var kv in t.UnitQueues)
             {
-                var name = kv.Key == Producer.Barracks ? "barracks" : "war_factory";
+                var name = Defs.ProducerKey(kv.Key);
                 prod.Set(name, kv.Value.Select((p, i) => i == 0 ? $"{p.Key} {(int)(p.Progress / Defs.Get(p.Key).BuildTime * 100)}%" : p.Key).ToList());
             }
             o.Set("production", prod);
 
             var available = new List<string>();
             foreach (var d in Defs.All.Values)
-                if (d.BuiltBy != Producer.None && w.MissingPrereq(team, d) == null) available.Add($"{d.Key} ${d.Cost}");
+                if (d.Buildable && d.BuiltBy != Producer.None && w.MissingPrereq(team, d) == null)
+                    available.Add($"{d.Key} ({d.CostText}){(t.Missing(d.Cost) == null ? "" : " - can't afford yet")}");
             o.Set("available", available);
 
             o.Set("my_structures", w.Owned(team).Where(e => e.IsStructure).Select(e =>
@@ -56,7 +62,8 @@ namespace Pez.Sim
             {
                 var s = $"#{e.Id} {e.Def.Key} at {R(e.Pos.X)},{R(e.Pos.Y)} hp {(int)e.Hp}/{e.Def.MaxHp} {e.OrderName}";
                 if (e.Order == Order.Attack) s += $" #{e.TargetId}";
-                if (e.IsHarvester) s += $" cargo {e.Cargo}/{e.Def.HarvestCapacity}";
+                if (e.IsHarvester) s += $" cargo {e.Cargo}/{e.Def.HarvestCapacity}{(e.CargoType >= 0 ? " " + Defs.Ores[e.CargoType] : "")}{(e.HarvestType >= 0 ? $" (assigned {Defs.Ores[e.HarvestType]})" : "")}";
+                if (e.IsAir) s += " (air)";
                 return s;
             }).ToList());
 
@@ -69,11 +76,11 @@ namespace Pez.Sim
                 .Where(kv => { var e = w.Get(kv.Key); return e == null || !w.IsVisibleTo(team, e); })
                 .Select(kv => $"#{kv.Key} team{kv.Value.team} {kv.Value.key} at {kv.Value.origin.X},{kv.Value.origin.Y} (last seen)").ToList());
 
-            o.Set("ore_fields", OreFields(w).Select(f => $"around {f.cx},{f.cy}: {f.tiles} tiles, {f.total} credits").ToList());
+            o.Set("ore_fields", OreFields(w, t.Explored).Select(f => $"{f.type} around {f.cx},{f.cy}: {f.tiles} tiles, {f.total} units").ToList());
 
             o.Set("stats", new JObj()
                 .Set("kills", t.Stats.Kills).Set("units_lost", t.Stats.UnitsLost).Set("structures_lost", t.Stats.StructuresLost)
-                .Set("ore_harvested", t.Stats.OreHarvested));
+                .Set("ore_mined", t.Stats.OreMined));
 
             o.Set("events", EventsFor(w, team, sinceSeq, 25));
             o.Set("last_event_seq", w.Events.Count > 0 ? w.Events[w.Events.Count - 1].Seq : 0);
@@ -109,14 +116,27 @@ namespace Pez.Sim
 
         static string TeamLabel(World w, int team) => team >= 0 ? $"{w.Teams[team].Name} ({w.Teams[team].PlayerName ?? w.Teams[team].Controller})" : "server";
 
-        public static List<(int cx, int cy, int tiles, int total)> OreFields(World w)
+        public static JObj Stockpile(Team t)
+        {
+            var o = new JObj();
+            foreach (var item in Defs.Items)
+            {
+                int n = t.Amount(item);
+                float r = t.Rates.TryGetValue(item, out var v) ? v : 0;
+                if (n == 0 && MathF.Abs(r) < 0.05f) continue;
+                o.Set(item, MathF.Abs(r) >= 0.05f ? $"{n} ({(r > 0 ? "+" : "")}{r:0.#}/s)" : n.ToString());
+            }
+            return o;
+        }
+
+        public static List<(int cx, int cy, int tiles, int total, string type)> OreFields(World w, bool[] explored = null)
         {
             var m = w.Map;
             var seen = new bool[m.W * m.H];
-            var result = new List<(int, int, int, int)>();
+            var result = new List<(int, int, int, int, string)>();
             for (int i = 0; i < m.Ore.Length; i++)
             {
-                if (m.Ore[i] <= 0 || seen[i]) continue;
+                if (m.Ore[i] <= 0 || seen[i] || (explored != null && !explored[i])) continue;
                 var q = new Queue<int>(); q.Enqueue(i); seen[i] = true;
                 long sx = 0, sy = 0; int n = 0, total = 0;
                 while (q.Count > 0)
@@ -129,18 +149,20 @@ namespace Pez.Sim
                             int nx = x + dx, ny = y + dy;
                             if (!m.InBounds(nx, ny)) continue;
                             int ni = m.Idx(nx, ny);
-                            if (seen[ni] || m.Ore[ni] <= 0) continue;
+                            if (seen[ni] || m.Ore[ni] <= 0 || m.OreType[ni] != m.OreType[i] || (explored != null && !explored[ni])) continue;
                             seen[ni] = true; q.Enqueue(ni);
                         }
                 }
-                result.Add(((int)(sx / n), (int)(sy / n), n, total));
+                result.Add(((int)(sx / n), (int)(sy / n), n, total, m.OreName(i)));
             }
             return result;
         }
 
         static readonly Dictionary<string, char> Glyph = new Dictionary<string, char>
         {
-            { "construction_yard", 'C' }, { "power_plant", 'P' }, { "refinery", 'R' }, { "barracks", 'B' }, { "war_factory", 'F' }, { "gun_turret", 'T' },
+            { "command_center", 'C' }, { "outpost", 'O' }, { "power_plant", 'P' }, { "mining_refinery", 'R' }, { "barracks", 'B' }, { "factory", 'F' },
+            { "gun_turret", 'T' }, { "electronics_plant", 'E' }, { "radar_dome", 'D' }, { "sam_site", 'S' }, { "optics_lab", 'L' }, { "enrichment_plant", 'N' },
+            { "laser_tower", 'Z' }, { "composite_foundry", 'K' }, { "fusion_reactor", 'U' }, { "airfield", 'A' },
         };
 
         /// <summary>ASCII map from the team's perspective. North (high y) is at the top.</summary>
@@ -151,7 +173,8 @@ namespace Pez.Sim
             for (int i = 0; i < g.Length; i++)
             {
                 g[i] = m.Tiles[i] switch { Terrain.Rock => '#', Terrain.Water => '~', _ => '.' };
-                if (m.Ore[i] > 0) g[i] = '$';
+                if (m.Ore[i] > 0) g[i] = "$%*!"[m.OreType[i]];
+                if (!w.Teams[team].Explored[i]) g[i] = ' ';
             }
             var vis = w.Teams[team].Visible;
             foreach (var kv in w.Teams[team].KnownEnemyStructures)
@@ -179,10 +202,12 @@ namespace Pez.Sim
                 if (!mine && !w.IsVisibleTo(team, e)) continue;
                 var t = Int2.Of(e.Pos);
                 if (!m.InBounds(t.X, t.Y)) continue;
-                g[m.Idx(t.X, t.Y)] = mine ? (e.IsHarvester ? 'h' : e.Def.Armor == Armor.Vehicle ? 'v' : 'i') : (e.IsHarvester ? 'H' : e.Def.Armor == Armor.Vehicle ? 'X' : 'x');
+                g[m.Idx(t.X, t.Y)] = mine ? (e.IsHarvester ? 'm' : e.IsAir ? 'a' : e.Def.Armor == Armor.Vehicle ? 'v' : 'i') : (e.IsHarvester ? 'M' : e.IsAir ? 'W' : e.Def.Armor == Armor.Vehicle ? 'X' : 'x');
             }
             var sb = new StringBuilder();
-            sb.AppendLine("Legend: . open  $ ore  # rock  ~ water | YOUR structures: C conyard P power R refinery B barracks F factory T turret | enemy structures: same letters lowercase | your units: i infantry v vehicle h harvester | enemy units: x infantry X vehicle H harvester | fog: enemies outside your vision are hidden (structures you've seen stay drawn)");
+            sb.AppendLine("Legend: . open  # rock  ~ water  blank = unexplored | ore: $ iron_ore  % copper_ore  * crystal  ! uranium");
+            sb.AppendLine("YOUR structures: C command_center O outpost P power_plant R mining_refinery B barracks F factory T gun_turret E electronics_plant D radar_dome S sam_site L optics_lab N enrichment_plant Z laser_tower K composite_foundry U fusion_reactor A airfield (enemy: same letters lowercase)");
+            sb.AppendLine("Units: yours i infantry v vehicle m mining_truck a aircraft | enemy x infantry X vehicle M mining_truck W aircraft | enemies outside your vision are hidden; enemy structures you've seen stay drawn");
             sb.Append("    ");
             for (int x = 0; x < m.W; x++) sb.Append(x % 10 == 0 ? (char)('0' + (x / 10) % 10) : ' ');
             sb.AppendLine();
@@ -201,16 +226,21 @@ namespace Pez.Sim
         public static JObj Rules()
         {
             var o = new JObj();
-            o.Set("overview", "Real-time strategy. Harvesters collect ore ($) and unload at a refinery for credits. Spend credits to build structures (from the construction yard) and units (barracks: infantry, war factory: vehicles). A team is defeated when it has no structures left. Game runs at 20 ticks/second in real time; it does not wait for you.");
+            o.Set("overview", "Real-time strategy with a production chain. Mining trucks mine four ores (iron_ore, copper_ore, crystal, uranium) into your stockpile. Converter buildings turn ore into materials (steel, copper, circuits, lenses, plasma, composite) that higher-tier structures and units cost. Your command_center builds structures; barracks/factory/airfield build units. A team is defeated when it has no structures left. Real time at 20 ticks/s; it does not wait for you.");
+            o.Set("chain", Defs.All.Values.Where(d => d.Recipes.Length > 0).SelectMany(d => d.Recipes.Select(r => $"{d.Key}: {r}")).Append("fusion_reactor: burns 0.1 plasma/s for +500 power").ToList());
             o.Set("tips", new List<string> {
-                "Typical opening: power_plant -> refinery -> barracks -> war_factory, then more refineries/harvesters.",
-                "Keep power produced >= power used or production halves.",
+                "Typical opening: power_plant -> more mining_trucks -> mining_refinery -> barracks/factory -> electronics_plant. Raw ore pays for the first buildings; everything later needs refined materials.",
+                "Assign trucks to the ore you need with harvest + ore. Crystal and uranium sit in the contested middle.",
+                "Expand: build an outpost_truck at the factory, drive it to a remote ore field and deploy it. Outposts are drop-off points and let you build defenses there.",
+                "Aircraft ignore terrain. Only rockets, lasers, SAMs, gunships (and weakly, rifles/mg) can hit them. Stealth bombers are invisible except within 3 tiles of your units or inside your radar dome range.",
+                "Keep power produced >= power used or production and refining halve.",
                 "Rockets beat vehicles, rifles beat infantry, tanks are all-round. Heavy tanks splash.",
                 "Use attack_move to send armies; units fight what they meet. Use 'all' or 'idle' for units.",
                 "Omit x,y on build to auto-place near your base.",
-                "Enemy starting positions are known; their bases are fogged until you scout them.",
+                "The map starts shrouded. Your base reveals a radius around it; units and harvesters reveal what they pass. Scout to find the enemy (bases start near corners). A radar_dome reveals 16 tiles around it.",
             });
             o.Set("structures", Defs.All.Values.Where(d => d.IsStructure).Select(DefJson).ToList());
+            o.Set("ores", "iron_ore and copper_ore near every corner (empty corners are expansion sites); crystal around the middle; uranium in small contested deposits at the centre");
             o.Set("units", Defs.All.Values.Where(d => !d.IsStructure).Select(DefJson).ToList());
             o.Set("commands", Commands.Help);
             return o;
@@ -218,14 +248,18 @@ namespace Pez.Sim
 
         static JObj DefJson(EntityDef d)
         {
-            var o = new JObj().Set("key", d.Key).Set("cost", d.Cost).Set("build_time_s", d.BuildTime).Set("hp", d.MaxHp).Set("armor", d.Armor.ToString().ToLowerInvariant());
+            var o = new JObj().Set("key", d.Key).Set("cost", d.CostText).Set("build_time_s", d.BuildTime).Set("hp", d.MaxHp).Set("armor", d.Armor.ToString().ToLowerInvariant());
+            if (d.Recipes.Length > 0) o.Set("produces", d.Recipes.Select(r => r.ToString()).ToList());
+            if (d.IsAir) o.Set("flying", true);
+            if (d.Stealth) o.Set("stealth", true);
             if (d.IsStructure) o.Set("size", $"{d.SizeX}x{d.SizeY}").Set("power", d.Power);
             else o.Set("speed", d.Speed);
-            if (d.Weapon != null) o.Set("weapon", $"{d.Weapon.Name}: {d.Weapon.Damage} dmg, range {d.Weapon.Range}, every {d.Weapon.Cooldown}s; x{d.Weapon.VsInfantry} vs infantry, x{d.Weapon.VsVehicle} vs vehicles, x{d.Weapon.VsStructure} vs structures");
+            if (d.Weapon != null) o.Set("weapon", $"{d.Weapon.Name}: {d.Weapon.Damage} dmg, range {d.Weapon.Range}, every {d.Weapon.Cooldown}s; " +
+                (d.Weapon.HitsGround ? $"x{d.Weapon.VsInfantry} vs infantry, x{d.Weapon.VsVehicle} vs vehicles, x{d.Weapon.VsStructure} vs structures" : "air only") +
+                (d.Weapon.HitsAir ? $", x{d.Weapon.VsAir} vs aircraft" : ", can't hit aircraft"));
             var req = new List<string>();
-            if (d.BuiltBy == Producer.Barracks) req.Add("barracks");
-            if (d.BuiltBy == Producer.WarFactory) req.Add("war_factory");
-            if (d.BuiltBy == Producer.ConstructionYard) req.Add("construction_yard");
+            var pk = Defs.ProducerKey(d.BuiltBy);
+            if (pk != null) req.Add(pk);
             req.AddRange(d.Requires);
             o.Set("requires", req);
             o.Set("description", d.Description);

@@ -1,0 +1,332 @@
+using UnityEngine;
+
+namespace Pez.View
+{
+    /// <summary>Handles to the moving parts of a procedural model.</summary>
+    public class Rig
+    {
+        public Transform Root, Body, Turret, Barrel, Spinner, Bin;
+        public float Altitude;
+        public Vector3 BarrelRest;
+    }
+
+    /// <summary>
+    /// Procedural models built from primitives so the MVP needs no imported art.
+    /// Everything faces +Z; one tile is one world unit. Swap these for real meshes later
+    /// by returning the same Rig handles.
+    /// </summary>
+    public static class Models
+    {
+        static readonly Color Steel = new Color(0.42f, 0.44f, 0.46f);
+        static readonly Color DarkSteel = new Color(0.16f, 0.17f, 0.18f);
+        static readonly Color Concrete = new Color(0.62f, 0.6f, 0.56f);
+        static readonly Color Track = new Color(0.09f, 0.09f, 0.09f);
+        static readonly Color Skin = new Color(0.85f, 0.67f, 0.52f);
+
+        public static Transform Part(Transform parent, PrimitiveType type, Vector3 pos, Vector3 scale, Material mat, Vector3 euler = default)
+        {
+            var go = GameObject.CreatePrimitive(type);
+            Object.Destroy(go.GetComponent<Collider>());
+            var t = go.transform;
+            t.SetParent(parent, false);
+            t.localPosition = pos;
+            t.localScale = scale;
+            t.localEulerAngles = euler;
+            go.GetComponent<Renderer>().sharedMaterial = mat;
+            return t;
+        }
+
+        static Transform Empty(Transform parent, string name, Vector3 pos = default)
+        {
+            var t = new GameObject(name).transform;
+            t.SetParent(parent, false);
+            t.localPosition = pos;
+            return t;
+        }
+
+        public static Rig Build(string key, int team)
+        {
+            var root = new GameObject(key).transform;
+            var rig = new Rig { Root = root };
+            rig.Body = Empty(root, "body");
+            var tc = Mats.Team(team);
+            var teamMat = Mats.Lit(tc, 0.45f, 0.25f);
+            var teamDark = Mats.Lit(tc * 0.55f, 0.35f, 0.2f);
+            var steel = Mats.Lit(Steel, 0.5f, 0.6f);
+            var dark = Mats.Lit(DarkSteel, 0.3f, 0.5f);
+            var concrete = Mats.Lit(Concrete, 0.1f, 0f);
+            var track = Mats.Lit(Track, 0.1f, 0.2f);
+            var b = rig.Body;
+            switch (key)
+            {
+                case "light_tank": Tank(rig, teamMat, teamDark, steel, track, 1f, false); break;
+                case "heavy_tank": Tank(rig, teamMat, teamDark, steel, track, 1.3f, true); break;
+                case "mining_truck":
+                    Part(b, PrimitiveType.Cube, new Vector3(-0.3f, 0.14f, 0), new Vector3(0.18f, 0.28f, 1.05f), track);
+                    Part(b, PrimitiveType.Cube, new Vector3(0.3f, 0.14f, 0), new Vector3(0.18f, 0.28f, 1.05f), track);
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.38f, -0.1f), new Vector3(0.62f, 0.32f, 0.8f), teamMat);
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.62f, 0.25f), new Vector3(0.36f, 0.24f, 0.25f), Mats.Lit(new Color(0.2f, 0.3f, 0.4f), 0.9f, 0.4f));
+                    rig.Bin = Part(b, PrimitiveType.Cube, new Vector3(0, 0.58f, -0.25f), new Vector3(0.5f, 0.12f, 0.45f), Mats.Glow(new Color(0.95f, 0.7f, 0.15f), 0.8f));
+                    rig.Spinner = Empty(b, "cutter", new Vector3(0, 0.2f, 0.55f));
+                    Part(rig.Spinner, PrimitiveType.Cylinder, Vector3.zero, new Vector3(0.24f, 0.33f, 0.24f), steel, new Vector3(0, 0, 90));
+                    for (int i = 0; i < 4; i++)
+                        Part(rig.Spinner, PrimitiveType.Cube, Vector3.zero, new Vector3(0.6f, 0.05f, 0.32f), dark, new Vector3(i * 45, 0, 0));
+                    rig.Turret = rig.Spinner;
+                    break;
+                case "rifleman":
+                case "rocket_soldier":
+                case "laser_trooper":
+                    {
+                        float s = 0.85f;
+                        Part(b, PrimitiveType.Capsule, new Vector3(0, 0.22f * s, 0), new Vector3(0.16f, 0.2f, 0.12f) * s, teamMat);
+                        Part(b, PrimitiveType.Sphere, new Vector3(0, 0.5f * s, 0), Vector3.one * 0.1f * s, Mats.Lit(Skin, 0.2f, 0));
+                        Part(b, PrimitiveType.Sphere, new Vector3(0, 0.53f * s, -0.005f), new Vector3(0.11f, 0.06f, 0.11f) * s, teamDark);
+                        rig.Turret = Empty(b, "arms", new Vector3(0, 0.32f * s, 0));
+                        if (key == "rifleman")
+                            rig.Barrel = Part(rig.Turret, PrimitiveType.Cube, new Vector3(0.06f, 0, 0.12f), new Vector3(0.03f, 0.04f, 0.26f), dark);
+                        else if (key == "laser_trooper")
+                        {
+                            rig.Barrel = Part(rig.Turret, PrimitiveType.Cube, new Vector3(0.06f, 0, 0.13f), new Vector3(0.045f, 0.05f, 0.28f), Mats.Lit(new Color(0.85f, 0.88f, 0.9f), 0.8f, 0.6f));
+                            Part(rig.Barrel, PrimitiveType.Cube, new Vector3(0, 0.6f, 0), new Vector3(0.6f, 0.3f, 0.9f), Mats.Glow(new Color(0.2f, 0.9f, 1f), 3f));
+                        }
+                        else
+                            rig.Barrel = Part(rig.Turret, PrimitiveType.Cylinder, new Vector3(0.08f, 0.07f, 0.02f), new Vector3(0.07f, 0.17f, 0.07f), Mats.Lit(new Color(0.3f, 0.35f, 0.2f), 0.3f, 0.3f), new Vector3(90, 0, 0));
+                        break;
+                    }
+                case "command_center":
+                    Pad(b, 3, 3, concrete);
+                    Part(b, PrimitiveType.Cube, new Vector3(-0.35f, 0.45f, 0.3f), new Vector3(1.6f, 0.7f, 1.5f), steel);
+                    Part(b, PrimitiveType.Cube, new Vector3(-0.35f, 0.85f, 0.3f), new Vector3(1.4f, 0.1f, 1.3f), teamMat);
+                    Part(b, PrimitiveType.Sphere, new Vector3(0.75f, 0.35f, -0.6f), new Vector3(0.9f, 0.6f, 0.9f), teamDark);
+                    rig.Turret = Empty(b, "crane", new Vector3(0.9f, 0.1f, 0.9f));
+                    Part(rig.Turret, PrimitiveType.Cube, new Vector3(0, 0.9f, 0), new Vector3(0.12f, 1.8f, 0.12f), Mats.Lit(new Color(0.95f, 0.75f, 0.1f), 0.4f, 0.3f));
+                    Part(rig.Turret, PrimitiveType.Cube, new Vector3(0, 1.75f, -0.6f), new Vector3(0.1f, 0.1f, 1.5f), Mats.Lit(new Color(0.95f, 0.75f, 0.1f), 0.4f, 0.3f));
+                    Part(b, PrimitiveType.Cube, new Vector3(-0.35f, 0.5f, -0.46f), new Vector3(1.2f, 0.4f, 0.05f), Mats.Glow(new Color(0.6f, 0.85f, 1f), 1.2f));
+                    break;
+                case "power_plant":
+                    Pad(b, 2, 2, concrete);
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.25f, 0.35f), new Vector3(1.6f, 0.4f, 0.8f), steel);
+                    Part(b, PrimitiveType.Cylinder, new Vector3(-0.4f, 0.6f, -0.35f), new Vector3(0.6f, 0.55f, 0.6f), concrete);
+                    Part(b, PrimitiveType.Cylinder, new Vector3(0.4f, 0.6f, -0.35f), new Vector3(0.6f, 0.55f, 0.6f), concrete);
+                    Part(b, PrimitiveType.Cylinder, new Vector3(-0.4f, 1.12f, -0.35f), new Vector3(0.5f, 0.02f, 0.5f), Mats.Glow(new Color(0.3f, 0.9f, 1f), 2.5f));
+                    Part(b, PrimitiveType.Cylinder, new Vector3(0.4f, 1.12f, -0.35f), new Vector3(0.5f, 0.02f, 0.5f), Mats.Glow(new Color(0.3f, 0.9f, 1f), 2.5f));
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.48f, 0.35f), new Vector3(1.62f, 0.06f, 0.82f), teamMat);
+                    break;
+                case "mining_refinery":
+                    Pad(b, 3, 3, concrete);
+                    Part(b, PrimitiveType.Cube, new Vector3(0.2f, 0.5f, 0.55f), new Vector3(2.2f, 0.9f, 1.4f), steel);
+                    Part(b, PrimitiveType.Cube, new Vector3(0.2f, 0.98f, 0.55f), new Vector3(2.2f, 0.08f, 1.4f), teamMat);
+                    for (int i = 0; i < 2; i++)
+                    {
+                        Part(b, PrimitiveType.Cylinder, new Vector3(-0.9f + i * 0.7f, 0.9f, 0.9f), new Vector3(0.5f, 0.75f, 0.5f), Mats.Lit(new Color(0.75f, 0.72f, 0.6f), 0.5f, 0.6f));
+                        Part(b, PrimitiveType.Sphere, new Vector3(-0.9f + i * 0.7f, 1.65f, 0.9f), new Vector3(0.5f, 0.25f, 0.5f), teamDark);
+                    }
+                    // Dock pad where harvesters unload (south edge).
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.06f, -1.0f), new Vector3(1.2f, 0.06f, 0.9f), Mats.Lit(new Color(0.3f, 0.3f, 0.28f), 0.1f, 0f));
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.1f, -1.0f), new Vector3(1.0f, 0.02f, 0.08f), Mats.Glow(new Color(1f, 0.75f, 0.2f), 1.5f));
+                    break;
+                case "barracks":
+                    Pad(b, 2, 2, concrete);
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.35f, 0.15f), new Vector3(1.6f, 0.6f, 1.2f), Mats.Lit(new Color(0.42f, 0.4f, 0.3f), 0.1f, 0f));
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.72f, 0.15f), new Vector3(1.7f, 0.12f, 1.3f), teamMat);
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.25f, -0.47f), new Vector3(0.4f, 0.45f, 0.05f), dark);
+                    Part(b, PrimitiveType.Cylinder, new Vector3(0.7f, 1.0f, 0.6f), new Vector3(0.03f, 0.6f, 0.03f), steel);
+                    Part(b, PrimitiveType.Cube, new Vector3(0.85f, 1.45f, 0.6f), new Vector3(0.3f, 0.18f, 0.02f), Mats.Glow(tc, 0.8f));
+                    break;
+                case "factory":
+                    Pad(b, 3, 3, concrete);
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.6f, 0.2f), new Vector3(2.6f, 1.1f, 2.2f), steel);
+                    Part(b, PrimitiveType.Cylinder, new Vector3(0, 1.15f, 0.2f), new Vector3(2.4f, 1.1f, 0.9f), teamDark, new Vector3(0, 0, 90));
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.45f, -0.92f), new Vector3(1.4f, 0.8f, 0.06f), Mats.Lit(new Color(0.12f, 0.12f, 0.12f), 0.4f, 0.6f));
+                    for (int i = 0; i < 5; i++)
+                        Part(b, PrimitiveType.Cube, new Vector3(-0.56f + i * 0.28f, 0.45f, -0.95f), new Vector3(0.12f, 0.8f, 0.02f), Mats.Lit(new Color(0.95f, 0.75f, 0.1f), 0.4f, 0.3f));
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 1.2f, -0.9f), new Vector3(2.0f, 0.12f, 0.04f), Mats.Glow(tc, 1.4f));
+                    break;
+                case "radar_dome":
+                    Pad(b, 2, 2, concrete);
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.25f, 0.1f), new Vector3(1.5f, 0.4f, 1.4f), steel);
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.47f, 0.1f), new Vector3(1.52f, 0.05f, 1.42f), teamMat);
+                    Part(b, PrimitiveType.Sphere, new Vector3(-0.25f, 0.6f, 0.2f), new Vector3(0.9f, 0.8f, 0.9f), Mats.Lit(new Color(0.88f, 0.88f, 0.85f), 0.6f, 0.1f));
+                    rig.Turret = Empty(b, "dish", new Vector3(0.45f, 0.5f, -0.35f));
+                    Part(rig.Turret, PrimitiveType.Cylinder, new Vector3(0, 0.25f, 0), new Vector3(0.05f, 0.25f, 0.05f), dark);
+                    Part(rig.Turret, PrimitiveType.Cylinder, new Vector3(0, 0.55f, 0.05f), new Vector3(0.6f, 0.03f, 0.6f), Mats.Lit(new Color(0.8f, 0.8f, 0.8f), 0.7f, 0.5f), new Vector3(70, 0, 0));
+                    Part(rig.Turret, PrimitiveType.Sphere, new Vector3(0, 0.6f, 0.2f), Vector3.one * 0.07f, Mats.Glow(new Color(1f, 0.2f, 0.15f), 3f));
+                    break;
+                case "gun_turret":
+                    Part(b, PrimitiveType.Cylinder, new Vector3(0, 0.15f, 0), new Vector3(0.85f, 0.15f, 0.85f), concrete);
+                    Part(b, PrimitiveType.Cylinder, new Vector3(0, 0.32f, 0), new Vector3(0.6f, 0.04f, 0.6f), teamMat);
+                    rig.Turret = Empty(b, "turret", new Vector3(0, 0.45f, 0));
+                    Part(rig.Turret, PrimitiveType.Sphere, Vector3.zero, new Vector3(0.55f, 0.4f, 0.55f), steel);
+                    rig.Barrel = Part(rig.Turret, PrimitiveType.Cylinder, new Vector3(0, 0.03f, 0.4f), new Vector3(0.09f, 0.3f, 0.09f), dark, new Vector3(90, 0, 0));
+                    break;
+
+                // ---- New economy structures
+                case "outpost":
+                    Pad(b, 2, 2, concrete);
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.3f, 0.1f), new Vector3(1.3f, 0.5f, 1.2f), steel);
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.57f, 0.1f), new Vector3(1.32f, 0.05f, 1.22f), teamMat);
+                    Part(b, PrimitiveType.Cylinder, new Vector3(0.45f, 1.0f, 0.45f), new Vector3(0.04f, 0.45f, 0.04f), dark);
+                    Part(b, PrimitiveType.Sphere, new Vector3(0.45f, 1.48f, 0.45f), Vector3.one * 0.09f, Mats.Glow(tc, 3f));
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.08f, -0.8f), new Vector3(0.9f, 0.04f, 0.04f), Mats.Glow(new Color(1f, 0.75f, 0.2f), 1.5f));
+                    break;
+                case "electronics_plant":
+                    Pad(b, 2, 2, concrete);
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.35f, 0.1f), new Vector3(1.6f, 0.6f, 1.3f), Mats.Lit(new Color(0.75f, 0.77f, 0.8f), 0.6f, 0.3f));
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.66f, 0.1f), new Vector3(1.62f, 0.04f, 1.32f), teamMat);
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.38f, -0.56f), new Vector3(1.3f, 0.3f, 0.03f), Mats.Glow(new Color(0.2f, 1f, 0.45f), 1.8f));
+                    for (int i = 0; i < 3; i++) Part(b, PrimitiveType.Cylinder, new Vector3(-0.5f + i * 0.5f, 0.85f, 0.45f), new Vector3(0.14f, 0.2f, 0.14f), dark);
+                    break;
+                case "optics_lab":
+                    Pad(b, 2, 2, concrete);
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.25f, 0), new Vector3(1.6f, 0.4f, 1.6f), steel);
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.46f, 0), new Vector3(1.62f, 0.04f, 1.62f), teamMat);
+                    Part(b, PrimitiveType.Sphere, new Vector3(0, 0.5f, 0), new Vector3(1.1f, 0.9f, 1.1f), Mats.Glow(new Color(0.3f, 0.85f, 1f), 0.9f));
+                    rig.Turret = Empty(b, "prism", new Vector3(0, 1.05f, 0));
+                    Part(rig.Turret, PrimitiveType.Cube, Vector3.zero, new Vector3(0.22f, 0.4f, 0.22f), Mats.Glow(new Color(0.6f, 0.95f, 1f), 3f), new Vector3(45, 0, 45));
+                    break;
+                case "enrichment_plant":
+                    Pad(b, 2, 2, concrete);
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.3f, 0.35f), new Vector3(1.6f, 0.5f, 0.8f), dark);
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.56f, 0.35f), new Vector3(1.62f, 0.04f, 0.82f), teamMat);
+                    for (int i = 0; i < 3; i++)
+                    {
+                        Part(b, PrimitiveType.Cylinder, new Vector3(-0.5f + i * 0.5f, 0.55f, -0.35f), new Vector3(0.36f, 0.5f, 0.36f), Mats.Lit(new Color(0.3f, 0.32f, 0.3f), 0.6f, 0.7f));
+                        Part(b, PrimitiveType.Cylinder, new Vector3(-0.5f + i * 0.5f, 0.55f, -0.35f), new Vector3(0.38f, 0.08f, 0.38f), Mats.Glow(new Color(0.4f, 1f, 0.2f), 2.5f));
+                    }
+                    break;
+                case "composite_foundry":
+                    Pad(b, 2, 2, concrete);
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.4f, 0.1f), new Vector3(1.5f, 0.7f, 1.3f), Mats.Lit(new Color(0.12f, 0.12f, 0.15f), 0.8f, 0.5f));
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.78f, 0.1f), new Vector3(1.2f, 0.12f, 1.0f), Mats.Lit(new Color(0.18f, 0.18f, 0.22f), 0.8f, 0.5f), new Vector3(0, 45, 0));
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.3f, -0.56f), new Vector3(1.1f, 0.08f, 0.03f), Mats.Glow(new Color(0.75f, 0.3f, 1f), 2.5f));
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.82f, 0.1f), new Vector3(1.52f, 0.03f, 1.32f), teamMat);
+                    break;
+                case "fusion_reactor":
+                    Pad(b, 3, 3, concrete);
+                    Part(b, PrimitiveType.Cylinder, new Vector3(0, 0.3f, 0), new Vector3(2.4f, 0.25f, 2.4f), steel);
+                    Part(b, PrimitiveType.Cylinder, new Vector3(0, 0.56f, 0), new Vector3(2.0f, 0.04f, 2.0f), teamMat);
+                    for (int i = 0; i < 6; i++)
+                    {
+                        float a = i * Mathf.PI / 3;
+                        Part(b, PrimitiveType.Cube, new Vector3(Mathf.Cos(a) * 0.9f, 0.9f, Mathf.Sin(a) * 0.9f), new Vector3(0.18f, 0.7f, 0.18f), dark);
+                    }
+                    rig.Turret = Empty(b, "core", new Vector3(0, 1.0f, 0));
+                    Part(rig.Turret, PrimitiveType.Sphere, Vector3.zero, Vector3.one * 0.75f, Mats.Glow(new Color(1f, 0.35f, 0.9f), 3.5f));
+                    break;
+                case "airfield":
+                    Pad(b, 3, 3, Mats.Lit(new Color(0.22f, 0.22f, 0.22f), 0.2f, 0f));
+                    for (int i = 0; i < 5; i++) Part(b, PrimitiveType.Cube, new Vector3(-0.3f, 0.09f, -1.1f + i * 0.5f), new Vector3(0.06f, 0.01f, 0.25f), Mats.Lit(Color.white * 0.9f, 0.2f, 0));
+                    Part(b, PrimitiveType.Cube, new Vector3(0.95f, 0.5f, 0.95f), new Vector3(0.5f, 0.9f, 0.5f), steel);
+                    Part(b, PrimitiveType.Cube, new Vector3(0.95f, 1.05f, 0.95f), new Vector3(0.65f, 0.25f, 0.65f), Mats.Lit(new Color(0.2f, 0.35f, 0.45f), 0.95f, 0.4f));
+                    Part(b, PrimitiveType.Cube, new Vector3(0.95f, 1.2f, 0.95f), new Vector3(0.7f, 0.05f, 0.7f), teamMat);
+                    Part(b, PrimitiveType.Cylinder, new Vector3(-0.3f, 0.1f, 0.9f), new Vector3(0.9f, 0.01f, 0.9f), Mats.Glow(new Color(1f, 0.8f, 0.2f), 0.8f));
+                    break;
+                case "sam_site":
+                    Part(b, PrimitiveType.Cylinder, new Vector3(0, 0.12f, 0), new Vector3(0.85f, 0.12f, 0.85f), concrete);
+                    Part(b, PrimitiveType.Cylinder, new Vector3(0, 0.26f, 0), new Vector3(0.6f, 0.03f, 0.6f), teamMat);
+                    rig.Turret = Empty(b, "launcher", new Vector3(0, 0.35f, 0));
+                    rig.Barrel = Empty(rig.Turret, "rack", new Vector3(0, 0.1f, 0));
+                    for (int i = 0; i < 4; i++)
+                        Part(rig.Barrel, PrimitiveType.Cylinder, new Vector3(-0.15f + (i % 2) * 0.3f, 0.12f + (i / 2) * 0.16f, 0.05f), new Vector3(0.11f, 0.25f, 0.11f), Mats.Lit(new Color(0.85f, 0.85f, 0.8f), 0.4f, 0.2f), new Vector3(-60, 0, 0));
+                    break;
+                case "laser_tower":
+                    Part(b, PrimitiveType.Cylinder, new Vector3(0, 0.15f, 0), new Vector3(0.8f, 0.15f, 0.8f), concrete);
+                    Part(b, PrimitiveType.Cylinder, new Vector3(0, 0.75f, 0), new Vector3(0.22f, 0.6f, 0.22f), steel);
+                    Part(b, PrimitiveType.Cylinder, new Vector3(0, 0.32f, 0), new Vector3(0.55f, 0.03f, 0.55f), teamMat);
+                    rig.Turret = Empty(b, "emitter", new Vector3(0, 1.45f, 0));
+                    rig.Barrel = Part(rig.Turret, PrimitiveType.Cube, Vector3.zero, new Vector3(0.28f, 0.42f, 0.28f), Mats.Glow(new Color(0.3f, 0.9f, 1f), 3.5f), new Vector3(45, 0, 45));
+                    break;
+
+                // ---- New units
+                case "outpost_truck":
+                    Part(b, PrimitiveType.Cube, new Vector3(-0.28f, 0.13f, 0), new Vector3(0.16f, 0.26f, 1.1f), track);
+                    Part(b, PrimitiveType.Cube, new Vector3(0.28f, 0.13f, 0), new Vector3(0.16f, 0.26f, 1.1f), track);
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.3f, 0), new Vector3(0.6f, 0.15f, 1.15f), teamMat);
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.5f, 0.4f), new Vector3(0.45f, 0.25f, 0.3f), Mats.Lit(new Color(0.2f, 0.3f, 0.4f), 0.9f, 0.4f));
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.55f, -0.15f), new Vector3(0.55f, 0.35f, 0.6f), steel);
+                    Part(b, PrimitiveType.Cylinder, new Vector3(0.18f, 0.9f, -0.3f), new Vector3(0.03f, 0.25f, 0.03f), dark);
+                    break;
+                case "scout_buggy":
+                    for (int i = 0; i < 4; i++)
+                        Part(b, PrimitiveType.Cylinder, new Vector3(i % 2 == 0 ? -0.24f : 0.24f, 0.1f, i < 2 ? 0.25f : -0.25f), new Vector3(0.18f, 0.05f, 0.18f), track, new Vector3(0, 0, 90));
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.18f, 0), new Vector3(0.38f, 0.1f, 0.7f), teamMat);
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.28f, -0.05f), new Vector3(0.32f, 0.04f, 0.3f), dark);
+                    rig.Turret = Empty(b, "mg", new Vector3(0, 0.33f, -0.1f));
+                    rig.Barrel = Part(rig.Turret, PrimitiveType.Cube, new Vector3(0, 0, 0.15f), new Vector3(0.04f, 0.04f, 0.3f), dark);
+                    break;
+                case "artillery":
+                    Part(b, PrimitiveType.Cube, new Vector3(-0.27f, 0.11f, 0), new Vector3(0.16f, 0.22f, 0.9f), track);
+                    Part(b, PrimitiveType.Cube, new Vector3(0.27f, 0.11f, 0), new Vector3(0.16f, 0.22f, 0.9f), track);
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.24f, -0.05f), new Vector3(0.44f, 0.16f, 0.8f), teamMat);
+                    rig.Turret = Empty(b, "gun", new Vector3(0, 0.36f, -0.15f));
+                    Part(rig.Turret, PrimitiveType.Cube, Vector3.zero, new Vector3(0.3f, 0.14f, 0.3f), teamDark);
+                    rig.Barrel = Empty(rig.Turret, "barrel", new Vector3(0, 0.05f, 0.1f));
+                    Part(rig.Barrel, PrimitiveType.Cylinder, new Vector3(0, 0.22f, 0.38f), new Vector3(0.07f, 0.45f, 0.07f), steel, new Vector3(60, 0, 0));
+                    break;
+                case "laser_tank":
+                    Tank(rig, teamMat, teamDark, steel, track, 1.2f, false);
+                    Part(rig.Turret, PrimitiveType.Sphere, new Vector3(0, 0.15f, -0.05f), Vector3.one * 0.18f, Mats.Glow(new Color(1f, 0.3f, 0.9f), 3f));
+                    foreach (Transform c in rig.Barrel) c.GetComponent<Renderer>().sharedMaterial = Mats.Glow(new Color(0.9f, 0.35f, 1f), 1.6f);
+                    break;
+                case "gunship":
+                    rig.Altitude = 2.4f;
+                    Part(b, PrimitiveType.Capsule, new Vector3(0, 0, 0), new Vector3(0.35f, 0.42f, 0.35f), teamMat, new Vector3(90, 0, 0));
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.02f, -0.6f), new Vector3(0.06f, 0.06f, 0.5f), teamDark);
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.12f, -0.82f), new Vector3(0.03f, 0.2f, 0.12f), teamDark);
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.05f, 0.28f), new Vector3(0.22f, 0.12f, 0.15f), Mats.Lit(new Color(0.15f, 0.25f, 0.35f), 0.95f, 0.4f));
+                    Part(b, PrimitiveType.Cube, new Vector3(0, -0.08f, 0), new Vector3(0.7f, 0.04f, 0.12f), dark);
+                    rig.Spinner = Empty(b, "rotor", new Vector3(0, 0.24f, 0));
+                    Part(rig.Spinner, PrimitiveType.Cube, Vector3.zero, new Vector3(1.4f, 0.015f, 0.07f), dark);
+                    Part(rig.Spinner, PrimitiveType.Cube, Vector3.zero, new Vector3(0.07f, 0.015f, 1.4f), dark);
+                    rig.Turret = Empty(b, "pods", new Vector3(0, -0.1f, 0.1f));
+                    rig.Barrel = Part(rig.Turret, PrimitiveType.Cylinder, new Vector3(0.3f, 0, 0), new Vector3(0.07f, 0.12f, 0.07f), steel, new Vector3(90, 0, 0));
+                    break;
+                case "stealth_bomber":
+                    {
+                        rig.Altitude = 3.2f;
+                        var hull = Mats.Lit(new Color(0.09f, 0.09f, 0.11f), 0.85f, 0.6f);
+                        Part(b, PrimitiveType.Cube, Vector3.zero, new Vector3(0.9f, 0.08f, 0.9f), hull, new Vector3(0, 45, 0));
+                        Part(b, PrimitiveType.Cube, new Vector3(0, 0.05f, 0.1f), new Vector3(0.3f, 0.1f, 0.7f), hull);
+                        Part(b, PrimitiveType.Cube, new Vector3(0, 0.02f, -0.45f), new Vector3(1.0f, 0.04f, 0.04f), Mats.Glow(tc, 1.2f));
+                        Part(b, PrimitiveType.Cube, new Vector3(0, 0.1f, 0.3f), new Vector3(0.14f, 0.04f, 0.18f), Mats.Lit(new Color(0.25f, 0.2f, 0.1f), 0.95f, 0.8f));
+                        break;
+                    }
+                default:
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.25f, 0), Vector3.one * 0.5f, teamMat);
+                    break;
+            }
+            if (rig.Barrel != null) rig.BarrelRest = rig.Barrel.localPosition;
+            foreach (var r in root.GetComponentsInChildren<Renderer>())
+            {
+                r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
+                r.receiveShadows = true;
+            }
+            return rig;
+        }
+
+        static void Tank(Rig rig, Material team, Material teamDark, Material steel, Material track, float s, bool twin)
+        {
+            var b = rig.Body;
+            Part(b, PrimitiveType.Cube, new Vector3(-0.27f, 0.11f, 0) * s, new Vector3(0.17f, 0.22f, 0.9f) * s, track);
+            Part(b, PrimitiveType.Cube, new Vector3(0.27f, 0.11f, 0) * s, new Vector3(0.17f, 0.22f, 0.9f) * s, track);
+            Part(b, PrimitiveType.Cube, new Vector3(0, 0.22f, 0) * s, new Vector3(0.44f, 0.18f, 0.82f) * s, team);
+            Part(b, PrimitiveType.Cube, new Vector3(0, 0.26f, 0.38f) * s, new Vector3(0.42f, 0.1f, 0.12f) * s, teamDark, new Vector3(-25, 0, 0));
+            rig.Turret = Empty(b, "turret", new Vector3(0, 0.34f, -0.04f) * s);
+            Part(rig.Turret, PrimitiveType.Cube, new Vector3(0, 0.04f, 0) * s, new Vector3(0.34f, 0.14f, 0.4f) * s, teamDark);
+            Part(rig.Turret, PrimitiveType.Cylinder, new Vector3(0.08f, 0.13f, -0.08f) * s, new Vector3(0.1f, 0.03f, 0.1f) * s, steel);
+            rig.Barrel = Empty(rig.Turret, "barrel", new Vector3(0, 0.05f, 0.2f) * s);
+            if (twin)
+            {
+                Part(rig.Barrel, PrimitiveType.Cylinder, new Vector3(-0.06f, 0, 0.25f) * s, new Vector3(0.05f, 0.25f, 0.05f) * s, steel, new Vector3(90, 0, 0));
+                Part(rig.Barrel, PrimitiveType.Cylinder, new Vector3(0.06f, 0, 0.25f) * s, new Vector3(0.05f, 0.25f, 0.05f) * s, steel, new Vector3(90, 0, 0));
+            }
+            else Part(rig.Barrel, PrimitiveType.Cylinder, new Vector3(0, 0, 0.22f) * s, new Vector3(0.05f, 0.22f, 0.05f) * s, steel, new Vector3(90, 0, 0));
+        }
+
+        /// <summary>Concrete foundation covering a w x h footprint, centred on the structure origin.</summary>
+        static void Pad(Transform b, int w, int h, Material m)
+        {
+            Part(b, PrimitiveType.Cube, new Vector3(0, 0.04f, 0), new Vector3(w - 0.08f, 0.08f, h - 0.08f), m);
+        }
+    }
+}

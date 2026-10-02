@@ -18,7 +18,9 @@ namespace Pez.Sim
   {""type"":""attack_move"", ""units"":[IDS], ""x"":X, ""y"":Y}  move, engaging enemies on the way
   {""type"":""attack"", ""units"":[IDS], ""target"":ID}     focus fire on a visible enemy
   {""type"":""stop"", ""units"":[IDS]}
-  {""type"":""harvest"", ""units"":[IDS], ""x"":X, ""y"":Y}  send harvesters to ore near x,y
+  {""type"":""harvest"", ""units"":[IDS], ""x"":X, ""y"":Y}  send mining trucks to ore near x,y (they stick to that ore type)
+  {""type"":""harvest"", ""units"":[IDS], ""ore"":""crystal""}  send mining trucks to the nearest ore of a type (iron_ore, copper_ore, crystal, uranium; ""any"" to reset)
+  {""type"":""deploy"", ""units"":[IDS]}                   deploy an outpost_truck into an Outpost where it stands
   {""type"":""rally"", ""structure_id"":ID, ""x"":X, ""y"":Y} where new units from that building go
   {""type"":""sell"", ""structure_id"":ID}                 sell for 50% refund
   {""type"":""cancel"", ""unit"":KEY}                       cancel the last queued unit of that type (full refund)
@@ -42,6 +44,7 @@ namespace Pez.Sim
                     case "attack": return Attack(w, team, c);
                     case "stop": return UnitOrder(w, team, c, Order.Idle);
                     case "harvest": return UnitOrder(w, team, c, Order.Harvest);
+                    case "deploy": return Deploy(w, team, c);
                     case "rally": return Rally(w, team, c);
                     case "sell": return Sell(w, team, c);
                     case "cancel": return Cancel(w, team, c);
@@ -65,11 +68,13 @@ namespace Pez.Sim
         {
             var key = c.Str("structure") ?? c.Str("key");
             var def = Defs.Get(key);
-            if (def == null || !def.IsStructure) return Err($"unknown structure '{key}'. Valid: {string.Join(", ", Defs.All.Values.Where(d => d.IsStructure && d.BuiltBy != Producer.None).Select(d => d.Key))}");
+            if (def == null || !def.IsStructure) return Err($"unknown structure '{key}'. Valid: {string.Join(", ", Defs.All.Values.Where(d => d.IsStructure && d.Buildable).Select(d => d.Key))}");
+            if (!def.Buildable) return Err($"{key} can't be built from the menu" + (key == "outpost" ? "; train an outpost_truck at a factory and deploy it" : ""));
             var missing = w.MissingPrereq(team, def);
             if (missing != null) return Err($"{key} {missing}");
             var t = w.Teams[team];
-            if (t.Credits < def.Cost) return Err($"not enough credits ({t.Credits}/{def.Cost})");
+            var lacking = t.Missing(def.Cost);
+            if (lacking != null) return Err($"{key}: {lacking}");
             float x = c.Num("x"), y = c.Num("y");
             Int2 origin;
             if (float.IsNaN(x) || float.IsNaN(y))
@@ -88,8 +93,7 @@ namespace Pez.Sim
                     return Err($"cannot place {key} at ({origin.X},{origin.Y}): {why}" + (alt.HasValue ? $". Nearest valid spot: ({alt.Value.X},{alt.Value.Y})" : ""));
                 }
             }
-            t.Credits -= def.Cost;
-            t.Stats.CreditsSpent += def.Cost;
+            t.Pay(def.Cost);
             var s = w.SpawnStructure(team, key, origin, 0f);
             t.StructureQueue.Add(new ProdItem { Key = key, StructureId = s.Id });
             w.Emit("placed", team, s.Id, pos: s.Center, key: key);
@@ -111,13 +115,12 @@ namespace Pez.Sim
             int queued = 0;
             for (int i = 0; i < count; i++)
             {
-                if (t.Credits < def.Cost) break;
-                t.Credits -= def.Cost;
-                t.Stats.CreditsSpent += def.Cost;
+                if (t.Missing(def.Cost) != null) break;
+                t.Pay(def.Cost);
                 t.UnitQueues[def.BuiltBy].Add(new ProdItem { Key = key });
                 queued++;
             }
-            if (queued == 0) return Err($"not enough credits ({t.Credits}/{def.Cost})");
+            if (queued == 0) return Err($"{key}: {t.Missing(def.Cost)}");
             return Ok($"queued {queued}x {key}" + (queued < count ? $" (could only afford {queued})" : "") + $"; queue length {t.UnitQueues[def.BuiltBy].Count}");
         }
 
@@ -147,13 +150,17 @@ namespace Pez.Sim
             if (order == Order.Harvest)
             {
                 var hs = units.Where(u => u.IsHarvester).ToList();
-                if (hs.Count == 0) return Err("none of those units are harvesters");
+                if (hs.Count == 0) return Err("none of those units are mining trucks");
+                var oreName = c.Str("ore");
+                int type = oreName == null || oreName == "any" ? -1 : Array.IndexOf(Defs.Ores, oreName);
+                if (oreName != null && oreName != "any" && type < 0) return Err($"unknown ore '{oreName}'. Valid: {string.Join(", ", Defs.Ores)}");
                 foreach (var h in hs)
                 {
-                    var tile = float.IsNaN(x) ? w.Map.NearestOre(h.Pos, 60) : w.Map.NearestOre(dest, 12);
+                    var tile = float.IsNaN(x) ? w.Map.NearestOre(h.Pos, 80, null, type) : w.Map.NearestOre(dest, 12, null, type);
                     w.SetOrder(h, Order.Harvest, tile?.Center ?? h.Pos);
+                    if (oreName != null) h.HarvestType = type;
                 }
-                return Ok($"{hs.Count} harvester(s) harvesting");
+                return Ok($"{hs.Count} truck(s) mining" + (type >= 0 ? $" {Defs.Ores[type]}" : ""));
             }
 
             // Spread a group around the destination so they don't all fight for one tile.
@@ -167,7 +174,7 @@ namespace Pez.Sim
                 if (u.IsHarvester && order == Order.AttackMove) { w.SetOrder(u, Order.Move, target); continue; }
                 w.SetOrder(u, order, order == Order.Idle ? u.Pos : target);
             }
-            return Ok($"{n} unit(s) {(order == Order.Idle ? "stopped" : order.ToString().ToLowerInvariant())}");
+            return Ok($"{n} unit(s) {(order == Order.Idle ? "stopped" : order == Order.AttackMove ? "attack-moving" : "moving")}");
         }
 
         static JObj Attack(World w, int team, Dictionary<string, object> c)
@@ -178,8 +185,10 @@ namespace Pez.Sim
             if (target == null) return Err("target not found (it may be destroyed)");
             if (target.Team == team) return Err("that is your own unit");
             if (!w.IsVisibleTo(team, target)) return Err("target is not currently visible; use attack_move toward its last known position");
-            foreach (var u in units) w.SetOrder(u, Order.Attack, target.Center, target.Id);
-            return Ok($"{units.Count} unit(s) attacking {target.Def.Key} #{target.Id}");
+            var able = units.Where(u => u.Def.Weapon.CanHit(target.Def)).ToList();
+            if (able.Count == 0) return Err($"none of those units can hit a {(target.IsAir ? "flying" : "ground")} {target.Def.Key}");
+            foreach (var u in able) w.SetOrder(u, Order.Attack, target.Center, target.Id);
+            return Ok($"{able.Count} unit(s) attacking {target.Def.Key} #{target.Id}" + (able.Count < units.Count ? $" ({units.Count - able.Count} can't hit it)" : ""));
         }
 
         static Entity OwnStructure(World w, int team, Dictionary<string, object> c)
@@ -203,13 +212,28 @@ namespace Pez.Sim
         {
             var s = OwnStructure(w, team, c);
             if (s == null) return Err("structure_id must be one of your structures");
-            int refund = (int)(s.Def.Cost * 0.5f * s.BuildProgress * (s.Hp / s.Def.MaxHp));
-            if (!s.IsComplete) refund = (int)(s.Def.Cost * (1 - s.BuildProgress) + s.Def.Cost * 0.5f * s.BuildProgress);
-            w.Teams[team].Credits += refund;
+            // Complete: half back, scaled by health. Unfinished: unbuilt share back in full.
+            float factor = s.IsComplete ? 0.5f * (s.Hp / s.Def.MaxHp) : 1f - 0.5f * s.BuildProgress;
+            w.Teams[team].Pay(s.Def.Cost, -factor);
+            string refund = string.Join(", ", s.Def.Cost.Select(kv => $"{(int)(kv.Value * factor)} {kv.Key}"));
             w.Emit("sold", team, s.Id, pos: s.Center, key: s.Def.Key);
             w.Emit("destroyed", team, s.Id, 0, s.Center, key: s.Def.Key);
             w.Remove(s);
             return Ok($"sold {s.Def.Key} for {refund}");
+        }
+
+        static JObj Deploy(World w, int team, Dictionary<string, object> c)
+        {
+            var units = ResolveUnits(w, team, c).Where(u => u.Def.DeploysInto != null).ToList();
+            if (units.Count == 0) return Err("no deployable units given (outpost_truck)");
+            var results = new List<string>();
+            foreach (var u in units)
+            {
+                var why = w.Deploy(u);
+                results.Add(why == null ? $"#{u.Id} deployed into {u.Def.DeploysInto}" : $"#{u.Id} {why}");
+            }
+            bool ok = results.Any(r => r.Contains("deployed"));
+            return ok ? Ok(string.Join("; ", results)) : Err(string.Join("; ", results));
         }
 
         static JObj Cancel(World w, int team, Dictionary<string, object> c)
@@ -221,8 +245,8 @@ namespace Pez.Sim
             int idx = q.FindLastIndex(p => p.Key == key);
             if (idx < 0) return Err($"no {key} in queue");
             q.RemoveAt(idx);
-            w.Teams[team].Credits += def.Cost;
-            return Ok($"cancelled one {key}, refunded {def.Cost}");
+            w.Teams[team].Pay(def.Cost, -1f);
+            return Ok($"cancelled one {key}, refunded {def.CostText}");
         }
     }
 }

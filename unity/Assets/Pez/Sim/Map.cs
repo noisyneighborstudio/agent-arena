@@ -9,7 +9,8 @@ namespace Pez.Sim
     {
         public readonly int W, H;
         public readonly Terrain[] Tiles;
-        public readonly int[] Ore;         // credits worth of ore on the tile
+        public readonly int[] Ore;         // units of ore left on the tile
+        public readonly byte[] OreType;    // index into Defs.Ores (iron_ore, copper_ore, crystal, uranium)
         public readonly int[] Occupant;    // structure id occupying the tile, 0 = none
         public readonly List<Vec2> Spawns = new List<Vec2>();
         public const int MaxOrePerTile = 1000;
@@ -19,6 +20,7 @@ namespace Pez.Sim
             W = w; H = h;
             Tiles = new Terrain[w * h];
             Ore = new int[w * h];
+            OreType = new byte[w * h];
             Occupant = new int[w * h];
         }
 
@@ -28,6 +30,8 @@ namespace Pez.Sim
         public bool TerrainPassable(int x, int y) => InBounds(x, y) && Tiles[Idx(x, y)] <= Terrain.Dirt;
         public bool Passable(int x, int y) => TerrainPassable(x, y) && Occupant[Idx(x, y)] == 0;
         public int OreAt(int x, int y) => InBounds(x, y) ? Ore[Idx(x, y)] : 0;
+        public string OreName(int i) => Defs.Ores[OreType[i]];
+        public const byte Iron = 0, Copper = 1, Crystal = 2, Uranium = 3;
 
         public static Map Generate(int w, int h, int seed)
         {
@@ -62,16 +66,26 @@ namespace Pez.Sim
                 m.Blob(rng, cx, cy, rng.Next(1, 4), (x, y) => m.Tiles[m.Idx(x, y)] = t);
             }
 
-            // Ore: one field per base (toward the map centre) plus contested rich fields in the middle.
+            // Every corner (including empty ones, which are expansion sites) gets iron and copper.
+            // Crystal rings the middle; uranium sits in small contested deposits at the centre.
             var centre = new Vec2(w / 2f, h / 2f);
             foreach (var s in m.Spawns)
             {
                 var dir = (centre - s).Normalized;
+                var side = new Vec2(-dir.Y, dir.X);
                 var p = s + dir * 9f;
-                m.OreField(rng, (int)p.X, (int)p.Y, 4, 400, 900);
+                m.OreField(rng, (int)p.X, (int)p.Y, 3, 260, 460, Iron);
+                var q = s + dir * 5f + side * 7f;
+                m.OreField(rng, (int)q.X, (int)q.Y, 2, 200, 340, Copper);
             }
-            m.OreField(rng, (int)centre.X - 6, (int)centre.Y + 6, 4, 700, 1000);
-            m.OreField(rng, (int)centre.X + 6, (int)centre.Y - 6, 4, 700, 1000);
+            for (int i = 0; i < 4; i++)
+            {
+                float a = i * MathF.PI / 2 + MathF.PI / 4 + MathF.PI / 4;
+                var p = centre + new Vec2(MathF.Cos(a), MathF.Sin(a)) * (w * 0.2f);
+                m.OreField(rng, (int)p.X, (int)p.Y, 2, 90, 170, Crystal);
+            }
+            m.OreField(rng, (int)centre.X - 2, (int)centre.Y + 2, 1, 70, 130, Uranium);
+            m.OreField(rng, (int)centre.X + 2, (int)centre.Y - 2, 1, 70, 130, Uranium);
             return m;
         }
 
@@ -92,12 +106,13 @@ namespace Pez.Sim
                 }
         }
 
-        void OreField(Random rng, int cx, int cy, int r, int min, int max)
+        void OreField(Random rng, int cx, int cy, int r, int min, int max, byte type)
         {
             Blob(rng, cx, cy, r, (x, y) =>
             {
                 int i = Idx(x, y);
                 Tiles[i] = Terrain.Dirt;
+                OreType[i] = type;
                 float d = MathF.Sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy));
                 Ore[i] = Math.Min(MaxOrePerTile, (int)(rng.Next(min, max) * (1.2f - d / (r + 1))));
             });
@@ -126,7 +141,7 @@ namespace Pez.Sim
         }
 
         /// <summary>Nearest tile with ore, searching outward from a point.</summary>
-        public Int2? NearestOre(Vec2 from, float maxDist, Func<Int2, bool> filter = null)
+        public Int2? NearestOre(Vec2 from, float maxDist, Func<Int2, bool> filter = null, int type = -1)
         {
             Int2? best = null;
             float bestD = maxDist * maxDist;
@@ -135,7 +150,7 @@ namespace Pez.Sim
             for (int y = Math.Max(0, fy - r); y <= Math.Min(H - 1, fy + r); y++)
                 for (int x = Math.Max(0, fx - r); x <= Math.Min(W - 1, fx + r); x++)
                 {
-                    if (Ore[Idx(x, y)] <= 0) continue;
+                    if (Ore[Idx(x, y)] <= 0 || (type >= 0 && OreType[Idx(x, y)] != type)) continue;
                     var t = new Int2(x, y);
                     float d = Vec2.DistSq(t.Center, from);
                     if (d < bestD && (filter == null || filter(t))) { bestD = d; best = t; }

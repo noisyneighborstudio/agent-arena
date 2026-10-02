@@ -1,27 +1,45 @@
 using System.Collections.Generic;
+using System.Linq;
 
 namespace Pez.Sim
 {
-    public enum Armor { Infantry, Vehicle, Structure }
-    public enum Producer { None, ConstructionYard, Barracks, WarFactory, Refinery }
+    public enum Armor { Infantry, Vehicle, Aircraft, Structure }
+    public enum Producer { None, CommandCenter, Barracks, Factory, Airfield }
 
     public class WeaponDef
     {
         public string Name;
         public float Damage, Range, Cooldown;
-        /// <summary>Tiles per second. 0 = hitscan.</summary>
+        /// <summary>Tiles per second. 0 = hitscan (bullets, lasers).</summary>
         public float ProjectileSpeed;
         public float SplashRadius;
-        public float VsInfantry = 1f, VsVehicle = 1f, VsStructure = 1f;
+        public bool HitsGround = true, HitsAir;
+        public float VsInfantry = 1f, VsVehicle = 1f, VsStructure = 1f, VsAir = 1f;
 
-        public float Multiplier(Armor a) => a == Armor.Infantry ? VsInfantry : a == Armor.Vehicle ? VsVehicle : VsStructure;
+        public float Multiplier(Armor a) => a switch
+        {
+            Armor.Infantry => VsInfantry,
+            Armor.Vehicle => VsVehicle,
+            Armor.Aircraft => VsAir,
+            _ => VsStructure,
+        };
+        public bool CanHit(EntityDef d) => d.IsAir ? HitsAir : HitsGround;
+    }
+
+    /// <summary>A converter recipe: consumes Inputs to make Outputs, Rate cycles per second.</summary>
+    public class Recipe
+    {
+        public Dictionary<string, int> Inputs, Outputs;
+        public float Rate;
+        public override string ToString() =>
+            $"{string.Join(" + ", Inputs.Select(kv => $"{kv.Value} {kv.Key}"))} -> {string.Join(" + ", Outputs.Select(kv => $"{kv.Value} {kv.Key}"))} ({Rate}/s)";
     }
 
     public class EntityDef
     {
         public string Key, Name, Description;
         public bool IsStructure;
-        public int Cost;
+        public Dictionary<string, int> Cost = new Dictionary<string, int>();
         public float BuildTime;   // seconds
         public int MaxHp;
         public Armor Armor;
@@ -34,37 +52,100 @@ namespace Pez.Sim
         public Producer BuiltBy;
         public Producer Produces;
         public string[] Requires = new string[0];
-        public int HarvestCapacity; // harvesters only
+        public int HarvestCapacity;   // mining trucks only
+        public bool DropOff;          // trucks can unload ore here
+        public Recipe[] Recipes = new Recipe[0];
+        public string DeploysInto;    // e.g. outpost_truck -> outpost
+        public bool IsAir, Stealth;
+        public bool Buildable = true; // false for structures you can't place from the build menu
+
+        public bool IsArmor(Armor a) => Armor == a;
+        public string CostText => Cost.Count == 0 ? "free" : string.Join(", ", Cost.Select(kv => $"{kv.Value} {kv.Key}"));
     }
 
     public static class Defs
     {
         public static readonly Dictionary<string, EntityDef> All = new Dictionary<string, EntityDef>();
 
-        static readonly WeaponDef Rifle = new WeaponDef { Name = "rifle", Damage = 15, Range = 4.5f, Cooldown = 1.0f, ProjectileSpeed = 0, VsInfantry = 1f, VsVehicle = 0.25f, VsStructure = 0.3f };
-        static readonly WeaponDef Rocket = new WeaponDef { Name = "rocket", Damage = 60, Range = 6f, Cooldown = 2.2f, ProjectileSpeed = 9f, VsInfantry = 0.3f, VsVehicle = 1f, VsStructure = 0.75f };
+        /// <summary>Stockpile items in display order: raw ores, then manufactured materials.</summary>
+        public static readonly string[] Ores = { "iron_ore", "copper_ore", "crystal", "uranium" };
+        public static readonly string[] Materials = { "steel", "copper", "circuits", "lenses", "plasma", "composite" };
+        public static IEnumerable<string> Items => Ores.Concat(Materials);
+
+        static Dictionary<string, int> C(params object[] kv)
+        {
+            var d = new Dictionary<string, int>();
+            for (int i = 0; i < kv.Length; i += 2) d[(string)kv[i]] = (int)kv[i + 1];
+            return d;
+        }
+        static Recipe R(float rate, Dictionary<string, int> inputs, Dictionary<string, int> outputs) => new Recipe { Rate = rate, Inputs = inputs, Outputs = outputs };
+
+        // Weapons
+        static readonly WeaponDef Rifle = new WeaponDef { Name = "rifle", Damage = 15, Range = 4.5f, Cooldown = 1.0f, HitsAir = true, VsInfantry = 1f, VsVehicle = 0.25f, VsStructure = 0.3f, VsAir = 0.3f };
+        static readonly WeaponDef Rocket = new WeaponDef { Name = "rocket", Damage = 60, Range = 6f, Cooldown = 2.2f, ProjectileSpeed = 9f, HitsAir = true, VsInfantry = 0.3f, VsVehicle = 1f, VsStructure = 0.75f, VsAir = 1f };
+        static readonly WeaponDef Laser = new WeaponDef { Name = "laser", Damage = 55, Range = 6f, Cooldown = 1.4f, HitsAir = true, VsInfantry = 1f, VsVehicle = 1f, VsStructure = 0.8f, VsAir = 0.9f };
+        static readonly WeaponDef MachineGun = new WeaponDef { Name = "mg", Damage = 10, Range = 5f, Cooldown = 0.5f, HitsAir = true, VsInfantry = 1f, VsVehicle = 0.3f, VsStructure = 0.25f, VsAir = 0.35f };
         static readonly WeaponDef Cannon = new WeaponDef { Name = "cannon", Damage = 40, Range = 5f, Cooldown = 1.5f, ProjectileSpeed = 18f, VsInfantry = 0.5f, VsVehicle = 1f, VsStructure = 0.8f };
         static readonly WeaponDef HeavyCannon = new WeaponDef { Name = "heavy_cannon", Damage = 85, Range = 5.5f, Cooldown = 2.0f, ProjectileSpeed = 16f, SplashRadius = 0.8f, VsInfantry = 0.6f, VsVehicle = 1f, VsStructure = 0.9f };
+        static readonly WeaponDef Shell = new WeaponDef { Name = "artillery", Damage = 90, Range = 11f, Cooldown = 3.5f, ProjectileSpeed = 8f, SplashRadius = 1.5f, VsInfantry = 1f, VsVehicle = 0.7f, VsStructure = 1f };
+        static readonly WeaponDef BeamCannon = new WeaponDef { Name = "beam", Damage = 110, Range = 6.5f, Cooldown = 2.0f, HitsAir = true, VsInfantry = 0.8f, VsVehicle = 1.2f, VsStructure = 1f, VsAir = 1f };
+        static readonly WeaponDef GunshipRockets = new WeaponDef { Name = "gunship_rockets", Damage = 45, Range = 5.5f, Cooldown = 1.2f, ProjectileSpeed = 12f, HitsAir = true, VsInfantry = 0.7f, VsVehicle = 1f, VsStructure = 0.6f, VsAir = 1f };
+        static readonly WeaponDef Bombs = new WeaponDef { Name = "bombs", Damage = 260, Range = 0.9f, Cooldown = 4f, ProjectileSpeed = 6f, SplashRadius = 2f, VsInfantry = 0.6f, VsVehicle = 0.8f, VsStructure = 1.6f };
         static readonly WeaponDef TurretGun = new WeaponDef { Name = "turret_gun", Damage = 50, Range = 6.5f, Cooldown = 1.3f, ProjectileSpeed = 20f, VsInfantry = 0.7f, VsVehicle = 1f, VsStructure = 0.5f };
+        static readonly WeaponDef Sam = new WeaponDef { Name = "sam", Damage = 90, Range = 8f, Cooldown = 1.6f, ProjectileSpeed = 16f, HitsGround = false, HitsAir = true, VsAir = 1f };
+        static readonly WeaponDef TowerLaser = new WeaponDef { Name = "laser", Damage = 90, Range = 7.5f, Cooldown = 1.1f, HitsAir = true, VsInfantry = 1f, VsVehicle = 1.1f, VsStructure = 0.6f, VsAir = 1f };
 
         static Defs()
         {
-            Add(new EntityDef { Key = "construction_yard", Name = "Construction Yard", Description = "Builds all structures. Lose every structure and you lose the game.", IsStructure = true, Cost = 3000, BuildTime = 30, MaxHp = 3000, Armor = Armor.Structure, SizeX = 3, SizeY = 3, Power = 15, Sight = 7, Produces = Producer.ConstructionYard, BuiltBy = Producer.None });
-            Add(new EntityDef { Key = "power_plant", Name = "Power Plant", Description = "Produces power. Low power halves production speed.", IsStructure = true, Cost = 300, BuildTime = 6, MaxHp = 800, Armor = Armor.Structure, SizeX = 2, SizeY = 2, Power = 100, BuiltBy = Producer.ConstructionYard });
-            Add(new EntityDef { Key = "refinery", Name = "Ore Refinery", Description = "Harvesters unload ore here for credits. Comes with one free harvester.", IsStructure = true, Cost = 1400, BuildTime = 12, MaxHp = 1500, Armor = Armor.Structure, SizeX = 3, SizeY = 3, Power = -40, BuiltBy = Producer.ConstructionYard, Produces = Producer.Refinery, Requires = new[] { "power_plant" } });
-            Add(new EntityDef { Key = "barracks", Name = "Barracks", Description = "Trains infantry.", IsStructure = true, Cost = 300, BuildTime = 6, MaxHp = 1000, Armor = Armor.Structure, SizeX = 2, SizeY = 2, Power = -20, BuiltBy = Producer.ConstructionYard, Produces = Producer.Barracks, Requires = new[] { "power_plant" } });
-            Add(new EntityDef { Key = "war_factory", Name = "War Factory", Description = "Builds vehicles.", IsStructure = true, Cost = 1500, BuildTime = 14, MaxHp = 2000, Armor = Armor.Structure, SizeX = 3, SizeY = 3, Power = -30, BuiltBy = Producer.ConstructionYard, Produces = Producer.WarFactory, Requires = new[] { "refinery" } });
-            Add(new EntityDef { Key = "gun_turret", Name = "Gun Turret", Description = "Static defense. Strong against vehicles.", IsStructure = true, Cost = 600, BuildTime = 7, MaxHp = 1000, Armor = Armor.Structure, SizeX = 1, SizeY = 1, Power = -20, Sight = 7, Weapon = TurretGun, BuiltBy = Producer.ConstructionYard, Requires = new[] { "barracks" } });
+            // ---- Structures
+            Add(new EntityDef { Key = "command_center", Name = "Command Center", Description = "Builds every structure, trains Mining Trucks, accepts ore, and extracts 1 iron_ore/s on its own. Lose all structures and you lose.", IsStructure = true, BuildTime = 30, Recipes = new[] { R(1, C(), C("iron_ore", 1)) }, MaxHp = 3000, Armor = Armor.Structure, SizeX = 3, SizeY = 3, Power = 20, Sight = 10, Produces = Producer.CommandCenter, DropOff = true, Buildable = false });
+            Add(new EntityDef { Key = "power_plant", Name = "Power Plant", Description = "+100 power. Low power halves all production and refining.", IsStructure = true, Cost = C("iron_ore", 250), BuildTime = 6, MaxHp = 800, Armor = Armor.Structure, SizeX = 2, SizeY = 2, Power = 100, BuiltBy = Producer.CommandCenter });
+            Add(new EntityDef { Key = "mining_refinery", Name = "Mining Refinery", Description = "Refines iron_ore into steel and copper_ore into copper. Trucks can unload here. Comes with a free Mining Truck.", IsStructure = true, Cost = C("iron_ore", 300, "copper_ore", 100), BuildTime = 10, MaxHp = 1500, Armor = Armor.Structure, SizeX = 3, SizeY = 3, Power = -30, BuiltBy = Producer.CommandCenter, DropOff = true, Requires = new[] { "power_plant" },
+                Recipes = new[] { R(5, C("iron_ore", 1), C("steel", 1)), R(5, C("copper_ore", 1), C("copper", 1)) } });
+            Add(new EntityDef { Key = "barracks", Name = "Barracks", Description = "Trains infantry.", IsStructure = true, Cost = C("steel", 150), BuildTime = 6, MaxHp = 1000, Armor = Armor.Structure, SizeX = 2, SizeY = 2, Power = -20, BuiltBy = Producer.CommandCenter, Produces = Producer.Barracks, Requires = new[] { "mining_refinery" } });
+            Add(new EntityDef { Key = "factory", Name = "Factory", Description = "Builds ground vehicles and Outpost Trucks.", IsStructure = true, Cost = C("steel", 300, "copper", 100), BuildTime = 12, MaxHp = 2000, Armor = Armor.Structure, SizeX = 3, SizeY = 3, Power = -40, BuiltBy = Producer.CommandCenter, Produces = Producer.Factory, Requires = new[] { "mining_refinery" } });
+            Add(new EntityDef { Key = "gun_turret", Name = "Gun Turret", Description = "Ground defense. Can't hit aircraft.", IsStructure = true, Cost = C("steel", 150, "copper", 30), BuildTime = 6, MaxHp = 900, Armor = Armor.Structure, Power = -15, Sight = 7, Weapon = TurretGun, BuiltBy = Producer.CommandCenter, Requires = new[] { "barracks" } });
+            Add(new EntityDef { Key = "electronics_plant", Name = "Electronics Plant", Description = "Makes circuits from copper and steel.", IsStructure = true, Cost = C("steel", 250, "copper", 150), BuildTime = 10, MaxHp = 1000, Armor = Armor.Structure, SizeX = 2, SizeY = 2, Power = -40, BuiltBy = Producer.CommandCenter, Requires = new[] { "factory" },
+                Recipes = new[] { R(1, C("copper", 2, "steel", 1), C("circuits", 1)) } });
+            Add(new EntityDef { Key = "radar_dome", Name = "Radar Dome", Description = "Reveals 16 tiles around it and detects stealth units in that range.", IsStructure = true, Cost = C("steel", 200, "circuits", 60), BuildTime = 10, MaxHp = 1000, Armor = Armor.Structure, SizeX = 2, SizeY = 2, Power = -40, Sight = 16, BuiltBy = Producer.CommandCenter, Requires = new[] { "electronics_plant" } });
+            Add(new EntityDef { Key = "sam_site", Name = "SAM Site", Description = "Anti-air missiles. Can't hit ground targets.", IsStructure = true, Cost = C("steel", 200, "circuits", 60), BuildTime = 7, MaxHp = 800, Armor = Armor.Structure, Power = -20, Sight = 9, Weapon = Sam, BuiltBy = Producer.CommandCenter, Requires = new[] { "electronics_plant" } });
+            Add(new EntityDef { Key = "optics_lab", Name = "Optics Lab", Description = "Grinds crystal into lenses.", IsStructure = true, Cost = C("steel", 300, "circuits", 80), BuildTime = 10, MaxHp = 1000, Armor = Armor.Structure, SizeX = 2, SizeY = 2, Power = -40, BuiltBy = Producer.CommandCenter, Requires = new[] { "electronics_plant" },
+                Recipes = new[] { R(0.5f, C("crystal", 2), C("lenses", 1)) } });
+            Add(new EntityDef { Key = "enrichment_plant", Name = "Enrichment Plant", Description = "Enriches uranium into plasma.", IsStructure = true, Cost = C("steel", 400, "circuits", 120), BuildTime = 12, MaxHp = 1200, Armor = Armor.Structure, SizeX = 2, SizeY = 2, Power = -60, BuiltBy = Producer.CommandCenter, Requires = new[] { "electronics_plant" },
+                Recipes = new[] { R(0.4f, C("uranium", 2), C("plasma", 1)) } });
+            Add(new EntityDef { Key = "laser_tower", Name = "Laser Tower", Description = "Heavy beam defense; hits ground and air.", IsStructure = true, Cost = C("steel", 250, "lenses", 60, "circuits", 60), BuildTime = 9, MaxHp = 1200, Armor = Armor.Structure, Power = -50, Sight = 8, Weapon = TowerLaser, BuiltBy = Producer.CommandCenter, Requires = new[] { "optics_lab" } });
+            Add(new EntityDef { Key = "composite_foundry", Name = "Composite Foundry", Description = "Fuses steel and crystal into stealth composite.", IsStructure = true, Cost = C("steel", 400, "circuits", 120), BuildTime = 12, MaxHp = 1200, Armor = Armor.Structure, SizeX = 2, SizeY = 2, Power = -50, BuiltBy = Producer.CommandCenter, Requires = new[] { "optics_lab" },
+                Recipes = new[] { R(0.5f, C("steel", 2, "crystal", 1), C("composite", 1)) } });
+            Add(new EntityDef { Key = "fusion_reactor", Name = "Fusion Reactor", Description = "+500 power while it has plasma to burn (0.1/s).", IsStructure = true, Cost = C("steel", 600, "circuits", 200, "plasma", 50), BuildTime = 16, MaxHp = 2000, Armor = Armor.Structure, SizeX = 3, SizeY = 3, Power = 500, BuiltBy = Producer.CommandCenter, Requires = new[] { "enrichment_plant" } });
+            Add(new EntityDef { Key = "airfield", Name = "Airfield", Description = "Builds aircraft.", IsStructure = true, Cost = C("steel", 500, "circuits", 200), BuildTime = 14, MaxHp = 1800, Armor = Armor.Structure, SizeX = 3, SizeY = 3, Power = -60, BuiltBy = Producer.CommandCenter, Produces = Producer.Airfield, Requires = new[] { "enrichment_plant" } });
+            Add(new EntityDef { Key = "outpost", Name = "Outpost", Description = "Forward base: ore drop-off, territory anchor for building, vision 9.", IsStructure = true, BuildTime = 1, MaxHp = 1500, Armor = Armor.Structure, SizeX = 2, SizeY = 2, Power = 10, Sight = 9, DropOff = true, Buildable = false });
 
-            Add(new EntityDef { Key = "rifleman", Name = "Rifleman", Description = "Cheap infantry. Good vs infantry, weak vs armor.", Cost = 100, BuildTime = 4, MaxHp = 125, Armor = Armor.Infantry, Speed = 1.5f, Radius = 0.2f, Weapon = Rifle, BuiltBy = Producer.Barracks });
-            Add(new EntityDef { Key = "rocket_soldier", Name = "Rocket Soldier", Description = "Anti-armor infantry. Outranges tanks.", Cost = 300, BuildTime = 7, MaxHp = 125, Armor = Armor.Infantry, Speed = 1.3f, Radius = 0.2f, Weapon = Rocket, BuiltBy = Producer.Barracks });
-            Add(new EntityDef { Key = "harvester", Name = "Harvester", Description = "Collects ore automatically and returns it to the nearest refinery.", Cost = 1000, BuildTime = 12, MaxHp = 1000, Armor = Armor.Vehicle, Speed = 1.4f, Radius = 0.5f, Sight = 4, HarvestCapacity = 700, BuiltBy = Producer.WarFactory, Requires = new[] { "refinery" } });
-            Add(new EntityDef { Key = "light_tank", Name = "Light Tank", Description = "Fast, all-round tank.", Cost = 600, BuildTime = 8, MaxHp = 400, Armor = Armor.Vehicle, Speed = 2.6f, Radius = 0.45f, Weapon = Cannon, BuiltBy = Producer.WarFactory });
-            Add(new EntityDef { Key = "heavy_tank", Name = "Heavy Tank", Description = "Slow, heavily armored, splash damage.", Cost = 1200, BuildTime = 14, MaxHp = 950, Armor = Armor.Vehicle, Speed = 1.6f, Radius = 0.55f, Weapon = HeavyCannon, BuiltBy = Producer.WarFactory });
+            // ---- Units
+            Add(new EntityDef { Key = "mining_truck", Name = "Mining Truck", Description = "Mines ore (150 per trip, one type at a time) and unloads at the nearest drop-off.", Cost = C("iron_ore", 200), BuildTime = 8, MaxHp = 900, Armor = Armor.Vehicle, Speed = 1.8f, Radius = 0.5f, Sight = 5, HarvestCapacity = 150, BuiltBy = Producer.CommandCenter });
+            Add(new EntityDef { Key = "rifleman", Name = "Rifleman", Description = "Cheap anti-infantry. Weak vs armor, can plink aircraft.", Cost = C("steel", 40), BuildTime = 4, MaxHp = 125, Armor = Armor.Infantry, Speed = 1.5f, Radius = 0.2f, Weapon = Rifle, BuiltBy = Producer.Barracks });
+            Add(new EntityDef { Key = "rocket_soldier", Name = "Rocket Soldier", Description = "Anti-armor and anti-air infantry.", Cost = C("steel", 80, "copper", 30), BuildTime = 6, MaxHp = 125, Armor = Armor.Infantry, Speed = 1.3f, Radius = 0.2f, Weapon = Rocket, BuiltBy = Producer.Barracks });
+            Add(new EntityDef { Key = "laser_trooper", Name = "Laser Trooper", Description = "Elite beam infantry; good against everything.", Cost = C("steel", 80, "lenses", 30), BuildTime = 8, MaxHp = 180, Armor = Armor.Infantry, Speed = 1.4f, Radius = 0.2f, Weapon = Laser, BuiltBy = Producer.Barracks, Requires = new[] { "optics_lab" } });
+            Add(new EntityDef { Key = "scout_buggy", Name = "Scout Buggy", Description = "Very fast, long sight, machine gun.", Cost = C("steel", 100, "copper", 20), BuildTime = 5, MaxHp = 220, Armor = Armor.Vehicle, Speed = 4f, Radius = 0.35f, Sight = 9, Weapon = MachineGun, BuiltBy = Producer.Factory });
+            Add(new EntityDef { Key = "light_tank", Name = "Light Tank", Description = "Fast all-round tank. Can't hit aircraft.", Cost = C("steel", 200, "copper", 40), BuildTime = 8, MaxHp = 400, Armor = Armor.Vehicle, Speed = 2.6f, Radius = 0.45f, Weapon = Cannon, BuiltBy = Producer.Factory });
+            Add(new EntityDef { Key = "outpost_truck", Name = "Outpost Truck", Description = "Drive to a remote ore field and 'deploy' it into an Outpost.", Cost = C("steel", 400, "copper", 100, "circuits", 50), BuildTime = 12, MaxHp = 800, Armor = Armor.Vehicle, Speed = 1.4f, Radius = 0.55f, Sight = 6, DeploysInto = "outpost", BuiltBy = Producer.Factory, Requires = new[] { "electronics_plant" } });
+            Add(new EntityDef { Key = "heavy_tank", Name = "Heavy Tank", Description = "Slow, heavily armored, splash damage.", Cost = C("steel", 400, "circuits", 80), BuildTime = 13, MaxHp = 950, Armor = Armor.Vehicle, Speed = 1.6f, Radius = 0.55f, Weapon = HeavyCannon, BuiltBy = Producer.Factory, Requires = new[] { "electronics_plant" } });
+            Add(new EntityDef { Key = "artillery", Name = "Artillery", Description = "Range 11 splash shells. Fragile; keep it behind your tanks.", Cost = C("steel", 300, "circuits", 100), BuildTime = 12, MaxHp = 300, Armor = Armor.Vehicle, Speed = 1.3f, Radius = 0.5f, Sight = 7, Weapon = Shell, BuiltBy = Producer.Factory, Requires = new[] { "electronics_plant" } });
+            Add(new EntityDef { Key = "laser_tank", Name = "Laser Tank", Description = "Beam cannon; hits ground and air.", Cost = C("steel", 350, "lenses", 60, "plasma", 40, "circuits", 60), BuildTime = 15, MaxHp = 750, Armor = Armor.Vehicle, Speed = 2f, Radius = 0.55f, Weapon = BeamCannon, BuiltBy = Producer.Factory, Requires = new[] { "optics_lab", "enrichment_plant" } });
+            Add(new EntityDef { Key = "gunship", Name = "Gunship", Description = "Aircraft. Flies over terrain; rockets vs ground and air.", Cost = C("steel", 300, "circuits", 120, "plasma", 30), BuildTime = 14, MaxHp = 500, Armor = Armor.Aircraft, Speed = 3.2f, Radius = 0.6f, Sight = 8, Weapon = GunshipRockets, IsAir = true, BuiltBy = Producer.Airfield });
+            Add(new EntityDef { Key = "stealth_bomber", Name = "Stealth Bomber", Description = "Invisible unless within 3 tiles of an enemy or inside enemy radar range. Bombs wreck structures.", Cost = C("composite", 300, "circuits", 150, "plasma", 80), BuildTime = 20, MaxHp = 600, Armor = Armor.Aircraft, Speed = 3.8f, Radius = 0.7f, Sight = 7, Weapon = Bombs, IsAir = true, Stealth = true, BuiltBy = Producer.Airfield, Requires = new[] { "composite_foundry" } });
         }
 
         static void Add(EntityDef d) => All[d.Key] = d;
 
         public static EntityDef Get(string key) => key != null && All.TryGetValue(key, out var d) ? d : null;
+
+        public static string ProducerKey(Producer p) => p switch
+        {
+            Producer.CommandCenter => "command_center",
+            Producer.Barracks => "barracks",
+            Producer.Factory => "factory",
+            Producer.Airfield => "airfield",
+            _ => null,
+        };
     }
 }
