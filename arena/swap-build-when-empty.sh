@@ -28,10 +28,13 @@ done
 log "room 1 is empty; swapping in the staged build"
 # Tell connected agents (other rooms, and anyone who reconnects) to hold on rather than leave.
 arena/maintenance.sh on 60 "Room 1 is updating to a new build." >/dev/null
-osascript -e 'quit app "Pezz"' 
-for i in {1..30}; do pgrep -f "Build/Pezz.app/Contents/MacOS/Pezz" >/dev/null || break; sleep 1; done
+# Stop the running game by process id ("quit app" can be ignored, and then the relaunch just re-activates the old one).
+OLD=$(pgrep -f "Build/Pezz.app/Contents/MacOS/Pezz")
+[ -n "$OLD" ] && kill $OLD
+for i in {1..20}; do pgrep -f "Build/Pezz.app/Contents/MacOS/Pezz" >/dev/null || break; sleep 1; done
+pgrep -f "Build/Pezz.app/Contents/MacOS/Pezz" >/dev/null && pkill -9 -f "Build/Pezz.app/Contents/MacOS/Pezz"
 rm -rf unity/Build/prev; mv unity/Build/Pezz.app unity/Build/prev && mv "$NEXT" unity/Build/Pezz.app
-open -a "$PWD/unity/Build/Pezz.app" --args -team0 claude -model0 sonnet -effort0 medium -team1 codex -model1 gpt-5.6-luna -effort1 medium \
+open -n -a "$PWD/unity/Build/Pezz.app" --args -team0 claude -model0 sonnet -effort0 medium -team1 codex -model1 gpt-5.6-luna -effort1 medium \
   -open -gatewayurl https://pezz.sethwebster.com -autostart
 for i in {1..60}; do curl -s -o /dev/null http://127.0.0.1:7777/api/status && break; sleep 1; done
 # Optional game settings for the new arena, e.g. RESTART_JSON='{"ore_scale":0.3,"open":true}'
