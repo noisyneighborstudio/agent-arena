@@ -14,7 +14,9 @@ if (!Number.isInteger(TEAM)) {
 }
 
 let joined = false;
-let lastSeq = 0;
+let lastSeq = 0;       // last game event seen (events are reported as deltas)
+let lastAlertSeq = 0;  // last priority alert already shown to the model
+let lastTick = 0;      // detects a game restart, which resets the server's sequence numbers
 
 async function call(path, { method = "GET", body } = {}) {
   const sep = path.includes("?") ? "&" : "?";
@@ -41,10 +43,30 @@ async function ensureJoined() {
 
 const text = (t) => ({ content: [{ type: "text", text: t }] });
 
-async function stateText() {
-  const s = JSON.parse(await call(`/api/state?since=${lastSeq}`));
+function noteState(s) {
+  if (s.tick < lastTick) { lastSeq = 0; lastAlertSeq = 0; } // new game
+  lastTick = s.tick;
   lastSeq = s.last_event_seq ?? lastSeq;
-  return JSON.stringify(s, null, 1);
+}
+
+function banner(alerts, lead) {
+  if (!alerts?.length) return "";
+  lastAlertSeq = Math.max(lastAlertSeq, ...alerts.map((a) => a.seq));
+  return `⚠️ ${lead}\n${alerts.map((a) => `- [#${a.seq}] ${a.text}`).join("\n")}\n\n`;
+}
+
+/** Priority alerts (high or critical) the model hasn't been shown yet. */
+async function unseenAlerts() {
+  const r = JSON.parse(await call(`/api/alerts?since=${lastAlertSeq}&min=high`));
+  if (r.last_alert_seq < lastAlertSeq) { lastAlertSeq = 0; return unseenAlerts(); } // new game
+  return r.new_alerts;
+}
+
+async function stateText() {
+  const alerts = await unseenAlerts();
+  const s = JSON.parse(await call(`/api/state?since=${lastSeq}`));
+  noteState(s);
+  return banner(alerts, "PRIORITY ALERT: deal with this before continuing your plan:") + JSON.stringify(s, null, 1);
 }
 
 const server = new McpServer({ name: "pez-rts", version: "0.1.0" });
@@ -109,7 +131,9 @@ server.registerTool(
   },
   async ({ commands }) => {
     await ensureJoined();
-    return text(await call("/api/command", { method: "POST", body: { commands } }));
+    const result = await call("/api/command", { method: "POST", body: { commands } });
+    const alerts = await unseenAlerts();
+    return text(banner(alerts, "NEW PRIORITY ALERT since your last look:") + result);
   },
 );
 
@@ -117,13 +141,22 @@ server.registerTool(
   "wait",
   {
     description:
-      "Let the game run for a few seconds (1-30), then get your updated state. The game is real-time and does not pause while you think, so use this when you have nothing to do right now.",
-    inputSchema: { seconds: z.number().min(1).max(30).describe("Seconds to wait") },
+      "Let the game run for up to `seconds` (1-30), then get your updated state. The wait is cut short the moment a priority alert " +
+      "is raised for your team (base under attack, trucks or units under attack, enemies near your base, stealth bomber detected), " +
+      "like a human hearing an alarm. The game is real-time and does not pause while you think.",
+    inputSchema: {
+      seconds: z.number().min(1).max(30).describe("Maximum seconds to wait"),
+      interrupt_on: z.enum(["high", "critical", "none"]).optional().describe("Lowest alert priority that ends the wait early (default high)"),
+    },
   },
-  async ({ seconds }) => {
+  async ({ seconds, interrupt_on }) => {
     await ensureJoined();
-    await new Promise((r) => setTimeout(r, seconds * 1000));
-    return text(await stateText());
+    const r = JSON.parse(await call(`/api/wait?seconds=${seconds}&since=${lastAlertSeq}&events_since=${lastSeq}&min=${interrupt_on ?? "high"}`));
+    noteState(r.state);
+    const head = r.interrupted
+      ? banner(r.new_alerts, `PRIORITY ALERT: your wait was cut short after ${r.waited_s}s of ${seconds}s. Respond to this first:`)
+      : `Waited ${r.waited_s}s. No new priority alerts.\n\n`;
+    return text(head + JSON.stringify(r.state, null, 1));
   },
 );
 

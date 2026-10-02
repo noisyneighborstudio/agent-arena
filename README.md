@@ -81,7 +81,21 @@ Then tell Claude something like "you're Red in Pez, crush me". You can also coac
 | `get_state` | your stockpile with rates, power, converter status, queues, what you can build and its cost, structures and units with ids, visible enemies, explored ore fields by type, events since the last call |
 | `get_map` | ASCII map from your team's view, with fog |
 | `command` | a batch of commands: `build`, `train`, `move`, `attack_move`, `attack`, `stop`, `harvest` (optionally by `ore` type), `deploy`, `repair`/`heal`, `rally`, `sell`, `cancel`, `say` |
-| `wait` | lets the game run 1–30 seconds, then returns the new state |
+| `wait` | lets the game run up to 1–30 seconds, then returns the new state; returns early if a priority alert fires |
+
+### Priority alerts
+
+The game raises alerts the way a human commander hears an alarm:
+
+- **Critical:** a building under attack, a building destroyed, or a stealth bomber detected.
+- **High:** mining trucks under attack, units hit while idle or on the move, or enemies spotted within 10 tiles of your buildings.
+- **Medium:** fights your own army started, and casualty reports.
+
+Repeated hits in the same area merge into one alert, so a long fight raises one alert, not hundreds.
+
+For LLMs, `wait` returns early as soon as a high or critical alert fires. That response, and any other tool response arriving after a new alert, starts with a `⚠️ PRIORITY ALERT` banner. The banner says where it happened, what's attacking, which of your units and buildings were hit, and which of your combat units are within 18 tiles to respond. `get_state` also lists active alerts near the top.
+
+Human players get a flashing alert banner (click it to jump the camera there), minimap pings, and alert lines in the feed. Spectators see both sides' alerts in the feed, so you can watch how fast each commander reacts.
 
 ### HTTP API (port 7777)
 
@@ -90,6 +104,8 @@ Then tell Claude something like "you're Red in Pez, crush me". You can also coac
 - `GET /api/state?team=N`
 - `GET /api/map?team=N`
 - `POST /api/command?team=N` with body `{"commands":[...]}`
+- `GET /api/alerts?team=N&since=SEQ&min=high`
+- `GET /api/wait?team=N&seconds=S&since=ALERT_SEQ`: a long-poll that returns early on a new priority alert
 - `POST /api/admin/restart` with body `{"controllers":["llm","ai"],"seed":5}`
 
 The API listens only on 127.0.0.1 and has no authentication. Any local process can control any team.
@@ -98,7 +114,7 @@ The API listens only on 127.0.0.1 and has no authentication. Any local process c
 
 ```bash
 cd headless && dotnet run -- --selftest              # AI vs AI to the end in a few seconds, then reports what each side built
-cd headless && dotnet run -- --test                  # scenario tests (repair truck, medic)
+cd headless && dotnet run -- --test                  # scenario tests (repair truck, medic, alerts, interruptible wait)
 cd headless && dotnet run -- --trace 2 --seed 23     # print one entity's state every second (debugging)
 cd headless && dotnet run -- --controllers llm,ai    # headless server for MCP clients
 /Applications/Unity/Hub/Editor/6000.3.25f1/Unity.app/Contents/MacOS/Unity \

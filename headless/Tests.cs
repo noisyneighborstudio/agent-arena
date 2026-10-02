@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net.Http;
+using System.Threading;
+using Pez.Api;
 using Pez.Sim;
 
 namespace Pez.Headless
@@ -32,6 +35,8 @@ namespace Pez.Headless
         {
             RepairTruck();
             Medic();
+            Alerts();
+            InterruptibleWait();
             Console.WriteLine(failures == 0 ? "\nAll tests passed." : $"\n{failures} test(s) FAILED.");
             return failures == 0 ? 0 : 1;
         }
@@ -97,6 +102,89 @@ namespace Pez.Headless
             Run(w, 25);
             Check(far.Hp >= far.Def.MaxHp - 1, $"medic travels to and heals a distant rifleman ({far.Hp:0}/{far.Def.MaxHp})");
             Check(medic.Order == Order.Idle, "medic goes idle once the patient is healed");
+        }
+        static Entity Enemy(World w, string key, Vec2 at)
+        {
+            var e = w.SpawnUnit(1, key, w.Owned(1).First(x => x.Def.Key == "command_center"));
+            e.Pos = e.PrevPos = e.GuardPos = at;
+            return e;
+        }
+
+        static void Alerts()
+        {
+            var w = new World(2, 7);
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            // Clear out the defenders so the raid actually reaches the building, and make the raid deliberate.
+            foreach (var d in w.Owned(0).Where(e => e.IsArmed).ToList()) w.Remove(d);
+            var raider = Enemy(w, "light_tank", hq.Center + new Vec2(4.5f, 0.5f));
+            w.UpdateVisibility(); // the raider was teleported in; let Red's fog catch up before ordering the attack
+            w.SetOrder(raider, Order.Attack, hq.Center, hq.Id);
+            var guard = w.SpawnUnit(0, "heavy_tank", hq);
+            guard.Pos = guard.PrevPos = guard.GuardPos = hq.Center + new Vec2(-14f, -3f); // out of range, but close enough to help
+            Run(w, 6);
+            var att = w.Alerts.Active(w, 0).Where(a => a.Kind == "base_under_attack").ToList();
+            Check(att.Count == 1 && att[0].Priority == Priority.Critical, $"enemy tank shelling the HQ raises one CRITICAL base_under_attack alert (got {att.Count})");
+            Check(att.Count == 1 && att[0].Count > 2, $"repeated hits merge into that alert ({(att.Count == 1 ? att[0].Count : 0)} hits)");
+            var text = att.Count == 1 ? AlertLog.Describe(w, att[0]) : "";
+            Console.WriteLine("      " + text);
+            Check(text.Contains("light_tank") && text.Contains("command_center"), "description names the attacker and the building being hit");
+            Check(text.Contains("your combat units within 18 tiles"), "description lists units that could respond");
+            Check(w.Alerts.Active(w, 0).Any(a => a.Kind == "enemy_near_base" && a.Priority == Priority.High), "enemy near base raises a HIGH alert");
+            Check(!w.Alerts.Active(w, 1).Any(a => a.Priority >= Priority.High), "the attacker's own side gets no priority alert for a fight it started");
+            var state = Json.Write(StateView.TeamState(w, 0));
+            Check(state.Contains("BASE UNDER ATTACK"), "get_state carries the alert");
+
+            // Ambush vs. a fight you picked.
+            var w2 = new World(2, 7);
+            var hq2 = w2.Owned(0).First(e => e.Def.Key == "command_center");
+            var mine = w2.SpawnUnit(0, "light_tank", hq2);
+            mine.Pos = mine.PrevPos = mine.GuardPos = new Vec2(40.5f, 40.5f);
+            w2.SetOrder(mine, Order.Move, new Vec2(41.5f, 40.5f)); // driving somewhere, not looking for a fight
+            Enemy(w2, "rocket_soldier", new Vec2(44.5f, 40.5f));
+            Run(w2, 4);
+            Check(w2.Alerts.Active(w2, 0).Any(a => a.Kind == "units_ambushed" && a.Priority == Priority.High), "a unit hit while moving raises HIGH units_ambushed");
+        }
+
+        static void InterruptibleWait()
+        {
+            var game = new Game(new GameConfig { Seed = 7, Controllers = new[] { "llm", "llm" } });
+            var api = new ApiServer(7799);
+            api.Start();
+            Entity raiderToPlace = null;
+            bool stop = false;
+            var loop = new Thread(() =>
+            {
+                var sw = System.Diagnostics.Stopwatch.StartNew(); double last = 0;
+                while (!stop)
+                {
+                    double now = sw.Elapsed.TotalSeconds;
+                    game.Advance((float)(now - last)); last = now;
+                    // All sim mutation happens on this thread, like the real host.
+                    if (now > 2 && raiderToPlace == null)
+                    {
+                        var hq = game.World.Owned(0).First(e => e.Def.Key == "command_center");
+                        raiderToPlace = Enemy(game.World, "light_tank", hq.Center + new Vec2(4.5f, 0.5f));
+                    }
+                    api.Pump(game);
+                    Thread.Sleep(5);
+                }
+            }) { IsBackground = true };
+            loop.Start();
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(40) };
+            var t0 = DateTime.UtcNow;
+            var body = http.GetStringAsync("http://127.0.0.1:7799/api/wait?team=0&seconds=25&since=0").Result;
+            double took = (DateTime.UtcNow - t0).TotalSeconds;
+            var r = (Dictionary<string, object>)Json.Parse(body);
+            Check(r["interrupted"] is bool b && b && took < 8, $"wait(25s) returns early when the base is attacked ({took:0.0}s)");
+            Check(body.Contains("BASE UNDER ATTACK") || body.Contains("ENEMY NEAR BASE"), "the interrupted wait carries the alert");
+            t0 = DateTime.UtcNow;
+            // Red is fighting too, so only a critical alert should cut its wait short; nothing critical happens to Red here.
+            body = http.GetStringAsync($"http://127.0.0.1:7799/api/wait?team=1&seconds=1.5&min=critical").Result;
+            took = (DateTime.UtcNow - t0).TotalSeconds;
+            r = (Dictionary<string, object>)Json.Parse(body);
+            Check(r["interrupted"] is bool b2 && !b2 && took >= 1.4 && took < 4, $"with nothing happening, wait runs its full time ({took:0.0}s)");
+            stop = true;
+            api.Stop();
         }
     }
 }

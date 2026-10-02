@@ -72,6 +72,7 @@ namespace Pez.Sim
         public readonly List<Entity> Entities = new List<Entity>();
         public readonly List<Projectile> Projectiles = new List<Projectile>();
         public readonly List<GameEvent> Events = new List<GameEvent>();
+        public readonly AlertLog Alerts = new AlertLog();
         public int Tick;
         public float Time => Tick * Dt;
         public bool GameOver;
@@ -663,6 +664,7 @@ namespace Pez.Sim
             if (Time - t.LastHitTime > 10f && (t.IsStructure || t.IsHarvester))
                 Emit("under_attack", t.Team, t.Id, src?.Id ?? 0, t.Center, key: t.Def.Key);
             t.LastHitTime = Time;
+            RaiseDamageAlert(t, src);
             // Retaliate if idle.
             if (src != null && !t.IsStructure && t.IsArmed && t.Order == Order.Idle && !src.Dead && t.Def.Weapon.CanHit(src.Def) && IsVisibleTo(t.Team, src))
                 SetOrder(t, Order.Attack, src.Pos, src.Id);
@@ -671,8 +673,24 @@ namespace Pez.Sim
                 Emit("destroyed", t.Team, t.Id, src?.Id ?? 0, t.Center, key: t.Def.Key);
                 if (team >= 0 && team < Teams.Count) Teams[team].Stats.Kills++;
                 if (t.IsStructure) Teams[t.Team].Stats.StructuresLost++; else Teams[t.Team].Stats.UnitsLost++;
+                var lost = Alerts.Raise(this, t.Team, t.IsStructure ? "structure_lost" : "units_lost", t.IsStructure ? Priority.Critical : Priority.Medium, t.Center, attacker: src);
+                lost.Lost.Add($"{t.Def.Key} #{t.Id}");
                 Remove(t);
             }
+        }
+
+        /// <summary>
+        /// Classify a hit the way a human commander would hear it: buildings and trucks under fire, or units
+        /// caught off guard, interrupt; fights the army picked on purpose are just a combat report.
+        /// </summary>
+        void RaiseDamageAlert(Entity t, Entity src)
+        {
+            string kind; Priority p;
+            if (t.IsStructure) { kind = "base_under_attack"; p = Priority.Critical; }
+            else if (t.IsHarvester) { kind = "harvester_under_attack"; p = Priority.High; }
+            else if (t.Order == Order.Attack || t.Order == Order.AttackMove) { kind = "combat"; p = Priority.Medium; }
+            else { kind = "units_ambushed"; p = Priority.High; }
+            Alerts.Raise(this, t.Team, kind, p, t.Center, t, src);
         }
 
         // ------------------------------------------------------------------ harvesting
@@ -879,6 +897,7 @@ namespace Pez.Sim
                         }
                 }
                 // Stealth units are only seen up close or inside one of this team's radar domes.
+                var wasDetected = new HashSet<int>(team.Detected);
                 team.Detected.Clear();
                 foreach (var s in Entities)
                 {
@@ -887,8 +906,20 @@ namespace Pez.Sim
                     {
                         if (o.Dead || o.Team != team.Id) continue;
                         float range = o.Def.Key == "radar_dome" && o.IsComplete ? 16f : 3f;
-                        if (Vec2.DistSq(o.Center, s.Pos) <= range * range) { team.Detected.Add(s.Id); break; }
+                        if (Vec2.DistSq(o.Center, s.Pos) <= range * range)
+                        {
+                            team.Detected.Add(s.Id);
+                            if (!wasDetected.Contains(s.Id)) Alerts.Raise(this, team.Id, "stealth_detected", Priority.Critical, s.Pos, attacker: s, hit: false);
+                            break;
+                        }
                     }
+                }
+                // Enemy forces showing up near any of this team's structures.
+                foreach (var e in Entities)
+                {
+                    if (e.Dead || e.Team == team.Id || e.IsStructure || e.IsHarvester || !IsVisibleTo(team.Id, e)) continue;
+                    if (Entities.Any(s => !s.Dead && s.Team == team.Id && s.IsStructure && s.DistFrom(e.Pos) <= 10f))
+                        Alerts.Raise(this, team.Id, "enemy_near_base", Priority.High, e.Pos, attacker: e, hit: false);
                 }
                 // Remember enemy structures that are in view; forget ones seen to be gone.
                 foreach (var e in Entities)

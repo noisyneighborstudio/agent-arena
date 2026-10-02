@@ -61,6 +61,7 @@ namespace Pez.View
 
             HealthBars();
             Scoreboard();
+            if (Team >= 0) AlertBanner(sw);
             Feed(sh);
             if (Team >= 0) { Sidebar(sw, sh); Selection(sw, sh); }
             else { sideRect = Rect.zero; SpectatorPanel(sw); }
@@ -134,6 +135,23 @@ namespace Pez.View
             }
         }
 
+        /// <summary>The human player's alarm: the newest high/critical alert, flashing; click to jump there.</summary>
+        void AlertBanner(float sw)
+        {
+            Alert top = null;
+            foreach (var a in W.Alerts.Active(W, Team))
+                if (a.Priority >= Priority.High && (W.Tick - a.LastTick) * World.Dt < 8f) { top = a; break; }
+            if (top == null) return;
+            bool crit = top.Priority == Priority.Critical;
+            float flash = crit ? 0.55f + Mathf.PingPong(Time.unscaledTime * 2.5f, 0.35f) : 0.75f;
+            var r = new Rect(sw / 2 - 230, 10, 460, 34);
+            Fill(r, crit ? new Color(0.55f, 0.04f, 0.03f, flash) : new Color(0.5f, 0.3f, 0.02f, flash));
+            var style = new GUIStyle(title) { alignment = TextAnchor.MiddleCenter, fontSize = 17 };
+            style.normal.textColor = Color.white;
+            if (GUI.Button(r, $"!! {AlertLog.Label(top.Kind)} ({(int)top.Pos.X},{(int)top.Pos.Y})  <size=11>click to view</size>", style))
+                Runner.Camera.LookAt(WorldView.W(top.Pos));
+        }
+
         static string FormatTime(float s) => $"{(int)s / 60:00}:{(int)s % 60:00}";
 
         void Feed(float sh)
@@ -144,6 +162,10 @@ namespace Pez.View
                 if (e.Type == "chat" || e.Type == "defeated" || e.Type == "game_over")
                     lines.Add((e.Tick * World.Dt, e.Type == "chat" ? $"{TeamTag(e.Team)}: {e.Text}" : $"<b>{e.Text}</b>"));
             foreach (var c in Runner.CommandFeed) lines.Add((c.time, $"<size=12><color=#aaa>{TeamTag(c.team)} ▸ {c.text}</color></size>"));
+            // Priority alarms in the feed: spectators see both sides' alarms (and how fast each commander reacts).
+            foreach (var a in W.Alerts.All)
+                if (a.Priority >= Priority.High && (Team < 0 || a.Team == Team))
+                    lines.Add((a.StartTick * World.Dt, $"<color=#{(a.Priority == Priority.Critical ? "ff5544" : "ffaa33")}>!! {TeamTag(a.Team)} {AlertLog.Label(a.Kind)} ({(int)a.Pos.X},{(int)a.Pos.Y})</color>"));
             var recent = lines.Where(l => W.Time - l.t < 30f).OrderBy(l => l.t).ToList();
             recent = recent.Skip(System.Math.Max(0, recent.Count - 9)).ToList();
             float y = sh - 16;
@@ -374,6 +396,20 @@ namespace Pez.View
             var f = Runner.Camera.Focus;
             var mp = new Vector2(miniRect.x + f.x / m.W * size, miniRect.y + (1 - f.z / m.H) * size);
             Fill(new Rect(mp.x - 3, mp.y - 3, 6, 6), Color.white);
+            // Pulsing pings where alerts are firing.
+            foreach (var a in W.Alerts.All)
+            {
+                float age = (W.Tick - a.LastTick) * World.Dt;
+                if (a.Priority < Priority.High || age > 6f || (Team >= 0 && a.Team != Team)) continue;
+                float pulse = 4f + Mathf.PingPong(Time.unscaledTime * 16f, 6f);
+                var c = Team >= 0 ? (a.Priority == Priority.Critical ? new Color(1f, 0.2f, 0.15f) : new Color(1f, 0.65f, 0.1f)) : Mats.Team(a.Team);
+                var ap = new Vector2(miniRect.x + a.Pos.X / m.W * size, miniRect.y + (1 - a.Pos.Y / m.H) * size);
+                c.a = 1f - age / 6f;
+                Fill(new Rect(ap.x - pulse, ap.y - pulse, pulse * 2, 2), c);
+                Fill(new Rect(ap.x - pulse, ap.y + pulse - 2, pulse * 2, 2), c);
+                Fill(new Rect(ap.x - pulse, ap.y - pulse, 2, pulse * 2), c);
+                Fill(new Rect(ap.x + pulse - 2, ap.y - pulse, 2, pulse * 2), c);
+            }
             var ev = Event.current;
             if ((ev.type == EventType.MouseDown || ev.type == EventType.MouseDrag) && ev.button == 0 && miniRect.Contains(ev.mousePosition))
             {

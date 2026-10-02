@@ -22,6 +22,20 @@ namespace Pez.Api
             public string Body;
         }
 
+        /// <summary>A parked /api/wait request: answered at its deadline, or early when a priority alert arrives.</summary>
+        class Waiter
+        {
+            public HttpListenerContext Ctx;
+            public World World;
+            public int Team;
+            public long AlertSince, EventSince;
+            public Priority Min;
+            public bool Interruptible;
+            public DateTime Started, Deadline;
+        }
+
+        readonly List<Waiter> waiters = new List<Waiter>();
+
         readonly HttpListener listener = new HttpListener();
         readonly ConcurrentQueue<Pending> queue = new ConcurrentQueue<Pending>();
         Thread thread;
@@ -86,9 +100,32 @@ namespace Pez.Api
                     status = 400;
                     payload = Json.Write(new JObj().Set("ok", false).Set("error", ex.Message));
                 }
-                Respond(p.Ctx, status, payload, contentType);
+                if (payload != null) Respond(p.Ctx, status, payload, contentType); // null = parked waiter
+            }
+            ServiceWaiters(game);
+        }
+
+        void ServiceWaiters(Game game)
+        {
+            var now = DateTime.UtcNow;
+            for (int i = waiters.Count - 1; i >= 0; i--)
+            {
+                var wt = waiters[i];
+                var w = game.World;
+                bool restarted = w != wt.World;
+                var fresh = restarted ? new List<Alert>() : w.Alerts.Since(wt.Team, wt.AlertSince, wt.Min).ToList();
+                bool interrupt = wt.Interruptible && fresh.Count > 0;
+                if (!interrupt && !restarted && now < wt.Deadline && !w.GameOver) continue;
+                waiters.RemoveAt(i);
+                Respond(wt.Ctx, 200, Json.Write(WaitResult(w, wt, interrupt, fresh, now)), "application/json");
             }
         }
+
+        static JObj WaitResult(World w, Waiter wt, bool interrupted, List<Alert> fresh, DateTime now) => new JObj()
+            .Set("interrupted", interrupted)
+            .Set("waited_s", (float)Math.Round((now - wt.Started).TotalSeconds, 1))
+            .Set("new_alerts", StateView.AlertsJson(w, fresh.OrderByDescending(a => a.Priority)))
+            .Set("state", StateView.TeamState(w, Math.Min(wt.Team, w.Teams.Count - 1), wt.EventSince));
 
         static int TeamParam(HttpListenerRequest req, World w)
         {
@@ -110,7 +147,7 @@ namespace Pez.Api
                 case "":
                 case "/api":
                     contentType = "text/plain";
-                    return "Pez RTS control API\n\nGET  /api/rules\nGET  /api/state?team=N[&since=SEQ]\nGET  /api/map?team=N\nPOST /api/command?team=N   body: {\"commands\":[...]} | [...] | {...}\nPOST /api/join?team=N      body: {\"name\":\"Claude\"}\nGET  /api/status\nPOST /api/admin/restart    body: {\"seed\":1,\"controllers\":[\"llm\",\"llm\"],\"speed\":1}\nPOST /api/admin/speed      body: {\"speed\":0.5}\n\n" + Commands.Help;
+                    return "Pez RTS control API\n\nGET  /api/rules\nGET  /api/state?team=N[&since=SEQ]\nGET  /api/map?team=N\nGET  /api/alerts?team=N[&since=SEQ&min=medium|high|critical]\nGET  /api/wait?team=N&seconds=S[&since=ALERT_SEQ&events_since=SEQ&min=high|critical|none]  (returns early on a new priority alert)\nPOST /api/command?team=N   body: {\"commands\":[...]} | [...] | {...}\nPOST /api/join?team=N      body: {\"name\":\"Claude\"}\nGET  /api/status\nPOST /api/admin/restart    body: {\"seed\":1,\"controllers\":[\"llm\",\"llm\"],\"speed\":1}\nPOST /api/admin/speed      body: {\"speed\":0.5}\n\n" + Commands.Help;
                 case "/api/rules":
                     return Json.Write(StateView.Rules());
                 case "/api/state":
@@ -118,6 +155,34 @@ namespace Pez.Api
                         int team = TeamParam(req, w);
                         long since = long.TryParse(req.QueryString["since"], out var s) ? s : 0;
                         return Json.Write(StateView.TeamState(w, team, since));
+                    }
+                case "/api/alerts":
+                    {
+                        int team = TeamParam(req, w);
+                        long since = long.TryParse(req.QueryString["since"], out var s) ? s : 0;
+                        var min = ParsePriority(req.QueryString["min"], Priority.Medium);
+                        return Json.Write(new JObj().Set("last_alert_seq", w.Alerts.LastSeq)
+                            .Set("new_alerts", StateView.AlertsJson(w, w.Alerts.Since(team, since, min).OrderByDescending(a => a.Priority)))
+                            .Set("active", StateView.AlertsJson(w, w.Alerts.Active(w, team))));
+                    }
+                case "/api/wait":
+                    {
+                        // Long-poll: let the game run for `seconds`, but come back early if a new alert at or
+                        // above `min` (default high) is raised for this team, the way a human hears "base under attack".
+                        int team = TeamParam(req, w);
+                        float secs = Math.Max(0.5f, Math.Min(60f, float.TryParse(req.QueryString["seconds"], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var sv) ? sv : 5f));
+                        var wt = new Waiter
+                        {
+                            Ctx = p.Ctx, World = w, Team = team,
+                            AlertSince = long.TryParse(req.QueryString["since"], out var a1) ? a1 : w.Alerts.LastSeq,
+                            EventSince = long.TryParse(req.QueryString["events_since"], out var e1) ? e1 : 0,
+                            Min = ParsePriority(req.QueryString["min"], Priority.High),
+                            Interruptible = req.QueryString["min"] != "none",
+                            Started = DateTime.UtcNow,
+                        };
+                        wt.Deadline = wt.Started.AddSeconds(secs);
+                        waiters.Add(wt);
+                        return null;
                     }
                 case "/api/map":
                     contentType = "text/plain";
@@ -185,6 +250,14 @@ namespace Pez.Api
                     return Json.Write(new JObj().Set("ok", false).Set("error", "not found; GET / for help"));
             }
         }
+
+        static Priority ParsePriority(string s, Priority def) => s switch
+        {
+            "medium" => Priority.Medium,
+            "high" => Priority.High,
+            "critical" => Priority.Critical,
+            _ => def,
+        };
 
         public static JObj Status(Game game)
         {

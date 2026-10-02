@@ -25,6 +25,11 @@ namespace Pez.Sim
                     .Set("start", $"{R(t.StartPos.X)},{R(t.StartPos.Y)}"))
                 .Set("map", $"{w.Map.W}x{w.Map.H} tiles; x grows east, y grows north");
 
+            // Alerts go near the top: they're what a commander should look at first.
+            var active = w.Alerts.Active(w, team).ToList();
+            o.Set("alerts", active.Count == 0 ? (object)"none" : active.Select(a => $"[#{a.Seq}] {AlertLog.Describe(w, a)}").ToList());
+            o.Set("last_alert_seq", w.Alerts.LastSeq);
+
             var enemies = w.Teams.Where(x => x.Id != team).Select(x => new JObj()
                 .Set("team", x.Id).Set("name", x.Name).Set("player", x.PlayerName ?? x.Controller)
                 .Set("defeated", x.Defeated)).ToList();
@@ -86,6 +91,10 @@ namespace Pez.Sim
             o.Set("last_event_seq", w.Events.Count > 0 ? w.Events[w.Events.Count - 1].Seq : 0);
             return o;
         }
+
+        public static List<object> AlertsJson(World w, IEnumerable<Alert> alerts) =>
+            alerts.Select(a => (object)new JObj().Set("seq", a.Seq).Set("priority", a.Priority.ToString().ToLowerInvariant()).Set("kind", a.Kind)
+                .Set("x", (int)a.Pos.X).Set("y", (int)a.Pos.Y).Set("text", AlertLog.Describe(w, a))).ToList();
 
         public static List<string> EventsFor(World w, int team, long sinceSeq, int max)
         {

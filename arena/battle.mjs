@@ -61,6 +61,7 @@ function prompt(team, player, continuation) {
     continuation ? "" : "Start with get_rules once, then get_state and get_map.",
     "Then loop until get_state shows game_over: true — read state, issue a batch of commands (economy, production, army orders), then wait a few seconds.",
     "The game runs in real time and never pauses for you, so keep turns short and batch several commands per call.",
+    "PRIORITY ALERTS: when a tool response starts with ⚠️ PRIORITY ALERT (your base, trucks or units under attack, enemies near your base, a stealth bomber detected), handle it first, the way a human commander would: send nearby combat units (the alert lists them), pull back trucks, repair, or build defenses. Then resume your plan. wait returns early when an alert fires, so long waits are safe.",
     "Win by destroying every enemy structure. The economy is a production chain: mining trucks mine four ore types into your stockpile, converter buildings refine them (steel, copper, circuits, lenses, plasma, composite), and higher tiers cost those materials. Assign trucks to the ores you need, keep power positive, expand with outpost trucks to claim more ore fields, defend what you own, scout through the fog, and attack.",
     "Use say occasionally to trash-talk your opponent; it shows on screen. Do not stop until the game is over.",
   ].filter(Boolean).join(" ");
