@@ -31,7 +31,7 @@ namespace Pez.Api
             public long AlertSince, EventSince;
             public int OrdersSince = -1;
             public Priority Min;
-            public bool Interruptible;
+            public bool Interruptible, Json;
             public DateTime Started, Deadline;
         }
 
@@ -135,9 +135,9 @@ namespace Pez.Api
         static JObj WaitResult(World w, Waiter wt, bool interrupted, List<Alert> fresh, DateTime now) => new JObj()
             .Set("interrupted", interrupted)
             .Set("waited_s", (float)Math.Round((now - wt.Started).TotalSeconds, 1))
-            .Set("new_alerts", StateView.AlertsJson(w, fresh.OrderByDescending(a => a.Priority)))
+            .Set("new_alerts", wt.Json ? fresh.OrderByDescending(a => a.Priority).Select(a => (object)StateData.Alert(w, a)).ToList() : StateView.AlertsJson(w, fresh.OrderByDescending(a => a.Priority)))
             .Set("orders_changed", wt.OrdersSince >= 0 && w.Teams.Count > wt.Team && w.Teams[wt.Team].OrdersVersion > wt.OrdersSince)
-            .Set("state", StateView.TeamState(w, Math.Min(wt.Team, w.Teams.Count - 1), wt.EventSince));
+            .Set("state", wt.Json ? StateData.Team(w, Math.Min(wt.Team, w.Teams.Count - 1), wt.EventSince) : StateView.TeamState(w, Math.Min(wt.Team, w.Teams.Count - 1), wt.EventSince));
 
         // ---- Player tokens (open arena). Control tokens act for one team; view tokens only read its fogged view.
         readonly Dictionary<string, (World world, int team, int seat)> controlTokens = new Dictionary<string, (World, int, int)>();
@@ -205,7 +205,7 @@ namespace Pez.Api
                     {
                         int team = TeamParam(req, w);
                         long since = long.TryParse(req.QueryString["since"], out var s) ? s : 0;
-                        return Json.Write(StateView.TeamState(w, team, since));
+                        return Json.Write(req.QueryString["format"] == "json" ? StateData.Team(w, team, since) : StateView.TeamState(w, team, since));
                     }
                 case "/api/alerts":
                     {
@@ -231,6 +231,7 @@ namespace Pez.Api
                             EventSince = long.TryParse(req.QueryString["events_since"], out var e1) ? e1 : 0,
                             Min = ParsePriority(req.QueryString["min"], Priority.High),
                             Interruptible = req.QueryString["min"] != "none",
+                            Json = req.QueryString["format"] == "json",
                             Started = DateTime.UtcNow,
                         };
                         wt.Deadline = wt.Started.AddSeconds(secs);
@@ -270,7 +271,7 @@ namespace Pez.Api
                     }
                 case "/api/lobby":
                     return Json.Write(new JObj()
-                        .Set("open", w.Open).Set("map", $"{w.Map.W}x{w.Map.H}").Set("max_map", w.MaxMapSize)
+                        .Set("open", w.Open).Set("rules_version", StateView.RulesVersion).Set("map", $"{w.Map.W}x{w.Map.H}").Set("max_map", w.MaxMapSize)
                         .Set("players", w.ActivePlayers).Set("max_players", w.MaxPlayers).Set("time_s", (float)Math.Round(w.Time, 1))
                         .Set("teams", w.Teams.Select(t => new JObj().Set("flavor", t.Name).Set("player", t.PlayerName ?? t.Controller)
                             .Set("status", t.Resigned ? "resigned" : t.Left ? "left" : t.Defeated ? "eliminated" : "playing").Set("house", t.House)

@@ -30,6 +30,12 @@ namespace Pez.Sim
         public int PathIdx;
         public float Cooldown;
         public float SpeedCap;        // moving as a group: no faster than the slowest member (0 = own speed)
+        // Queued waypoints for move / attack_move (taken in order; with WaypointLoop, forever, as a patrol).
+        public readonly List<Vec2> Waypoints = new List<Vec2>();
+        public bool WaypointLoop;
+        // Pull back to base on its own when HP drops below this fraction (0 = never). Stays set until changed.
+        public float RetreatBelow;
+        public bool Retreating;
         public float RepathTimer;
         public bool Moving;
         public int LastAttackerId;
@@ -65,6 +71,8 @@ namespace Pez.Sim
         public Order ResumeOrder;
         public Vec2 ResumePos, ResumeGuard;
         public int ResumeTarget;
+        public readonly List<Vec2> ResumeWaypoints = new List<Vec2>();
+        public float ResumeSpeedCap;
         public float FuelFraction => Def.Fuel > 0 ? Fuel / Def.Fuel : 1f;
 
         // Mine layers: where to put the remaining mines

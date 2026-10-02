@@ -17,6 +17,8 @@ namespace Pez.Sim
   {""type"":""move"", ""units"":[IDS], ""x"":X, ""y"":Y}     move, ignoring enemies
   {""type"":""attack_move"", ""units"":[IDS], ""x"":X, ""y"":Y}  move, engaging enemies on the way
       add ""together"":true to move or attack_move so the group keeps the slowest member's pace and arrives as one
+      add ""waypoints"":[[x,y],...] to queue more points (x/y optional: the first waypoint is used), and ""loop"":true to patrol them
+  {""type"":""set_retreat"", ""units"":[IDS], ""below_pct"":30}  units pull back to base on their own below that HP % (0 = off)
   {""type"":""attack"", ""units"":[IDS], ""target"":ID}     focus fire on a visible enemy
   {""type"":""stop"", ""units"":[IDS]}
   {""type"":""harvest"", ""units"":[IDS], ""x"":X, ""y"":Y}  send mining trucks to ore near x,y (they stick to that ore type)
@@ -63,6 +65,7 @@ namespace Pez.Sim
                     case "lay_mines": return LayMines(w, team, c);
                     case "rally": return Rally(w, team, c);
                     case "refuel": return Refuel(w, team, c);
+                    case "set_retreat": return SetRetreat(w, team, c);
                     case "sell": return Sell(w, team, c);
                     case "cancel": return Cancel(w, team, c);
                     case "say":
@@ -157,6 +160,12 @@ namespace Pez.Sim
             var units = ResolveUnits(w, team, c);
             if (units.Count == 0) return Err("no valid units of yours given (use ids from your unit list)");
             float x = c.Num("x"), y = c.Num("y");
+            // Queued waypoints: "waypoints":[[x,y],...] (after x,y if given, else starting with the first).
+            var waypoints = ParsePoints(c.TryGetValue("waypoints", out var wpRaw) ? wpRaw : null);
+            if (waypoints == null) return Err("waypoints must be a list like [[10,20],[30,40]] or [{\"x\":10,\"y\":20}]");
+            foreach (var p in waypoints) if (!w.Map.InBounds((int)p.X, (int)p.Y)) return Err($"waypoint ({p.X},{p.Y}) is outside the {w.Map.W}x{w.Map.H} map");
+            if ((order == Order.Move || order == Order.AttackMove) && float.IsNaN(x) && waypoints.Count > 0) { x = waypoints[0].X; y = waypoints[0].Y; waypoints.RemoveAt(0); }
+            bool loop = c.TryGetValue("loop", out var lp) && lp is bool lb && lb;
             if (order != Order.Idle && (float.IsNaN(x) || float.IsNaN(y)))
             {
                 if (order != Order.Harvest) return Err("x and y are required");
@@ -190,6 +199,11 @@ namespace Pez.Sim
                 var target = n > 1 && order != Order.Idle ? dest + off : dest;
                 if (u.IsHarvester && order == Order.AttackMove) { w.SetOrder(u, Order.Move, target); continue; }
                 w.SetOrder(u, order, order == Order.Idle ? u.Pos : target);
+                if (order == Order.Move || order == Order.AttackMove)
+                {
+                    foreach (var p in waypoints) u.Waypoints.Add(n > 1 ? p + off : p);
+                    u.WaypointLoop = loop && waypoints.Count > 0;
+                }
             }
             // Moving together: everyone keeps to the slowest member's pace so the group arrives as one.
             bool together = order != Order.Idle && n > 1 && c.TryGetValue("together", out var tg) && tg is bool tb && tb;
@@ -198,6 +212,7 @@ namespace Pez.Sim
             var low = units.Where(u => u.Def.UsesFuel && u.FuelFraction < 0.35f).ToList();
             return Ok($"{n} unit(s) {(order == Order.Idle ? "stopped" : order == Order.AttackMove ? "attack-moving" : "moving")}" +
                       (together ? $" together at {pace:0.0} tiles/s" : "") +
+                      (waypoints.Count > 0 ? $", then {waypoints.Count} more waypoint(s){(loop ? " on a loop" : "")}" : "") +
                       (low.Count > 0 ? $"; low fuel: {string.Join(", ", low.Select(u => $"#{u.Id} {(int)(u.FuelFraction * 100)}%"))} (they'll turn back to refuel when they must)" : ""));
         }
 
@@ -324,6 +339,33 @@ namespace Pez.Sim
             foreach (var u in able) w.SetOrder(u, Order.Repair, target.Center, target.Id);
             return Ok($"{able.Count} {(target.Def.Armor == Armor.Infantry ? "medic(s) healing" : "repair truck(s) repairing")} {target.Def.Key} #{target.Id} ({(int)target.Hp}/{target.Def.MaxHp})" +
                       (able.Count < healers.Count ? $"; {healers.Count - able.Count} can't work on that" : ""));
+        }
+
+        static JObj SetRetreat(World w, int team, Dictionary<string, object> c)
+        {
+            var units = ResolveUnits(w, team, c).Where(u => !u.IsMine).ToList();
+            if (units.Count == 0) return Err("no valid units of yours given");
+            float pct = c.Num("below_pct");
+            if (float.IsNaN(pct) || pct < 0 || pct > 95) return Err("below_pct must be 0-95 (0 turns it off)");
+            foreach (var u in units) { u.RetreatBelow = pct / 100f; if (pct == 0) u.Retreating = false; }
+            return Ok(pct == 0 ? $"{units.Count} unit(s) will fight to the end" : $"{units.Count} unit(s) will pull back to base on their own below {pct:0}% HP");
+        }
+
+        /// <summary>[[x,y],...] or [{"x":..,"y":..},...]; empty list if absent, null if malformed.</summary>
+        static List<Vec2> ParsePoints(object raw)
+        {
+            var list = new List<Vec2>();
+            if (raw == null) return list;
+            if (raw is not List<object> items || items.Count > 20) return null;
+            foreach (var it in items)
+            {
+                float px, py;
+                if (it is List<object> pair && pair.Count == 2) { px = Convert.ToSingle(pair[0]); py = Convert.ToSingle(pair[1]); }
+                else if (it is Dictionary<string, object> d && d.ContainsKey("x") && d.ContainsKey("y")) { px = Convert.ToSingle(d["x"]); py = Convert.ToSingle(d["y"]); }
+                else return null;
+                list.Add(new Vec2(px, py));
+            }
+            return list;
         }
 
         static JObj Refuel(World w, int team, Dictionary<string, object> c)

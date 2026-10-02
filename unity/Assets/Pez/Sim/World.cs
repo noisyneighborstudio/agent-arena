@@ -97,6 +97,16 @@ namespace Pez.Sim
         /// <summary>Open arena: seconds of protection a joiner gets to set up before they can be attacked.</summary>
         public float ProtectionSeconds = 300f;
 
+        /// <summary>A protected newcomer's starting ore (within this many tiles of their base) is theirs alone until protection ends.</summary>
+        public const float ReservedOreRadius = 16f;
+
+        public bool OreReserved(Int2 tile, int team)
+        {
+            foreach (var t in Teams)
+                if (t.Id != team && t.ProtectedUntil > Time && !t.Left && Vec2.Dist(tile.Center, t.StartPos) <= ReservedOreRadius) return true;
+            return false;
+        }
+
         public bool IsProtected(int team) => team >= 0 && team < Teams.Count && Teams[team].ProtectedUntil > Time;
         public static readonly string[] Flavors = { "Blueberry", "Cherry", "Lime", "Lemon", "Grape", "Blackberry", "Spearmint", "Plum" };
         public readonly List<Team> Teams = new List<Team>();
@@ -616,6 +626,8 @@ namespace Pez.Sim
             if (o == Order.Idle) e.GuardPos = e.Pos;
             e.Responding = false; // any new order (from a commander or the response itself) replaces the old one
             e.SpeedCap = 0;
+            e.Waypoints.Clear(); e.WaypointLoop = false;
+            e.Retreating = false;
             if (o == Order.Harvest && e.IsHarvester)
             {
                 var t = Int2.Of(pos);
@@ -651,7 +663,7 @@ namespace Pez.Sim
                 try
                 {
                     if (e.IsMine) { MineTick(e); continue; }
-                    if (!e.IsStructure) { UpdateUnit(e); if (e.Def.UsesFuel && !e.Dead) UpdateFuel(e); }
+                    if (!e.IsStructure) { CheckRetreat(e); UpdateUnit(e); if (e.Def.UsesFuel && !e.Dead) UpdateFuel(e); }
                     else if (e.IsArmed && e.IsComplete) UpdateTurret(e);
                 }
                 catch (Exception ex)
@@ -809,16 +821,16 @@ namespace Pez.Sim
                     if (e.IsArmed && !e.Dead) OpportunisticFire(e);
                     break;
                 case Order.Move:
-                    if (FollowPath(e, e.OrderPos, 0.3f)) SetOrder(e, Order.Idle, e.Pos);
+                    if (FollowPath(e, e.OrderPos, 0.3f) && !NextWaypoint(e)) { bool back = e.Retreating; SetOrder(e, Order.Idle, e.Pos); e.Retreating = back; }
                     if (e.IsArmed && (e.Def.Armor == Armor.Vehicle || e.IsAir)) OpportunisticFire(e);
                     break;
                 case Order.AttackMove:
                     {
                         // Unarmed units (medics, repair trucks...) swept up in an attack-move just travel.
-                        if (!e.IsArmed) { if (FollowPath(e, e.OrderPos, 0.5f)) FinishOrder(e); break; }
+                        if (!e.IsArmed) { if (FollowPath(e, e.OrderPos, 0.5f) && !NextWaypoint(e)) FinishOrder(e); break; }
                         var t = AcquireTarget(e, e.Def.Sight);
                         if (t != null) { Engage(e, t); break; }
-                        if (FollowPath(e, e.OrderPos, 0.5f)) FinishOrder(e);
+                        if (FollowPath(e, e.OrderPos, 0.5f) && !NextWaypoint(e)) FinishOrder(e);
                         break;
                     }
                 case Order.Attack:
@@ -842,6 +854,37 @@ namespace Pez.Sim
                     UpdateHarvester(e);
                     break;
             }
+        }
+
+        /// <summary>Arrived: head for the next queued waypoint (same kind of order), keeping the group pace. False if none.</summary>
+        bool NextWaypoint(Entity e)
+        {
+            if (e.Waypoints.Count == 0) return false;
+            var next = e.Waypoints[0];
+            var rest = e.Waypoints.Skip(1).ToList();
+            bool loop = e.WaypointLoop; float cap = e.SpeedCap;
+            if (loop) rest.Add(e.OrderPos);
+            SetOrder(e, e.Order, next);
+            e.Waypoints.AddRange(rest); e.WaypointLoop = loop; e.SpeedCap = cap;
+            return true;
+        }
+
+        /// <summary>Units told to pull back below an HP threshold head for the nearest base building on their own.</summary>
+        void CheckRetreat(Entity e)
+        {
+            if (e.RetreatBelow <= 0 || e.Retreating || e.Hp >= e.Def.MaxHp * e.RetreatBelow || (Tick + e.Id) % 5 != 0) return;
+            Entity home = null; float bd = float.MaxValue;
+            foreach (var s in Owned(e.Team))
+            {
+                if (!s.IsStructure || !s.IsComplete) continue;
+                float d = Vec2.DistSq(s.Center, e.Pos) - (s.Def.FuelDepot ? 100f : 0f); // prefer real bases over a lone turret
+                if (d < bd) { bd = d; home = s; }
+            }
+            if (home == null || home.DistFrom(e.Pos) < 4f) return;
+            SetOrder(e, Order.Move, e.IsAir ? home.Center : DockPoint(home));
+            e.Retreating = true;
+            Emit("retreating", e.Team, e.Id, home.Id, e.Pos, key: e.Def.Key,
+                 text: $"{e.Def.Key} #{e.Id} fell below {(int)(e.RetreatBelow * 100)}% HP ({(int)e.Hp}/{e.Def.MaxHp}) and is pulling back to {home.Def.Key} #{home.Id}");
         }
 
         void IdleCombat(Entity e)
@@ -1205,13 +1248,14 @@ namespace Pez.Sim
                 // A partly loaded truck can only take more of the same ore.
                 int want = e.Cargo > 0 ? e.CargoType : e.HarvestType;
                 bool tileGood = e.HarvestTile.HasValue && Map.OreAt(e.HarvestTile.Value.X, e.HarvestTile.Value.Y) > 0 &&
-                                (want < 0 || Map.OreType[Map.Idx(e.HarvestTile.Value.X, e.HarvestTile.Value.Y)] == want);
+                                (want < 0 || Map.OreType[Map.Idx(e.HarvestTile.Value.X, e.HarvestTile.Value.Y)] == want) &&
+                                !OreReserved(e.HarvestTile.Value, e.Team);
                 if (!tileGood)
                 {
                     var from = e.HarvestTile.HasValue ? e.HarvestTile.Value.Center : e.Pos;
                     // Spread trucks out: avoid tiles another truck is already working.
-                    e.HarvestTile = Map.NearestOre(from, 40, t => !Entities.Any(o => o != e && !o.Dead && o.IsHarvester && o.HarvestTile.HasValue && o.HarvestTile.Value.Equals(t)), want)
-                                    ?? Map.NearestOre(from, 80, null, want);
+                    e.HarvestTile = Map.NearestOre(from, 40, t => !OreReserved(t, e.Team) && !Entities.Any(o => o != e && !o.Dead && o.IsHarvester && o.HarvestTile.HasValue && o.HarvestTile.Value.Equals(t)), want)
+                                    ?? Map.NearestOre(from, 80, t => !OreReserved(t, e.Team), want);
                     e.Path = null;
                     if (!e.HarvestTile.HasValue)
                     {
@@ -1362,6 +1406,8 @@ namespace Pez.Sim
             if (e.Order != Order.Refuel)
             {
                 e.ResumeOrder = e.Order; e.ResumePos = e.OrderPos; e.ResumeTarget = e.TargetId; e.ResumeGuard = e.GuardPos;
+                e.ResumeWaypoints.Clear(); e.ResumeWaypoints.AddRange(e.Waypoints); e.ResumeSpeedCap = e.SpeedCap;
+                if (e.WaypointLoop) e.ResumeWaypoints.Add(new Vec2(float.NaN, 0)); // marker: it was a patrol
             }
             SetOrder(e, Order.Refuel, p.Center, p.Id);
         }
@@ -1406,6 +1452,8 @@ namespace Pez.Sim
             else
             {
                 e.Order = o; e.OrderPos = e.ResumePos; e.TargetId = e.ResumeTarget; e.GuardPos = e.ResumeGuard; e.Path = null; e.RepathTimer = 0;
+                e.WaypointLoop = e.ResumeWaypoints.RemoveAll(p => float.IsNaN(p.X)) > 0;
+                e.Waypoints.Clear(); e.Waypoints.AddRange(e.ResumeWaypoints); e.SpeedCap = e.ResumeSpeedCap;
                 if (o == Order.Attack && Get(e.TargetId) == null) FinishOrder(e);
             }
             e.ResumeOrder = Order.Idle;
@@ -1616,6 +1664,53 @@ namespace Pez.Sim
             }
         }
 
+        // ------------------------------------------------------------------ radar
+
+        /// <summary>How far a radar dome picks up enemy aircraft as blips (beyond what it can actually see).</summary>
+        public const float RadarRange = 28f;
+        readonly Dictionary<(int team, int id), float> airWarned = new Dictionary<(int, int), float>();
+
+        /// <summary>Enemy aircraft on this team's radar: within range of a working radar dome, not stealthed, not in plain sight.</summary>
+        public List<Entity> RadarContacts(int team)
+        {
+            var domes = Entities.Where(s => !s.Dead && s.Team == team && s.IsStructure && s.IsComplete && s.Def.Key == "radar_dome").ToList();
+            var list = new List<Entity>();
+            if (domes.Count == 0 || Teams[team].LowPower) return list;
+            foreach (var e in Entities)
+                if (!e.Dead && e.IsAir && e.Team != team && !e.IsCarried && !e.Landed && (!e.Def.Stealth || IsVisibleTo(team, e)) &&
+                    domes.Any(d => Vec2.Dist(d.Center, e.Pos) <= RadarRange))
+                    list.Add(e);
+            return list;
+        }
+
+        /// <summary>Early warning: enemy aircraft on radar raise an alert (high if they're close to your base).</summary>
+        void CheckRadar()
+        {
+            if (Tick % TickRate != 0) return;
+            foreach (var t in Teams)
+            {
+                if (t.Defeated || t.Left) continue;
+                foreach (var a in RadarContacts(t.Id))
+                {
+                    if (airWarned.TryGetValue((t.Id, a.Id), out var at) && Time - at < 20f) continue;
+                    airWarned[(t.Id, a.Id)] = Time;
+                    bool close = Entities.Any(s => !s.Dead && s.Team == t.Id && s.IsStructure && s.DistFrom(a.Pos) <= 14f);
+                    Alerts.Raise(this, t.Id, "air_contact", close ? Priority.High : Priority.Medium, a.Pos, attacker: a, hit: false)
+                          .Lost.Add($"{(a.IsArmed ? "armed " : "")}enemy aircraft heading {Heading(a)}");
+                }
+            }
+            if (airWarned.Count > 500) foreach (var k in airWarned.Where(kv => Time - kv.Value > 60).Select(kv => kv.Key).ToList()) airWarned.Remove(k);
+        }
+
+        static string Heading(Entity a)
+        {
+            var d = a.Pos - a.PrevPos;
+            if (d.Length < 1e-4f) return "nowhere (hovering)";
+            string[] names = { "east", "north-east", "north", "north-west", "west", "south-west", "south", "south-east" };
+            int i = (int)MathF.Round(MathF.Atan2(d.Y, d.X) / (MathF.PI / 4)); // y grows north
+            return names[((i % 8) + 8) % 8];
+        }
+
         /// <summary>Seconds a team may go without any way to make progress before it's resigned as lost.</summary>
         public float StallGrace = 90f;
 
@@ -1685,6 +1780,7 @@ namespace Pez.Sim
         {
             CheckProtection();
             CheckStalled();
+            CheckRadar();
             if (Open)
             {
                 // An open arena never ends: teams that lose every structure are out, everyone else plays on.
