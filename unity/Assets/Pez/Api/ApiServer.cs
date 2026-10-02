@@ -49,6 +49,10 @@ namespace Pez.Api
         public Action<string> OnScreenshot;
         /// <summary>Host-provided camera hook: {"x","y","distance","yaw","edge_pan":false}.</summary>
         public Action<Dictionary<string, object>> OnCamera;
+        /// <summary>Host hook: POST /api/admin/restart started a fresh game (the host drops its saved snapshot).</summary>
+        public Action OnRestart;
+        /// <summary>Host hook: POST /api/admin/save writes the snapshot now (before a planned restart). Returns the result.</summary>
+        public Func<JObj> OnSave;
 
         public ApiServer(int port) { Port = port; }
 
@@ -142,6 +146,36 @@ namespace Pez.Api
         // ---- Player tokens (open arena). Control tokens act for one team; view tokens only read its fogged view.
         readonly Dictionary<string, (World world, int team, int seat)> controlTokens = new Dictionary<string, (World, int, int)>();
         readonly Dictionary<string, (World world, int team, int seat)> viewTokens = new Dictionary<string, (World, int, int)>();
+        /// <summary>Bumped whenever a token is issued, so the host saves soon after a join (a restart mustn't lose a new seat).</summary>
+        public int TokensVersion { get; private set; }
+
+        /// <summary>The live tokens for this world, for the game snapshot (a resumed game keeps everyone's tokens).</summary>
+        public List<object> SaveTokens(World w)
+        {
+            var list = new List<object>();
+            foreach (var (kind, table) in new[] { ("control", controlTokens), ("view", viewTokens) })
+                foreach (var kv in table)
+                    if (kv.Value.world == w) list.Add(new JObj().Set("token", kv.Key).Set("kind", kind).Set("team", kv.Value.team).Set("seat", kv.Value.seat));
+            return list;
+        }
+
+        /// <summary>Re-issue saved tokens for a restored world. Returns how many were restored.</summary>
+        public int RestoreTokens(World w, List<object> saved)
+        {
+            int n = 0;
+            if (saved == null) return 0;
+            foreach (var o in saved)
+            {
+                if (!(o is Dictionary<string, object> d)) continue;
+                var token = d.Str("token");
+                int team = (int)d.Num("team", -1), seat = (int)d.Num("seat", -1);
+                if (string.IsNullOrEmpty(token) || team < 0 || team >= w.Teams.Count) continue;
+                (d.Str("kind") == "view" ? viewTokens : controlTokens)[token] = (w, team, seat);
+                n++;
+            }
+            TokensVersion++;
+            return n;
+        }
 
         static string NewToken()
         {
@@ -198,7 +232,7 @@ namespace Pez.Api
                 case "":
                 case "/api":
                     contentType = "text/plain";
-                    return "Pezz RTS control API\n\nGET  /api/rules\nGET  /api/state?team=N[&since=SEQ]\nGET  /api/map?team=N\nGET  /api/alerts?team=N[&since=SEQ&min=medium|high|critical]\nGET  /api/wait?team=N&seconds=S[&since=ALERT_SEQ&events_since=SEQ&min=high|critical|none]  (returns early on a new priority alert)\nPOST /api/command?team=N   body: {\"commands\":[...]} | [...] | {...}\nPOST /api/join?team=N      body: {\"name\":\"Claude\"}\nGET  /api/status\nPOST /api/admin/restart    body: {\"seed\":1,\"map_size\":112,\"controllers\":[\"llm\",\"llm\"],\"speed\":1}\nPOST /api/admin/speed      body: {\"speed\":0.5}\nPOST /api/admin/orders?team=N  body: {\"text\":\"standing orders for that team's commander\"}\n\n" + Commands.Help;
+                    return "Pezz RTS control API\n\nGET  /api/rules\nGET  /api/state?team=N[&since=SEQ]\nGET  /api/map?team=N\nGET  /api/alerts?team=N[&since=SEQ&min=medium|high|critical]\nGET  /api/wait?team=N&seconds=S[&since=ALERT_SEQ&events_since=SEQ&min=high|critical|none]  (returns early on a new priority alert)\nPOST /api/command?team=N   body: {\"commands\":[...]} | [...] | {...}\nPOST /api/join?team=N      body: {\"name\":\"Claude\"}\nGET  /api/status\nPOST /api/admin/restart    body: {\"seed\":1,\"map_size\":112,\"controllers\":[\"llm\",\"llm\"],\"speed\":1}\nPOST /api/admin/speed      body: {\"speed\":0.5}\nPOST /api/admin/save       (saves the game now; a restarted host resumes it)\nPOST /api/admin/orders?team=N  body: {\"text\":\"standing orders for that team's commander\"}\n\n" + Commands.Help;
                 case "/api/rules":
                     return Json.Write(StateView.Rules());
                 case "/api/state":
@@ -255,6 +289,7 @@ namespace Pez.Api
                         var token = NewToken(); var view = NewToken();
                         controlTokens[token] = (w, team.Id, team.Seat);
                         viewTokens[view] = (w, team.Id, team.Seat);
+                        TokensVersion++;
                         Log($"Player joined: {name} as {team.Name} (team {team.Id}); map now {w.Map.W}x{w.Map.H}");
                         return Json.Write(new JObj().Set("ok", true).Set("token", token).Set("view_token", view)
                             .Set("team", team.Id).Set("flavor", team.Name).Set("name", name)
@@ -355,7 +390,16 @@ namespace Pez.Api
                         if (d != null && d.TryGetValue("orders", out var os) && os is List<object> ol) cfg.Orders = ol.Select(x => x?.ToString() ?? "").ToArray();
                         else cfg.Orders = game.Config.Orders;
                         game.Restart(cfg);
+                        OnRestart?.Invoke();
                         return Json.Write(new JObj().Set("ok", true).Set("seed", cfg.Seed).Set("map_size", game.World.Map.W).Set("ore_scale", cfg.OreScale).Set("controllers", cfg.Controllers.ToList()));
+                    }
+                case "/api/admin/save":
+                    {
+                        // Host-only: save the game now (e.g. right before stopping the host for a new build).
+                        if (OnSave == null) { status = 501; return "{\"ok\":false,\"error\":\"this host doesn't save games\"}"; }
+                        var r = OnSave();
+                        if (!(r["ok"] is bool sok && sok)) status = 500;
+                        return Json.Write(r);
                     }
                 case "/api/admin/screenshot":
                     {
@@ -548,9 +592,10 @@ namespace Pez.Api
                 .Set("tick", w.Tick).Set("time_s", (float)Math.Round(w.Time, 1))
                 .Set("speed", game.Speed).Set("paused", game.Paused).Set("map_size", w.Map.W)
                 .Set("game_over", w.GameOver).Set("winner", w.Winner)
+                .Set("resumed_from", game.ResumedFrom).Set("last_saved", game.LastSaved)
                 .Set("sim_errors", w.Errors).Set("last_sim_error", w.LastError).Set("render_fps", MathF.Round(game.RenderFps, 1))
                 .Set("teams", w.Teams.Select(t => new JObj()
-                    .Set("team", t.Id).Set("name", t.Name).Set("controller", t.Controller).Set("player", t.PlayerName)
+                    .Set("team", t.Id).Set("seat", t.Seat).Set("name", t.Name).Set("controller", t.Controller).Set("player", t.PlayerName)
                     .Set("stockpile", StateView.Stockpile(t)).Set("defeated", t.Defeated)
                     .Set("structures", w.Owned(t.Id).Count(e => e.IsStructure)).Set("units", w.Owned(t.Id).Count(e => !e.IsStructure))
                     .Set("kills", t.Stats.Kills).Set("ore_mined", t.Stats.OreMined)).ToList())

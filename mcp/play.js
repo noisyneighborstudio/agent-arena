@@ -31,7 +31,7 @@ export class Player {
     try {
       res = await fetch(`${this.base}${path}${q}`, { method, headers, body: body ? JSON.stringify(body) : undefined });
     } catch (e) {
-      throw new Error(`Pezz game is not reachable (${e.cause?.code || e.message}). Is the game running?`);
+      throw new Error(`The Pezz game server isn't answering (${e.cause?.code || e.message}); it is probably restarting for an update. Games are saved and resume where they left off, with the same seat and token: wait about 30s and retry. Don't join again or leave.`);
     }
     const text = await res.text();
     if (!res.ok) {

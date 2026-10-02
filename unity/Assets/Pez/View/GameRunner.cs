@@ -10,6 +10,8 @@ namespace Pez.View
     /// Owns the Game, the HTTP API and the view. Created automatically at startup (see Bootstrap),
     /// so the project needs no authored scene content.
     /// Command line: -team0 human|ai|claude|codex|llm -team1 ... -model0 sonnet -effort0 medium -orders0 "text" -seed N -mapsize 80 -open -port 7777 -speed 1 -autostart
+    ///               -resume (resume the saved game; an -open arena does by default) -fresh (discard it) -snapshot path
+    /// The running game is saved to ~/.config/pezz/rooms/game-PORT.json (see RoomSaver), so a relaunch picks it up.
     /// </summary>
     public class GameRunner : MonoBehaviour
     {
@@ -35,6 +37,8 @@ namespace Pez.View
         World viewWorld;
         bool startingFromMenu;
         bool firstView = true;
+        RoomSaver saver;
+        bool resumed;
 
         void Awake()
         {
@@ -46,6 +50,17 @@ namespace Pez.View
             InMenu = !autostart;
             SetupScene();
             StartApi();
+            // A saved game for this port (a new build swapped in, or the app restarted): carry on with it.
+            var args = System.Environment.GetCommandLineArgs();
+            int si = System.Array.IndexOf(args, "-snapshot");
+            saver = new RoomSaver(si >= 0 && si + 1 < args.Length ? args[si + 1] : RoomSaver.DefaultFile(Port)) { Log = Debug.Log };
+            resumed = saver.TryResume(Game, Api, args.Contains("-resume"), MenuConfig.Open && autostart, args.Contains("-fresh"));
+            if (resumed) InMenu = false;
+            if (Api != null)
+            {
+                Api.OnRestart = () => saver.Forget(Game);
+                Api.OnSave = () => saver.Save(Game, Api, "requested");
+            }
         }
 
         GameConfig ParseArgs(out bool autostart)
@@ -183,6 +198,7 @@ namespace Pez.View
         public void StartGame(GameConfig cfg)
         {
             StopAgents();
+            saver?.Forget(Game); // a new game replaces the saved one
             startingFromMenu = true;
             // The sim only knows "llm"; which CLI plays is the launcher's business.
             var simControllers = cfg.Controllers.Select(c => AgentClis.Contains(c) ? "llm" : c).ToArray();
@@ -344,7 +360,16 @@ namespace Pez.View
 
         void Start()
         {
-            if (!InMenu) StartGame(MenuConfig); // -autostart, including launching any agent CLIs
+            if (resumed) ResumeSession();
+            else if (!InMenu) StartGame(MenuConfig); // -autostart, including launching any agent CLIs
+        }
+
+        /// <summary>The saved game is already loaded: bring back the in-app agents and the gateway around it.</summary>
+        void ResumeSession()
+        {
+            startingFromMenu = true;
+            if (MenuConfig.Controllers.Any(c => AgentClis.Contains(c))) LaunchAgents(MenuConfig.Controllers);
+            if (Game.Config.Open) LaunchGateway();
         }
 
         void Update()
@@ -355,13 +380,18 @@ namespace Pez.View
             {
                 if (UnityEngine.Input.GetKeyDown(KeyCode.Pause) || (UnityEngine.Input.GetKeyDown(KeyCode.P) && HumanTeam < 0 && !Hud.Typing)) Game.Paused = !Game.Paused;
                 Game.Advance(Time.deltaTime);
+                saver?.Tick(Game, Api);
             }
             if (Time.unscaledDeltaTime > 0) Game.RenderFps = Mathf.Lerp(Game.RenderFps, 1f / Time.unscaledDeltaTime, 0.05f);
             View.Sync(Game.Alpha);
         }
 
         void OnDestroy() { StopAgents(); StopGateway(); Api?.Stop(); }
-        void OnApplicationQuit() { StopAgents(); StopGateway(); Api?.Stop(); }
+        void OnApplicationQuit()
+        {
+            if (!InMenu) saver?.Save(Game, Api, "quit");
+            StopAgents(); StopGateway(); Api?.Stop();
+        }
     }
 
     public static class Bootstrap

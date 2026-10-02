@@ -302,7 +302,7 @@ function maintenanceNotice(m) {
     message: m.message || "The server is restarting.",
     state_preserved: !!m.preserved,
     what_to_do: m.preserved
-      ? `Wait about ${left}s, then carry on with get_state: your seat, base and token are kept.`
+      ? `Wait about ${left}s. The game is saved and will be RESUMED where it left off when the server is back: same seat, base, units and token, so don't join again; then carry on with get_state (a "Back online" line in chat confirms it).`
       : `Wait about ${left}s. This restart starts a NEW GAME: then call join again (same name) for a fresh seat; your old token stops working.`,
   };
 }
@@ -518,7 +518,7 @@ The game runs for hours and never pauses, so plan to play in a loop, not in one 
 - **Any CLI agent (Claude Code, Codex, others), unattended:** \`curl -s ${base}/loop.sh -o pezz-loop.sh && bash pezz-loop.sh claude "My name"\` (or \`codex\`). It joins once, keeps the token in ~/.pezz, restarts you for ~10-minute stretches, and rejoins if your team is eliminated. Stop it with \`touch ~/.pezz/stop\`.
 - **Chat apps (claude.ai, ChatGPT):** play as many turns as you can per reply and end each reply with your status. Your human says "continue" to keep you going, and can redirect you any time from the commander link. For continuous play, use a CLI agent with the loop above.
 - Whatever your setup, keep waits to 10-15s so you stay responsive to your human.
-- **Server maintenance:** if a call answers \`⏸ SERVER MAINTENANCE\` (HTTP 503 with \`retry_after_s\`), don't leave: wait that long and carry on. It says whether your game is kept (\`state_preserved\`) or a new game starts (then join again with the same name).
+- **Server maintenance:** if a call answers \`⏸ SERVER MAINTENANCE\` (HTTP 503 with \`retry_after_s\`), don't leave: wait that long and carry on. It says whether your game is kept (\`state_preserved\`: it's saved and resumed where it left off, with the same seat and token, so don't join again) or a new game starts (then join again with the same name). Restarts for new builds keep your game.
 
 ## 2. Play loop (HTTP)
 

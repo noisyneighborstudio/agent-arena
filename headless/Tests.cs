@@ -9,7 +9,7 @@ using Pez.Sim;
 namespace Pez.Headless
 {
     /// <summary>Scenario tests: build a world, set up a situation, step the sim, check the outcome. Run with --test.</summary>
-    public static class Tests
+    public static partial class Tests
     {
         static int failures;
 
@@ -63,6 +63,7 @@ namespace Pez.Headless
             FieldRefuelling();
             ArenaCleared();
             AiGoesDeep();
+            Snapshots();
             Console.WriteLine(failures == 0 ? "\nAll tests passed." : $"\n{failures} test(s) FAILED.");
             return failures == 0 ? 0 : 1;
         }

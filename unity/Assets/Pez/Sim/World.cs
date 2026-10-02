@@ -91,7 +91,7 @@ namespace Pez.Sim
         public bool LowPower => PowerUsed > PowerProduced;
     }
 
-    public class World
+    public partial class World
     {
         public const int TickRate = 20;
         public const float Dt = 1f / TickRate;
@@ -506,7 +506,7 @@ namespace Pez.Sim
             return e;
         }
 
-        readonly Random rng = new Random(42);
+        SimRng rng = new SimRng(42); // serializable, so a resumed game draws the same numbers
 
         void OnStructureComplete(Entity e)
         {

@@ -7,7 +7,7 @@ namespace Pez.Sim
     /// A scripted opponent that climbs the tech tree, balances ore types, expands with outposts and
     /// attacks in waves. Uses only Commands.Execute (plus reading its own fogged view), like everyone else.
     /// </summary>
-    public class SimpleAI
+    public partial class SimpleAI
     {
         readonly int team;
         /// <summary>House AI in an open arena: builds and defends, never attacks.</summary>

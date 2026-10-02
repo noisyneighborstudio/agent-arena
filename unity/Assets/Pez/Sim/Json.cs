@@ -122,6 +122,7 @@ namespace Pez.Sim
                 case null: sb.Append("null"); break;
                 case string str: WriteString(sb, str); break;
                 case bool b: sb.Append(b ? "true" : "false"); break;
+                case JExact x: sb.Append(x.Text); break;
                 case float f: sb.Append(Math.Round(f, 2).ToString(CultureInfo.InvariantCulture)); break;
                 case double d: sb.Append(Math.Round(d, 2).ToString(CultureInfo.InvariantCulture)); break;
                 case int n: sb.Append(n.ToString(CultureInfo.InvariantCulture)); break;
@@ -191,6 +192,16 @@ namespace Pez.Sim
             if (v is List<object> l) foreach (var o in l) if (o is double x) r.Add((int)x);
             return r;
         }
+    }
+
+    /// <summary>
+    /// A number written exactly as given (Write rounds floats to 2 decimals for readability). Saved games use it so
+    /// every float reads back bit-for-bit.
+    /// </summary>
+    public readonly struct JExact
+    {
+        public readonly string Text;
+        public JExact(string text) { Text = text; }
     }
 
     /// <summary>Ordered string-keyed object for JSON output (keeps field order stable for LLM readability).</summary>

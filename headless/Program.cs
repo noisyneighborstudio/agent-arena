@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Threading;
 using Pez.Api;
 using Pez.Sim;
@@ -11,6 +12,9 @@ namespace Pez.Headless
     /// pez-headless [--port 7777] [--controllers llm,ai] [--seed N] [--map-size 80] [--speed 1] [--selftest]
     ///              [--open [--max-players 8] [--max-map-size 320] [--house-ais 1] [--house-resign-above 5]]
     ///              open arena: outside agents join through the gateway; scripted "house" seats are passive and make room
+    ///              [--resume | --fresh] [--snapshot ~/.config/pezz/rooms/game-PORT.json] [--save-interval 30]
+    ///              the game is saved every 30 game-seconds, soon after a join, on POST /api/admin/save and on SIGTERM/SIGINT;
+    ///              --resume restores the saved game at startup (an --open arena does by default; --fresh starts over)
     /// Runs the game with no graphics. LLMs connect over the HTTP API (usually via the MCP server).
     /// --selftest plays AI vs AI as fast as possible and prints the result.
     /// </summary>
@@ -38,21 +42,37 @@ namespace Pez.Headless
             if (args.Contains("--trace")) return Trace(cfg, int.Parse(Arg("--trace", "1")), float.Parse(Arg("--seconds", "60")));
 
             var game = new Game(cfg);
-            var api = new ApiServer(int.Parse(Arg("--port", "7777"))) { Log = Console.WriteLine };
+            int port = int.Parse(Arg("--port", "7777"));
+            var api = new ApiServer(port) { Log = Console.WriteLine };
             api.OnCommand = (team, cmd, res) => Console.WriteLine($"[{game.World.Time,6:0.0}s] team{team} {cmd} -> {res}");
+            var saver = new RoomSaver(Arg("--snapshot", RoomSaver.DefaultFile(port)))
+            {
+                Log = Console.WriteLine,
+                IntervalSeconds = float.Parse(Arg("--save-interval", "30"), System.Globalization.CultureInfo.InvariantCulture),
+            };
+            bool resumed = saver.TryResume(game, api, args.Contains("--resume"), cfg.Open, args.Contains("--fresh"));
+            api.OnRestart = () => saver.Forget(game);
+            api.OnSave = () => saver.Save(game, api, "requested");
             api.Start();
-            Console.WriteLine($"Headless game: seed {cfg.Seed}, controllers [{string.Join(",", cfg.Controllers)}], speed {cfg.Speed}");
+            Console.WriteLine(resumed
+                ? $"Headless game resumed at {game.World.Time:0}s: controllers [{string.Join(",", game.Config.Controllers)}], speed {game.Speed}"
+                : $"Headless game: seed {cfg.Seed}, controllers [{string.Join(",", cfg.Controllers)}], speed {cfg.Speed}");
+
+            // SIGTERM / SIGINT / SIGHUP: finish the current loop, save, exit (the handler only sets a flag; the sim is single-threaded).
+            var signals = new[] { PosixSignal.SIGTERM, PosixSignal.SIGINT, PosixSignal.SIGHUP }
+                .Select(sig => PosixSignalRegistration.Create(sig, ctx => { ctx.Cancel = true; stopRequested = true; })).ToList();
 
             var sw = Stopwatch.StartNew();
             double last = 0;
             long lastSeq = 0;
             bool announcedOver = false;
-            while (true)
+            while (!stopRequested)
             {
                 double now = sw.Elapsed.TotalSeconds;
                 game.Advance((float)(now - last));
                 last = now;
                 api.Pump(game);
+                saver.Tick(game, api);
                 var w = game.World;
                 foreach (var e in w.Events.Where(e => e.Seq > lastSeq && (e.Type == "chat" || e.Type == "defeated" || e.Type == "game_over")))
                     Console.WriteLine($"[{e.Tick * World.Dt,6:0.0}s] {(e.Team >= 0 ? w.Teams[e.Team].Name : "")}: {e.Text}");
@@ -61,7 +81,13 @@ namespace Pez.Headless
                 if (!w.GameOver) announcedOver = false;
                 Thread.Sleep(5);
             }
+            saver.Save(game, api, "shutdown");
+            api.Stop();
+            GC.KeepAlive(signals);
+            return 0;
         }
+
+        static volatile bool stopRequested;
 
         /// <summary>Debug aid: run AI vs AI and print one entity's state every second.</summary>
         static int Trace(GameConfig cfg, int id, float seconds)

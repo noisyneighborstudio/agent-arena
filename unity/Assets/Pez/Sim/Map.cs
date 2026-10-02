@@ -19,7 +19,7 @@ namespace Pez.Sim
         public int MineId;        // the deep mine working it (0 = none)
     }
 
-    public class Map
+    public partial class Map
     {
         public readonly int W, H;
         public readonly Terrain[] Tiles;

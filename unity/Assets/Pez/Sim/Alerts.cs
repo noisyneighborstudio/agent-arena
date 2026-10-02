@@ -24,7 +24,7 @@ namespace Pez.Sim
         public readonly List<string> Lost = new List<string>();
     }
 
-    public class AlertLog
+    public partial class AlertLog
     {
         public const float MergeRadius = 9f;
         public const float MergeWindow = 8f;     // seconds of quiet before the same area raises a fresh alert

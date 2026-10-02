@@ -25,7 +25,7 @@ namespace Pez.Sim
     }
 
     /// <summary>Owns a World plus who controls each team, and advances it in real time.</summary>
-    public class Game
+    public partial class Game
     {
         public World World { get; private set; }
         public GameConfig Config { get; private set; }
