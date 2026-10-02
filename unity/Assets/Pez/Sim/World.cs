@@ -131,6 +131,14 @@ namespace Pez.Sim
         /// <summary>How many of each event type have happened (the event list itself is a rolling window).</summary>
         public readonly Dictionary<string, int> EventCounts = new Dictionary<string, int>();
         public readonly AlertLog Alerts = new AlertLog();
+        /// <summary>Agent-invented unit designs in this game, by key (t&lt;team&gt;:&lt;name&gt;). See Invention.cs.</summary>
+        public readonly Dictionary<string, Invention> Inventions = new Dictionary<string, Invention>();
+
+        /// <summary>Let key-only lookups (Defs.Get, used by the view and API) see this world's inventions. A new World does this itself.</summary>
+        public void MakeCurrent() => Defs.Invented = key => Inventions.TryGetValue(key, out var i) ? i.Def : null;
+
+        /// <summary>A def by key: a standard one, or one of this game's inventions.</summary>
+        public EntityDef Def(string key) => key == null ? null : Defs.All.TryGetValue(key, out var d) ? d : Inventions.TryGetValue(key, out var i) ? i.Def : null;
         public int Tick;
         public float Time => Tick * Dt;
         public bool GameOver;
@@ -209,6 +217,7 @@ namespace Pez.Sim
             size = Math.Clamp(size, Map.MinSize, Map.MaxSize);
             Map = Map.Generate(size, size, seed, Math.Clamp(oreScale, 0.05f, 4f));
             Paths = new Pathfinder(Map);
+            MakeCurrent();
             for (int t = 0; t < teamCount; t++) CreateTeam(Map.Spawns[t]);
             UpdatePower();
             UpdateVisibility();
@@ -227,6 +236,7 @@ namespace Pez.Sim
                 Teams[t] = team;
                 Alerts.ClearTeam(t);
                 ForgetTeam(t);
+                foreach (var k in Inventions.Where(kv => kv.Value.Team == t).Select(kv => kv.Key).ToList()) Inventions.Remove(k); // the old occupant's designs
             }
             else Teams.Add(team);
             // Enough raw ore for a power plant; everything after that has to be mined.
@@ -451,7 +461,7 @@ namespace Pez.Sim
 
         public Entity SpawnStructure(int team, string key, Int2 origin, float progress)
         {
-            var def = Defs.Get(key);
+            var def = Def(key);
             var e = NewEntity(team, def);
             e.Origin = origin;
             e.BuildProgress = progress;
@@ -480,7 +490,7 @@ namespace Pez.Sim
 
         public Entity SpawnUnit(int team, string key, Entity at)
         {
-            var def = Defs.Get(key);
+            var def = Def(key);
             var e = NewEntity(team, def);
             var jitter = new Vec2((float)(rng.NextDouble() - 0.5) * 0.6f, (float)(rng.NextDouble() - 0.5) * 0.6f);
             if (def.IsAir) e.Pos = e.PrevPos = at.Center + jitter;
@@ -597,6 +607,11 @@ namespace Pez.Sim
         public string MissingPrereq(int team, EntityDef def)
         {
             if (def.BuiltBy == Producer.None) return $"{def.Key} cannot be built";
+            if (def.OwnerTeam >= 0)
+            {
+                if (def.OwnerTeam != team) return $"is {Teams[def.OwnerTeam].Name}'s invention; only they can build it";
+                if (Inventions.TryGetValue(def.Key, out var inv) && !inv.Done) return $"is still being researched ({inv.Pct}%)";
+            }
             var producerKey = Defs.ProducerKey(def.BuiltBy);
             if (producerKey != null && !HasComplete(team, producerKey)) return $"requires a completed {producerKey}";
             foreach (var r in def.Requires) if (!HasComplete(team, r)) return $"requires a completed {r}";
@@ -817,6 +832,7 @@ namespace Pez.Sim
             {
                 if (team.Defeated) continue;
                 float rate = team.LowPower ? 0.5f : 1f;
+                Tech.Tick(this, team, rate);
 
                 // Structures: one at a time per team, needs a command center.
                 if (team.StructureQueue.Count > 0 && HasComplete(team.Id, "command_center"))
@@ -848,7 +864,7 @@ namespace Pez.Sim
                     var producer = FirstProducer(team.Id, kv.Key);
                     if (producer == null) continue;
                     var item = q[0];
-                    var def = Defs.Get(item.Key);
+                    var def = Def(item.Key);
                     item.Progress += Dt * rate;
                     if (item.Progress >= def.BuildTime)
                     {

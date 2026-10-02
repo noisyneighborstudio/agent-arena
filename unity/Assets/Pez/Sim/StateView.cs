@@ -128,14 +128,18 @@ namespace Pez.Sim
             foreach (var kv in t.UnitQueues)
             {
                 var name = Defs.ProducerKey(kv.Key);
-                prod.Set(name, kv.Value.Select((p, i) => i == 0 ? $"{p.Key} {Pct(p.Progress / Defs.Get(p.Key).BuildTime)}%" : p.Key).ToList());
+                prod.Set(name, kv.Value.Select((p, i) => i == 0 ? $"{p.Key} {Pct(p.Progress / w.Def(p.Key).BuildTime)}%" : p.Key).ToList());
             }
             o.Set("production", prod);
 
             // What can be built right now, and for everything else exactly what's in the way.
             var opts = StateData.BuildOptions(w, team);
-            o.Set("build_now", ((List<object>)opts["now"]).Select(x => { var j = (JObj)x; return $"{j["type"]} ({Defs.Get((string)j["type"]).CostText})"; }).ToList());
+            o.Set("build_now", ((List<object>)opts["now"]).Select(x => { var j = (JObj)x; return $"{j["type"]} ({w.Def((string)j["type"]).CostText})"; }).ToList());
             o.Set("build_blocked", ((List<object>)opts["blocked"]).Select(x => { var j = (JObj)x; return $"{j["type"]}: {j["why"]}"; }).ToList());
+            var own = Tech.OwnLines(w, team);
+            o.Set("inventions", own.Count == 0 ? (object)$"none: design your own unit with propose_tech (see inventions in the rules; up to {Tech.MaxPerTeam})" : own);
+            var seen = Tech.SeenLines(w, team);
+            if (seen.Count > 0) o.Set("enemy_inventions_seen", seen);
 
             o.Set("my_structures", w.Owned(team).Where(e => e.IsStructure).Select(e =>
             {
@@ -229,6 +233,7 @@ namespace Pez.Sim
                         break;
                     case "arena_cleared": s = e.Text; break;
                     case "low_fuel": case "stranded": case "refuelled": case "retreating": case "unstalled": case "surveyed": case "depleted": case "drilled": case "drill_failed": case "survey_failed":
+                    case "research_started": case "researched":
                         if (e.Team == team) s = e.Text; break;
                     case "defeated": case "game_over": s = e.Text; break;
                 }
@@ -381,10 +386,11 @@ namespace Pez.Sim
         /// 4: deep mining (geological_surveyor, survey, drill_rig, deep_mine, deep_deposits).
         /// 5: a team's last command center falling spills its stockpile as salvage; infantry slower than vehicles.
         /// 6: surveyors flag mining zones (mining_zones replaces deep_deposits), prospect (roaming surveys), drill (rig to a zone).
-        /// </summary>
         /// 7: repair trucks refuel vehicles in the field; thinner fuel reserve in a fight; arena-cleared milestone.
         /// 8: games survive host restarts (saved and resumed: same seats, tokens and world).
-        public const int RulesVersion = 8;
+        /// 9: agent-invented units (propose_tech, inventions, enemy_inventions_seen).
+        /// </summary>
+        public const int RulesVersion = 9;
 
         public static JObj Rules()
         {
@@ -416,6 +422,7 @@ namespace Pez.Sim
             o.Set("structures", Defs.All.Values.Where(d => d.IsStructure).Select(DefJson).ToList());
             o.Set("ores", "iron_ore and copper_ore near every corner (empty corners are expansion sites); crystal around the middle; uranium in small contested deposits at the centre");
             o.Set("units", Defs.All.Values.Where(d => !d.IsStructure).Select(DefJson).ToList());
+            o.Set("inventions", Tech.RulesJson());
             o.Set("commands", Commands.Help);
             return o;
         }

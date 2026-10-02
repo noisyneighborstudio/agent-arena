@@ -76,6 +76,12 @@ namespace Pez.Sim
         public string DeploysInto;    // e.g. outpost_truck -> outpost
         public bool IsAir, Stealth;
         public bool Buildable = true; // false for structures you can't place from the build menu
+        /// <summary>Agent inventions (Invention.cs): the standard unit this was derived from, and the only team that may build it.</summary>
+        public string Chassis;
+        public int OwnerTeam = -1;
+        /// <summary>The standard def whose model, icon and animation profile to use (an invention looks like its chassis).</summary>
+        public string ModelKey => Chassis ?? Key;
+        public EntityDef Clone() => (EntityDef)MemberwiseClone();
 
         public bool IsArmor(Armor a) => Armor == a;
         public string CostText => Cost.Count == 0 ? "free" : string.Join(", ", Cost.Select(kv => $"{kv.Value} {kv.Key}"));
@@ -201,7 +207,15 @@ namespace Pez.Sim
             All[d.Key] = d;
         }
 
-        public static EntityDef Get(string key) => key != null && All.TryGetValue(key, out var d) ? d : null;
+        public static EntityDef Get(string key) => key == null ? null : All.TryGetValue(key, out var d) ? d : Invented?.Invoke(key);
+
+        /// <summary>
+        /// Inventions live on each World (World.Inventions; sim code resolves keys with World.Def). This hook lets code
+        /// that only has a key and no world (the Unity view's event handlers, the HUD, the API status) resolve the
+        /// invention keys of the current game too: the most recently created World installs it. Invention keys
+        /// (t&lt;team&gt;:&lt;name&gt;) can't collide with standard ones.
+        /// </summary>
+        public static System.Func<string, EntityDef> Invented;
 
         public static string ProducerKey(Producer p) => p switch
         {

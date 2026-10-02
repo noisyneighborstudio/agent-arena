@@ -38,6 +38,8 @@ namespace Pez.Sim
   {""type"":""sell"", ""structure_id"":ID}                 sell for 50% refund
   {""type"":""cancel"", ""unit"":KEY}                       cancel the last queued unit of that type (full refund)
   {""type"":""say"", ""text"":""...""}                      broadcast a chat message (shown on screen)
+  {""type"":""propose_tech"", ""name"":""Lancer"", ""base"":""light_tank"", ""weapon_from"":""rocket_soldier"", ""hp"":360, ""damage"":70, ""dry_run"":true}
+      design your own unit from one you can build (see inventions in the rules); dry_run quotes it, without dry_run it's researched, then train its key
 'units' may also be the string ""all"" (all your combat units) or ""idle"" (idle combat units).";
 
         public static JObj Execute(World w, int team, Dictionary<string, object> c)
@@ -74,6 +76,7 @@ namespace Pez.Sim
                     case "drill": return Drill(w, team, c);
                     case "sell": return Sell(w, team, c);
                     case "cancel": return Cancel(w, team, c);
+                    case "propose_tech": return Tech.Propose(w, team, c);
                     case "say":
                         {
                             var text = Text.Clean(c.Str("text", ""), 200);
@@ -131,8 +134,8 @@ namespace Pez.Sim
         static JObj Train(World w, int team, Dictionary<string, object> c)
         {
             var key = c.Str("unit") ?? c.Str("key");
-            var def = Defs.Get(key);
-            if (def == null || def.IsStructure) return Err($"unknown unit '{key}'. Valid: {string.Join(", ", Defs.All.Values.Where(d => !d.IsStructure).Select(d => d.Key))}");
+            var def = w.Def(key);
+            if (def == null || def.IsStructure) return Err($"unknown unit '{key}'. Valid: {string.Join(", ", Defs.All.Values.Where(d => !d.IsStructure).Select(d => d.Key).Concat(w.Inventions.Values.Where(i => i.Team == team).Select(i => i.Key)))}");
             var missing = w.MissingPrereq(team, def);
             if (missing != null) return Err($"{key} {missing}");
             int count = (int)c.Num("count", 1);
@@ -492,7 +495,7 @@ namespace Pez.Sim
         static JObj Cancel(World w, int team, Dictionary<string, object> c)
         {
             var key = c.Str("unit");
-            var def = Defs.Get(key);
+            var def = w.Def(key);
             if (def == null || def.IsStructure) return Err("unit key required");
             var q = w.Teams[team].UnitQueues[def.BuiltBy];
             int idx = q.FindLastIndex(p => p.Key == key);

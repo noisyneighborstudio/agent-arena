@@ -64,6 +64,7 @@ namespace Pez.Headless
             ArenaCleared();
             AiGoesDeep();
             Snapshots();
+            InventedTech();
             Console.WriteLine(failures == 0 ? "\nAll tests passed." : $"\n{failures} test(s) FAILED.");
             return failures == 0 ? 0 : 1;
         }

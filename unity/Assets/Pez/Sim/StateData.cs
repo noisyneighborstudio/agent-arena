@@ -108,9 +108,11 @@ namespace Pez.Sim
             prod.Set("structures", t.StructureQueue.Select(p => { var s = w.Get(p.StructureId); return (object)new JObj().Set("type", p.Key).Set("id", p.StructureId).Set("progress_pct", StateView.Pct(s?.BuildProgress ?? 0)); }).ToList());
             foreach (var kv in t.UnitQueues)
                 prod.Set(Defs.ProducerKey(kv.Key), kv.Value.Select((p, i) => (object)new JObj().Set("type", p.Key)
-                    .Set("progress_pct", i == 0 ? StateView.Pct(p.Progress / Defs.Get(p.Key).BuildTime) : 0)).ToList());
+                    .Set("progress_pct", i == 0 ? StateView.Pct(p.Progress / w.Def(p.Key).BuildTime) : 0)).ToList());
             o.Set("production", prod);
             o.Set("build_options", BuildOptions(w, team));
+            o.Set("inventions", Tech.OwnJson(w, team));
+            o.Set("enemy_inventions_seen", Tech.SeenJson(w, team));
 
             o.Set("stats", new JObj().Set("kills", t.Stats.Kills).Set("units_lost", t.Stats.UnitsLost)
                 .Set("structures_lost", t.Stats.StructuresLost).Set("ore_mined", t.Stats.OreMined));
@@ -145,10 +147,11 @@ namespace Pez.Sim
             var t = w.Teams[team];
             var now = new List<object>();
             var blocked = new List<object>();
-            foreach (var d in Defs.All.Values)
+            foreach (var d in Defs.All.Values.Concat(Tech.Own(w, team).Select(i => i.Def)))
             {
                 if (!d.Buildable || d.BuiltBy == Producer.None) continue;
                 var needs = new List<string>();
+                var researching = d.OwnerTeam >= 0 && w.Inventions.TryGetValue(d.Key, out var inv) && !inv.Done ? inv : null;
                 var producer = Defs.ProducerKey(d.BuiltBy);
                 if (producer != null && !w.HasComplete(team, producer)) needs.Add(producer);
                 foreach (var r in d.Requires) if (!w.HasComplete(team, r) && !needs.Contains(r)) needs.Add(r);
@@ -157,7 +160,8 @@ namespace Pez.Sim
                 var shortBy = new JObj();
                 foreach (var kv in d.Cost) if (t.Amount(kv.Key) < kv.Value) shortBy.Set(kv.Key, kv.Value - t.Amount(kv.Key));
                 var item = new JObj().Set("type", d.Key).Set("kind", d.IsStructure ? "structure" : "unit").Set("built_by", producer).Set("cost", cost);
-                if (needs.Count == 0 && shortBy.Count == 0) now.Add(item);
+                if (researching != null) { item.Set("why", $"still being researched ({researching.Pct}%)"); blocked.Add(item); }
+                else if (needs.Count == 0 && shortBy.Count == 0) now.Add(item);
                 else
                 {
                     if (needs.Count > 0) item.Set("needs_buildings", needs.Cast<object>().ToList());
