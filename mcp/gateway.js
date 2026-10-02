@@ -730,6 +730,62 @@ async function handleMcp(req, res, base) {
 }
 
 
+
+// ------------------------------------------------------------------ replays
+// Every room is recorded: a compact whole-map snapshot every 3s (and the map whenever it changes) into
+// ~/.config/pezz/replays/room-<n>-<start>/. A viewer can replay the game so far, but never anything newer than the
+// public /watch delay, so a replay shows nobody anything /watch doesn't already.
+const REPLAY_DIR = process.env.PEZZ_REPLAY_DIR || path.join(CONFIG_DIR, "replays");
+const recording = new Map(); // room id -> { dir, lastTick, mapVersion }
+async function recordRooms() {
+  for (const room of rooms.all()) {
+    let f;
+    try { f = await gameAt(room, "/api/view/frame"); } catch { continue; }
+    let r = recording.get(room.id);
+    if (!r || f.tick < r.lastTick) { // a new game in this room: new recording
+      const dir = path.join(REPLAY_DIR, `room-${room.id}-${new Date().toISOString().replace(/[:.]/g, "-")}`);
+      try { fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); } catch { continue; }
+      r = { dir, lastTick: 0, mapVersion: -1 };
+      recording.set(room.id, r);
+    }
+    r.lastTick = f.tick;
+    try {
+      if (f.version !== r.mapVersion) {
+        fs.writeFileSync(path.join(r.dir, `map-${f.version}.json`), JSON.stringify(await gameAt(room, "/api/view/map")));
+        r.mapVersion = f.version;
+      }
+      const line = { t: f.time_s, v: f.version,
+        teams: f.teams.map((t) => [t.id, t.flavor, t.player, t.status, t.kills]),
+        e: f.entities.map((e) => [e[0], e[1], e[2], Math.round(e[3] * 2) / 2, Math.round(e[4] * 2) / 2, e[5], e[6], e[7], e[8]]) };
+      fs.appendFileSync(path.join(r.dir, "frames.jsonl"), JSON.stringify(line) + "\n");
+    } catch {}
+  }
+}
+setInterval(() => recordRooms(), 3000).unref();
+// Prune recordings older than three days.
+setInterval(() => {
+  try {
+    for (const d of fs.readdirSync(REPLAY_DIR)) {
+      const p = path.join(REPLAY_DIR, d);
+      if (Date.now() - fs.statSync(p).mtimeMs > 3 * 86400e3) fs.rmSync(p, { recursive: true, force: true });
+    }
+  } catch {}
+}, 3600e3).unref();
+
+/** The current game's replay for a room, up to the public delay. */
+async function replayFrames(room) {
+  const r = recording.get(room.id);
+  if (!r) return { frames: [], note: "no recording yet" };
+  let lines = [];
+  try { lines = fs.readFileSync(path.join(r.dir, "frames.jsonl"), "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)); } catch {}
+  const now = lines.length ? lines[lines.length - 1].t : 0;
+  return { delay_s: WATCH_DELAY_S, frames: lines.filter((l) => l.t <= now - WATCH_DELAY_S) };
+}
+function replayMap(room, version) {
+  const r = recording.get(room.id);
+  try { return JSON.parse(fs.readFileSync(path.join(r.dir, `map-${Number(version)}.json`), "utf8")); } catch { return null; }
+}
+
 // ------------------------------------------------------------------ keep playing: a loop script for CLI agents
 // A chat turn ends; a match doesn't. This script joins once (token kept in ~/.pezz), then keeps restarting the agent
 // CLI for ~10-minute stretches of play, rejoining if the seat was eliminated. Stop it with: touch ~/.pezz/stop
@@ -817,6 +873,16 @@ const server = http.createServer(async (req, res) => {
       const { room, raw } = parseToken(um[1]);
       try { return send(res, 200, await gameAt(room, `/api/view/unit?view=${raw}&id=${um[2]}`)); }
       catch (e) { return send(res, e.status === 404 ? 404 : 400, { ok: false, error: e.message }); }
+    }
+    // Replays: /view/<v>/replay and /view/<v>/replay/map/<version>; /watch[/<n>]/replay likewise.
+    const rv = p.match(new RegExp(`^/view/${V}/replay(?:/map/(\\d+))?$`)) ;
+    const rw = p.match(/^\/watch(?:\/(\d{1,3}))?\/replay(?:\/map\/(\d+))?$/);
+    if (rv || rw) {
+      const room = rv ? parseToken(rv[1]).room : rooms.get(rw[1] ?? 1);
+      if (!room) return send(res, 404, { ok: false, error: "no such room" });
+      const ver = rv ? rv[2] : rw[2];
+      if (ver != null) { const m = replayMap(room, ver); return m ? send(res, 200, m) : send(res, 404, { ok: false, error: "no such map" }); }
+      return send(res, 200, await replayFrames(room));
     }
     const fm = p.match(new RegExp(`^/view/${V}/feed$`));
     if (fm) {

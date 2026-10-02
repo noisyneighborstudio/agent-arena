@@ -107,7 +107,7 @@
   <div class="panel" id="brand"><span class="word">PEZ</span><span class="rule"></span><span id="clock">0:00</span><span id="where">Connecting…</span></div>
   <div id="teams"></div>
   <div class="panel" id="modes">
-    <button id="bLive" title="Live view (L)">Live</button><button id="bMap" class="on" title="Tactical map (L)">Map</button>
+    <button id="bLive" title="Live view (L)">Live</button><button id="bMap" class="on" title="Tactical map (L)">Map</button><button id="bReplay" title="Replay the game so far">Replay</button>
     <span class="rule"></span><span id="mode">Map view</span>
   </div>
 </div>
@@ -136,6 +136,14 @@
 </div>
 <div class="hud panel" id="sel"></div>
 <div class="hud panel" id="results"></div>
+<div class="hud panel" id="replaybar" style="left:50%;bottom:16px;transform:translateX(-50%);display:none;align-items:center;gap:12px;padding:10px 14px;width:720px">
+  <button id="rpPlay" style="width:44px;height:36px;border:0;border-radius:8px;background:var(--cream);color:#101317;font-weight:600;cursor:pointer">❚❚</button>
+  <select id="rpSpeed" style="height:36px;border-radius:8px;background:var(--btn);color:var(--ink);border:1px solid var(--line);font-family:'IBM Plex Mono',monospace">
+    <option value="10">10×</option><option value="30" selected>30×</option><option value="60">60×</option><option value="120">120×</option></select>
+  <input id="rpScrub" type="range" min="0" max="1000" value="0" style="flex-grow:1">
+  <span id="rpTime" class="mono note" style="width:120px;text-align:right">0:00</span>
+  <button id="rpExit" style="height:36px;border:1px solid var(--line);border-radius:8px;background:transparent;cursor:pointer;padding:0 12px">Exit replay</button>
+</div>
 
 <script>
 const BASE = "__BASE__"; // /view/<token> for a player's own fogged view, /watch for the delayed public spectator view
@@ -170,8 +178,8 @@ addEventListener("resize", fit); fit();
 
 async function getJSON(u) { const r = await fetch(u, { cache: "no-store" }); if (!r.ok) throw new Error((await r.json()).error || r.status); return r.json(); }
 
-async function loadMap() {
-  map = await getJSON(`${BASE}/map`);
+async function loadMap(data) {
+  map = data ?? await getJSON(`${BASE}/map`);
   mapVersion = map.version;
   terrainCanvas = document.createElement("canvas");
   terrainCanvas.width = map.w; terrainCanvas.height = map.h;
@@ -201,6 +209,7 @@ function lookAt(x, y) {
 }
 
 async function tick() {
+  if (replay) { setTimeout(tick, 500); return; } // replay owns the picture
   try {
     const prev = frame;
     frame = await getJSON(`${BASE}/frame`);
@@ -244,6 +253,58 @@ if (COMMANDER && !SPECTATOR) {
   document.getElementById("orderSend").addEventListener("click", () => { const t = document.getElementById("orderText").value.trim(); if (t) sendOrders(t); });
   document.getElementById("orderClear").addEventListener("click", () => sendOrders(""));
 }
+
+// ---- Replay: the game so far (up to the public delay), whole map, at 10-120x.
+let replay = null;
+async function startReplay() {
+  try {
+    const r = await getJSON(`${BASE}/replay`);
+    if (!r.frames?.length) { document.getElementById("where").textContent = "No replay yet: the recording starts when the game does."; return; }
+    if (liveMode) setMode(false);
+    replay = { frames: r.frames, t: r.frames[0].t, speed: 30, playing: true, version: -1, last: performance.now() };
+    deselect();
+    document.getElementById("results").style.display = "none";
+    document.getElementById("replaybar").style.display = "flex";
+    document.getElementById("bReplay").classList.add("on");
+    fitted = false;
+  } catch (e) { document.getElementById("where").textContent = `Replay unavailable: ${e.message}`; }
+}
+function stopReplay() {
+  replay = null; frame = null; mapVersion = -1; fitted = false;
+  document.getElementById("replaybar").style.display = "none";
+  document.getElementById("bReplay").classList.remove("on");
+}
+async function replayStep() {
+  if (!replay) return;
+  const now = performance.now(), fr = replay.frames;
+  if (replay.playing) replay.t += (now - replay.last) / 1000 * replay.speed;
+  replay.last = now;
+  const end = fr[fr.length - 1].t;
+  if (replay.t >= end) { replay.t = end; replay.playing = false; }
+  let i = 0; while (i + 1 < fr.length && fr[i + 1].t <= replay.t) i++;
+  const f = fr[i];
+  if (f.v !== replay.version && !replay.loading) {
+    replay.loading = true;
+    try { await loadMap(await getJSON(`${BASE}/replay/map/${f.v}`)); replay.version = f.v; } catch {}
+    replay.loading = false;
+  }
+  frame = { time_s: f.t, version: f.v, teams: f.teams.map(([id, flavor, player, status, kills]) => ({ id, flavor, player, status, kills })),
+            entities: f.e, effects: [], chat: [], alerts: [], deposits: [] };
+  hud();
+  document.getElementById("where").textContent = `Replay · ${clock(f.t)} of ${clock(end)} · whole map`;
+  document.getElementById("rpTime").textContent = `${clock(f.t)} / ${clock(end)}`;
+  document.getElementById("rpPlay").textContent = replay.playing ? "❚❚" : "▶";
+  if (!scrubbing) document.getElementById("rpScrub").value = Math.round(1000 * (f.t - fr[0].t) / Math.max(1, end - fr[0].t));
+}
+let scrubbing = false;
+setInterval(replayStep, 100);
+document.getElementById("bReplay").addEventListener("click", () => replay ? stopReplay() : startReplay());
+document.getElementById("rpExit").addEventListener("click", stopReplay);
+document.getElementById("rpPlay").addEventListener("click", () => { if (!replay) return; if (replay.t >= replay.frames[replay.frames.length - 1].t) replay.t = replay.frames[0].t; replay.playing = !replay.playing; });
+document.getElementById("rpSpeed").addEventListener("change", (e) => { if (replay) replay.speed = Number(e.target.value); });
+const scrub = document.getElementById("rpScrub");
+scrub.addEventListener("input", () => { scrubbing = true; if (!replay) return; const fr = replay.frames; replay.t = fr[0].t + (fr[fr.length - 1].t - fr[0].t) * scrub.value / 1000; });
+scrub.addEventListener("change", () => (scrubbing = false));
 
 // ---- HUD panels
 function hud() {
@@ -383,7 +444,8 @@ function showResults(r, rejoin) {
   el.style.display = "block";
   el.innerHTML = `<div class="head">Your game</div><div class="big">${r.flavor ? `<span class="chip" style="background:${FLAVORS[(r.team ?? 0) % 8]};width:14px;height:14px"></span>${esc(r.flavor)} · ${esc(r.player ?? "")} · ` : ""}${esc(outcome)}</div>` +
     (r.flavor ? `<div class="stats mono">${r.kills} kills · played ${clock(r.played_s)} · last seen ${clock(r.last_seen_s)}</div>` : `<div class="stats">${esc(r.note ?? "")}</div>`) +
-    `<div class="stats" style="margin-top:8px">Now spectating the whole room${frame?.delay_s ? `, ${frame.delay_s}s behind` : ""}. ${esc(rejoin ?? "")}</div>`;
+    `<div class="stats" style="margin-top:8px">Now spectating the whole room${frame?.delay_s ? `, ${frame.delay_s}s behind` : ""}. ${esc(rejoin ?? "")}</div>` +
+    `<div style="margin-top:10px"><button onclick="startReplay()" style="height:36px;border:0;border-radius:8px;background:var(--cream);color:#101317;font-weight:600;padding:0 14px;cursor:pointer">Watch the replay</button></div>`;
 }
 
 // ---- Minimap: north up, sectors A-H x 1-8, your view box; click to look there.
@@ -675,6 +737,7 @@ liveImg.addEventListener("wheel", (e) => { e.preventDefault(); camAcc.zoom *= e.
 addEventListener("keydown", (e) => { if (!liveMode) return; const k = e.key.toLowerCase(); if (k === "q") camAcc.yaw += 15; if (k === "e") camAcc.yaw -= 15; camFlush(); });
 addEventListener("keydown", (e) => { if (e.key === "l" || e.key === "L") setMode(!liveMode); });
 setMode(false); tick(); draw(); liveLoop();
+if (new URLSearchParams(location.search).get("replay") === "1") setTimeout(startReplay, 800); // a shareable replay link
 setTimeout(focusBase, 1500);
 </script>
 </body>
