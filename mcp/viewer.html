@@ -8,9 +8,9 @@
   :root { --bg:#141113; --panel:rgba(20,17,19,.88); --cream:#ECE4D2; --muted:#9c9488; --amber:#FFA22E; --crit:#ff5a4a; }
   html,body { margin:0; height:100%; background:var(--bg); color:var(--cream); font:13px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; overflow:hidden; }
   canvas { position:absolute; inset:0; width:100%; height:100%; cursor:grab; }
-  #live { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; background:#141113; display:none; cursor:grab; user-select:none; -webkit-user-drag:none; }
+  #live { object-fit:contain; background:#141113; display:none; user-select:none; }
   body.live #live { display:block; }
-  body.live canvas { visibility:hidden; }
+  body.live #c { visibility:hidden; }
   #mode { cursor:pointer; color:var(--cream); text-decoration:underline; }
   canvas:active { cursor:grabbing; }
   .panel { position:absolute; background:var(--panel); border:1px solid rgba(236,228,210,.12); border-radius:10px; padding:10px 12px; backdrop-filter:blur(6px); }
@@ -43,7 +43,7 @@
 </head>
 <body>
 <canvas id="c"></canvas>
-<img id="live" alt="">
+<canvas id="live"></canvas>
 <div class="panel" id="top">
   <div class="who"><span class="chip" id="chip"></span><span id="who">Connecting…</span></div>
   <div class="meta" id="meta"></div>
@@ -233,26 +233,64 @@ document.getElementById("alerts").addEventListener("click", (e) => {
   else { cam.x = x + 0.5; cam.y = y + 0.5; cam.scale = Math.max(cam.scale, 14); }
 });
 addEventListener("keydown", (e) => { if (e.key === "f" || e.key === "F") focusBase(); if (e.key === "m" || e.key === "M") fitAll(); });
-// High-res live stream of this player's own view, rendered by the game host (when it has a renderer).
-const liveImg = document.getElementById("live");
-let liveOk = false, liveMode = false, liveFails = 0;
+// High-res live stream of this player's own view, rendered by the game host (when it has a renderer). It arrives as
+// MJPEG at up to 60fps over one long request; frames are decoded off the main thread, and any that arrive while the
+// previous one is still decoding are skipped, so a slow device shows fewer frames rather than falling behind.
+const liveImg = document.getElementById("live"), liveCtx = liveImg.getContext("2d");
+let liveOk = false, liveMode = false, liveFails = 0, liveAbort = null, liveFps = 0, liveShown = 0;
 function setMode(live) {
   liveMode = live && liveOk;
   document.body.classList.toggle("live", liveMode);
-  document.getElementById("mode").textContent = liveMode ? "Live view (switch to map)" : liveOk ? "Map view (switch to live)" : "Map view";
+  document.getElementById("mode").textContent = liveMode ? `Live view${liveFps ? ` · ${liveFps} fps` : ""} (switch to map)` : liveOk ? "Map view (switch to live)" : "Map view";
+  if (!liveWanted()) liveAbort?.abort(); // don't pull video nobody is looking at
 }
+setInterval(() => { liveFps = liveShown; liveShown = 0; if (liveMode) setMode(true); }, 1000);
+function liveWanted() { return !document.hidden && (liveMode || !liveOk); }
+document.addEventListener("visibilitychange", () => { if (!liveWanted()) liveAbort?.abort(); });
 async function liveLoop() {
   if (!BASE.startsWith("/view/")) return; // the public spectator page has no personal stream
+  if (!liveWanted()) return setTimeout(liveLoop, 250);
+  liveAbort = new AbortController();
   try {
-    const r = await fetch(`${BASE}/live.jpg?${Date.now()}`, { cache: "no-store" });
-    if (r.ok) {
-      const url = URL.createObjectURL(await r.blob());
-      const old = liveImg.src; liveImg.src = url; if (old.startsWith("blob:")) URL.revokeObjectURL(old);
+    const r = await fetch(`${BASE}/live.mjpg`, { cache: "no-store", signal: liveAbort.signal });
+    if (r.ok) { liveFails = 0; await readFrames(r.body.getReader()); }
+    else if (r.status !== 429 && ++liveFails > 3) { liveOk = false; setMode(false); setTimeout(liveLoop, 15000); return; }
+  } catch { if (liveAbort.signal.aborted) return setTimeout(liveLoop, 0); liveFails++; }
+  setTimeout(liveLoop, 1000); // the stream ended (the game restarted, the seat emptied): reconnect
+}
+// The stream is multipart: each part is a few header lines (with Content-Length) and then one JPEG.
+async function readFrames(reader) {
+  let buf = new Uint8Array(0);
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) return;
+    const next = new Uint8Array(buf.length + value.length); next.set(buf); next.set(value, buf.length); buf = next;
+    for (;;) {
+      const end = headerEnd(buf);
+      if (end < 0) break;
+      const len = Number(/content-length:\s*(\d+)/i.exec(new TextDecoder().decode(buf.subarray(0, end)))?.[1] ?? 0);
+      if (buf.length < end + len) break;
+      if (len) showFrame(buf.slice(end, end + len));
+      buf = buf.subarray(end + len);
+    }
+  }
+}
+function headerEnd(b) { for (let i = 3; i < Math.min(b.length, 512); i++) if (b[i] === 10 && b[i - 1] === 13 && b[i - 2] === 10 && b[i - 3] === 13) return i + 1; return -1; }
+let nextFrame = null, decoding = false;
+async function showFrame(jpg) {
+  nextFrame = jpg;
+  if (decoding) return;
+  decoding = true;
+  while (nextFrame) {
+    const blob = new Blob([nextFrame], { type: "image/jpeg" }); nextFrame = null;
+    try {
+      const bmp = await createImageBitmap(blob);
+      if (liveImg.width !== bmp.width || liveImg.height !== bmp.height) { liveImg.width = bmp.width; liveImg.height = bmp.height; }
+      liveCtx.drawImage(bmp, 0, 0); bmp.close(); liveShown++;
       if (!liveOk) { liveOk = true; setMode(true); }
-      liveFails = 0;
-    } else if (r.status === 404 && ++liveFails > 3) { liveOk = false; setMode(false); setTimeout(liveLoop, 15000); return; }
-  } catch { liveFails++; }
-  setTimeout(liveLoop, 150);
+    } catch {}
+  }
+  decoding = false;
 }
 document.getElementById("mode").addEventListener("click", () => setMode(!liveMode));
 // In live mode, dragging and scrolling steer the stream's camera (it returns to following the action after 20s).
