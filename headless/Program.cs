@@ -93,6 +93,10 @@ namespace Pez.Headless
                     Console.WriteLine($"t={w.Time / 60:0}m " + string.Join(" | ", w.Teams.Select(t => $"{t.Name}: steel {t.Amount("steel")} circ {t.Amount("circuits")} plasma {t.Amount("plasma")} pow {t.PowerProduced}/{t.PowerUsed} S{w.Owned(t.Id).Count(e => e.IsStructure)} U{w.Owned(t.Id).Count(e => !e.IsStructure)} K{t.Stats.Kills} ore{t.Stats.OreMined}")));
             }
             Console.WriteLine($"Simulated {w.Time / 60:0.0} game-minutes in {sw.Elapsed.TotalSeconds:0.0}s real.");
+            int Count(string type) => w.EventCounts.TryGetValue(type, out var n) ? n : 0;
+            Console.WriteLine($"Fuel: {Count("low_fuel")} trips home to refuel, {Count("refuelled")} refuelled, {Count("stranded")} stranded, {Count("crashed")} crashed; " +
+                              $"{w.Entities.Count(e => !e.Dead && e.Stranded)} still stranded.");
+            Console.WriteLine($"Stalls: {w.Teams.Count(t => t.Resigned)} resigned: {string.Join(", ", w.Teams.Where(t => t.Resigned).Select(t => t.Name))}");
             if (World.Profile) Console.WriteLine("Profile (s): " + string.Join(", ", World.Timings.OrderByDescending(kv => kv.Value).Select(kv => $"{kv.Key} {kv.Value:0.0}")));
             foreach (var t in w.Teams)
                 Console.WriteLine($"{t.Name} built: " + string.Join(", ", t.Stats.Built.Select(kv => $"{kv.Key} x{kv.Value}")));

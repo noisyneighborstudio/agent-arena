@@ -16,11 +16,13 @@ namespace Pez.Sim
   {""type"":""train"", ""unit"":KEY, ""count"":N}            queue N units (1-10) at the barracks / war factory
   {""type"":""move"", ""units"":[IDS], ""x"":X, ""y"":Y}     move, ignoring enemies
   {""type"":""attack_move"", ""units"":[IDS], ""x"":X, ""y"":Y}  move, engaging enemies on the way
+      add ""together"":true to move or attack_move so the group keeps the slowest member's pace and arrives as one
   {""type"":""attack"", ""units"":[IDS], ""target"":ID}     focus fire on a visible enemy
   {""type"":""stop"", ""units"":[IDS]}
   {""type"":""harvest"", ""units"":[IDS], ""x"":X, ""y"":Y}  send mining trucks to ore near x,y (they stick to that ore type)
   {""type"":""harvest"", ""units"":[IDS], ""ore"":""crystal""}  send mining trucks to the nearest ore of a type (iron_ore, copper_ore, crystal, uranium; ""any"" to reset)
-  {""type"":""repair"", ""units"":[IDS], ""target"":ID}     repair trucks fix a damaged friendly vehicle, aircraft or structure (costs steel)
+  {""type"":""repair"", ""units"":[IDS], ""target"":ID}     repair trucks fix a damaged friendly vehicle, aircraft or structure (costs steel), and refuel vehicles (free)
+  {""type"":""refuel"", ""units"":[IDS], ""target"":ID}     vehicles/aircraft go refuel (target optional: a pad or depot), then resume their order
   {""type"":""heal"", ""units"":[IDS], ""target"":ID}       medics heal a wounded friendly infantry unit (free); same as repair
   {""type"":""load"", ""units"":[INFANTRY IDS], ""transport"":ID}   infantry walk to an APC / transport_chopper and board it
   {""type"":""unload"", ""units"":[TRANSPORT IDS]}          drop all passengers where the transport is
@@ -60,6 +62,7 @@ namespace Pez.Sim
                     case "capture": return Capture(w, team, c);
                     case "lay_mines": return LayMines(w, team, c);
                     case "rally": return Rally(w, team, c);
+                    case "refuel": return Refuel(w, team, c);
                     case "sell": return Sell(w, team, c);
                     case "cancel": return Cancel(w, team, c);
                     case "say":
@@ -188,7 +191,14 @@ namespace Pez.Sim
                 if (u.IsHarvester && order == Order.AttackMove) { w.SetOrder(u, Order.Move, target); continue; }
                 w.SetOrder(u, order, order == Order.Idle ? u.Pos : target);
             }
-            return Ok($"{n} unit(s) {(order == Order.Idle ? "stopped" : order == Order.AttackMove ? "attack-moving" : "moving")}");
+            // Moving together: everyone keeps to the slowest member's pace so the group arrives as one.
+            bool together = order != Order.Idle && n > 1 && c.TryGetValue("together", out var tg) && tg is bool tb && tb;
+            float pace = together ? units.Min(u => u.Def.Speed) : 0;
+            if (together) foreach (var u in units) u.SpeedCap = pace;
+            var low = units.Where(u => u.Def.UsesFuel && u.FuelFraction < 0.35f).ToList();
+            return Ok($"{n} unit(s) {(order == Order.Idle ? "stopped" : order == Order.AttackMove ? "attack-moving" : "moving")}" +
+                      (together ? $" together at {pace:0.0} tiles/s" : "") +
+                      (low.Count > 0 ? $"; low fuel: {string.Join(", ", low.Select(u => $"#{u.Id} {(int)(u.FuelFraction * 100)}%"))} (they'll turn back to refuel when they must)" : ""));
         }
 
         static JObj Attack(World w, int team, Dictionary<string, object> c)
@@ -305,14 +315,33 @@ namespace Pez.Sim
             var target = w.Get((int)c.Num("target", 0));
             if (target == null || target.Team != team) return Err("target must be one of your own units or structures");
             if (!target.IsComplete) return Err("that structure is still under construction");
-            if (target.Hp >= target.Def.MaxHp - 0.5f) return Err($"{target.Def.Key} #{target.Id} is already at full health");
+            bool needsFuel = target.Def.UsesFuel && !target.IsAir && target.Fuel < target.Def.Fuel * 0.99f;
+            if (target.Hp >= target.Def.MaxHp - 0.5f && !needsFuel) return Err($"{target.Def.Key} #{target.Id} is already at full health" + (target.Def.UsesFuel ? " and fuel" : ""));
             // Medics take infantry, repair trucks take machines; whoever can't help is left alone.
-            var able = healers.Where(h => World.CanTend(h, target)).ToList();
+            var able = healers.Where(h => World.CanTend(h, target) || (needsFuel && !h.Def.Medic)).ToList();
             if (able.Count == 0)
                 return Err(target.Def.Armor == Armor.Infantry ? "only medics can heal infantry" : "only repair trucks can repair vehicles, aircraft and structures");
             foreach (var u in able) w.SetOrder(u, Order.Repair, target.Center, target.Id);
             return Ok($"{able.Count} {(target.Def.Armor == Armor.Infantry ? "medic(s) healing" : "repair truck(s) repairing")} {target.Def.Key} #{target.Id} ({(int)target.Hp}/{target.Def.MaxHp})" +
                       (able.Count < healers.Count ? $"; {healers.Count - able.Count} can't work on that" : ""));
+        }
+
+        static JObj Refuel(World w, int team, Dictionary<string, object> c)
+        {
+            var units = ResolveUnits(w, team, c).Where(u => u.Def.UsesFuel && !u.IsCarried).ToList();
+            if (units.Count == 0) return Err("no vehicles or aircraft given (infantry don't use fuel)");
+            var at = c.ContainsKey("target") ? w.Get((int)c.Num("target", 0)) : null;
+            var sent = new List<string>(); var stuck = new List<string>();
+            foreach (var u in units)
+            {
+                var p = at != null && World.IsFuelPoint(u, at) ? at : w.NearestFuelPoint(u);
+                if (u.Stranded) { stuck.Add($"#{u.Id} is out of fuel; send a repair truck to it with repair"); continue; }
+                if (p == null) { stuck.Add($"#{u.Id} has nowhere to refuel ({(u.IsAir ? "build an airfield" : "needs a command center, outpost, refinery, factory or a repair truck")})"); continue; }
+                w.BeginRefuel(u, p);
+                sent.Add($"#{u.Id} ({(int)(u.FuelFraction * 100)}%) to {p.Def.Key} #{p.Id}");
+            }
+            if (sent.Count == 0) return Err(string.Join("; ", stuck));
+            return Ok("refuelling: " + string.Join(", ", sent) + (stuck.Count > 0 ? "; " + string.Join("; ", stuck) : ""));
         }
 
         static JObj Deploy(World w, int team, Dictionary<string, object> c)

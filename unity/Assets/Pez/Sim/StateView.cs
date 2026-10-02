@@ -27,7 +27,7 @@ namespace Pez.Sim
                 .Set("winner", w.Winner >= 0 ? w.Teams[w.Winner].Name : null)
                 .Set("you", new JObj()
                     .Set("team", team).Set("name", t.Name).Set("player", t.PlayerName)
-                    .Set("status", t.Left ? "left" : t.Defeated ? "eliminated: call join again for a new seat" : "playing")
+                    .Set("status", t.Resigned ? "resigned as lost (no way left to make progress): call join again for a new seat" : t.Left ? "left" : t.Defeated ? "eliminated: call join again for a new seat" : "playing")
                     .Set("stockpile", Stockpile(t))
                     .Set("power", $"{t.PowerProduced} produced / {t.PowerUsed} used" + (t.LowPower ? " (LOW POWER: production at half speed, build a power_plant)" : ""))
                     .Set("start", $"{R(t.StartPos.X)},{R(t.StartPos.Y)}")
@@ -83,6 +83,13 @@ namespace Pez.Sim
                 if (e.Order == Order.Attack || e.Order == Order.Repair || e.Order == Order.Capture || e.Order == Order.Board) s += $" #{e.TargetId}";
                 if (e.IsHarvester) s += $" cargo {e.Cargo}/{e.Def.HarvestCapacity}{(e.CargoType >= 0 ? " " + Defs.Ores[e.CargoType] : "")}{(e.HarvestType >= 0 ? $" (assigned {Defs.Ores[e.HarvestType]})" : "")}";
                 if (e.IsAir) s += " (air)";
+                if (e.Def.UsesFuel)
+                {
+                    s += $" fuel {(int)(e.FuelFraction * 100)}%";
+                    if (e.Stranded) s += " (OUT OF FUEL: can't move; send a repair truck)";
+                    else if (e.Landed) s += " (landed, refuelling)";
+                    else if (e.AtDepot && e.Fuel < e.Def.Fuel) s += " (refuelling)";
+                }
                 if (e.IsCarried) s += $" (inside #{e.CarrierId})";
                 if (e.Def.Capacity > 0) s += $" carrying {e.Passengers.Count}/{e.Def.Capacity}" + (e.Passengers.Count > 0 ? ": " + string.Join(",", e.Passengers.Select(p => "#" + p)) : "");
                 if (e.Def.LaysMines && e.MineQueue.Count > 0) s += $" ({e.MineQueue.Count} mines to lay)";
@@ -265,6 +272,7 @@ namespace Pez.Sim
                 "Specialists: engineers capture enemy buildings below 50% HP; snipers delete infantry from range 9; commandos C4 buildings. APCs and transport choppers carry infantry (load/unload). Mine layers plant hidden mines. Flak tracks are mobile anti-air. Mammoth tanks are super-heavy and self-repair to 50%. Recon drones are cheap flying scouts.",
                 "Repair trucks (factory) fix vehicles, aircraft and structures for steel; medics (barracks) heal infantry for free. Both auto-tend anything damaged within 6 tiles when idle, so park them behind your army.",
                 "Aircraft ignore terrain. Only rockets, lasers, SAMs, gunships (and weakly, rifles/mg) can hit them. Stealth bombers are invisible except within 3 tiles of your units or inside your radar dome range.",
+                "Fuel: vehicles burn fuel while driving (parked ones burn none) and aircraft burn it the whole time they're airborne (less while hovering). Vehicles refuel next to a command center, outpost, refinery or factory, or from a repair truck; aircraft land on an airfield (drones also at a factory). On low fuel a unit heads to the nearest one by itself and then resumes its order. A vehicle that runs dry is stranded until a repair truck reaches it; an aircraft that runs dry crashes. Each unit's fuel % is in my_units; use 'refuel' to send units early.",
                 "Keep power produced >= power used or production and refining halve.",
                 "Rockets beat vehicles, rifles beat infantry, tanks are all-round. Heavy tanks splash.",
                 "Use attack_move to send armies; units fight what they meet. Use 'all' or 'idle' for units.",
@@ -286,6 +294,9 @@ namespace Pez.Sim
             if (d.Stealth) o.Set("stealth", true);
             if (d.IsStructure) o.Set("size", $"{d.SizeX}x{d.SizeY}").Set("power", d.Power);
             else o.Set("speed", d.Speed);
+            if (d.UsesFuel) o.Set("fuel", d.IsAir ? $"{d.Fuel:0}s airborne; refuels landed on an airfield{(d.BuiltBy == Producer.Factory ? " or factory" : "")}" : $"{d.Fuel:0}s of driving (~{d.Fuel * d.Speed:0} tiles); refuels next to a command center, outpost, refinery or factory, or from a repair truck");
+            if (d.FuelDepot) o.Set("refuels", "ground vehicles parked next to it");
+            if (d.Helipad) o.Set("refuels", "aircraft that land on it");
             if (d.Weapon != null) o.Set("weapon", $"{d.Weapon.Name}: {d.Weapon.Damage} dmg, range {d.Weapon.Range}, every {d.Weapon.Cooldown}s; " +
                 (d.Weapon.HitsGround ? $"x{d.Weapon.VsInfantry} vs infantry, x{d.Weapon.VsVehicle} vs vehicles, x{d.Weapon.VsStructure} vs structures" : "air only") +
                 (d.Weapon.HitsAir ? $", x{d.Weapon.VsAir} vs aircraft" : ", can't hit aircraft"));

@@ -53,6 +53,10 @@ namespace Pez.Sim
         public bool[] Explored;
         /// <summary>Open arena: the player left for good (their base became salvage).</summary>
         public bool Left;
+        /// <summary>Resigned as lost because nothing they had could change the game any more.</summary>
+        public bool Resigned;
+        /// <summary>When the team was first seen unable to make progress (-1 = it can).</summary>
+        public float StalledSince = -1;
         /// <summary>Open arena: a scripted house player that keeps the world populated.</summary>
         public bool House;
         /// <summary>Unique per occupant. Seats are recycled, so tokens bind to this, not just the team index.</summary>
@@ -100,6 +104,8 @@ namespace Pez.Sim
         public readonly List<Entity> Entities = new List<Entity>();
         public readonly List<Projectile> Projectiles = new List<Projectile>();
         public readonly List<GameEvent> Events = new List<GameEvent>();
+        /// <summary>How many of each event type have happened (the event list itself is a rolling window).</summary>
+        public readonly Dictionary<string, int> EventCounts = new Dictionary<string, int>();
         public readonly AlertLog Alerts = new AlertLog();
         public int Tick;
         public float Time => Tick * Dt;
@@ -326,7 +332,7 @@ namespace Pez.Sim
                     o.KnownEnemyStructures.Remove(id);
         }
 
-        public string Leave(int teamId)
+        public string Leave(int teamId, string reason = null)
         {
             var t = Teams[teamId];
             if (t.Left) return "already left";
@@ -368,7 +374,7 @@ namespace Pez.Sim
             ForgetTeam(teamId);
             MapVersion++;
             var where = StateView.Sector(Map, t.StartPos);
-            string msg = $"{t.PlayerName ?? t.Name} ({t.Name}) left the arena. Their base at sector {where} is now about {(int)total} units of salvage ore. First come, first served.";
+            string msg = $"{t.PlayerName ?? t.Name} ({t.Name}) {reason ?? "left the arena"}. Their base at sector {where} is now about {(int)total} units of salvage ore. First come, first served.";
             Emit("left", teamId, pos: t.StartPos, text: msg);
             Emit("chat", -1, text: msg);
             foreach (var other in Teams.Where(o => !o.Left && !o.Defeated))
@@ -432,6 +438,7 @@ namespace Pez.Sim
             }
             e.Facing = e.TurretFacing = -MathF.PI / 2;
             e.GuardPos = e.Pos;
+            e.Fuel = def.Fuel;
             if (e.IsHarvester) SetOrder(e, Order.Harvest, e.Pos);
             else if (at.Rally.HasValue) SetOrder(e, Order.Move, at.Rally.Value);
             return e;
@@ -498,6 +505,7 @@ namespace Pez.Sim
         {
             var ev = new GameEvent { Seq = nextSeq++, Tick = Tick, Type = type, Team = team, A = a, B = b, Pos = pos, Pos2 = pos2, Key = key, Text = text };
             Events.Add(ev);
+            EventCounts[type] = (EventCounts.TryGetValue(type, out var n) ? n : 0) + 1;
             if (Events.Count > MaxEvents) Events.RemoveRange(0, Events.Count - MaxEvents);
             return ev;
         }
@@ -607,6 +615,7 @@ namespace Pez.Sim
             e.RepathTimer = 0;
             if (o == Order.Idle) e.GuardPos = e.Pos;
             e.Responding = false; // any new order (from a commander or the response itself) replaces the old one
+            e.SpeedCap = 0;
             if (o == Order.Harvest && e.IsHarvester)
             {
                 var t = Int2.Of(pos);
@@ -642,7 +651,7 @@ namespace Pez.Sim
                 try
                 {
                     if (e.IsMine) { MineTick(e); continue; }
-                    if (!e.IsStructure) UpdateUnit(e);
+                    if (!e.IsStructure) { UpdateUnit(e); if (e.Def.UsesFuel && !e.Dead) UpdateFuel(e); }
                     else if (e.IsArmed && e.IsComplete) UpdateTurret(e);
                 }
                 catch (Exception ex)
@@ -794,6 +803,10 @@ namespace Pez.Sim
                     break;
                 case Order.LayMines:
                     UpdateLayMines(e);
+                    break;
+                case Order.Refuel:
+                    UpdateRefuelTrip(e);
+                    if (e.IsArmed && !e.Dead) OpportunisticFire(e);
                     break;
                 case Order.Move:
                     if (FollowPath(e, e.OrderPos, 0.3f)) SetOrder(e, Order.Idle, e.Pos);
@@ -1018,8 +1031,11 @@ namespace Pez.Sim
 
         /// <summary>Medics heal infantry; repair trucks fix everything else. Neither works on itself.</summary>
         public static bool CanTend(Entity healer, Entity t) =>
-            t != healer && !t.Dead && !t.IsMine && !t.IsCarried && t.Team == healer.Team && t.IsComplete && t.Hp < t.Def.MaxHp - 0.5f &&
+            t != healer && !t.Dead && !t.IsMine && !t.IsCarried && t.Team == healer.Team && t.IsComplete && (t.Hp < t.Def.MaxHp - 0.5f || NeedsTanker(healer, t)) &&
             (healer.Def.Medic ? t.Def.Armor == Armor.Infantry : t.Def.Armor != Armor.Infantry);
+
+        /// <summary>Repair trucks double as field tankers for ground vehicles (aircraft refuel on a pad).</summary>
+        public static bool NeedsTanker(Entity healer, Entity t) => !healer.Def.Medic && t.Def.UsesFuel && !t.IsAir && t.Fuel < t.Def.Fuel * 0.6f;
 
         void IdleRepair(Entity e)
         {
@@ -1029,7 +1045,8 @@ namespace Pez.Sim
             foreach (var o in Entities)
             {
                 if (!CanTend(e, o)) continue;
-                float d = o.DistFrom(e.Pos);
+                // Stranded vehicles are worth a longer drive than a scratch.
+                float d = o.DistFrom(e.Pos) - (o.Stranded ? 14f : 0f);
                 if (d < bd) { bd = d; best = o; }
             }
             if (best != null) SetOrder(e, Order.Repair, best.Center, best.Id);
@@ -1038,12 +1055,15 @@ namespace Pez.Sim
         void UpdateRepair(Entity e)
         {
             var t = Get(e.TargetId);
-            if (t == null || !CanTend(e, t)) { SetOrder(e, Order.Idle, e.Pos); return; }
+            // Keep going until it's whole and (for a vehicle being refuelled) the tank is full.
+            bool topping = t != null && !e.Def.Medic && t.Team == e.Team && t.Def.UsesFuel && !t.IsAir && t.Fuel < t.Def.Fuel * 0.99f;
+            if (t == null || !(CanTend(e, t) || topping)) { SetOrder(e, Order.Idle, e.Pos); return; }
             if (t.DistFrom(e.Pos) > e.Def.RepairRange) { Chase(e, t); return; }
             e.Moving = false;
             e.Path = null;
             e.TurretFacing = RotateToward(e.TurretFacing, (t.Center - e.Pos).Angle, 6f * Dt);
             var team = Teams[e.Team];
+            if (topping) Refill(t, t.Def.Fuel / (EntityDef.RefuelSeconds * 1.2f) * Dt);
             float hp = MathF.Min(e.Def.RepairRate * Dt, t.Def.MaxHp - t.Hp);
             if (!e.Def.Medic)
             {
@@ -1237,6 +1257,171 @@ namespace Pez.Sim
 
         public Vec2 DockPoint(Entity refinery) => new Vec2(refinery.Origin.X + refinery.Def.SizeX / 2f, refinery.Origin.Y - 0.5f);
 
+        // ------------------------------------------------------------------ fuel
+
+        /// <summary>Where a unit can refuel: aircraft on a landing pad (an airfield, or the factory that built a drone), vehicles at a depot.</summary>
+        public static bool IsFuelPoint(Entity u, Entity s) =>
+            s.IsStructure && !s.Dead && s.Team == u.Team && s.IsComplete &&
+            (u.IsAir ? s.Def.Helipad || (u.Def.BuiltBy == Producer.Factory && s.Def.Produces == Producer.Factory) : s.Def.FuelDepot);
+
+        public Entity NearestFuelPoint(Entity u)
+        {
+            Entity best = null; float bd = float.MaxValue;
+            foreach (var s in Entities)
+            {
+                if (!IsFuelPoint(u, s)) continue;
+                float d = Vec2.DistSq(s.Center, u.Pos);
+                if (d < bd) { bd = d; best = s; }
+            }
+            return best;
+        }
+
+        void Refill(Entity u, float amount)
+        {
+            u.Fuel = MathF.Min(u.Def.Fuel, u.Fuel + amount);
+            // A stranded vehicle stays put until it has enough to be worth moving, so it doesn't drive off a drop at a time.
+            if (u.Stranded && u.Fuel >= u.Def.Fuel * 0.3f) u.Stranded = false;
+            if (u.Fuel > u.Def.Fuel * 0.3f) u.FuelWarned = false;
+        }
+
+        /// <summary>Burn, refuel, head home on low fuel, and run dry: a stranded vehicle, or a crashed aircraft.</summary>
+        void UpdateFuel(Entity e)
+        {
+            float max = e.Def.Fuel;
+            bool refuelling;
+            if (e.IsAir)
+            {
+                // Parked on a pad: landed, refuelling, burning nothing.
+                e.Landed = !e.Moving && (e.Order == Order.Idle || e.Order == Order.Refuel) &&
+                           ((Tick + e.Id) % 5 == 0 ? OnPad(e) : e.Landed);
+                refuelling = e.Landed;
+            }
+            else
+            {
+                if ((Tick + e.Id) % 5 == 0) e.AtDepot = NearDepot(e);
+                refuelling = e.AtDepot;
+            }
+            if (refuelling) { if (e.Fuel < max) Refill(e, max / EntityDef.RefuelSeconds * Dt); }
+            else if (e.IsAir) e.Fuel -= Dt * (e.Moving ? 1f : 0.6f); // hovering still burns
+            else e.Fuel -= Vec2.Dist(e.Pos, e.PrevPos) / MathF.Max(0.1f, e.Def.Speed);
+
+            if (e.Fuel <= 0)
+            {
+                e.Fuel = 0;
+                if (e.IsAir) { Crash(e); return; }
+                if (!e.Stranded)
+                {
+                    e.Stranded = true;
+                    e.Moving = false;
+                    var a = Alerts.Raise(this, e.Team, "units_stranded", Priority.High, e.Pos);
+                    a.Lost.Add($"{e.Def.Key} #{e.Id} (out of fuel)");
+                    Emit("stranded", e.Team, e.Id, 0, e.Pos, key: e.Def.Key,
+                         text: $"{e.Def.Key} #{e.Id} ran out of fuel at {(int)e.Pos.X},{(int)e.Pos.Y}. It can still shoot, but can't move until a repair truck refuels it.");
+                }
+                return;
+            }
+
+            // Bingo fuel: head for the nearest pad or depot with enough left to get there, then carry on.
+            if (e.Order == Order.Refuel || refuelling || (Tick + e.Id) % 10 != 0 || Time < e.NoAutoRefuelUntil) return;
+            if (e.Fuel > max * 0.5f) return;
+            if (!e.IsAir && e.Order == Order.Idle && !e.Moving) return; // a parked vehicle burns nothing
+            var p = NearestFuelPoint(e);
+            if (p == null)
+            {
+                if (!e.FuelWarned && e.Fuel < max * 0.3f)
+                {
+                    e.FuelWarned = true;
+                    var a = Alerts.Raise(this, e.Team, "low_fuel", e.IsAir ? Priority.High : Priority.Medium, e.Pos);
+                    a.Lost.Add($"{e.Def.Key} #{e.Id} ({(int)(e.FuelFraction * 100)}% fuel, nowhere to refuel: {(e.IsAir ? "build an airfield" : "needs a command center, outpost, refinery or factory, or a repair truck")})");
+                }
+                return;
+            }
+            float speed = MathF.Max(0.1f, e.Def.Speed), dist = Vec2.Dist(e.Pos, p.Center);
+            float need = e.IsAir ? dist / speed * 1.15f + 8f : dist * 1.4f / speed + 10f; // roads wind; keep a reserve
+            if (e.Fuel > need) return;
+            BeginRefuel(e, p);
+            Emit("low_fuel", e.Team, e.Id, p.Id, e.Pos, key: e.Def.Key,
+                 text: $"{e.Def.Key} #{e.Id} is low on fuel ({(int)(e.FuelFraction * 100)}%) and is heading to {p.Def.Key} #{p.Id} to refuel; it picks up its {e.ResumeOrder.ToString().ToLowerInvariant()} order afterwards.");
+        }
+
+        bool OnPad(Entity e)
+        {
+            foreach (var s in Owned(e.Team)) if (IsFuelPoint(e, s) && s.DistFrom(e.Pos) <= 1.5f) return true;
+            return false;
+        }
+
+        bool NearDepot(Entity e)
+        {
+            foreach (var s in Owned(e.Team)) if (s.IsStructure && s.Def.FuelDepot && s.IsComplete && s.DistFrom(e.Pos) <= 2.5f) return true;
+            return false;
+        }
+
+        /// <summary>Send a unit to refuel at p, remembering what it was doing.</summary>
+        public void BeginRefuel(Entity e, Entity p)
+        {
+            if (e.Order != Order.Refuel)
+            {
+                e.ResumeOrder = e.Order; e.ResumePos = e.OrderPos; e.ResumeTarget = e.TargetId; e.ResumeGuard = e.GuardPos;
+            }
+            SetOrder(e, Order.Refuel, p.Center, p.Id);
+        }
+
+        void UpdateRefuelTrip(Entity e)
+        {
+            var p = Get(e.TargetId);
+            if (p == null || !IsFuelPoint(e, p))
+            {
+                p = NearestFuelPoint(e);
+                if (p == null) { FinishRefuel(e); return; }
+                e.TargetId = p.Id; e.OrderPos = p.Center; e.Path = null;
+            }
+            if (e.IsAir)
+            {
+                if (Vec2.Dist(e.Pos, p.Center) > 0.6f) { StepToward(e, p.Center); return; }
+            }
+            else if (p.DistFrom(e.Pos) > 2.2f)
+            {
+                if (FollowPath(e, DockPoint(p), 0.8f) && p.DistFrom(e.Pos) > 2.5f)
+                {
+                    // Can't get there: carry on, and don't try again for a while.
+                    e.NoAutoRefuelUntil = Time + 30f;
+                    FinishRefuel(e);
+                }
+                return;
+            }
+            e.Moving = false; e.Path = null;
+            if (e.Fuel >= e.Def.Fuel * 0.99f) FinishRefuel(e);
+        }
+
+        void FinishRefuel(Entity e)
+        {
+            var o = e.ResumeOrder;
+            if (o == Order.Idle || o == Order.Refuel)
+            {
+                // Aircraft stay parked on the pad; a vehicle drives back to its post.
+                var post = e.ResumeGuard;
+                SetOrder(e, Order.Idle, e.Pos);
+                if (!e.IsAir && Vec2.Dist(post, e.Pos) > 4f) SetOrder(e, Order.Move, post);
+            }
+            else
+            {
+                e.Order = o; e.OrderPos = e.ResumePos; e.TargetId = e.ResumeTarget; e.GuardPos = e.ResumeGuard; e.Path = null; e.RepathTimer = 0;
+                if (o == Order.Attack && Get(e.TargetId) == null) FinishOrder(e);
+            }
+            e.ResumeOrder = Order.Idle;
+            Emit("refuelled", e.Team, e.Id, 0, e.Pos, key: e.Def.Key, text: $"{e.Def.Key} #{e.Id} refuelled and is back on {e.OrderName}.");
+        }
+
+        void Crash(Entity e)
+        {
+            Emit("destroyed", e.Team, e.Id, 0, e.Pos, key: e.Def.Key, text: $"{e.Def.Key} #{e.Id} ran out of fuel and crashed");
+            Emit("crashed", e.Team, e.Id, 0, e.Pos, key: e.Def.Key);
+            Teams[e.Team].Stats.UnitsLost++;
+            var a = Alerts.Raise(this, e.Team, "aircraft_crashed", Priority.High, e.Pos);
+            a.Lost.Add($"{e.Def.Key} #{e.Id} (out of fuel)" + (e.Passengers.Count > 0 ? $" with {e.Passengers.Count} passengers" : ""));
+            Remove(e);
+        }
+
         // ------------------------------------------------------------------ movement
 
         /// <summary>Moves along a path to dest. Returns true on arrival.</summary>
@@ -1276,6 +1461,7 @@ namespace Pez.Sim
 
         void StepToward(Entity e, Vec2 p)
         {
+            if (e.Stranded) { e.Moving = false; return; } // out of fuel
             var d = p - e.Pos;
             float len = d.Length;
             if (len < 1e-4f) return;
@@ -1288,7 +1474,8 @@ namespace Pez.Sim
             }
             else e.Facing = want;
             if (!e.IsArmed || e.Cooldown <= 0 || e.Order != Order.Attack) e.TurretFacing = RotateToward(e.TurretFacing, e.Facing, 4f * Dt);
-            float step = MathF.Min(len, e.Def.Speed * Dt);
+            float speed = e.SpeedCap > 0 ? MathF.Min(e.Def.Speed, e.SpeedCap) : e.Def.Speed;
+            float step = MathF.Min(len, speed * Dt);
             var next = e.Pos + d / len * step;
             var nt = Int2.Of(next);
             var ct = Int2.Of(e.Pos);
@@ -1429,9 +1616,75 @@ namespace Pez.Sim
             }
         }
 
+        /// <summary>Seconds a team may go without any way to make progress before it's resigned as lost.</summary>
+        public float StallGrace = 90f;
+
+        /// <summary>
+        /// Why this team can't change the game any more, or null if it still can. It can if it has income (a command
+        /// center's trickle, a working mining truck with ore left and somewhere to unload, a converter running),
+        /// something being built or trained, something it can afford to build or train, or units that can still move
+        /// and act (armed units, engineers, outpost trucks, or a repair truck that could refuel a stranded vehicle).
+        /// </summary>
+        public string Stalled(Team t)
+        {
+            var mine = Entities.Where(e => !e.Dead && e.Team == t.Id).ToList();
+            bool hq = mine.Any(e => e.IsStructure && e.IsComplete && e.Def.Recipes.Any(r => r.Inputs.Count == 0));
+            if (hq) return null;
+            bool dropOff = mine.Any(e => e.IsStructure && e.IsComplete && e.Def.DropOff);
+            if (dropOff && mine.Any(e => e.IsHarvester && !e.Stranded && !e.IsCarried) && (mine.Any(e => e.IsHarvester && e.Cargo > 0) || Map.Ore.Any(o => o > 0))) return null;
+            if (mine.Any(e => e.IsStructure && e.Working)) return null;
+            if (t.UnitQueues.Values.Any(q => q.Count > 0)) return null;
+            foreach (var d in Defs.All.Values)
+                if (d.BuiltBy != Producer.None && d.BuiltBy != Producer.CommandCenter && d.Cost.Count > 0 && MissingPrereq(t.Id, d) == null && t.Missing(d.Cost) == null)
+                    return null; // can still train something (structures need a command center, which would already count)
+            bool anyStranded = mine.Any(e => e.Stranded);
+            if (mine.Any(e => !e.IsStructure && !e.IsMine && !e.IsCarried && !e.Stranded &&
+                              (e.IsArmed || e.Def.Key == "engineer" || e.Def.DeploysInto != null || (e.Def.RepairRate > 0 && !e.Def.Medic && anyStranded))))
+                return null;
+            return "no command center, no working mining trucks, nothing affordable to train, and no units that can still move and fight";
+        }
+
+        void CheckStalled()
+        {
+            if (Tick % (TickRate * 5) != 0) return;
+            foreach (var t in Teams)
+            {
+                if (t.Defeated || t.Left) { t.StalledSince = -1; continue; }
+                var why = Stalled(t);
+                if (why == null)
+                {
+                    if (t.StalledSince >= 0) Emit("unstalled", t.Id, text: $"{t.Name} can make progress again");
+                    t.StalledSince = -1;
+                    continue;
+                }
+                if (t.StalledSince < 0)
+                {
+                    t.StalledSince = Time;
+                    Alerts.Raise(this, t.Id, "stalled", Priority.Critical, t.StartPos, hit: false)
+                          .Lost.Add($"{why}. Unless that changes within {StallGrace:0}s you'll be resigned as lost");
+                    continue;
+                }
+                if (Time - t.StalledSince >= StallGrace) Resign(t, why);
+            }
+        }
+
+        void Resign(Team t, string why)
+        {
+            t.Resigned = true;
+            if (Open)
+            {
+                Leave(t.Id, $"could make no further progress ({why}) and was resigned as lost");
+                return;
+            }
+            t.Defeated = true;
+            foreach (var e in Entities.Where(e => !e.Dead && e.Team == t.Id).ToList()) { Emit("destroyed", e.Team, e.Id, 0, e.Center, key: e.Def.Key); Remove(e); }
+            Emit("defeated", t.Id, text: $"{t.Name} ({t.PlayerName ?? t.Controller}) could make no further progress ({why}) and was resigned as lost");
+        }
+
         void CheckVictory()
         {
             CheckProtection();
+            CheckStalled();
             if (Open)
             {
                 // An open arena never ends: teams that lose every structure are out, everyone else plays on.

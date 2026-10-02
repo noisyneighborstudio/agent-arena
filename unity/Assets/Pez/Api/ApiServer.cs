@@ -120,9 +120,12 @@ namespace Pez.Api
                 var w = game.World;
                 bool restarted = w != wt.World;
                 var fresh = restarted ? new List<Alert>() : w.Alerts.Since(wt.Team, wt.AlertSince, wt.Min).ToList();
+                // Only news cuts a wait short: a new place or a worse kind of trouble, not the fight it already knows
+                // about (which otherwise turns every wait into 0s). And every wait runs at least a second.
+                bool news = fresh.Any(a => !w.Alerts.IsContinuation(w, a, wt.AlertSince));
                 // New commander's orders also end the wait: the model should read them right away.
                 bool newOrders = !restarted && wt.OrdersSince >= 0 && w.Teams[wt.Team].OrdersVersion > wt.OrdersSince;
-                bool interrupt = wt.Interruptible && (fresh.Count > 0 || newOrders);
+                bool interrupt = wt.Interruptible && (news || newOrders) && (now - wt.Started).TotalSeconds >= 1.0;
                 if (!interrupt && !restarted && now < wt.Deadline && !w.GameOver) continue;
                 waiters.RemoveAt(i);
                 Respond(wt.Ctx, 200, Json.Write(WaitResult(w, wt, interrupt, fresh, now)), "application/json");
@@ -270,7 +273,7 @@ namespace Pez.Api
                         .Set("open", w.Open).Set("map", $"{w.Map.W}x{w.Map.H}").Set("max_map", w.MaxMapSize)
                         .Set("players", w.ActivePlayers).Set("max_players", w.MaxPlayers).Set("time_s", (float)Math.Round(w.Time, 1))
                         .Set("teams", w.Teams.Select(t => new JObj().Set("flavor", t.Name).Set("player", t.PlayerName ?? t.Controller)
-                            .Set("status", t.Left ? "left" : t.Defeated ? "eliminated" : "playing").Set("house", t.House)
+                            .Set("status", t.Resigned ? "resigned" : t.Left ? "left" : t.Defeated ? "eliminated" : "playing").Set("house", t.House)
                             .Set("structures", w.Owned(t.Id).Count(e => e.IsStructure)).Set("kills", t.Stats.Kills)).ToList()));
                 case "/api/whoami":
                     {
@@ -433,7 +436,7 @@ namespace Pez.Api
             }
             var o = new JObj().Set("tick", w.Tick).Set("time_s", (float)Math.Round(w.Time, 1)).Set("version", w.MapVersion)
                 .Set("teams", w.Teams.Select(t => new JObj().Set("id", t.Id).Set("flavor", t.Name).Set("player", t.PlayerName ?? t.Controller)
-                    .Set("status", t.Left ? "left" : t.Defeated ? "eliminated" : "playing").Set("kills", t.Stats.Kills)).ToList())
+                    .Set("status", t.Resigned ? "resigned" : t.Left ? "left" : t.Defeated ? "eliminated" : "playing").Set("kills", t.Stats.Kills)).ToList())
                 .Set("entities", ents).Set("effects", shots)
                 .Set("chat", w.Events.Where(e => e.Type == "chat").Reverse().Take(8).Reverse()
                     .Select(e => $"{(e.Team >= 0 ? w.Teams[e.Team].Name : "arena")}: {e.Text}").ToList());
@@ -442,7 +445,7 @@ namespace Pez.Api
             {
                 var t = w.Teams[team];
                 o.Set("you", new JObj().Set("team", team).Set("flavor", t.Name).Set("player", t.PlayerName).Set("stockpile", StateView.Stockpile(t))
-                    .Set("power", $"{t.PowerUsed}/{t.PowerProduced}").Set("status", t.Left ? "left" : t.Defeated ? "eliminated" : "playing"));
+                    .Set("power", $"{t.PowerUsed}/{t.PowerProduced}").Set("status", t.Resigned ? "resigned" : t.Left ? "left" : t.Defeated ? "eliminated" : "playing"));
                 o.Set("alerts", w.Alerts.Active(w, team).Take(4).Select(a => AlertLog.Describe(w, a)).ToList());
                 o.Set("standing_orders", t.StandingOrders);
             }

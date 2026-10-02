@@ -2,7 +2,7 @@ using System.Collections.Generic;
 
 namespace Pez.Sim
 {
-    public enum Order { Idle, Move, AttackMove, Attack, Harvest, ReturnOre, Repair, Board, Capture, LayMines }
+    public enum Order { Idle, Move, AttackMove, Attack, Harvest, ReturnOre, Repair, Board, Capture, LayMines, Refuel }
 
     public class Entity
     {
@@ -29,6 +29,7 @@ namespace Pez.Sim
         public List<Vec2> Path;
         public int PathIdx;
         public float Cooldown;
+        public float SpeedCap;        // moving as a group: no faster than the slowest member (0 = own speed)
         public float RepathTimer;
         public bool Moving;
         public int LastAttackerId;
@@ -53,6 +54,18 @@ namespace Pez.Sim
         public int CarrierId;                         // != 0 while riding inside a transport
         public readonly List<int> Passengers = new List<int>();
         public bool IsCarried => CarrierId != 0;
+
+        // Fuel (vehicles and aircraft). A refuel trip remembers the order it interrupted and picks it up afterwards.
+        public float Fuel;
+        public bool Landed;          // aircraft parked on a pad (refuelling, not burning)
+        public bool Stranded;        // ground vehicle out of fuel: can't move until a repair truck tops it up
+        public bool AtDepot;         // ground vehicle next to a fuel depot (refuelling)
+        public bool FuelWarned;      // told the commander there's nowhere to refuel
+        public float NoAutoRefuelUntil;
+        public Order ResumeOrder;
+        public Vec2 ResumePos, ResumeGuard;
+        public int ResumeTarget;
+        public float FuelFraction => Def.Fuel > 0 ? Fuel / Def.Fuel : 1f;
 
         // Mine layers: where to put the remaining mines
         public readonly List<Vec2> MineQueue = new List<Vec2>();

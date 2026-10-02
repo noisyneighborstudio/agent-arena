@@ -90,9 +90,11 @@ export class Player {
     const r = JSON.parse(await this.call(`/api/wait?seconds=${seconds}&since=${this.lastAlertSeq}&events_since=${this.lastSeq}&orders_version=${this.lastOrdersVersion}&min=${interruptOn}`));
     this.noteState(r.state);
     const orders = this.ordersBanner(r.state.orders_version, r.state.standing_orders === "none" ? "" : r.state.standing_orders);
-    const head = r.new_alerts?.length
-      ? this.banner(r.new_alerts, `PRIORITY ALERT: your wait was cut short after ${r.waited_s}s of ${seconds}s. Respond to this first:`)
-      : r.interrupted ? `Your wait was cut short after ${r.waited_s}s of ${seconds}s by new orders.\n\n` : `Waited ${r.waited_s}s. No new priority alerts.\n\n`;
+    const head = r.interrupted && r.new_alerts?.length
+      ? this.banner(r.new_alerts, `PRIORITY ALERT: your wait was cut short after ${r.waited_s}s of ${seconds}s by something new. Respond to this first:`)
+      : r.interrupted ? `Your wait was cut short after ${r.waited_s}s of ${seconds}s by new orders.\n\n`
+      : r.new_alerts?.length ? `Waited ${r.waited_s}s. ` + this.banner(r.new_alerts, "Ongoing (the fight you already know about; it didn't interrupt the wait):")
+      : `Waited ${r.waited_s}s. No new priority alerts.\n\n`;
     return orders + head + JSON.stringify(r.state, null, 1);
   }
 

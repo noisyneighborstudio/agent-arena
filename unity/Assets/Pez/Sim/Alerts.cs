@@ -59,6 +59,19 @@ namespace Pez.Sim
             return a;
         }
 
+        /// <summary>
+        /// A fresh alert in the same place as one the player has already seen (still active, at least as serious) is
+        /// the same fight going on, not news: it shouldn't cut a wait short. A fight produces a stream of these.
+        /// </summary>
+        public bool IsContinuation(World w, Alert a, long seenSeq)
+        {
+            foreach (var x in All)
+                if (x.Team == a.Team && x.Seq <= seenSeq && x.Priority >= a.Priority &&
+                    (w.Tick - x.LastTick) * World.Dt < 30f && Vec2.Dist(x.Pos, a.Pos) <= 12f)
+                    return true;
+            return false;
+        }
+
         public void ClearTeam(int team)
         {
             All.RemoveAll(a => a.Team == team);
@@ -83,6 +96,11 @@ namespace Pez.Sim
             "units_lost" => "UNITS LOST",
             "salvage_available" => "SALVAGE AVAILABLE",
             "protection_ended" => "YOUR NEWCOMER PROTECTION HAS ENDED",
+            "units_stranded" => "VEHICLE OUT OF FUEL",
+            "aircraft_crashed" => "AIRCRAFT CRASHED (OUT OF FUEL)",
+            "low_fuel" => "LOW FUEL, NOWHERE TO REFUEL",
+            "air_contact" => "ENEMY AIRCRAFT ON RADAR",
+            "stalled" => "NO WAY TO MAKE PROGRESS",
             _ => "COMBAT",
         };
 

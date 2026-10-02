@@ -49,8 +49,144 @@ namespace Pez.Headless
             HousePolicy();
             NewcomerProtection();
             SafeSpawn();
+            Fuel();
+            GroupMove();
+            ResignWhenStalled();
+            WaitPacing();
             Console.WriteLine(failures == 0 ? "\nAll tests passed." : $"\n{failures} test(s) FAILED.");
             return failures == 0 ? 0 : 1;
+        }
+
+        static void Fuel()
+        {
+            var w = new World(2, 7, 80);
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var spot = w.FindPlacement(0, "airfield").Value;
+            var airfield = w.SpawnStructure(0, "airfield", spot, 1f);
+
+            // A gunship far from home turns back on low fuel, lands, refuels, and resumes its order.
+            var gs = At(w.SpawnUnit(0, "gunship", airfield), new Vec2(60, 60));
+            gs.Fuel = 25;
+            var dest = new Vec2(70, 20);
+            w.SetOrder(gs, Order.Move, dest);
+            Run(w, 1);
+            Check(gs.Order == Order.Refuel && w.Events.Any(e => e.Type == "low_fuel" && e.A == gs.Id), $"a gunship low on fuel heads back to refuel ({gs.Fuel:0}s left, order {gs.OrderName})");
+            Run(w, 25);
+            Check(!gs.Dead && (gs.Landed || gs.Fuel > 39), $"it lands on the airfield and refuels (fuel {gs.Fuel:0}, landed {gs.Landed})");
+            Run(w, 12);
+            Check(!gs.Dead && gs.Order == Order.Move && Vec2.Dist(gs.OrderPos, dest) < 0.1f && gs.Fuel > gs.Def.Fuel * 0.9f, $"then picks up its move order again (order {gs.OrderName}, fuel {gs.FuelFraction:P0})");
+
+            // Parked aircraft don't burn fuel; hovering ones do.
+            Run(w, 30);
+            var parked = At(w.SpawnUnit(0, "gunship", airfield), airfield.Center);
+            parked.Fuel = 100;
+            Run(w, 10);
+            Check(parked.Landed && parked.Fuel >= 100, "an aircraft parked on its airfield stays topped up");
+
+            // An aircraft with nowhere to land crashes when it runs dry.
+            var w2 = new World(2, 7, 80);
+            var hq2 = w2.Owned(0).First(e => e.Def.Key == "command_center");
+            var drone = At(w2.SpawnUnit(0, "recon_drone", hq2), new Vec2(40, 40));
+            drone.Fuel = 3;
+            w2.SetOrder(drone, Order.Move, new Vec2(70, 70));
+            Run(w2, 6);
+            Check(drone.Dead && w2.Alerts.Active(w2, 0).Any(a => a.Kind == "aircraft_crashed"), "an aircraft that runs out of fuel crashes, with an alert");
+
+            // A tank that runs dry is stranded; a repair truck tops it up and it can drive again.
+            var tank = At(w2.SpawnUnit(0, "light_tank", hq2), new Vec2(45, 45));
+            tank.Fuel = 1.5f;
+            w2.SetOrder(tank, Order.Move, new Vec2(65, 45));
+            Run(w2, 3);
+            var stuckAt = tank.Pos;
+            Run(w2, 3);
+            Check(tank.Stranded && Vec2.Dist(tank.Pos, stuckAt) < 0.01f && w2.Alerts.Active(w2, 0).Any(a => a.Kind == "units_stranded"), $"a vehicle that runs dry is stranded where it is, with an alert (at {tank.Pos})");
+            var r = Commands.Execute(w2, 0, Cmd("type", "refuel", "units", new[] { tank.Id }));
+            Check(!Ok(r) && r["error"].ToString().Contains("repair truck"), $"refuel on a stranded vehicle says to send a repair truck: {r["error"]}");
+            var rt = At(w2.SpawnUnit(0, "repair_truck", hq2), tank.Pos + new Vec2(-12, 0));
+            Run(w2, 20);
+            Check(!tank.Stranded && tank.Fuel >= tank.Def.Fuel * 0.3f, $"an idle repair truck nearby drives over and refuels it until it can carry on (fuel {tank.FuelFraction:P0})");
+            w2.SetOrder(tank, Order.Move, tank.Pos + new Vec2(3, 0));
+            var before = tank.Pos;
+            Run(w2, 3);
+            Check(Vec2.Dist(tank.Pos, before) > 1f, "and it can drive again");
+
+            // Parked vehicles burn nothing; the refuel command sends a unit to a depot and back.
+            var guard = At(w2.SpawnUnit(0, "heavy_tank", hq2), new Vec2(30, 30));
+            float f0 = guard.Fuel;
+            Run(w2, 30);
+            Check(guard.Fuel == f0, "a parked tank burns no fuel");
+            guard.Fuel = 100;
+            r = Commands.Execute(w2, 0, Cmd("type", "refuel", "units", new[] { guard.Id }));
+            Check(Ok(r) && guard.Order == Order.Refuel, $"refuel command: {r["result"]}");
+            Run(w2, 40);
+            Check(guard.Fuel > guard.Def.Fuel * 0.85f && guard.Order != Order.Refuel, $"it tops up at a depot (fuel {guard.FuelFraction:P0}, order {guard.OrderName})");
+
+            var st = Json.Write(StateView.TeamState(w2, 0));
+            Check(st.Contains("fuel ") && st.Contains("%"), "units show their fuel in the state");
+            Check(w.Errors == 0 && w2.Errors == 0, $"no sim errors ({w.LastError ?? w2.LastError})");
+        }
+
+        static void GroupMove()
+        {
+            var w = new World(2, 7, 80);
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var fast = At(w.SpawnUnit(0, "scout_buggy", hq), new Vec2(20, 30));
+            var slow = At(w.SpawnUnit(0, "heavy_tank", hq), new Vec2(21, 30));
+            var r = Commands.Execute(w, 0, Cmd("type", "move", "units", new[] { fast.Id, slow.Id }, "x", 50, "y", 30, "together", true));
+            Run(w, 8);
+            Check(Ok(r) && r["result"].ToString().Contains("together") && Vec2.Dist(fast.Pos, slow.Pos) < 3f, $"together:true keeps a buggy with a heavy tank ({Vec2.Dist(fast.Pos, slow.Pos):0.0} tiles apart): {r["result"]}");
+        }
+
+        static void ResignWhenStalled()
+        {
+            var w = new World(2, 7, 80) { StallGrace = 30 };
+            Run(w, 6);
+            Check(w.Stalled(w.Teams[1]) == null, "a team with a command center can always make progress");
+            // Team 1 is down to a turret and a tank stranded without fuel: nothing it has can change the game.
+            foreach (var e in w.Owned(1).ToList()) w.Remove(e);
+            var spot = w.FindPlacement(1, "gun_turret", w.Teams[1].StartPos);
+            w.SpawnStructure(1, "gun_turret", spot ?? Int2.Of(w.Teams[1].StartPos), 1f);
+            var tank = At(w.SpawnUnit(1, "light_tank", w.Owned(1).First()), w.Teams[1].StartPos + new Vec2(-3, -3));
+            tank.Fuel = 0; tank.Stranded = true;
+            w.Teams[1].Stock.Clear();
+            Run(w, 6);
+            Check(w.Stalled(w.Teams[1]) != null && w.Alerts.Active(w, 1).Any(a => a.Kind == "stalled"), $"it's flagged as stalled and warned: {w.Stalled(w.Teams[1])}");
+            Run(w, 35);
+            Check(w.Teams[1].Resigned && w.Teams[1].Defeated && w.GameOver && w.Winner == 0, $"after the grace period it's resigned as lost and the other side wins (resigned {w.Teams[1].Resigned}, winner {w.Winner})");
+
+            // Fuel for that tank would have counted as a way forward: a repair truck that can reach it.
+            var w2 = new World(2, 7, 80) { StallGrace = 30 };
+            foreach (var e in w2.Owned(1).ToList()) w2.Remove(e);
+            var post = w2.SpawnStructure(1, "gun_turret", w2.FindPlacement(1, "gun_turret", w2.Teams[1].StartPos) ?? Int2.Of(w2.Teams[1].StartPos), 1f);
+            var t2 = At(w2.SpawnUnit(1, "light_tank", post), w2.Teams[1].StartPos + new Vec2(-3, -3));
+            t2.Fuel = 0; t2.Stranded = true;
+            At(w2.SpawnUnit(1, "repair_truck", post), w2.Teams[1].StartPos + new Vec2(-6, -3));
+            w2.Teams[1].Stock.Clear();
+            Run(w2, 6);
+            Check(w2.Stalled(w2.Teams[1]) == null, "a repair truck that can refuel the stranded tank counts as a way forward");
+
+            // In an open arena a resigned player's base becomes salvage for everyone else.
+            var w3 = new World(2, 7, 80) { Open = true, StallGrace = 10 };
+            foreach (var e in w3.Owned(1).ToList()) w3.Remove(e);
+            w3.SpawnStructure(1, "power_plant", w3.FindPlacement(1, "power_plant", w3.Teams[1].StartPos) ?? Int2.Of(w3.Teams[1].StartPos), 1f);
+            w3.Teams[1].Stock.Clear();
+            Run(w3, 20);
+            Check(w3.Teams[1].Resigned && w3.Teams[1].Left && !w3.GameOver && w3.Events.Any(e => e.Type == "left" && e.Text.Contains("resigned as lost")), "in an open arena the resigned base turns into salvage and play goes on");
+            Check(w.Errors == 0 && w2.Errors == 0 && w3.Errors == 0, "no sim errors");
+        }
+
+        static void WaitPacing()
+        {
+            var w = new World(2, 7, 80);
+            var p = new Vec2(40, 40);
+            var seen = w.Alerts.Raise(w, 0, "units_ambushed", Priority.High, p);
+            Run(w, 2);
+            var sameFight = w.Alerts.Raise(w, 0, "combat", Priority.High, p + new Vec2(5, 3));
+            var elsewhere = w.Alerts.Raise(w, 0, "units_ambushed", Priority.High, p + new Vec2(30, 0));
+            var worse = w.Alerts.Raise(w, 0, "structure_lost", Priority.Critical, p + new Vec2(2, 0));
+            Check(w.Alerts.IsContinuation(w, sameFight, seen.Seq), "more alerts from a fight the player already saw don't count as news (so wait doesn't return at 0s)");
+            Check(!w.Alerts.IsContinuation(w, elsewhere, seen.Seq), "trouble somewhere else does");
+            Check(!w.Alerts.IsContinuation(w, worse, seen.Seq), "and so does something worse in the same place");
         }
 
         static void RepairTruck()

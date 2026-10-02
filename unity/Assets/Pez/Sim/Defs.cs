@@ -65,6 +65,11 @@ namespace Pez.Sim
         public float RepairRange = 1.5f;
         public const float RepairSteelPerHp = 0.1f;
         public bool DropOff;          // trucks can unload ore here
+        public float Fuel;            // vehicles and aircraft: seconds of full-speed travel (aircraft burn while airborne); 0 = no fuel
+        public bool FuelDepot;        // vehicles refuel next to it
+        public bool Helipad;          // aircraft land and refuel here
+        public const float RefuelSeconds = 10f;  // empty to full at a depot, pad or tanker
+        public bool UsesFuel => Fuel > 0;
         public Recipe[] Recipes = new Recipe[0];
         public string DeploysInto;    // e.g. outpost_truck -> outpost
         public bool IsAir, Stealth;
@@ -161,6 +166,23 @@ namespace Pez.Sim
             Add(new EntityDef { Key = "transport_chopper", Name = "Transport Chopper", Description = "Flying transport for 6 infantry; ignores terrain. Use 'load' and 'unload'. Passengers die if it's shot down.", Cost = C("steel", 300, "circuits", 80), BuildTime = 12, MaxHp = 600, Armor = Armor.Aircraft, Speed = 3.5f, Radius = 0.7f, Sight = 7, Capacity = 6, IsAir = true, BuiltBy = Producer.Airfield });
             Add(new EntityDef { Key = "gunship", Name = "Gunship", Description = "Aircraft. Flies over terrain; rockets vs ground and air.", Cost = C("steel", 300, "circuits", 120, "plasma", 30), BuildTime = 14, MaxHp = 500, Armor = Armor.Aircraft, Speed = 3.2f, Radius = 0.6f, Sight = 8, Weapon = GunshipRockets, IsAir = true, BuiltBy = Producer.Airfield });
             Add(new EntityDef { Key = "stealth_bomber", Name = "Stealth Bomber", Description = "Invisible unless within 3 tiles of an enemy or inside enemy radar range. Bombs wreck structures.", Cost = C("composite", 300, "circuits", 150, "plasma", 80), BuildTime = 20, MaxHp = 600, Armor = Armor.Aircraft, Speed = 3.8f, Radius = 0.7f, Sight = 7, Weapon = Bombs, IsAir = true, Stealth = true, BuiltBy = Producer.Airfield, Requires = new[] { "composite_foundry" } });
+
+            // Fuel. Ground vehicles burn it while driving (a parked tank burns nothing); aircraft burn it the whole time
+            // they're airborne. Vehicles refuel next to a command center, outpost, refinery or factory, or from a repair
+            // truck in the field; aircraft land on an airfield (recon drones also at a factory) and refuel there.
+            var tanks = new Dictionary<string, float>
+            {
+                ["mining_truck"] = 300, ["scout_buggy"] = 160, ["light_tank"] = 200, ["repair_truck"] = 360, ["outpost_truck"] = 260,
+                ["heavy_tank"] = 200, ["artillery"] = 200, ["laser_tank"] = 200, ["apc"] = 200, ["flak_track"] = 200, ["minelayer"] = 220,
+                ["mammoth_tank"] = 220, ["recon_drone"] = 150, ["transport_chopper"] = 150, ["gunship"] = 120, ["stealth_bomber"] = 150,
+            };
+            foreach (var d in All.Values)
+            {
+                if (tanks.TryGetValue(d.Key, out var f)) d.Fuel = f;
+                else if (!d.IsStructure && !d.IsMine && (d.IsAir || d.Armor == Armor.Vehicle)) d.Fuel = 200; // any vehicle added later
+                if (d.Key is "command_center" or "outpost" or "mining_refinery" or "factory") d.FuelDepot = true;
+                if (d.Key == "airfield") d.Helipad = true;
+            }
         }
 
         static void Add(EntityDef d)
