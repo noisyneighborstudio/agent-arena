@@ -16,6 +16,7 @@ namespace Pez.Sim
         float nextThink;
         int waveSize = 6;
         readonly Dictionary<int, Vec2> outpostTargets = new Dictionary<int, Vec2>();
+        readonly Dictionary<int, int> rigTargets = new Dictionary<int, int>(); // drill rig -> deposit id
 
         static readonly string[] BuildOrder =
         {
@@ -132,6 +133,50 @@ namespace Pez.Sim
             if (w.HasComplete(team, "barracks") && mine.Count(e => e.Def.Key == "medic") < 2 &&
                 !t.UnitQueues[Producer.Barracks].Any(p => p.Key == "medic") && t.Amount("steel") > 200 && Affordable("medic"))
                 Do(w, "type", "train", "unit", "medic");
+
+            // ---- Deep mining: when the surface runs dry, survey outward from the base and drill what turns up.
+            bool surfaceDry = (trucks.Count > 0 && trucks.Count(tr => tr.Order == Order.Idle) * 2 >= trucks.Count) ||
+                              (t.SurfaceWarnedAt > 0 && w.Time - t.SurfaceWarnedAt < 300);
+            if (w.HasComplete(team, "factory") && (surfaceDry || mine.Any(e => e.Def.Key == "deep_mine")))
+            {
+                var free = w.Map.Deep.Where(d => t.Surveyed.Contains(d.Id) && d.Amount > 0 && (d.MineId == 0 || w.Get(d.MineId) == null))
+                                     .OrderBy(d => Vec2.Dist(d.Pos, t.StartPos)).ToList();
+                var surveyors = mine.Where(e => e.Def.Key == "surveyor").ToList();
+                bool Queued(string k) => t.UnitQueues[Producer.Factory].Any(q => q.Key == k);
+                if (surveyors.Count == 0 && free.Count < 2 && !Queued("surveyor") && Affordable("surveyor"))
+                    Do(w, "type", "train", "unit", "surveyor");
+                foreach (var sv in surveyors.Where(e => e.Order == Order.Idle))
+                {
+                    // The nearest spot on widening rings around the base that hasn't been surveyed yet.
+                    Vec2? spot = null;
+                    for (int ring = 1; ring <= 8 && spot == null; ring++)
+                        for (int k = 0; k < 8 * ring && spot == null; k++)
+                        {
+                            float a = k * 2 * System.MathF.PI / (8 * ring) + team;
+                            var p = t.StartPos + new Vec2(System.MathF.Cos(a), System.MathF.Sin(a)) * (14f * ring);
+                            if (!w.Map.InBounds((int)p.X, (int)p.Y) || !w.Map.Passable((int)p.X, (int)p.Y)) continue;
+                            if (t.SurveySites.Any(q => Vec2.Dist(q, p) < 18f)) continue;
+                            spot = p;
+                        }
+                    if (spot.HasValue) Do(w, "type", "survey", "units", new[] { sv.Id }, "x", spot.Value.X, "y", spot.Value.Y);
+                }
+                var rigs = mine.Where(e => e.Def.Key == "drill_rig").ToList();
+                int rigsWanted = System.Math.Min(2, free.Count);
+                if (rigs.Count + t.UnitQueues[Producer.Factory].Count(q => q.Key == "drill_rig") < rigsWanted && Affordable("drill_rig"))
+                    Do(w, "type", "train", "unit", "drill_rig");
+                foreach (var rig in rigs)
+                {
+                    if (!rigTargets.TryGetValue(rig.Id, out var depId) || !free.Any(d => d.Id == depId))
+                    {
+                        var pick = free.FirstOrDefault(d => !rigTargets.Values.Contains(d.Id));
+                        if (pick == null) continue;
+                        rigTargets[rig.Id] = depId = pick.Id;
+                    }
+                    var dep = free.First(d => d.Id == depId);
+                    if (Vec2.Dist(rig.Pos, dep.Pos) > 2.5f) { if (rig.Order == Order.Idle) Do(w, "type", "move", "units", new[] { rig.Id }, "x", dep.Pos.X, "y", dep.Pos.Y); }
+                    else if (rig.Order == Order.Idle) Do(w, "type", "deploy", "units", new[] { rig.Id });
+                }
+            }
 
             // ---- Army
             void Train(Producer p, params string[] options)

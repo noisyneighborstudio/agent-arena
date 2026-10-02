@@ -30,7 +30,8 @@ namespace Pez.Sim
   {""type"":""unload"", ""units"":[TRANSPORT IDS]}          drop all passengers where the transport is
   {""type"":""capture"", ""units"":[ENGINEER IDS], ""target"":ID}  engineer takes over an enemy structure below 50% HP (engineer is used up)
   {""type"":""lay_mines"", ""units"":[MINELAYER IDS], ""x"":X, ""y"":Y, ""count"":N}  lay up to 8 hidden mines around x,y (30 steel each)
-  {""type"":""deploy"", ""units"":[IDS]}                   deploy an outpost_truck into an Outpost where it stands
+  {""type"":""deploy"", ""units"":[IDS]}                   deploy an outpost_truck into an Outpost where it stands, or a drill_rig into a Deep Mine on a surveyed deep deposit within 3 tiles
+  {""type"":""survey"", ""units"":[SURVEYOR IDS], ""x"":X, ""y"":Y}  survey for deep ore deposits (8s, 12-tile radius; only your team sees what it finds)
   {""type"":""rally"", ""structure_id"":ID, ""x"":X, ""y"":Y} where new units from that building go
   {""type"":""sell"", ""structure_id"":ID}                 sell for 50% refund
   {""type"":""cancel"", ""unit"":KEY}                       cancel the last queued unit of that type (full refund)
@@ -66,6 +67,7 @@ namespace Pez.Sim
                     case "rally": return Rally(w, team, c);
                     case "refuel": return Refuel(w, team, c);
                     case "set_retreat": return SetRetreat(w, team, c);
+                    case "survey": return Survey(w, team, c);
                     case "sell": return Sell(w, team, c);
                     case "cancel": return Cancel(w, team, c);
                     case "say":
@@ -339,6 +341,17 @@ namespace Pez.Sim
             foreach (var u in able) w.SetOrder(u, Order.Repair, target.Center, target.Id);
             return Ok($"{able.Count} {(target.Def.Armor == Armor.Infantry ? "medic(s) healing" : "repair truck(s) repairing")} {target.Def.Key} #{target.Id} ({(int)target.Hp}/{target.Def.MaxHp})" +
                       (able.Count < healers.Count ? $"; {healers.Count - able.Count} can't work on that" : ""));
+        }
+
+        static JObj Survey(World w, int team, Dictionary<string, object> c)
+        {
+            var units = ResolveUnits(w, team, c).Where(u => u.Def.Key == "surveyor").ToList();
+            if (units.Count == 0) return Err("no surveyors given (train a surveyor at a factory)");
+            float x = c.Num("x"), y = c.Num("y");
+            if (float.IsNaN(x) || float.IsNaN(y)) return Err("x and y are required: where to survey");
+            if (!w.Map.InBounds((int)x, (int)y)) return Err($"({x},{y}) is outside the {w.Map.W}x{w.Map.H} map");
+            foreach (var u in units) { w.SetOrder(u, Order.Survey, new Vec2(x, y)); u.WorkTimer = 0; }
+            return Ok($"{units.Count} surveyor(s) heading to {x},{y}; a survey takes {EntityDef.SurveySeconds:0}s and covers {EntityDef.SurveyRadius:0} tiles");
         }
 
         static JObj SetRetreat(World w, int team, Dictionary<string, object> c)

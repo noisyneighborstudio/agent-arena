@@ -2,7 +2,7 @@ using System.Collections.Generic;
 
 namespace Pez.Sim
 {
-    public enum Order { Idle, Move, AttackMove, Attack, Harvest, ReturnOre, Repair, Board, Capture, LayMines, Refuel }
+    public enum Order { Idle, Move, AttackMove, Attack, Harvest, ReturnOre, Repair, Board, Capture, LayMines, Refuel, Survey }
 
     public class Entity
     {
@@ -52,6 +52,9 @@ namespace Pez.Sim
         public int HarvestType = -1; // preferred ore type, -1 = nearest of any
         public Int2? HarvestTile;
         public float WorkTimer;
+
+        // Deep mines: the deposit underneath
+        public int DepositId;
 
         // Converters / reactors: currently producing
         public bool Working;

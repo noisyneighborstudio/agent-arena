@@ -73,6 +73,10 @@ namespace Pez.Sim
         };
         /// <summary>Enemy structures this team has seen: id -> (key, origin, team).</summary>
         public readonly Dictionary<int, (string key, Int2 origin, int team)> KnownEnemyStructures = new Dictionary<int, (string, Int2, int)>();
+        /// <summary>Deep deposits this team's surveyors have found (by deposit id), and where they've surveyed.</summary>
+        public readonly HashSet<int> Surveyed = new HashSet<int>();
+        public readonly List<Vec2> SurveySites = new List<Vec2>();
+        public float SurfaceWarnedAt = -999;
         public readonly TeamStats Stats = new TeamStats();
         public bool LowPower => PowerUsed > PowerProduced;
     }
@@ -469,11 +473,23 @@ namespace Pez.Sim
             if (key == null) return $"{u.Def.Key} can't deploy";
             var def = Defs.Get(key);
             var t = Int2.Of(u.Pos);
+            DeepDeposit deposit = null;
+            if (key == "deep_mine")
+            {
+                // A drill rig only works on a deep deposit your surveyors have found, and one mine per deposit.
+                deposit = Map.Deep.Where(d => Teams[u.Team].Surveyed.Contains(d.Id) && Vec2.Dist(d.Pos, u.Pos) <= 3f)
+                                  .OrderBy(d => Vec2.Dist(d.Pos, u.Pos)).FirstOrDefault();
+                if (deposit == null) return "no deep deposit your team has surveyed within 3 tiles: survey first, then drive the rig onto a deposit";
+                if (deposit.MineId != 0 && Get(deposit.MineId) != null) return $"deposit #{deposit.Id} already has a deep mine on it";
+                if (deposit.Amount <= 0) return $"deposit #{deposit.Id} is exhausted";
+                t = Int2.Of(deposit.Pos);
+            }
             var origin = new Int2(t.X - (def.SizeX - 1) / 2, t.Y - (def.SizeY - 1) / 2);
             var why = CanPlace(u.Team, key, origin.X, origin.Y, requireNear: false);
             if (why != null) return $"can't deploy here: {why}";
             Remove(u);
             var s = SpawnStructure(u.Team, key, origin, 1f);
+            if (deposit != null) { s.DepositId = deposit.Id; deposit.MineId = s.Id; }
             Teams[u.Team].Stats.Count(key);
             Emit("built", u.Team, s.Id, pos: s.Center, key: key);
             return null;
@@ -710,6 +726,7 @@ namespace Pez.Sim
                     if (fueled != e.Working) { e.Working = fueled; powerChanged = true; }
                     continue;
                 }
+                if (e.Def.Key == "deep_mine") { DeepMineTick(e, team); continue; }
                 if (e.Def.Recipes.Length == 0) continue;
                 float speed = team.LowPower ? 0.5f : 1f;
                 bool any = false;
@@ -815,6 +832,9 @@ namespace Pez.Sim
                     break;
                 case Order.LayMines:
                     UpdateLayMines(e);
+                    break;
+                case Order.Survey:
+                    UpdateSurvey(e);
                     break;
                 case Order.Refuel:
                     UpdateRefuelTrip(e);
@@ -1259,6 +1279,7 @@ namespace Pez.Sim
                     e.Path = null;
                     if (!e.HarvestTile.HasValue)
                     {
+                        WarnSurfaceExhausted(e, want);
                         if (e.Cargo > 0) { e.Order = Order.ReturnOre; return; }
                         SetOrder(e, Order.Idle, e.Pos);
                         return;
@@ -1300,6 +1321,65 @@ namespace Pez.Sim
         }
 
         public Vec2 DockPoint(Entity refinery) => new Vec2(refinery.Origin.X + refinery.Def.SizeX / 2f, refinery.Origin.Y - 0.5f);
+
+        // ------------------------------------------------------------------ deep mining
+
+        /// <summary>A surveyor drives to its spot, stands for SurveySeconds, and finds the deep deposits around it.</summary>
+        void UpdateSurvey(Entity e)
+        {
+            if (Vec2.Dist(e.Pos, e.OrderPos) > 0.6f)
+            {
+                e.WorkTimer = 0;
+                if (FollowPath(e, e.OrderPos, 0.5f) && Vec2.Dist(e.Pos, e.OrderPos) > 2f) e.OrderPos = e.Pos; // unreachable: survey where it stopped
+                return;
+            }
+            e.Moving = false;
+            e.TurretFacing += 0.15f; // the sensor mast turns while it listens
+            e.WorkTimer += Dt;
+            if (e.WorkTimer < EntityDef.SurveySeconds) return;
+            var team = Teams[e.Team];
+            var found = Map.Deep.Where(d => Vec2.Dist(d.Pos, e.Pos) <= EntityDef.SurveyRadius).ToList();
+            var fresh = found.Where(d => team.Surveyed.Add(d.Id)).ToList();
+            team.SurveySites.Add(e.Pos);
+            if (team.SurveySites.Count > 200) team.SurveySites.RemoveAt(0);
+            string list = string.Join(", ", found.Select(d => $"#{d.Id} {Defs.Ores[d.Type]} at {(int)d.Pos.X},{(int)d.Pos.Y} ({(int)d.Amount} left{(d.MineId != 0 && Get(d.MineId) != null ? ", being mined" : "")})"));
+            Emit("surveyed", e.Team, e.Id, 0, e.Pos, key: e.Def.Key,
+                 text: found.Count == 0 ? $"surveyor #{e.Id} found no deep deposits within {EntityDef.SurveyRadius:0} tiles of {(int)e.Pos.X},{(int)e.Pos.Y}"
+                     : $"surveyor #{e.Id} found {found.Count} deep deposit(s){(fresh.Count < found.Count ? $" ({fresh.Count} new)" : "")}: {list}. Send a drill_rig onto one and deploy it.");
+            e.WorkTimer = 0;
+            SetOrder(e, Order.Idle, e.Pos);
+        }
+
+        void DeepMineTick(Entity e, Team team)
+        {
+            var d = Map.DepositById(e.DepositId);
+            if (d == null || d.Amount <= 0) { e.Working = false; return; }
+            float take = MathF.Min(d.Amount, EntityDef.DeepMineRate * Dt * (team.LowPower ? 0.5f : 1f));
+            d.Amount -= take;
+            team.Add(Defs.Ores[d.Type], take);
+            e.WorkTimer += take;
+            if (e.WorkTimer >= 1f) { team.Stats.OreMined += (int)e.WorkTimer; e.WorkTimer -= (int)e.WorkTimer; }
+            e.Working = true;
+            if (d.Amount <= 0)
+            {
+                d.Amount = 0;
+                e.Working = false;
+                Alerts.Raise(this, e.Team, "deep_mine_depleted", Priority.Medium, e.Center, hit: false)
+                      .Lost.Add($"deep_mine #{e.Id}: the {Defs.Ores[d.Type]} deposit is used up; sell it and survey for another");
+                Emit("depleted", e.Team, e.Id, 0, e.Center, key: e.Def.Key, text: $"deep_mine #{e.Id} has exhausted its {Defs.Ores[d.Type]} deposit");
+            }
+        }
+
+        /// <summary>A mining truck that can't find any surface ore means it's time to go deep.</summary>
+        void WarnSurfaceExhausted(Entity truck, int type)
+        {
+            var team = Teams[truck.Team];
+            if (Time - team.SurfaceWarnedAt < 120f) return;
+            team.SurfaceWarnedAt = Time;
+            string what = type >= 0 ? Defs.Ores[type] : "surface ore";
+            Alerts.Raise(this, truck.Team, "surface_ore_exhausted", Priority.Medium, truck.Pos, hit: false)
+                  .Lost.Add($"mining truck #{truck.Id} can't find any {what} within reach. Train a surveyor at a factory and survey for deep deposits, then deploy a drill_rig on one");
+        }
 
         // ------------------------------------------------------------------ fuel
 

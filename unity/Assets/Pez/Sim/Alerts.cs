@@ -101,6 +101,8 @@ namespace Pez.Sim
             "low_fuel" => "LOW FUEL, NOWHERE TO REFUEL",
             "air_contact" => "ENEMY AIRCRAFT ON RADAR",
             "stalled" => "NO WAY TO MAKE PROGRESS",
+            "surface_ore_exhausted" => "SURFACE ORE RUNNING OUT",
+            "deep_mine_depleted" => "DEEP DEPOSIT USED UP",
             _ => "COMBAT",
         };
 

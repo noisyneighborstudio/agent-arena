@@ -133,6 +133,7 @@ const FLAVORS = ["#2E73FF", "#F22E1F", "#33D94D", "#FFD126", "#8E44D9", "#3A2F9E
 const TERRAIN = { g: "#7D6E55", d: "#7A6B53", r: "#4A3F40", w: "#3A2218" };
 const ORE = { i: "#8A3A24", c: "#C8742F", x: "#8FE4FF", u: "#B6FF3B" };
 const AIR = new Set(["gunship", "stealth_bomber", "recon_drone", "transport_chopper"]);
+const DEEP = ["#8A3A24", "#C8742F", "#8FE4FF", "#B6FF3B"]; // deep deposits by ore type: iron, copper, crystal, uranium
 const ICON = {
   power: '<svg viewBox="0 0 16 16"><path d="M9 1 L3 9 H8 L7 15 L13 7 H8 Z" fill="none" stroke="#ECE4D2" stroke-width="1.5" stroke-linejoin="round"/></svg>',
   steel: '<svg viewBox="0 0 16 16"><rect x="2" y="5" width="12" height="7" rx="3" fill="none" stroke="#ECE4D2" stroke-width="1.5"/></svg>',
@@ -334,6 +335,10 @@ function drawMini() {
     const r = size > 0 ? Math.max(5, size * k) : 5;
     mctx.fillRect(ox + x * k - r / 2, oy + (map.h - y) * k - r / 2, r, r);
   }
+  for (const [x, y, type, pct] of frame.deposits ?? []) {
+    mctx.strokeStyle = DEEP[type] ?? "#ECE4D2"; mctx.globalAlpha = pct > 0 ? 1 : 0.4; mctx.lineWidth = 3;
+    mctx.beginPath(); mctx.arc(ox + x * k, oy + (map.h - y) * k, 8, 0, Math.PI * 2); mctx.stroke(); mctx.globalAlpha = 1;
+  }
   mctx.strokeStyle = "#3A4047"; mctx.lineWidth = 2; mctx.strokeRect(ox, oy, map.w * k, map.h * k);
   mctx.fillStyle = "#9BA5AE"; mctx.font = "20px 'IBM Plex Mono', monospace"; mctx.textAlign = "center";
   for (let i = 0; i < 8; i++) {
@@ -380,6 +385,14 @@ function draw() {
     ctx.beginPath(); ctx.moveTo(gx, sy(0)); ctx.lineTo(gx, sy(map.h)); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(sx(0), gy); ctx.lineTo(sx(map.w), gy); ctx.stroke();
     if (i < 8) { ctx.fillText("ABCDEFGH"[i], gx + 4, sy(map.h) + 14); ctx.fillText(String(8 - i), sx(0) + 4, gy - 4); }
+  }
+  // Surveyed deep deposits: a tinted ring with what's left.
+  for (const [x, y, type, pct] of frame.deposits ?? []) {
+    ctx.strokeStyle = DEEP[type] ?? "#ECE4D2"; ctx.globalAlpha = pct > 0 ? 0.9 : 0.35; ctx.lineWidth = Math.max(1.5, s * 0.12);
+    ctx.setLineDash([Math.max(2, s * 0.3), Math.max(2, s * 0.2)]);
+    ctx.beginPath(); ctx.arc(sx(x), sy(y), Math.max(5, s * 1.6), 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+    if (s > 7) { ctx.fillStyle = "#ECE4D2"; ctx.font = `${Math.max(9, s * 0.8)}px "IBM Plex Mono", monospace`; ctx.fillText(`${pct}%`, sx(x) - s * 0.7, sy(y) + s * 0.3); }
+    ctx.globalAlpha = 1;
   }
   const ents = frame.entities;
   for (const e of ents) if (e[8] > 0) drawStructure(e, s);

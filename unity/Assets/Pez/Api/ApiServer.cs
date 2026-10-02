@@ -367,6 +367,15 @@ namespace Pez.Api
                         if (d.TryGetValue("paused", out var pz) && pz is bool pb) game.Paused = pb;
                         return Json.Write(new JObj().Set("ok", true).Set("speed", game.Speed).Set("paused", game.Paused));
                     }
+                case "/api/admin/announce":
+                    {
+                        // Host-only: a line in the arena chat for everyone in this game (e.g. "new capability").
+                        var d = Json.Parse(p.Body ?? "{}") as Dictionary<string, object>;
+                        var text = Text.Clean(d?.Str("text", "") ?? "", 300);
+                        if (text.Length == 0) { status = 400; return Json.Write(new JObj().Set("ok", false).Set("error", "text is empty")); }
+                        w.Emit("chat", -1, text: text);
+                        return Json.Write(new JObj().Set("ok", true));
+                    }
                 case "/api/admin/kick":
                     {
                         // Host-only (the gateway never forwards /api/admin): remove a seat as if it had left.
@@ -449,6 +458,9 @@ namespace Pez.Api
                 .Set("chat", w.Events.Where(e => e.Type == "chat").Reverse().Take(8).Reverse()
                     .Select(e => $"{(e.Team >= 0 ? w.Teams[e.Team].Name : "arena")}: {e.Text}").ToList());
             if (shroud != null) o.Set("shroud", shroud);
+            // Deep deposits: a player sees the ones their surveyors found; spectators see all. [x, y, type, % left]
+            o.Set("deposits", w.Map.Deep.Where(d => team < 0 || w.Teams[team].Surveyed.Contains(d.Id))
+                .Select(d => (object)new List<object> { Math.Round(d.Pos.X, 1), Math.Round(d.Pos.Y, 1), d.Type, d.Initial > 0 ? (int)(100 * d.Amount / d.Initial) : 0 }).ToList());
             if (team >= 0)
             {
                 var t = w.Teams[team];

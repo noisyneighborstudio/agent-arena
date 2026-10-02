@@ -6,6 +6,19 @@ namespace Pez.Sim
 {
     public enum Terrain : byte { Grass, Dirt, Rock, Water }
 
+    /// <summary>
+    /// Ore deep underground: invisible until a geological surveyor finds it, then mined by a drill rig deployed into a
+    /// deep mine. Far bigger than surface fields, for when those run out.
+    /// </summary>
+    public class DeepDeposit
+    {
+        public int Id;
+        public Vec2 Pos;
+        public int Type;          // index into Defs.Ores
+        public float Amount, Initial;
+        public int MineId;        // the deep mine working it (0 = none)
+    }
+
     public class Map
     {
         public readonly int W, H;
@@ -14,6 +27,8 @@ namespace Pez.Sim
         public readonly byte[] OreType;    // index into Defs.Ores (iron_ore, copper_ore, crystal, uranium)
         public readonly int[] Occupant;    // structure id occupying the tile, 0 = none
         public readonly List<Vec2> Spawns = new List<Vec2>();
+        public readonly List<DeepDeposit> Deep = new List<DeepDeposit>();
+        int nextDepositId = 1;
         public const int MaxOrePerTile = 1000;
         /// <summary>While growing, restricts terrain edits to the new strip (null = anywhere).</summary>
         Func<int, int, bool> writable;
@@ -95,8 +110,30 @@ namespace Pez.Sim
             }
             m.OreField(rng, (int)centre.X - 2, (int)centre.Y + 2, 1, 70, 130, Uranium);
             m.OreField(rng, (int)centre.X + 2, (int)centre.Y - 2, 1, 70, 130, Uranium);
+            m.SeedDeep(rng, (x, y) => true);
             return m;
         }
+
+        /// <summary>Scatter deep deposits over the ground `where` allows (about 12 per 80x80), clear of base sites.</summary>
+        void SeedDeep(Random rng, Func<int, int, bool> where)
+        {
+            int cells = 0;
+            for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) if (where(x, y)) cells++;
+            int want = Math.Max(2, (int)(cells / 6400f * 12));
+            for (int tries = 0; tries < want * 30 && want > 0; tries++)
+            {
+                int x = 3 + rng.Next(W - 6), y = 3 + rng.Next(H - 6);
+                if (!where(x, y) || !Passable(x, y)) continue;
+                var p = new Vec2(x + 0.5f, y + 0.5f);
+                if (Spawns.Any(s => Vec2.Dist(s, p) < 10) || Deep.Any(d => Vec2.Dist(d.Pos, p) < 9)) continue;
+                int roll = rng.Next(100), type = roll < 35 ? Iron : roll < 65 ? Copper : roll < 85 ? Crystal : Uranium;
+                float amount = type <= Copper ? rng.Next(4000, 8000) : type == Crystal ? rng.Next(2000, 4000) : rng.Next(1500, 3000);
+                Deep.Add(new DeepDeposit { Id = nextDepositId++, Pos = p, Type = type, Amount = amount, Initial = amount });
+                want--;
+            }
+        }
+
+        public DeepDeposit DepositById(int id) => Deep.FirstOrDefault(d => d.Id == id);
 
         bool NearSpawn(int x, int y, float r)
         {
@@ -204,6 +241,9 @@ namespace Pez.Sim
             }
 
             m.Spawns.Add(sp);
+            // Deep deposits carry over unchanged; the new strip gets its own.
+            m.Deep.AddRange(Deep); m.nextDepositId = nextDepositId;
+            m.SeedDeep(rng, InNew);
             if (bases.Count > 0) m.EnsureConnected(bases[0], sp);
             return m;
         }

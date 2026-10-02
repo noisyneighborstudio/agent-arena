@@ -87,6 +87,16 @@ namespace Pez.Sim
             o.Set("ore_fields", StateView.OreFields(w, t.Explored).Select(f => (object)new JObj()
                 .Set("type", f.type).Set("x", f.cx).Set("y", f.cy).Set("tiles", f.tiles).Set("amount", f.total)).ToList());
 
+            o.Set("deep_deposits", w.Map.Deep.Where(d => t.Surveyed.Contains(d.Id)).Select(d =>
+            {
+                var mine = d.MineId != 0 ? w.Get(d.MineId) : null;
+                return (object)new JObj().Set("id", d.Id).Set("type", Defs.Ores[d.Type]).Set("x", R1(d.Pos.X)).Set("y", R1(d.Pos.Y))
+                    .Set("amount", (int)d.Amount).Set("initial", (int)d.Initial)
+                    .Set("mine_id", mine != null && (mine.Team == team || w.IsVisibleTo(team, mine)) ? (object)mine.Id : null)
+                    .Set("status", mine == null ? (d.Amount <= 0 ? "exhausted" : "free") : mine.Team == team ? "yours" : "taken");
+            }).ToList());
+            o.Set("survey_sites", t.SurveySites.Select(p => (object)Point(p)).ToList());
+
             var prod = new JObj();
             prod.Set("structures", t.StructureQueue.Select(p => { var s = w.Get(p.StructureId); return (object)new JObj().Set("type", p.Key).Set("id", p.StructureId).Set("progress_pct", (int)((s?.BuildProgress ?? 0) * 100)); }).ToList());
             foreach (var kv in t.UnitQueues)

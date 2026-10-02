@@ -111,6 +111,10 @@ namespace Pez.Sim
                 .Select(kv => $"#{kv.Key} team{kv.Value.team} {kv.Value.key} at {kv.Value.origin.X},{kv.Value.origin.Y} (last seen)").ToList());
 
             o.Set("ore_fields", OreFields(w, t.Explored).Select(f => $"{f.type} around {f.cx},{f.cy}: {f.tiles} tiles, {f.total} units").ToList());
+            var deep = w.Map.Deep.Where(d => t.Surveyed.Contains(d.Id)).ToList();
+            o.Set("deep_deposits", deep.Count == 0
+                ? (object)(t.SurveySites.Count == 0 ? "none surveyed yet: when surface ore runs low, train a surveyor and 'survey' for deep deposits" : $"none found yet ({t.SurveySites.Count} survey(s) done)")
+                : deep.Select(d => $"#{d.Id} {Defs.Ores[d.Type]} at {(int)d.Pos.X},{(int)d.Pos.Y}: {(int)d.Amount}/{(int)d.Initial} left" + DeepOwner(w, d, team)).ToList());
 
             o.Set("stats", new JObj()
                 .Set("kills", t.Stats.Kills).Set("units_lost", t.Stats.UnitsLost).Set("structures_lost", t.Stats.StructuresLost)
@@ -149,7 +153,7 @@ namespace Pez.Sim
                         if (e.Team == team) s = e.Text != null ? $"LOST your {e.Text}" : $"LOST your {e.Key} #{e.A}";
                         else if (w.Teams[team].Visible[w.Map.Idx((int)e.Pos.X, (int)e.Pos.Y)]) s = $"destroyed enemy {e.Key} #{e.A}";
                         break;
-                    case "low_fuel": case "stranded": case "refuelled": case "retreating": case "unstalled":
+                    case "low_fuel": case "stranded": case "refuelled": case "retreating": case "unstalled": case "surveyed": case "depleted":
                         if (e.Team == team) s = e.Text; break;
                     case "defeated": case "game_over": s = e.Text; break;
                 }
@@ -160,6 +164,13 @@ namespace Pez.Sim
         }
 
         public static List<Entity> RadarContacts(World w, int team) => w.RadarContacts(team);
+
+        static string DeepOwner(World w, DeepDeposit d, int team)
+        {
+            var mine = d.MineId != 0 ? w.Get(d.MineId) : null;
+            if (mine == null) return d.Amount <= 0 ? " (exhausted)" : " (free: deploy a drill_rig on it)";
+            return mine.Team == team ? $" (your deep_mine #{mine.Id})" : w.IsVisibleTo(team, mine) ? $" (mined by team{mine.Team})" : " (taken)";
+        }
 
         static string TeamLabel(World w, int team) => team >= 0 ? $"{w.Teams[team].Name} ({w.Teams[team].PlayerName ?? w.Teams[team].Controller})" : "server";
 
@@ -275,8 +286,9 @@ namespace Pez.Sim
         /// <summary>
         /// Bumped whenever players gain a capability or a rule changes, so the gateway can tell agents what's new.
         /// 3: fuel, refuel, together, waypoints, set_retreat, radar contacts, format=json, build options, resign when stalled.
+        /// 4: deep mining (surveyor, survey, drill_rig, deep_mine, deep_deposits).
         /// </summary>
-        public const int RulesVersion = 3;
+        public const int RulesVersion = 4;
 
         public static JObj Rules()
         {
@@ -290,6 +302,7 @@ namespace Pez.Sim
                 "Specialists: engineers capture enemy buildings below 50% HP; snipers delete infantry from range 9; commandos C4 buildings. APCs and transport choppers carry infantry (load/unload). Mine layers plant hidden mines. Flak tracks are mobile anti-air. Mammoth tanks are super-heavy and self-repair to 50%. Recon drones are cheap flying scouts.",
                 "Repair trucks (factory) fix vehicles, aircraft and structures for steel; medics (barracks) heal infantry for free. Both auto-tend anything damaged within 6 tiles when idle, so park them behind your army.",
                 "Aircraft ignore terrain. Only rockets, lasers, SAMs, gunships (and weakly, rifles/mg) can hit them. Stealth bombers are invisible except within 3 tiles of your units or inside your radar dome range.",
+                "Deep mining: surface ore runs out. A surveyor (factory) 'survey's a spot for 8s and finds the deep deposits within 12 tiles; they appear in deep_deposits for your team only. Drive a drill_rig onto one (within 3 tiles) and 'deploy' it into a deep_mine, which pumps 4 ore/s of that deposit's type straight into your stockpile until it runs dry (it needs 50 power). One mine per deposit.",
                 "Radar: a radar_dome lists enemy aircraft within 28 tiles as radar_contacts (even beyond its sight) and raises an 'enemy aircraft on radar' alert, high priority when they're near your base.",
                 "Orders: move and attack_move take \"waypoints\" (and \"loop\":true to patrol) and \"together\":true (keep the slowest unit's pace). set_retreat makes units pull back to base on their own below an HP %.",
                 "Newcomer protection also reserves the newcomer's starting ore (16 tiles around their base): nobody else's trucks can mine it until protection ends.",

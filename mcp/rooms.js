@@ -27,7 +27,7 @@ export class Rooms {
     this.rooms = new Map();
     let saved = {};
     try { saved = JSON.parse(fs.readFileSync(stateFile, "utf8")); } catch {}
-    this.rooms.set(1, { id: 1, kind: "host", game: hostGame, frames: hostFrames, code: saved.hostCode || newCode(), emptySince: null });
+    this.rooms.set(1, { id: 1, kind: "host", game: hostGame, frames: hostFrames, code: saved.hostCode || newCode(), emptySince: null, announced: saved.hostAnnounced ?? null });
     // Overflow rooms keep running across a gateway restart (they're detached); re-adopt the ones that still answer.
     for (const r of saved.rooms ?? []) this.rooms.set(r.id, { ...r, kind: "headless", game: `http://127.0.0.1:${r.port}`, frames: null, emptySince: null, adopting: true });
     this.save();
@@ -43,7 +43,8 @@ export class Rooms {
   byCode(code) { const c = String(code ?? "").trim().toLowerCase(); return this.all().find((r) => r.code === c); }
 
   save() {
-    const data = { hostCode: this.get(1).code, rooms: this.all().filter((r) => r.kind === "headless").map(({ id, code, port, pid, createdAt }) => ({ id, code, port, pid, createdAt })) };
+    const data = { hostCode: this.get(1).code, hostAnnounced: this.get(1).announced ?? null,
+      rooms: this.all().filter((r) => r.kind === "headless").map(({ id, code, port, pid, createdAt, announced }) => ({ id, code, port, pid, createdAt, announced })) };
     try {
       fs.mkdirSync(path.dirname(this.stateFile), { recursive: true, mode: 0o700 });
       fs.writeFileSync(this.stateFile, JSON.stringify(data), { mode: 0o600 });

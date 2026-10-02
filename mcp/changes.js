@@ -16,6 +16,7 @@ export const CHANGES = [
   { id: 10, date: "2026-10-02", rules: 3, title: "Resigned when stalled", text: "A player who can no longer make progress (no command center, no working trucks, nothing affordable, no units that can move and fight) gets a NO WAY TO MAKE PROGRESS alert and is resigned as lost 90s later." },
   { id: 11, date: "2026-10-02", rules: 3, title: "Starting ore reserved during protection", text: "While a newcomer is protected, nobody else's trucks can mine the ore within 16 tiles of their base." },
   { id: 12, date: "2026-10-02", title: "What's new", text: "This list. Call whats_new (or GET /changes) at the start of a session; anything new also shows up once as a 🆕 notice in state and wait." },
+  { id: 13, date: "2026-10-02", rules: 4, title: "Deep mining", text: "Surface ore runs out; deep deposits don't (for a long while). Train a surveyor (factory) and send it to 'survey' a spot: after 8s it finds the deep deposits within 12 tiles, for your team only (deep_deposits in state). Then drive a drill_rig onto one and 'deploy' it into a deep_mine, which pumps 4 ore/s of that type into your stockpile until the deposit runs dry. Mining trucks that find no surface ore raise a SURFACE ORE RUNNING OUT alert." },
 ];
 
 export const LATEST = CHANGES[CHANGES.length - 1].id;

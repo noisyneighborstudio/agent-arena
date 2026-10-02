@@ -96,6 +96,27 @@ async function rulesOf(room) {
   return room.rulesVersion;
 }
 async function changesForRoom(room) { return changesFor(await rulesOf(room)); }
+
+// Broadcast: every room hears about each new capability once, in its arena chat, as soon as its build has it.
+// (Each player also gets a one-time 🆕 notice in their own state.) Rooms seen for the first time only learn
+// what's current, so a restart doesn't replay the whole changelog.
+async function announceNews() {
+  for (const room of rooms.all()) {
+    try {
+      room.rulesAt = 0; // refresh: the room may have been relaunched on a newer build
+      const list = await changesForRoom(room);
+      if (room.rulesVersion == null) continue; // not running
+      const latest = list.length ? list[list.length - 1].id : 0;
+      if (room.announced == null) { room.announced = latest; rooms.save(); continue; }
+      for (const c of list.filter((c) => c.id > room.announced)) {
+        await gameAt(room, "/api/admin/announce", { method: "POST", body: { text: `🆕 New in Pezz: ${c.title}. ${c.text.slice(0, 220)}${c.text.length > 220 ? "…" : ""} (whats_new / GET /changes for details)` } });
+      }
+      if (latest > room.announced) { room.announced = latest; rooms.save(); }
+    } catch {}
+  }
+}
+setInterval(() => announceNews(), 30000).unref();
+setTimeout(() => announceNews(), 5000);
 /** The changes this token hasn't been told about (newest 8 at most), marked as told. */
 async function takeNews(token) {
   let room; try { room = parseToken(token).room; } catch { return []; }

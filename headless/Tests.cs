@@ -25,7 +25,7 @@ namespace Pez.Headless
         {
             var d = new Dictionary<string, object>();
             for (int i = 0; i < kv.Length; i += 2)
-                d[(string)kv[i]] = kv[i + 1] is int n ? (double)n : kv[i + 1] is int[] ids ? ids.Select(x => (object)(double)x).ToList() : kv[i + 1];
+                d[(string)kv[i]] = kv[i + 1] is int n ? (double)n : kv[i + 1] is float fl ? (double)fl : kv[i + 1] is int[] ids ? ids.Select(x => (object)(double)x).ToList() : kv[i + 1];
             return d;
         }
 
@@ -53,6 +53,8 @@ namespace Pez.Headless
             GroupMove();
             ResignWhenStalled();
             WaitPacing();
+            DeepMining();
+            AiGoesDeep();
             Console.WriteLine(failures == 0 ? "\nAll tests passed." : $"\n{failures} test(s) FAILED.");
             return failures == 0 ? 0 : 1;
         }
@@ -187,6 +189,69 @@ namespace Pez.Headless
             Check(w.Alerts.IsContinuation(w, sameFight, seen.Seq), "more alerts from a fight the player already saw don't count as news (so wait doesn't return at 0s)");
             Check(!w.Alerts.IsContinuation(w, elsewhere, seen.Seq), "trouble somewhere else does");
             Check(!w.Alerts.IsContinuation(w, worse, seen.Seq), "and so does something worse in the same place");
+        }
+
+        static void DeepMining()
+        {
+            var w = new World(2, 7, 80) { Open = true };
+            Check(w.Map.Deep.Count >= 6, $"the map has hidden deep deposits ({w.Map.Deep.Count})");
+            int before = w.Map.Deep.Count; var first = w.Map.Deep[0];
+            var joiner = w.AddTeam("llm", "Driller", out _);
+            Check(w.Map.Deep.Count > before && w.Map.Deep.Contains(first), $"growing the map keeps them and adds more ({before} -> {w.Map.Deep.Count})");
+
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var dep = w.Map.Deep.OrderBy(d => Vec2.Dist(d.Pos, hq.Center)).First();
+            var sv = At(w.SpawnUnit(0, "surveyor", hq), dep.Pos + new Vec2(4, 0));
+            var r = Commands.Execute(w, 0, Cmd("type", "survey", "units", new[] { sv.Id }, "x", sv.Pos.X, "y", sv.Pos.Y));
+            Check(Ok(r), $"survey: {r["result"]}");
+            Run(w, 4);
+            Check(!w.Teams[0].Surveyed.Contains(dep.Id), "a survey takes time");
+            Run(w, 6);
+            Check(w.Teams[0].Surveyed.Contains(dep.Id) && !w.Teams[1].Surveyed.Contains(dep.Id) && w.Events.Any(e => e.Type == "surveyed" && e.Team == 0),
+                  "the surveyor finds the deposit, for its own team only");
+            var st = Json.Write(StateView.TeamState(w, 0));
+            Check(st.Contains("deep_deposits") && st.Contains($"#{dep.Id} "), "surveyed deposits show in the state");
+
+            // A drill rig only deploys on a surveyed deposit.
+            var rig = At(w.SpawnUnit(0, "drill_rig", hq), dep.Pos + new Vec2(8, 0));
+            r = Commands.Execute(w, 0, Cmd("type", "deploy", "units", new[] { rig.Id }));
+            Check(!Ok(r) && r["error"].ToString().Contains("deep deposit"), $"off a deposit, the rig won't deploy: {r["error"]}");
+            At(rig, dep.Pos + new Vec2(1, 0));
+            r = Commands.Execute(w, 0, Cmd("type", "deploy", "units", new[] { rig.Id }));
+            var mine = w.Owned(0).FirstOrDefault(e => e.Def.Key == "deep_mine");
+            Check(Ok(r) && mine != null && mine.DepositId == dep.Id && dep.MineId == mine.Id, $"on the deposit it becomes a deep mine: {r["result"] ?? r["error"]}");
+            string ore = Defs.Ores[dep.Type];
+            int have = w.Teams[0].Amount(ore); float left = dep.Amount;
+            Run(w, 10);
+            Check(w.Teams[0].Amount(ore) >= have + 30 && dep.Amount < left, $"it pumps {ore} into the stockpile ({have} -> {w.Teams[0].Amount(ore)}), drawing the deposit down ({left:0} -> {dep.Amount:0})");
+            var rig2 = At(w.SpawnUnit(0, "drill_rig", hq), dep.Pos + new Vec2(-2, 1));
+            r = Commands.Execute(w, 0, Cmd("type", "deploy", "units", new[] { rig2.Id }));
+            Check(!Ok(r), $"one mine per deposit: {r["error"]}");
+            dep.Amount = 3;
+            Run(w, 2);
+            Check(dep.Amount == 0 && !mine.Working && w.Alerts.Active(w, 0).Any(a => a.Kind == "deep_mine_depleted"), "when the deposit runs dry the mine stops and says so");
+
+            // Trucks that can't find surface ore raise the alarm.
+            for (int i = 0; i < w.Map.Ore.Length; i++) w.Map.Ore[i] = 0;
+            var truck = w.SpawnUnit(0, "mining_truck", hq);
+            Run(w, 3);
+            Check(w.Alerts.Active(w, 0).Any(a => a.Kind == "surface_ore_exhausted"), "running out of surface ore raises a 'survey for deep deposits' alert");
+            Check(w.Errors == 0, $"no sim errors ({w.LastError})");
+        }
+
+        static void AiGoesDeep()
+        {
+            var game = new Game(new GameConfig { Seed = 5, MapSize = 80, Controllers = new[] { "ai", "ai" } });
+            var w = game.World;
+            void Tick(float s) { for (int i = 0; i < s * World.TickRate; i++) game.Advance(World.Dt); }
+            Tick(600);
+            for (int i = 0; i < w.Map.Ore.Length; i++) w.Map.Ore[i] = 0; // the surface is mined out
+            w.Teams[0].Add("steel", 3000); w.Teams[0].Add("circuits", 600); w.Teams[0].Add("copper", 800);
+            Tick(420);
+            var t = w.Teams[0];
+            Check(t.Surveyed.Count > 0 || t.SurveySites.Count > 0, $"the scripted AI surveys when its surface ore runs out ({t.SurveySites.Count} surveys, {t.Surveyed.Count} deposits)");
+            Check(w.Owned(0).Any(e => e.Def.Key == "deep_mine"), $"and puts a deep mine on what it finds ({w.Owned(0).Count(e => e.Def.Key == "drill_rig")} rigs)");
+            Check(w.Errors == 0, $"no sim errors ({w.LastError})");
         }
 
         static void RepairTruck()

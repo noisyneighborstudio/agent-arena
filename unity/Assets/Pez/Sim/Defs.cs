@@ -69,6 +69,8 @@ namespace Pez.Sim
         public bool FuelDepot;        // vehicles refuel next to it
         public bool Helipad;          // aircraft land and refuel here
         public const float RefuelSeconds = 10f;  // empty to full at a depot, pad or tanker
+        public const float DeepMineRate = 4f;    // ore per second from a deep mine
+        public const float SurveyRadius = 12f, SurveySeconds = 8f;
         public bool UsesFuel => Fuel > 0;
         public Recipe[] Recipes = new Recipe[0];
         public string DeploysInto;    // e.g. outpost_truck -> outpost
@@ -150,6 +152,9 @@ namespace Pez.Sim
             Add(new EntityDef { Key = "light_tank", Name = "Light Tank", Description = "Fast all-round tank. Can't hit aircraft.", Cost = C("steel", 200, "copper", 40), BuildTime = 8, MaxHp = 400, Armor = Armor.Vehicle, Speed = 2.6f, Radius = 0.45f, Weapon = Cannon, BuiltBy = Producer.Factory });
             Add(new EntityDef { Key = "repair_truck", Name = "Repair Truck", Description = "Unarmed. Repairs friendly vehicles, aircraft and structures (30 HP/s, costs 1 steel per 10 HP). Auto-repairs anything damaged within 6 tiles when idle.", Cost = C("steel", 180, "copper", 60), BuildTime = 8, MaxHp = 500, Armor = Armor.Vehicle, Speed = 2.2f, Radius = 0.45f, Sight = 6, RepairRate = 30, BuiltBy = Producer.Factory });
             Add(new EntityDef { Key = "outpost_truck", Name = "Outpost Truck", Description = "Drive to a remote ore field and 'deploy' it into an Outpost.", Cost = C("steel", 400, "copper", 100, "circuits", 50), BuildTime = 12, MaxHp = 800, Armor = Armor.Vehicle, Speed = 1.4f, Radius = 0.55f, Sight = 6, DeploysInto = "outpost", BuiltBy = Producer.Factory, Requires = new[] { "electronics_plant" } });
+            Add(new EntityDef { Key = "surveyor", Name = "Geological Surveyor", Description = "Unarmed. 'survey' a spot: it stops for 8s and finds the deep ore deposits within 12 tiles (only your team learns of them). Use it when surface ore runs out.", Cost = C("steel", 150, "copper", 60, "circuits", 20), BuildTime = 7, MaxHp = 300, Armor = Armor.Vehicle, Speed = 2.6f, Radius = 0.45f, Sight = 7, BuiltBy = Producer.Factory });
+            Add(new EntityDef { Key = "drill_rig", Name = "Drill Rig", Description = "Deep mining equipment. Drive it onto a deep deposit your surveyors found and 'deploy' it into a Deep Mine.", Cost = C("steel", 500, "copper", 150, "circuits", 120), BuildTime = 14, MaxHp = 900, Armor = Armor.Vehicle, Speed = 1.2f, Radius = 0.6f, Sight = 5, DeploysInto = "deep_mine", BuiltBy = Producer.Factory, Requires = new[] { "electronics_plant" } });
+            Add(new EntityDef { Key = "deep_mine", Name = "Deep Mine", Description = $"Pumps ore from the deep deposit under it straight into your stockpile ({EntityDef.DeepMineRate}/s) until the deposit runs dry. Power hungry. Deployed from a Drill Rig.", IsStructure = true, BuildTime = 1, MaxHp = 1600, Armor = Armor.Structure, SizeX = 2, SizeY = 2, Power = -50, Sight = 6, Buildable = false });
             Add(new EntityDef { Key = "heavy_tank", Name = "Heavy Tank", Description = "Slow, heavily armored, splash damage.", Cost = C("steel", 400, "circuits", 80), BuildTime = 13, MaxHp = 950, Armor = Armor.Vehicle, Speed = 1.6f, Radius = 0.55f, Weapon = HeavyCannon, BuiltBy = Producer.Factory, Requires = new[] { "electronics_plant" } });
             Add(new EntityDef { Key = "artillery", Name = "Artillery", Description = "Range 11 splash shells. Fragile; keep it behind your tanks.", Cost = C("steel", 300, "circuits", 100), BuildTime = 12, MaxHp = 300, Armor = Armor.Vehicle, Speed = 1.3f, Radius = 0.5f, Sight = 7, Weapon = Shell, BuiltBy = Producer.Factory, Requires = new[] { "electronics_plant" } });
             Add(new EntityDef { Key = "laser_tank", Name = "Laser Tank", Description = "Beam cannon; hits ground and air.", Cost = C("steel", 350, "lenses", 60, "plasma", 40, "circuits", 60), BuildTime = 15, MaxHp = 750, Armor = Armor.Vehicle, Speed = 2f, Radius = 0.55f, Weapon = BeamCannon, BuiltBy = Producer.Factory, Requires = new[] { "optics_lab", "enrichment_plant" } });
@@ -174,7 +179,7 @@ namespace Pez.Sim
             {
                 ["mining_truck"] = 300, ["scout_buggy"] = 160, ["light_tank"] = 200, ["repair_truck"] = 360, ["outpost_truck"] = 260,
                 ["heavy_tank"] = 200, ["artillery"] = 200, ["laser_tank"] = 200, ["apc"] = 200, ["flak_track"] = 200, ["minelayer"] = 220,
-                ["mammoth_tank"] = 220, ["recon_drone"] = 150, ["transport_chopper"] = 150, ["gunship"] = 120, ["stealth_bomber"] = 150,
+                ["mammoth_tank"] = 220, ["surveyor"] = 260, ["drill_rig"] = 220, ["recon_drone"] = 150, ["transport_chopper"] = 150, ["gunship"] = 120, ["stealth_bomber"] = 150,
             };
             foreach (var d in All.Values)
             {
