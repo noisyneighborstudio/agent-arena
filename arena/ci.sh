@@ -6,12 +6,13 @@
 #   arena/ci.sh loop     forever, a pass every PEZZ_CI_EVERY seconds (default 180); the com.sethwebster.pezz-ci
 #                        LaunchAgent runs this
 #
-# It works in its own checkout (.ci/worktree, always detached at origin/main), so nobody's uncommitted edits ship.
-# The gateway LaunchAgent runs from that checkout too, so the live gateway is always the deployed commit.
-# A commit that fails its tests or build is recorded in .ci/failed and not retried until main moves again.
+# It tests and builds in its own checkout (ci-work/worktree, detached at origin/main), so nobody's uncommitted edits
+# ship. The gateway runs from a second checkout (ci-work/live) that only moves to a commit once it has deployed, so the
+# live gateway is always the deployed commit. A commit that fails its tests or build is recorded in ci-work/failed and
+# not retried until main moves again.
 set -u
 REPO=${0:A:h:h}
-CI="$REPO/.ci"; WT="$CI/worktree"
+CI="$REPO/ci-work"; WT="$CI/worktree"; LIVE="$CI/live"  # build-and-test checkout; deployed checkout (the gateway runs here)
 UNITY=/Applications/Unity/Hub/Editor/6000.3.25f1/Unity.app/Contents/MacOS/Unity
 FRESH_JSON=${PEZZ_FRESH_JSON:-'{"ore_scale":0.3,"open":true}'}
 mkdir -p "$CI"
@@ -19,7 +20,12 @@ log() { echo "$(date '+%F %T') $*"; }
 status() { printf '{"at":"%s","state":"%s","commit":"%s","detail":"%s"}\n' "$(date '+%FT%T%z')" "$1" "${2:-}" "${3:-}" > "$CI/status.json"; }
 
 setup() {
-  [ -d "$WT/.git" ] || [ -f "$WT/.git" ] && return 0
+  if [ ! -e "$LIVE/.git" ]; then
+    git -C "$REPO" worktree add -q --detach "$LIVE" "$(cat "$CI/deployed" 2>/dev/null || echo origin/main)" || return 1
+    ln -s "$REPO/mcp/node_modules" "$LIVE/mcp/node_modules"
+    (cd "$LIVE/headless" && dotnet build -c Release >/dev/null 2>&1) # the overflow rooms' engine
+  fi
+  [ -e "$WT/.git" ] && return 0
   log "creating the CI checkout"
   git -C "$REPO" fetch -q origin
   git -C "$REPO" worktree add -q --detach "$WT" origin/main || return 1
@@ -97,9 +103,12 @@ pass() {
     fi
   fi
 
-  # 4. Gateway: restart onto the new code (MCP sessions, rooms and commander links survive restarts).
+  # 4. The live checkout moves to the deployed commit; the gateway restarts onto it if it changed (MCP sessions, rooms
+  #    and commander links survive restarts), and the overflow rooms' engine is rebuilt there for new rooms.
+  git -C "$LIVE" checkout -q --detach "$target"
+  (cd "$LIVE/headless" && dotnet build -c Release >/dev/null 2>&1)
   if [ $changed_mcp = 1 ]; then
-    (cd "$WT/mcp" && [ package.json -nt node_modules ] && npm install --silent >/dev/null 2>&1)
+    (cd "$LIVE/mcp" && [ package.json -nt node_modules ] && npm install --silent >/dev/null 2>&1)
     launchctl kickstart -k "gui/$(id -u)/com.sethwebster.pezz-gateway" && log "gateway restarted on ${target[1,7]}"
   fi
   echo "$target" > "$CI/deployed"; rm -f "$CI/failed"
