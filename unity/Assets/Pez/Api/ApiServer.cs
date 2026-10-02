@@ -328,13 +328,16 @@ namespace Pez.Api
                             Speed = d?.Num("speed", game.Speed) ?? game.Speed,
                             MapSize = (int)(d?.Num("map_size", game.Config.MapSize) ?? game.Config.MapSize),
                             Open = d != null && d.TryGetValue("open", out var op) ? op is bool ob && ob : game.Config.Open,
+                            OreScale = d?.Num("ore_scale", game.Config.OreScale) ?? game.Config.OreScale,
+                            MaxPlayers = game.Config.MaxPlayers, MaxMapSize = game.Config.MaxMapSize,
+                            HouseAIs = game.Config.HouseAIs, HouseResignAbove = game.Config.HouseResignAbove,
                         };
                         if (d != null && d.TryGetValue("controllers", out var cs) && cs is List<object> cl2) cfg.Controllers = cl2.Select(x => x.ToString()).ToArray();
                         else cfg.Controllers = game.Config.Controllers;
                         if (d != null && d.TryGetValue("orders", out var os) && os is List<object> ol) cfg.Orders = ol.Select(x => x?.ToString() ?? "").ToArray();
                         else cfg.Orders = game.Config.Orders;
                         game.Restart(cfg);
-                        return Json.Write(new JObj().Set("ok", true).Set("seed", cfg.Seed).Set("map_size", game.World.Map.W).Set("controllers", cfg.Controllers.ToList()));
+                        return Json.Write(new JObj().Set("ok", true).Set("seed", cfg.Seed).Set("map_size", game.World.Map.W).Set("ore_scale", cfg.OreScale).Set("controllers", cfg.Controllers.ToList()));
                     }
                 case "/api/admin/screenshot":
                     {

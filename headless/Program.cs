@@ -23,6 +23,7 @@ namespace Pez.Headless
             {
                 Seed = int.Parse(Arg("--seed", "1337")),
                 MapSize = int.Parse(Arg("--map-size", "80")),
+                OreScale = float.Parse(Arg("--ore-scale", "1"), System.Globalization.CultureInfo.InvariantCulture),
                 Open = args.Contains("--open"),
                 MaxPlayers = int.Parse(Arg("--max-players", "8")),
                 MaxMapSize = int.Parse(Arg("--max-map-size", "320")),

@@ -28,6 +28,8 @@ namespace Pez.Sim
         public readonly int[] Occupant;    // structure id occupying the tile, 0 = none
         public readonly List<Vec2> Spawns = new List<Vec2>();
         public readonly List<DeepDeposit> Deep = new List<DeepDeposit>();
+        /// <summary>Scales every surface ore field (1 = normal; below 1 = a scarce map where deep mining matters early).</summary>
+        public float OreScale = 1f;
         int nextDepositId = 1;
         public const int MaxOrePerTile = 1000;
         /// <summary>While growing, restricts terrain edits to the new strip (null = anywhere).</summary>
@@ -51,26 +53,26 @@ namespace Pez.Sim
         public string OreName(int i) => Defs.Ores[OreType[i]];
         public const byte Iron = 0, Copper = 1, Crystal = 2, Uranium = 3;
 
-        public static Map Generate(int w, int h, int seed)
+        public static Map Generate(int w, int h, int seed, float oreScale = 1f)
         {
             for (int attempt = 0; attempt < 20; attempt++)
             {
-                var m = TryGenerate(w, h, seed + attempt * 7919);
+                var m = TryGenerate(w, h, seed + attempt * 7919, oreScale);
                 if (m.SpawnsConnected()) return m;
             }
-            return TryGenerate(w, h, seed);
+            return TryGenerate(w, h, seed, oreScale);
         }
 
         public const int MinSize = 48, MaxSize = 320;
         /// <summary>Menu presets. Any size between MinSize and MaxSize works through the API and command line.</summary>
         public static readonly (string name, int size)[] Presets = { ("Small", 56), ("Medium", 80), ("Large", 112), ("Huge", 160), ("Vast", 240) };
 
-        static Map TryGenerate(int w, int h, int seed)
+        static Map TryGenerate(int w, int h, int seed, float oreScale = 1f)
         {
             // Scatter counts were tuned on an 80x80 map; scale them with area so bigger maps aren't empty.
             float area = w * h / 6400f;
             var rng = new Random(seed);
-            var m = new Map(w, h);
+            var m = new Map(w, h) { OreScale = oreScale };
             int inset = 9;
             m.Spawns.Add(new Vec2(inset, inset));
             m.Spawns.Add(new Vec2(w - inset, h - inset));
@@ -161,7 +163,7 @@ namespace Pez.Sim
                 Tiles[i] = Terrain.Dirt;
                 OreType[i] = type;
                 float d = MathF.Sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy));
-                Ore[i] = Math.Min(MaxOrePerTile, (int)(rng.Next(min, max) * (1.2f - d / (r + 1))));
+                Ore[i] = Math.Min(MaxOrePerTile, (int)(rng.Next(min, max) * (1.2f - d / (r + 1)) * OreScale));
             });
         }
 
@@ -181,6 +183,7 @@ namespace Pez.Sim
                     m.Tiles[b] = Tiles[a]; m.Ore[b] = Ore[a]; m.OreType[b] = OreType[a]; m.Occupant[b] = Occupant[a];
                 }
             m.Spawns.AddRange(Spawns);
+            m.OreScale = OreScale; // newcomers' fields are as scarce as everyone else's
             var rng = new Random(seed);
             int oldW = W, oldH = H;
             bool InNew(int x, int y) => x >= oldW || y >= oldH;

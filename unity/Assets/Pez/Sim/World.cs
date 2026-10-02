@@ -194,10 +194,10 @@ namespace Pez.Sim
         long nextSeq = 1;
         const int MaxEvents = 4000;
 
-        public World(int teamCount = 2, int seed = 1337, int size = 80)
+        public World(int teamCount = 2, int seed = 1337, int size = 80, float oreScale = 1f)
         {
             size = Math.Clamp(size, Map.MinSize, Map.MaxSize);
-            Map = Map.Generate(size, size, seed);
+            Map = Map.Generate(size, size, seed, Math.Clamp(oreScale, 0.05f, 4f));
             Paths = new Pathfinder(Map);
             for (int t = 0; t < teamCount; t++) CreateTeam(Map.Spawns[t]);
             UpdatePower();
@@ -1378,7 +1378,7 @@ namespace Pez.Sim
             team.SurfaceWarnedAt = Time;
             string what = type >= 0 ? Defs.Ores[type] : "surface ore";
             Alerts.Raise(this, truck.Team, "surface_ore_exhausted", Priority.Medium, truck.Pos, hit: false)
-                  .Lost.Add($"mining truck #{truck.Id} can't find any {what} within reach. Train a surveyor at a factory and survey for deep deposits, then deploy a drill_rig on one");
+                  .Lost.Add($"mining truck #{truck.Id} can't find any {what} within reach. Train a geological_surveyor at a factory and survey for deep deposits, then deploy a drill_rig on one");
         }
 
         // ------------------------------------------------------------------ fuel

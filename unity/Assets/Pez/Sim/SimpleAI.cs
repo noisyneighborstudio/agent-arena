@@ -17,6 +17,7 @@ namespace Pez.Sim
         int waveSize = 6;
         readonly Dictionary<int, Vec2> outpostTargets = new Dictionary<int, Vec2>();
         readonly Dictionary<int, int> rigTargets = new Dictionary<int, int>(); // drill rig -> deposit id
+        int knownSurface = -1; // surface ore in the fields it has explored (refreshed every 10s)
 
         static readonly string[] BuildOrder =
         {
@@ -135,16 +136,21 @@ namespace Pez.Sim
                 Do(w, "type", "train", "unit", "medic");
 
             // ---- Deep mining: when the surface runs dry, survey outward from the base and drill what turns up.
-            bool surfaceDry = (trucks.Count > 0 && trucks.Count(tr => tr.Order == Order.Idle) * 2 >= trucks.Count) ||
+            // Go deep when the surface ore it knows about is thin, not just when the trucks have run dry.
+            int surfaceLeft = w.Tick % (World.TickRate * 10) == 0 || knownSurface < 0 ? (knownSurface = StateView.OreFields(w, t.Explored).Sum(f => f.total)) : knownSurface;
+            bool surfaceDry = surfaceLeft < 4000 ||
+                              (trucks.Count > 0 && trucks.Count(tr => tr.Order == Order.Idle) * 2 >= trucks.Count) ||
                               (t.SurfaceWarnedAt > 0 && w.Time - t.SurfaceWarnedAt < 300);
-            if (w.HasComplete(team, "factory") && (surfaceDry || mine.Any(e => e.Def.Key == "deep_mine")))
+            // Past the electronics plant it prospects anyway: deep mines are the economy's second stage.
+            bool prospect = w.HasComplete(team, "electronics_plant") && t.Amount("steel") > 400;
+            if (w.HasComplete(team, "factory") && (surfaceDry || prospect || mine.Any(e => e.Def.Key == "deep_mine")))
             {
                 var free = w.Map.Deep.Where(d => t.Surveyed.Contains(d.Id) && d.Amount > 0 && (d.MineId == 0 || w.Get(d.MineId) == null))
                                      .OrderBy(d => Vec2.Dist(d.Pos, t.StartPos)).ToList();
-                var surveyors = mine.Where(e => e.Def.Key == "surveyor").ToList();
+                var surveyors = mine.Where(e => e.Def.Key == "geological_surveyor").ToList();
                 bool Queued(string k) => t.UnitQueues[Producer.Factory].Any(q => q.Key == k);
-                if (surveyors.Count == 0 && free.Count < 2 && !Queued("surveyor") && Affordable("surveyor"))
-                    Do(w, "type", "train", "unit", "surveyor");
+                if (surveyors.Count == 0 && free.Count < 2 && !Queued("geological_surveyor") && Affordable("geological_surveyor"))
+                    Do(w, "type", "train", "unit", "geological_surveyor");
                 foreach (var sv in surveyors.Where(e => e.Order == Order.Idle))
                 {
                     // The nearest spot on widening rings around the base that hasn't been surveyed yet.

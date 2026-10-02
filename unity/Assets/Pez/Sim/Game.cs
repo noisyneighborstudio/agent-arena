@@ -16,6 +16,8 @@ namespace Pez.Sim
         public bool Open;
         public int MaxPlayers = 8;
         public int MaxMapSize = Map.MaxSize;
+        /// <summary>Surface ore richness (1 normal; 0.3 = scarce, deep mining matters early).</summary>
+        public float OreScale = 1f;
         /// <summary>Open arena: scripted house players kept in the world while no outside players are left.</summary>
         public int HouseAIs = 1;
         /// <summary>Open arena: house players resign (leaving salvage) once more than this many players are active.</summary>
@@ -40,7 +42,7 @@ namespace Pez.Sim
         {
             Config = cfg;
             Speed = cfg.Speed;
-            World = new World(cfg.Controllers.Length, cfg.Seed, cfg.MapSize) { Open = cfg.Open, MaxPlayers = cfg.MaxPlayers, MaxMapSize = cfg.MaxMapSize };
+            World = new World(cfg.Controllers.Length, cfg.Seed, cfg.MapSize, cfg.OreScale) { Open = cfg.Open, MaxPlayers = cfg.MaxPlayers, MaxMapSize = cfg.MaxMapSize };
             ais.Clear();
             for (int i = 0; i < cfg.Controllers.Length; i++)
             {

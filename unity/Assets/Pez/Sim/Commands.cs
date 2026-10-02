@@ -345,8 +345,8 @@ namespace Pez.Sim
 
         static JObj Survey(World w, int team, Dictionary<string, object> c)
         {
-            var units = ResolveUnits(w, team, c).Where(u => u.Def.Key == "surveyor").ToList();
-            if (units.Count == 0) return Err("no surveyors given (train a surveyor at a factory)");
+            var units = ResolveUnits(w, team, c).Where(u => u.Def.Key == "geological_surveyor").ToList();
+            if (units.Count == 0) return Err("no surveyors given (train a geological_surveyor at a factory)");
             float x = c.Num("x"), y = c.Num("y");
             if (float.IsNaN(x) || float.IsNaN(y)) return Err("x and y are required: where to survey");
             if (!w.Map.InBounds((int)x, (int)y)) return Err($"({x},{y}) is outside the {w.Map.W}x{w.Map.H} map");

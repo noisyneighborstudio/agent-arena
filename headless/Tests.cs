@@ -201,7 +201,7 @@ namespace Pez.Headless
 
             var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
             var dep = w.Map.Deep.OrderBy(d => Vec2.Dist(d.Pos, hq.Center)).First();
-            var sv = At(w.SpawnUnit(0, "surveyor", hq), dep.Pos + new Vec2(4, 0));
+            var sv = At(w.SpawnUnit(0, "geological_surveyor", hq), dep.Pos + new Vec2(4, 0));
             var r = Commands.Execute(w, 0, Cmd("type", "survey", "units", new[] { sv.Id }, "x", sv.Pos.X, "y", sv.Pos.Y));
             Check(Ok(r), $"survey: {r["result"]}");
             Run(w, 4);
