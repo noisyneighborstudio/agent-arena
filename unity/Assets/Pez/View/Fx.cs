@@ -2,64 +2,315 @@ using UnityEngine;
 
 namespace Pez.View
 {
-    /// <summary>Animates a transient effect object: grow/fade and self-destruct.</summary>
+    /// <summary>Animates a transient line effect (tracers, beams): fade and self-destruct.</summary>
     public class FxLife : MonoBehaviour
     {
-        public float Life = 0.5f, Grow = 1f;
-        public Vector3 Velocity;
-        public float Gravity;
-        public Light Light;
+        public float Life = 0.5f;
         public Material Mat;
         public Color Color;
-        public float Spin;
         float age;
-        Vector3 baseScale;
-
-        void Start() { baseScale = transform.localScale; }
 
         void Update()
         {
             age += Time.deltaTime;
             float t = age / Life;
             if (t >= 1f) { Destroy(gameObject); if (Mat != null) Destroy(Mat); return; }
-            transform.localScale = baseScale * (1f + (Grow - 1f) * t);
-            Velocity += Vector3.down * Gravity * Time.deltaTime;
-            transform.position += Velocity * Time.deltaTime;
-            if (Spin != 0) transform.Rotate(Spin * Time.deltaTime, Spin * 0.7f * Time.deltaTime, 0);
-            if (transform.position.y < 0.02f && Gravity > 0) { var p = transform.position; p.y = 0.02f; transform.position = p; Velocity *= 0.5f; Velocity.y = 0; }
-            if (Light != null) Light.intensity *= 1f - Mathf.Clamp01(Time.deltaTime * 12f);
             if (Mat != null) { var c = Color; c.a *= 1f - t; Mat.color = c; }
         }
     }
 
+    /// <summary>
+    /// Battle effects. Explosions are particle physics (see <see cref="FxSystems"/>): a flash and a point light, a fireball
+    /// of hot gas that expands, rises and cools white to yellow to orange to red to soot, lit smoke that billows up and
+    /// spreads, sparks flying ballistically and bouncing, faceted debris in the unit's colours that tumbles and settles,
+    /// a dust shockwave along the ground and a scorch mark that fades. Each event has its own recipe and scale.
+    /// Stylised palette (warm sugar-dust smoke #3A3026, biscuit ground, cream plastic), physical motion.
+    /// </summary>
     public static class Fx
     {
-        static GameObject Blob(Vector3 pos, float size, Color c, bool additive, float life, float grow)
+        static FxSystems S => FxSystems.I;
+
+        public static readonly Color32 White = new Color32(255, 255, 255, 255);
+        static readonly Color32 FlashCol = new Color32(255, 246, 222, 255);
+        static readonly Color FlashLight = new Color(1f, 0.62f, 0.28f);
+        static readonly Color32 SmokeWarm = new Color32(58, 48, 38, 255);   // #3A3026 warm sugar-dust smoke
+        static readonly Color32 SmokeAsh = new Color32(96, 84, 70, 255);
+        static readonly Color32 GunSmoke = new Color32(150, 142, 128, 255);
+        static readonly Color32 DustPale = PezPalette.MaterialsSugarPad;     // #B9AE98
+        static readonly Color32 DustBiscuit = PezPalette.TerrainBiscuitLight;
+        static readonly Color32 Clod = PezPalette.TerrainBiscuitDark;
+        static readonly Color32 Cream = PezPalette.MaterialsCreamPlastic;
+        static readonly Color32 Hull = PezPalette.MaterialsSmokePlastic;
+        static readonly Color32 Steel = PezPalette.MaterialsSpringSteel;
+        static readonly Color32 Licorice = PezPalette.MaterialsLicorice;
+        static readonly Color32 ScorchCol = new Color32(24, 19, 17, 215);
+        static readonly Vector3 Up = Vector3.up;
+
+        /// <summary>Build the particle systems now (not mid-battle) and draw each once so its shader is ready.</summary>
+        public static void Prewarm()
         {
-            var mat = Mats.UnlitInstance(c, additive);
-            var t = Models.Part(null, PrimitiveType.Sphere, pos, Vector3.one * size, mat);
-            t.GetComponent<Renderer>().shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-            var f = t.gameObject.AddComponent<FxLife>();
-            f.Life = life; f.Grow = grow; f.Mat = mat; f.Color = c;
-            return t.gameObject;
+            var cam = Camera.main;
+            S.Prewarm(cam != null ? cam.transform.position + cam.transform.forward * 50f : new Vector3(0, 0.5f, 0));
         }
 
-        static void Flash(Vector3 pos, Color c, float intensity, float range)
+        // ---------------------------------------------------------------- helpers
+
+        static void Emit(ParticleSystem ps, Vector3 pos, Vector3 vel, float size, float life, Color32 c, float rot = 0f) =>
+            FxSystems.Emit(ps, pos, vel, size, life, c, rot);
+
+        static Color32 Vary(Color32 c, float amount, byte alpha = 255)
         {
-            var go = new GameObject("flash");
-            go.transform.position = pos + Vector3.up * 0.5f;
-            var l = go.AddComponent<Light>();
-            l.type = LightType.Point; l.color = c; l.intensity = intensity; l.range = range;
-            l.shadows = LightShadows.None;
-            var f = go.AddComponent<FxLife>();
-            f.Life = 0.35f; f.Light = l;
+            float k = 1f + Random.Range(-amount, amount);
+            return new Color32((byte)Mathf.Min(255f, c.r * k), (byte)Mathf.Min(255f, c.g * k), (byte)Mathf.Min(255f, c.b * k), alpha);
         }
 
+        static Color32 Alpha(Color32 c, float a) { c.a = (byte)(Mathf.Clamp01(a) * 255f); return c; }
+
+        public static Color32 SmokeColor(float alpha) => Vary(Color32.Lerp(SmokeWarm, SmokeAsh, Random.value * 0.6f), 0.1f, (byte)(alpha * 255f));
+
+        static Vector3 Ground(Vector3 p) => new Vector3(p.x, 0f, p.z);
+
+        static Vector3 Flat(float speed)
+        {
+            float a = Random.Range(0f, Mathf.PI * 2f);
+            return new Vector3(Mathf.Cos(a), 0f, Mathf.Sin(a)) * speed;
+        }
+
+        /// <summary>Faceted debris: half in `a`, 30% `b`, 20% `c`; `hot` is the share that glows as it flies.</summary>
+        static void Chunks(Vector3 pos, int n, float size, float speed, float life, Color32 a, Color32 b, Color32 c, float hot, float lift = 1.2f)
+        {
+            for (int i = 0; i < n; i++)
+            {
+                var dir = Random.onUnitSphere;
+                dir.y = Mathf.Abs(dir.y) + lift * Random.Range(0.3f, 1f);
+                dir.Normalize();
+                float r = Random.value;
+                var col = Vary(r < 0.5f ? a : r < 0.8f ? b : c, 0.12f, (byte)(Random.value < hot ? 255 : 0));
+                S.EmitShard(pos + Random.insideUnitSphere * 0.15f * size, dir * speed * Random.Range(0.45f, 1f),
+                    Random.Range(0.06f, 0.13f) * size, life * Random.Range(0.8f, 1.25f), col);
+            }
+        }
+
+        // ---------------------------------------------------------------- building blocks
+
+        /// <summary>
+        /// One explosion of scale `s` (1 = a vehicle): flash, light, fireball, smoke, sparks, and when it's on the ground
+        /// a dust shockwave. Ground bursts throw everything into the upper hemisphere; air bursts go every way.
+        /// </summary>
+        public static void Blast(Vector3 pos, float s, bool ground)
+        {
+            var S = FxSystems.I;
+            float sq = Mathf.Sqrt(s);
+            Emit(S.Flash, pos + Up * 0.1f * s, Vector3.zero, 2f * s, 0.09f + 0.05f * s, FlashCol);
+            S.Lamp(pos + Up * (0.4f + 0.4f * s), FlashLight, 1.2f + 2f * s, 1.5f + 3.5f * s, 0.15f + 0.15f * s);
+
+            int nf = Mathf.Clamp((int)(8 + 22 * s), 6, 50);
+            for (int i = 0; i < nf; i++)
+            {
+                var dir = Random.onUnitSphere;
+                if (ground) dir.y = Mathf.Abs(dir.y) * 0.9f + 0.1f;
+                Emit(S.Fire, pos + dir * 0.12f * s, dir * Random.Range(1.2f, 4.2f) * sq + Up * Random.Range(0f, 0.6f) * sq,
+                    Random.Range(0.5f, 0.95f) * s, Random.Range(0.55f, 1.05f) * (0.75f + 0.25f * sq), Vary(White, 0.04f));
+            }
+
+            int ns = Mathf.Clamp((int)(4 + 12 * s), 3, 36);
+            for (int i = 0; i < ns; i++)
+            {
+                var dir = Random.onUnitSphere;
+                if (ground) dir.y = Mathf.Abs(dir.y);
+                Emit(S.Smoke, pos + dir * 0.2f * s, dir * Random.Range(0.4f, 1.6f) * sq + Up * Random.Range(0.5f, 1.2f) * sq,
+                    Random.Range(0.55f, 1f) * s, Random.Range(2.4f, 4.2f) * (0.8f + 0.2f * sq), SmokeColor(0.92f));
+            }
+
+            int nk = Mathf.Clamp((int)(10 + 34 * s), 4, 90);
+            for (int i = 0; i < nk; i++)
+            {
+                var dir = Random.onUnitSphere;
+                dir.y = ground ? Mathf.Abs(dir.y) * 1.1f + 0.15f : dir.y + 0.3f;
+                Emit(S.Sparks, pos + dir * 0.1f * s, dir * Random.Range(2.5f, 8.5f) * sq, Random.Range(0.035f, 0.065f) * (0.8f + 0.2f * sq),
+                    Random.Range(0.5f, 1.5f), White);
+            }
+
+            if (ground) Shockwave(Ground(pos), s);
+        }
+
+        /// <summary>The blast wave along the ground: a dust ring racing out and dust kicked sideways.</summary>
+        static void Shockwave(Vector3 g, float s)
+        {
+            float sq = Mathf.Sqrt(s);
+            Emit(S.Ring, g + Up * 0.05f, Vector3.zero, 3.4f * s, 0.4f + 0.25f * s, Alpha(Color32.Lerp(DustPale, Cream, 0.5f), 0.8f), Random.Range(0f, 360f));
+            int nd = Mathf.Clamp((int)(4 + 10 * s), 3, 30);
+            for (int i = 0; i < nd; i++)
+            {
+                var dir = Flat(1f);
+                Emit(S.Dust, g + dir * 0.3f * s + Up * 0.15f * s, dir * Random.Range(1.5f, 3.5f) * sq + Up * Random.Range(0.1f, 0.5f),
+                    Random.Range(0.45f, 0.8f) * s, Random.Range(1.6f, 3f), Vary(Color32.Lerp(DustBiscuit, DustPale, Random.value), 0.06f, 200));
+            }
+        }
+
+        /// <summary>A dark blotch burnt into the ground; fades over 25 s.</summary>
+        public static void Scorch(Vector3 pos, float size) =>
+            Emit(S.Scorch, new Vector3(pos.x, 0.035f, pos.z), Vector3.zero, size * Random.Range(0.9f, 1.1f), 25f, ScorchCol, Random.Range(0f, 360f));
+
+        /// <summary>A plain explosion of the given scale (C4 charges and anything without its own recipe).</summary>
+        public static void Explosion(Vector3 pos, float size) => Blast(pos, size, pos.y < 0.9f);
+
+        /// <summary>Thrown debris in one colour (kept for callers that just want bits).</summary>
+        public static void Debris(Vector3 pos, float size, Color c, int n) => Chunks(pos + Up * 0.2f, n, size, 3.5f, 3f, c, Hull, Licorice, 0f);
+
+        // ---------------------------------------------------------------- event recipes
+
+        /// <summary>A projectile arrives: scale and character by weapon.</summary>
+        public static void Hit(string weapon, Vector3 pos)
+        {
+            bool ground = pos.y < 0.6f;
+            switch (weapon)
+            {
+                case "bombs": Shell(pos, 1.5f); break;
+                case "artillery": Shell(pos, 1.05f); break;
+                case "mammoth_cannon": Shell(pos, 0.8f); break;
+                case "heavy_cannon": Shell(pos, 0.6f); break;
+                case "mine": Mine(pos); break;
+                case "flak":
+                    // Flak bursts in the air and leaves a hanging black puff.
+                    Blast(pos, 0.35f, ground);
+                    for (int i = 0; i < 3; i++)
+                        Emit(S.Smoke, pos + Random.insideUnitSphere * 0.15f, Random.insideUnitSphere * 0.4f, Random.Range(0.35f, 0.5f), Random.Range(2f, 3f), SmokeColor(0.9f));
+                    break;
+                case "rocket": case "gunship_rockets": case "sam": Blast(pos, 0.42f, ground); break;
+                default: Blast(pos, 0.3f, ground); break; // cannon, turret gun
+            }
+        }
+
+        /// <summary>A shell or bomb: a ground burst that throws dirt clods and a dust column, and scorches.</summary>
+        static void Shell(Vector3 pos, float s)
+        {
+            bool ground = pos.y < 0.6f;
+            Blast(pos, s, ground);
+            if (!ground) return;
+            var g = Ground(pos);
+            float sq = Mathf.Sqrt(s);
+            Chunks(g + Up * 0.1f, (int)(4 + 8 * s), 0.9f * s, 4f * sq, 3.5f, Clod, DustBiscuit, Licorice, 0f, 2f);
+            int nd = (int)(3 + 5 * s);
+            for (int i = 0; i < nd; i++)
+                Emit(S.Dust, g + Flat(0.25f * s) + Up * 0.2f, Up * Random.Range(1.5f, 3.2f) * sq + Flat(0.5f), Random.Range(0.4f, 0.7f) * s,
+                    Random.Range(2f, 3.2f), Vary(DustBiscuit, 0.08f, 210));
+            Scorch(g, 1.4f * s);
+        }
+
+        /// <summary>A hitscan round (rifle, machine gun, sniper) lands: a spit of sparks and a little dust.</summary>
+        public static void BulletImpact(Vector3 pos)
+        {
+            Emit(S.Flash, pos, Vector3.zero, 0.22f, 0.05f, FlashCol);
+            for (int i = 0; i < 3; i++)
+                Emit(S.Sparks, pos, (Random.onUnitSphere + Up * 0.8f) * Random.Range(1.5f, 4f), 0.025f, Random.Range(0.2f, 0.45f), White);
+            Emit(S.Dust, pos, Up * 0.3f + Random.insideUnitSphere * 0.2f, Random.Range(0.14f, 0.22f), Random.Range(0.6f, 0.9f), Alpha(DustPale, 0.6f));
+        }
+
+        /// <summary>A gun fires: muzzle flash, a short light, and a puff of gun smoke. Tiny ones (welders) spit sparks.</summary>
         public static void MuzzleFlash(Vector3 pos, float size)
         {
-            Blob(pos, size, new Color(1f, 0.85f, 0.4f, 1f), true, 0.08f, 1.6f);
-            Flash(pos, new Color(1f, 0.8f, 0.4f), 2.5f, 2.5f + size * 6);
+            Emit(S.Flash, pos, Vector3.zero, size * 4.5f, 0.07f, FlashCol);
+            if (size >= 0.1f) S.Lamp(pos, FlashLight, 1f + size * 5f, 1.5f + size * 6f, 0.08f);
+            Emit(S.Dust, pos, Up * 0.25f + Random.insideUnitSphere * 0.1f, size * 3f, Random.Range(0.6f, 1.1f), Alpha(GunSmoke, 0.45f));
+            if (size < 0.08f)
+                for (int i = 0; i < 3; i++)
+                    Emit(S.Sparks, pos, (Random.onUnitSphere + Up * 0.5f) * Random.Range(1f, 2.5f), 0.02f, Random.Range(0.25f, 0.5f), White);
         }
+
+        /// <summary>A vehicle blows up: blast, a secondary cook-off, its hull in pieces, and a wreck that burns a while.</summary>
+        public static void VehicleDestroyed(Vector3 pos, Color team)
+        {
+            bool ground = pos.y < 0.9f;
+            Blast(pos, 1f, ground);
+            S.Later(Random.Range(0.18f, 0.35f), pos + new Vector3(Random.Range(-0.3f, 0.3f), 0.1f, Random.Range(-0.3f, 0.3f)), 0.45f, ground);
+            Chunks(pos + Up * 0.1f, 12, 1f, 4.5f, Random.Range(4f, 6f), team, Hull, Licorice, 0.5f);
+            if (!ground) return;
+            var g = Ground(pos);
+            Scorch(g, 1.4f);
+            S.Smoulder(g + Up * 0.2f, 1f, 4.5f, 7f);
+        }
+
+        /// <summary>
+        /// An aircraft is shot down: a burst in the air and pieces shed, then the airframe (`hulk`, may be null) falls
+        /// trailing fire and smoke, tumbling, and explodes where it hits the ground. Fx takes ownership of `hulk`.
+        /// </summary>
+        public static void AircraftDestroyed(Transform hulk, Vector3 pos, Vector3 velocity, Color team)
+        {
+            Blast(pos, 0.55f, false);
+            Chunks(pos, 7, 0.9f, 3.5f, 4.5f, team, Hull, Licorice, 0.5f, 0.4f);
+            if (hulk != null)
+                foreach (var mb in hulk.GetComponentsInChildren<MonoBehaviour>()) mb.enabled = false;
+            S.Fall(hulk, pos, velocity + Up * 0.6f, team);
+        }
+
+        /// <summary>
+        /// A building is destroyed: staggered blasts across its footprint, a collapse of dust, walls and roof thrown
+        /// out as debris, smoke columns that linger, and a large scorch.
+        /// </summary>
+        public static void BuildingDestroyed(Vector3 center, int sizeX, Color team)
+        {
+            float n = Mathf.Max(1, sizeX), half = n * 0.5f, sn = Mathf.Sqrt(n);
+            var c = Ground(center);
+            Blast(c + Up * 0.4f * sn, 0.75f * sn, true);
+            int bursts = 1 + sizeX * 2;
+            for (int k = 0; k < bursts; k++)
+                S.Later(Random.Range(0.1f, 0.35f + 0.35f * n),
+                    c + new Vector3(Random.Range(-half, half) * 0.8f, Random.Range(0.2f, 0.6f) * sn, Random.Range(-half, half) * 0.8f),
+                    Random.Range(0.5f, 0.9f) * (0.6f + 0.25f * n), true);
+            int nd = (int)(10 + 10 * n);
+            for (int i = 0; i < nd; i++)
+            {
+                var off = new Vector3(Random.Range(-half, half), 0f, Random.Range(-half, half));
+                var outward = off.sqrMagnitude > 0.01f ? off.normalized : Flat(1f);
+                Emit(S.Dust, c + off + Up * Random.Range(0.1f, 0.6f), outward * Random.Range(0.8f, 2.2f) + Up * Random.Range(0.2f, 0.9f),
+                    Random.Range(0.7f, 1.2f) * (0.5f + 0.3f * n), Random.Range(3f, 5.5f), Vary(Color32.Lerp(DustPale, Cream, Random.value * 0.5f), 0.06f, 220));
+            }
+            Emit(S.Ring, c + Up * 0.05f, Vector3.zero, 3f * n + 2f, 0.9f, Alpha(DustPale, 0.7f), Random.Range(0f, 360f));
+            Chunks(c + Up * 0.4f * sn, (int)(14 + 8 * n), 1.1f + 0.25f * n, 3.5f + n, Random.Range(6f, 9f), Cream, team, Hull, 0.35f);
+            Chunks(c + Up * 0.2f, (int)(4 * n), 0.9f, 2.5f, 7f, Steel, Licorice, Cream, 0f);
+            Scorch(c, n * 1.5f);
+            int columns = 1 + sizeX / 2;
+            for (int k = 0; k < columns; k++)
+                S.Smoulder(c + new Vector3(Random.Range(-half, half) * 0.6f, 0.2f, Random.Range(-half, half) * 0.6f), 0.8f + 0.3f * n, Random.Range(8f, 10f), 6f);
+        }
+
+        /// <summary>An infantryman falls: no fireball, a puff of dust and a few kicked-up bits.</summary>
+        public static void InfantryDeath(Vector3 pos, Color team)
+        {
+            var g = Ground(pos);
+            for (int i = 0; i < 8; i++)
+                Emit(S.Dust, g + Flat(0.12f) + Up * 0.12f, Flat(Random.Range(0.3f, 1f)) + Up * Random.Range(0.2f, 0.6f),
+                    Random.Range(0.28f, 0.45f), Random.Range(1.2f, 2f), Vary(DustPale, 0.06f, 220));
+            Chunks(g + Up * 0.15f, 6, 0.35f, 2.2f, 2.5f, Clod, team, DustBiscuit, 0f);
+        }
+
+        /// <summary>A mine goes off under a vehicle: a geyser of dirt and dust thrown straight up, a squat fireball.</summary>
+        public static void Mine(Vector3 pos)
+        {
+            var g = Ground(pos);
+            Blast(g + Up * 0.15f, 0.55f, true);
+            Chunks(g + Up * 0.05f, 14, 0.8f, 6f, 3.5f, Clod, DustBiscuit, Licorice, 0f, 3f);
+            for (int i = 0; i < 8; i++)
+                Emit(S.Dust, g + Flat(0.15f) + Up * 0.2f, Up * Random.Range(1.5f, 3.5f) + Flat(0.4f), Random.Range(0.45f, 0.75f),
+                    Random.Range(2f, 3.2f), Vary(DustBiscuit, 0.08f, 220));
+            Scorch(g, 1.3f);
+        }
+
+        /// <summary>A structure is dismantled into salvage: cream sugar dust settling, a few panels falling off.</summary>
+        public static void Salvaged(Vector3 pos, float size)
+        {
+            var g = Ground(pos);
+            float sq = Mathf.Sqrt(size);
+            int n = (int)(6 + 6 * size);
+            for (int i = 0; i < n; i++)
+                Emit(S.Dust, g + Flat(Random.Range(0f, 0.5f) * size) + Up * 0.2f, Flat(0.6f) + Up * Random.Range(0.3f, 0.9f),
+                    Random.Range(0.5f, 0.9f) * sq, Random.Range(2f, 3.5f), Vary(Color32.Lerp(Cream, DustPale, 0.45f), 0.05f, 200));
+            Chunks(g + Up * 0.2f, (int)(4 + 3 * size), 0.6f, 2.5f, 3f, Cream, DustPale, Steel, 0f);
+            Emit(S.Ring, g + Up * 0.05f, Vector3.zero, 2f + 1.5f * size, 0.6f, Alpha(Cream, 0.45f), Random.Range(0f, 360f));
+        }
+
+        // ---------------------------------------------------------------- lines
 
         public static void Tracer(Vector3 a, Vector3 b, Color c)
         {
@@ -89,50 +340,7 @@ namespace Pez.View
             lr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             var f = go.AddComponent<FxLife>();
             f.Life = 0.22f; f.Mat = mat; f.Color = c;
-            Flash(b, c, 3f, 3f);
-        }
-
-        public static void Explosion(Vector3 pos, float size)
-        {
-            Blob(pos + Vector3.up * size * 0.3f, size * 0.6f, new Color(1f, 0.95f, 0.7f, 1f), true, 0.15f, 2.2f);
-            Blob(pos + Vector3.up * size * 0.3f, size * 0.8f, new Color(1f, 0.5f, 0.1f, 0.9f), true, 0.35f, 2.4f);
-            Flash(pos, new Color(1f, 0.6f, 0.25f), 4f + size * 4f, 3f + size * 5f);
-            int smoke = Mathf.Clamp((int)(size * 5), 2, 12);
-            for (int i = 0; i < smoke; i++)
-            {
-                var g = Blob(pos + Random.insideUnitSphere * size * 0.4f + Vector3.up * size * 0.3f, size * Random.Range(0.3f, 0.6f),
-                    new Color(0.227f, 0.188f, 0.149f, 0.5f), false, Random.Range(1.2f, 2.4f), 2.5f); // warm sugar-dust smoke #3A3026
-                g.GetComponent<FxLife>().Velocity = new Vector3(Random.Range(-0.3f, 0.3f), Random.Range(0.5f, 1.2f), Random.Range(-0.3f, 0.3f)) * Mathf.Sqrt(size);
-            }
-            int sparks = Mathf.Clamp((int)(size * 8), 3, 20);
-            for (int i = 0; i < sparks; i++)
-            {
-                var g = Blob(pos + Vector3.up * 0.2f, 0.06f, new Color(1f, 0.7f, 0.2f, 1f), true, Random.Range(0.3f, 0.7f), 0.3f);
-                var f = g.GetComponent<FxLife>();
-                f.Velocity = (Random.onUnitSphere + Vector3.up * 1.2f) * Random.Range(2f, 5f) * Mathf.Sqrt(size);
-                f.Gravity = 9f;
-            }
-        }
-
-        public static void Debris(Vector3 pos, float size, Color c, int n)
-        {
-            var mat = Mats.Lit(c * 0.5f, 0.2f, 0.3f);
-            for (int i = 0; i < n; i++)
-            {
-                var t = Models.Part(null, PrimitiveType.Cube, pos + Vector3.up * 0.3f, Vector3.one * Random.Range(0.06f, 0.18f) * size, mat);
-                var f = t.gameObject.AddComponent<FxLife>();
-                f.Life = Random.Range(1.5f, 3f); f.Grow = 0.6f; f.Gravity = 9f; f.Spin = Random.Range(-400f, 400f);
-                f.Velocity = (Random.onUnitSphere + Vector3.up * 1.5f) * Random.Range(1.5f, 4f);
-            }
-        }
-
-        public static void Scorch(Vector3 pos, float size)
-        {
-            var mat = Mats.UnlitInstance(new Color(0.03f, 0.03f, 0.02f, 0.7f), false);
-            var t = Models.Part(null, PrimitiveType.Cylinder, new Vector3(pos.x, 0.03f, pos.z), new Vector3(size, 0.002f, size), mat);
-            t.GetComponent<Renderer>().shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-            var f = t.gameObject.AddComponent<FxLife>();
-            f.Life = 25f; f.Mat = mat; f.Color = new Color(0.03f, 0.03f, 0.02f, 0.7f);
+            S.Lamp(b + Up * 0.3f, c, 3f, 3f, 0.25f);
         }
     }
 }

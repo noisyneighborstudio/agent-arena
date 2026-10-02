@@ -67,6 +67,7 @@ namespace Pez.View
             Deposits.Init(w);
             mapVersion = w.MapVersion;
             lastSeq = w.Events.Count > 0 ? w.Events[w.Events.Count - 1].Seq : 0;
+            Fx.Prewarm();
         }
 
         // When a unit drops out of a team's sight it shrinks away over half a second instead of blinking off.
@@ -481,6 +482,7 @@ namespace Pez.View
                             {
                                 Fx.Tracer(from, to, ev.Key == "sniper" ? new Color(0.6f, 0.95f, 1f, 1f) : new Color(1f, 0.85f, 0.4f, 0.9f));
                                 Fx.MuzzleFlash(from, ev.Key == "sniper" ? 0.1f : 0.06f);
+                                Fx.BulletImpact(to);
                             }
                             Kick(ev.A, beam ? 0.04f : 0.02f);
                             break;
@@ -506,7 +508,7 @@ namespace Pez.View
                         break;
                     case "salvaged":
                         // A leaving player's base turns to salvage: a puff of sugar dust, not a silent swap.
-                        Fx.Debris(W(ev.Pos), 0.6f, Mats.Cream, 6);
+                        { var sd = Defs.Get(ev.Key); Fx.Salvaged(W(ev.Pos), sd != null && sd.IsStructure ? sd.SizeX : 1f); }
                         break;
                     case "captured":
                         Fx.Beam(W(ev.Pos, 0.2f), W(ev.Pos, 4f), Mats.Team(ev.Team), 0.25f);
@@ -524,30 +526,26 @@ namespace Pez.View
                             break;
                         }
                     case "hit":
-                        {
-                            float size = ev.Key == "bombs" ? 1.6f : ev.Key == "mine" ? 1.2f : ev.Key == "artillery" || ev.Key == "mammoth_cannon" ? 0.9f : ev.Key == "heavy_cannon" ? 0.55f : ev.Key == "rocket" || ev.Key == "sam" || ev.Key == "flak" ? 0.45f : 0.3f;
-                            Fx.Explosion(W(ev.Pos, HeightOf(ev.B, 0.2f)), size);
-                            if (ev.Key == "bombs" || ev.Key == "artillery" || ev.Key == "mine") Fx.Scorch(W(ev.Pos), size * 1.3f);
-                            if (ev.Key == "mine") Fx.Debris(W(ev.Pos), 0.8f, new Color(0.35f, 0.3f, 0.25f), 10);
-                            break;
-                        }
+                        Fx.Hit(ev.Key, W(ev.Pos, HeightOf(ev.B, 0.2f))); // scale and character by weapon
+                        break;
                     case "destroyed":
                         {
-                            if (Views.TryGetValue(ev.A, out var dead)) dead.Destroyed = true;
+                            Views.TryGetValue(ev.A, out var dead);
+                            if (dead != null) dead.Destroyed = true;
                             var def = Defs.Get(ev.Key);
-                            float size = def.IsStructure ? def.SizeX * 1.2f : def.Armor == Armor.Infantry ? 0.35f : 1f;
-                            if (def.Armor == Armor.Infantry)
+                            var team = Mats.Team(ev.Team);
+                            if (def.Armor == Armor.Infantry) Fx.InfantryDeath(W(ev.Pos), team);
+                            else if (def.IsStructure) Fx.BuildingDestroyed(W(ev.Pos), def.SizeX, team);
+                            else if (def.IsMine) Fx.Mine(W(ev.Pos));
+                            else if (def.IsAir && dead != null && dead.Rig.Root.position.y > 0.5f)
                             {
-                                // Readable at game zoom: a small blast and a few bits in the team's colour.
-                                Fx.Explosion(W(ev.Pos, 0.25f), 0.4f);
-                                Fx.Debris(W(ev.Pos), 0.4f, Mats.Team(ev.Team), 4);
-                                break;
+                                // The airframe falls burning and blows up where it hits the ground; Fx takes the model.
+                                var root = dead.Rig.Root;
+                                Transform hulk = null;
+                                if (dead.Rig.HasModel && root.gameObject.activeInHierarchy) { hulk = dead.Rig.Model.transform; hulk.SetParent(null, true); root.gameObject.SetActive(false); }
+                                Fx.AircraftDestroyed(hulk, root.position, root.forward * def.Speed * 0.6f, team);
                             }
-                            float y = Views.TryGetValue(ev.A, out var dv) ? dv.Rig.Root.position.y : 0.3f;
-                            Fx.Explosion(W(ev.Pos, y), size);
-                            Fx.Debris(W(ev.Pos), def.IsStructure ? 2f : 1f, Mats.Team(ev.Team), def.IsStructure ? 18 : 8);
-                            Fx.Scorch(W(ev.Pos), size * 1.2f);
-                            if (def.IsStructure) for (int k = 0; k < def.SizeX; k++) Fx.Explosion(W(ev.Pos + new Vec2(Random.Range(-1f, 1f), Random.Range(-1f, 1f)) * def.SizeX * 0.4f, 0.3f), size * 0.5f);
+                            else Fx.VehicleDestroyed(W(ev.Pos, dead != null ? Mathf.Max(0.3f, dead.Rig.Root.position.y) : 0.3f), team);
                             break;
                         }
                 }
