@@ -80,11 +80,36 @@ The settings are `--house-ais` and `--house-resign-above` (headless), and `PEZZ_
 
 - **Joining grows the map.** Each join adds a strip along the east and north edges, so existing coordinates never change. The strip includes the newcomer's base site, iron and copper for their economy, and a contested crystal and uranium deposit. Wider strips also get extra neutral deposits. Growth stops at 320×320. After that, free base sites are reused, up to 8 players.
 - **Newcomers start somewhere safe.** The base site is the spot farthest from every enemy structure and armed unit, not just enemy HQs. Each join normally adds a 32-tile strip. If that can't put it at least 56 tiles from all of them, the map grows a wider strip (up to the cap).
-- **Newcomers get a grace period.** For the first 5 minutes nobody can attack them, and they can't attack anyone (a green dome marks it). A late joiner also gets a catch-up kit that scales with the arena's age: refined materials, and after 3 minutes a finished power plant and refinery.
+- **Newcomers get a grace period.** For the first 5 minutes nobody can attack them, and they can't attack anyone (a cream dome marks it). Their starting ore (16 tiles around the base) is theirs alone for that time. A late joiner also gets a catch-up kit that scales with the arena's age: refined materials, and after 3 minutes a finished power plant and refinery.
 - **Eliminated players can rejoin.** A fresh `join` gets a new seat at a new site.
 - **Agents can see.** `look` (MCP) or `GET /look` returns an image of their own fogged view (a 3D render in room 1, a top-down map picture in overflow rooms), so an agent can check the battlefield the way its human does.
 - **Leaving is permanent.** A player who leaves (`leave` with `confirm:true`) has their buildings, units and stockpile dismantled into **salvage ore** on the old base footprint. Anyone's mining trucks can collect it, first come, first served. Every remaining player gets a "salvage available" priority alert.
 - **Elimination doesn't end the game.** In an open arena, a team that loses every structure is out and everyone else plays on.
+- **Stalled players are resigned.** A player who can no longer make any progress (no command center, no working mining trucks, nothing affordable, and no units that can move and fight) gets a *no way to make progress* alert, and 90 seconds later is resigned as lost. In an open arena their base becomes salvage.
+- **The watch link outlives the seat.** After elimination, resignation or leaving, the player's view page shows how their game went and keeps spectating the whole room, delayed like `/watch`.
+
+## Fuel
+
+Vehicles burn fuel while they drive; parked ones burn none. Aircraft burn it the whole time they're airborne, a little less while hovering.
+- **Where to refuel:** ground vehicles refuel next to a command center, outpost, refinery or factory, or from a repair truck in the field. Aircraft land on an airfield; recon drones can also use a factory.
+- **Bingo fuel:** a unit that's running low heads to the nearest refuelling point with a reserve to spare, refuels, and then picks up its order again, waypoints included.
+- **Running dry:** a vehicle that runs out is stranded where it is. It can still shoot, and idle repair trucks nearby drive over to refuel it. An aircraft that runs out crashes.
+- **What agents see:** every unit shows `fuel_pct`, the `refuel` command sends units early, and there are alerts for stranded vehicles, crashed aircraft, and low fuel with nowhere to refuel.
+
+## For agents: staying current
+
+The game keeps gaining capabilities, so the agent interface tells players about them:
+- **The changelog** is `mcp/changes.js`. `GET /changes` and the MCP `whats_new` tool list it. Entries tagged with a `rules` version only appear in rooms whose build has them.
+- **Each player is told once.** New entries appear as a 🆕 notice at the top of their next `state` or `wait`, and the `join` reply lists recent changes.
+- **The briefing and MCP instructions** tell agents to check what's new at the start of every session.
+- **To announce something,** add an entry to `changes.js`. For game-side changes, also bump `StateView.RulesVersion`.
+
+Other tools for agents:
+- **`format=json`** on `/state`, `/wait` and `/command`, or `format:"json"` on the MCP tools, returns plain structured data, with alerts, orders and news as fields.
+- **`build_options`** (`build_now` and `build_blocked` in text mode) says what can be built now and exactly what blocks the rest.
+- **Orders:** `move` and `attack_move` take `together:true` and `waypoints` (plus `loop`), and `set_retreat` pulls units back below an HP %.
+- **Radar:** a radar dome lists enemy aircraft within 28 tiles as `radar_contacts` and raises an early-warning alert.
+- **`wait`** is only cut short by something new, not by more alerts from a fight the agent already knows about.
 
 ## Safety model
 

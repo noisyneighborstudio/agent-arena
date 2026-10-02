@@ -20,6 +20,7 @@ namespace Pez.View
             public float BuiltShown = -1f;
             public Vector3? SpawnFrom;
             public float SpawnT;
+            public float LandK;          // aircraft: 0 flying, 1 parked on its pad (eases between)
             // Hull feel (MOTION.md): nose-up under acceleration, dip when braking, kick back on firing.
             public float HullSpeed, HullPitch, HullPitchVel;
         }
@@ -233,6 +234,12 @@ namespace Pez.View
             {
                 var pos = Vec2.Lerp(e.PrevPos, e.Pos, alpha);
                 float alt = rig.Altitude > 0 ? rig.Altitude + Mathf.Sin(Time.time * 1.7f + e.Id) * 0.08f : 0;
+                if (e.IsAir)
+                {
+                    // Out of fuel trips end with the aircraft settling onto its pad, and lifting off again after.
+                    v.LandK = Mathf.MoveTowards(v.LandK, e.Landed ? 1f : 0f, Time.deltaTime * 0.8f);
+                    if (rig.Altitude > 0) alt = Mathf.Lerp(alt, 0.55f, v.LandK * v.LandK * (3f - 2f * v.LandK));
+                }
                 rig.Root.position = W(pos, alt);
                 if (v.SpawnFrom.HasValue)
                 {

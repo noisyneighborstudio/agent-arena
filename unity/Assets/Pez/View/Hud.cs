@@ -449,6 +449,7 @@ namespace Pez.View
             {
                 var e = sel[0];
                 text = $"<b>{e.Def.Name}</b> #{e.Id}   HP {(int)e.Hp}/{e.Def.MaxHp}   {(e.IsStructure ? (e.IsComplete ? "" : $"building {(int)(e.BuildProgress * 100)}%") : e.OrderName)}" +
+                       (e.Def.UsesFuel ? $"   fuel {(int)(e.FuelFraction * 100)}%{(e.Stranded ? " <b>OUT OF FUEL</b>" : e.Landed ? " (landed)" : e.Order == Order.Refuel ? " (refuelling)" : "")}" : "") +
                        (e.IsHarvester ? $"   cargo {e.Cargo}/{e.Def.HarvestCapacity} {(e.CargoType >= 0 ? Defs.Ores[e.CargoType] : "")}{(e.HarvestType >= 0 ? $" (assigned {Defs.Ores[e.HarvestType]})" : "")}" : "") +
                        (e.IsStructure && e.Def.Recipes.Length > 0 ? $"   {(e.Working ? "<color=#7f7>working</color>" : "<color=#f97>idle: missing inputs</color>")}" : "") +
                        $"\n<size=12><color=#aaa>{e.Def.Description}</color></size>";
@@ -477,6 +478,13 @@ namespace Pez.View
                 if (f < 0.25f) Hazard(new Rect(p.x - w / 2, p.y, Mathf.Max(3f, w * f), 4), 2f);
                 else Fill(new Rect(p.x - w / 2, p.y, w * f, 4), f < 0.5f ? Mats.Amber : Mats.Cream);
                 if (!e.IsComplete) { Fill(new Rect(p.x - w / 2, p.y + 6, w * e.BuildProgress, 3), new Color(1f, 0.7f, 0.2f)); }
+                // Fuel under health for selected vehicles and aircraft: crystal blue, amber when low.
+                if (sel && e.Def.UsesFuel)
+                {
+                    float ff = Mathf.Clamp01(e.FuelFraction);
+                    Fill(new Rect(p.x - w / 2 - 1, p.y + 5, w + 2, 4), new Color(0.06f, 0.07f, 0.09f, 0.8f));
+                    Fill(new Rect(p.x - w / 2, p.y + 6, w * ff, 2), ff < 0.3f ? Mats.Amber : new Color(0.56f, 0.89f, 1f));
+                }
             }
         }
 
