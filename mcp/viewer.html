@@ -472,6 +472,7 @@ addEventListener("keydown", (e) => { if (e.key === "f" || e.key === "F") focusBa
 // MJPEG at up to 60fps over one long request; frames are decoded off the main thread, and any that arrive while the
 // previous one is still decoding are skipped, so a slow device shows fewer frames rather than falling behind.
 const liveImg = document.getElementById("live"), liveCtx = liveImg.getContext("2d");
+let liveTotal = 0, noPush = false;
 let liveOk = false, liveMode = false, liveFails = 0, liveAbort = null, liveFps = 0, liveShown = 0;
 function setMode(live) {
   liveMode = live && liveOk;
@@ -491,9 +492,19 @@ async function liveLoop() {
   liveAbort = new AbortController();
   try {
     const r = await fetch(`${BASE}/live.mjpg`, { cache: "no-store", signal: liveAbort.signal });
-    if (r.ok) { liveFails = 0; await readFrames(r.body.getReader()); }
+    if (r.ok) {
+      liveFails = 0;
+      // If no frame shows up soon, this browser isn't getting the stream: fall back to stills.
+      const shownBefore = liveTotal, ab = liveAbort;
+      const watchdog = setTimeout(() => { if (liveTotal === shownBefore) { noPush = true; ab.abort(); } }, 4000);
+      try { await readFrames(r.body.getReader()); } finally { clearTimeout(watchdog); }
+    }
     else if (++liveFails > 3) return pollLoop(); // no push stream for us right now: poll stills instead
-  } catch { if (liveAbort.signal.aborted) return setTimeout(liveLoop, 0); liveFails++; }
+  } catch {
+    if (noPush) return pollLoop();
+    if (liveAbort.signal.aborted) return setTimeout(liveLoop, 0);
+    liveFails++;
+  }
   setTimeout(liveLoop, 1000); // the stream ended (the game restarted, the seat emptied): reconnect
 }
 // Fallback for hosts without the push stream: fetch one still at a time, as fast as they come.
@@ -501,7 +512,7 @@ async function pollLoop() {
   let misses = 0;
   const started = Date.now();
   for (;;) {
-    if (Date.now() - started > 30000) { liveFails = 0; return liveLoop(); } // try the push stream again
+    if (!noPush && Date.now() - started > 30000) { liveFails = 0; return liveLoop(); } // try the push stream again
     if (!liveWanted()) { await new Promise((r) => setTimeout(r, 250)); continue; }
     try {
       const r = await fetch(`${BASE}/live.jpg?${Date.now()}`, { cache: "no-store" });
@@ -539,7 +550,7 @@ async function showFrame(jpg) {
     try {
       const bmp = await createImageBitmap(blob);
       if (liveImg.width !== bmp.width || liveImg.height !== bmp.height) { liveImg.width = bmp.width; liveImg.height = bmp.height; }
-      liveCtx.drawImage(bmp, 0, 0); bmp.close(); liveShown++;
+      liveCtx.drawImage(bmp, 0, 0); bmp.close(); liveShown++; liveTotal++;
       if (!liveOk) { liveOk = true; setMode(true); }
     } catch {}
   }

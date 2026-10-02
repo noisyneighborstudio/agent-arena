@@ -366,7 +366,9 @@ async function liveStream(res, view) {
   if (!r.ok || !r.body || !/multipart/i.test(r.headers.get("content-type") ?? "")) { ac.abort(); return send(res, 404, { ok: false, error: "no live stream (use live.jpg)" }); }
   const entry = { close: () => { ac.abort(); res.destroy(); } };
   open.push(entry); liveStreams.set(view, open);
-  res.writeHead(200, { "content-type": r.headers.get("content-type"), "cache-control": "no-store, no-transform", "x-content-type-options": "nosniff", "x-accel-buffering": "no" });
+  // Sent as plain bytes: Safari won't stream a multipart/x-mixed-replace body to fetch(), and the page splits
+  // the frames itself anyway.
+  res.writeHead(200, { "content-type": "application/octet-stream", "x-stream-format": r.headers.get("content-type") ?? "", "cache-control": "no-store, no-transform", "x-content-type-options": "nosniff", "x-accel-buffering": "no" });
   const recheck = setInterval(async () => {
     try { if ((await whoIs(view)).team === who.team) return; } catch {}
     ac.abort();
