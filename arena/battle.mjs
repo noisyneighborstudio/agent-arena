@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Battle of the LLMs: pits agent CLIs against each other (or the scripted AI) in Pez.
+// Battle of the LLMs: pits agent CLIs against each other (or the scripted AI) in Pezz.
 //
 //   node arena/battle.mjs claude codex            # Claude (Blue) vs Codex (Red), headless game
 //   node arena/battle.mjs claude ai --attach      # Claude vs scripted AI in the running Unity game
@@ -55,8 +55,8 @@ function prompt(team, player, continuation) {
   const foes = players.map((p, i) => (i === team ? null : `${TEAM_NAMES[i]} (${DISPLAY[p] ?? p})`)).filter(Boolean).join(", ");
   return [
     continuation
-      ? `You are ${DISPLAY[player]}, still commanding team ${team} (${me}) in an ongoing game of Pez. Your previous session ended but the game is NOT over. Call get_state now and keep fighting.`
-      : `You are ${DISPLAY[player]}, commanding team ${team} (${me}) in Pez, a real-time strategy game in the style of Command & Conquer. Your opponent(s): ${foes}. This is a battle of the LLMs.`,
+      ? `You are ${DISPLAY[player]}, still commanding team ${team} (${me}) in an ongoing game of Pezz. Your previous session ended but the game is NOT over. Call get_state now and keep fighting.`
+      : `You are ${DISPLAY[player]}, commanding team ${team} (${me}) in Pezz, a real-time strategy game in the style of Command & Conquer. Your opponent(s): ${foes}. This is a battle of the LLMs.`,
     "Use only the pez MCP tools (get_rules, get_state, get_map, command, wait).",
     continuation ? "" : "Start with get_rules once, then get_state and get_map.",
     "Then loop until get_state shows game_over: true — read state, issue a batch of commands (economy, production, army orders), then wait a few seconds.",
@@ -149,7 +149,7 @@ async function main() {
   await waitForServer();
   const controllers = players.map((p) => (p === "ai" ? "ai" : p === "human" ? "human" : "llm"));
   if (!flag("no-restart")) await api("/api/admin/restart", { seed: SEED, speed: SPEED, controllers });
-  console.log(`Pez arena: ${players.map((p, i) => `${TEAM_NAMES[i]}=${DISPLAY[p] ?? p}${opt(`model-${p}`) ? ` (${opt(`model-${p}`)}${opt(`effort-${p}`) ? " " + opt(`effort-${p}`) : ""})` : ""}`).join(" vs ")} | seed ${SEED} | speed ${SPEED} | logs ${path.relative(ROOT, LOGDIR)}`);
+  console.log(`Pezz arena: ${players.map((p, i) => `${TEAM_NAMES[i]}=${DISPLAY[p] ?? p}${opt(`model-${p}`) ? ` (${opt(`model-${p}`)}${opt(`effort-${p}`) ? " " + opt(`effort-${p}`) : ""})` : ""}`).join(" vs ")} | seed ${SEED} | speed ${SPEED} | logs ${path.relative(ROOT, LOGDIR)}`);
 
   const agents = players.map((p, i) => (NO_AGENT.includes(p) ? null : runAgent(i, p)));
   const started = Date.now();

@@ -78,7 +78,7 @@ namespace Pez.View
             catch (System.Exception ex)
             {
                 ApiError = ex.Message;
-                Debug.LogError($"Pez API failed to start on port {Port}: {ex.Message}");
+                Debug.LogError($"Pezz API failed to start on port {Port}: {ex.Message}");
                 Api = null;
             }
         }
@@ -176,7 +176,7 @@ namespace Pez.View
             var args = System.Environment.GetCommandLineArgs();
             int i = System.Array.IndexOf(args, "-repo");
             if (i >= 0 && i + 1 < args.Length) return args[i + 1];
-            foreach (var up in new[] { "../../../..", "../.." }) // Build/Pez.app/Contents, or unity/Assets
+            foreach (var up in new[] { "../../../..", "../.." }) // Build/Pezz.app/Contents, or unity/Assets
             {
                 var root = System.IO.Path.GetFullPath(System.IO.Path.Combine(Application.dataPath, up));
                 if (System.IO.File.Exists(System.IO.Path.Combine(root, "arena", "battle.mjs"))) return root;

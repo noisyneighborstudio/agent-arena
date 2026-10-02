@@ -1,7 +1,7 @@
 {
   "name": "pez-mcp",
   "version": "1.0.0",
-  "description": "MCP server that lets an LLM command a team in Pez RTS",
+  "description": "MCP server that lets an LLM command a team in Pezz RTS",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"

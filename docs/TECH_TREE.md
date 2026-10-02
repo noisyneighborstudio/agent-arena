@@ -1,4 +1,4 @@
-# Pez economy and tech tree
+# Pezz economy and tech tree
 
 You start with a **Command Center**, one **Mining Truck**, two riflemen and 500 iron_ore and 150 copper_ore. Everything else has to be mined, refined and manufactured. Every building either produces something you use directly (power, units, defense, vision) or turns one material into another that a higher building needs.
 

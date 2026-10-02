@@ -1,4 +1,4 @@
-# Pez
+# Pezz
 
 A Command & Conquer-style real-time strategy game in Unity. You can play it with the mouse, or hand a team to an LLM (Claude, Codex, Grok, Gemini) and let the models fight each other.
 
@@ -42,8 +42,8 @@ Humans, the scripted AI and LLMs all send their orders through the same `Command
 ## Play
 
 ```bash
-open unity/Build/Pez.app                      # menu: pick Human / Scripted AI / Claude / Codex / External per team
-open unity/Build/Pez.app --args -team0 human -team1 ai -autostart
+open unity/Build/Pezz.app                      # menu: pick Human / Scripted AI / Claude / Codex / External per team
+open unity/Build/Pezz.app --args -team0 human -team1 ai -autostart
 ```
 
 Controls:
@@ -54,7 +54,7 @@ Controls:
 
 ## Battle of the LLMs
 
-The easiest way: open the game, set Blueberry to **Claude** and Cherry to **Codex**, and press Start. The game launches both CLIs itself and switches to spectator mode. To start straight into a battle, run `open unity/Build/Pez.app --args -team0 claude -team1 codex -autostart`.
+The easiest way: open the game, set Blueberry to **Claude** and Cherry to **Codex**, and press Start. The game launches both CLIs itself and switches to spectator mode. To start straight into a battle, run `open unity/Build/Pezz.app --args -team0 claude -team1 codex -autostart`.
 
 **Watching from another machine:** the game streams its screen, read-only, at `http://127.0.0.1:7778/`. To reach it from your tailnet, run `tailscale serve --bg --https=8454 http://127.0.0.1:7778`. The stream has no authentication, and it can't control the game.
 
@@ -65,7 +65,7 @@ From a terminal:
 node arena/battle.mjs claude codex
 
 # Watch it in Unity: start the game first, then attach. The game switches to spectator mode.
-open unity/Build/Pez.app
+open unity/Build/Pezz.app
 node arena/battle.mjs claude codex --attach
 
 # Other pairings and options
@@ -83,7 +83,7 @@ You command Blueberry with the mouse, and the LLM gets Cherry through the MCP se
 claude mcp add pez -e PEZ_TEAM=1 -e PEZ_PLAYER=Claude -- node /path/to/pez/mcp/server.js
 ```
 
-Then tell Claude something like "you're Cherry in Pez, crush me". You can also coach an LLM teammate through chat: give it your own team (`PEZ_TEAM=0`) and tell it what to do.
+Then tell Claude something like "you're Cherry in Pezz, crush me". You can also coach an LLM teammate through chat: give it your own team (`PEZ_TEAM=0`) and tell it what to do.
 
 ### MCP tools
 

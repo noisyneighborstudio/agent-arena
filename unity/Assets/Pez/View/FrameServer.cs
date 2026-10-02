@@ -25,7 +25,7 @@ namespace Pez.View
         RenderTexture full, small;
         Texture2D readback;
 
-        const string Page = @"<!doctype html><html><head><meta name=viewport content='width=device-width,initial-scale=1'><title>Pez</title>
+        const string Page = @"<!doctype html><html><head><meta name=viewport content='width=device-width,initial-scale=1'><title>Pezz</title>
 <style>html,body{margin:0;background:#0b0c0e;height:100%;display:flex;align-items:center;justify-content:center}img{max-width:100vw;max-height:100vh}</style></head>
 <body><img id=f><script>
 const img=document.getElementById('f');
@@ -42,7 +42,7 @@ loop();</script></body></html>";
                 thread = new Thread(Serve) { IsBackground = true, Name = "PezFrames" };
                 thread.Start();
                 StartCoroutine(Capture());
-                Debug.Log($"Pez spectator stream on http://127.0.0.1:{Port}/");
+                Debug.Log($"Pezz spectator stream on http://127.0.0.1:{Port}/");
             }
             catch (System.Exception ex) { Debug.LogWarning("Frame server failed: " + ex.Message); }
         }

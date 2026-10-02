@@ -120,7 +120,7 @@ namespace Pez.View
             Fill(r, new Color(0.08f, 0.09f, 0.1f, 0.95f));
             GUILayout.BeginArea(new Rect(r.x + 24, r.y + 18, r.width - 48, r.height - 36));
             var big = new GUIStyle(title) { fontSize = 40 };
-            GUILayout.Label("PEZ", big);
+            GUILayout.Label("PEZZ", big);
             GUILayout.Label("Real-time strategy. Command it with the mouse, or hand a team to an LLM over MCP.", small);
             GUILayout.Space(14);
             var cfg = Runner.MenuConfig;

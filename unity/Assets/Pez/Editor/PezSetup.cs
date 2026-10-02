@@ -36,9 +36,9 @@ namespace Pez.EditorTools
             }
             EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(ScenePath, true) };
 
-            PlayerSettings.productName = "Pez";
+            PlayerSettings.productName = "Pezz";
             PlayerSettings.SetApplicationIdentifier(UnityEditor.Build.NamedBuildTarget.Standalone, "com.pez.rts");
-            PlayerSettings.companyName = "Pez";
+            PlayerSettings.companyName = "Pezz";
             PlayerSettings.runInBackground = true;
             PlayerSettings.colorSpace = ColorSpace.Linear;
             PlayerSettings.fullScreenMode = FullScreenMode.Windowed;
@@ -68,7 +68,7 @@ namespace Pez.EditorTools
         {
             var args = System.Environment.GetCommandLineArgs();
             int i = System.Array.IndexOf(args, "-pezOut");
-            return i >= 0 && i + 1 < args.Length ? args[i + 1] : "Build/Pez.app";
+            return i >= 0 && i + 1 < args.Length ? args[i + 1] : "Build/Pezz.app";
         }
 
         /// <summary>Batchmode check that the art pack imported: node names, materials and shaders per model.</summary>

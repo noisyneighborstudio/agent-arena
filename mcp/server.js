@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// MCP server that lets an LLM command one team in Pez RTS.
+// MCP server that lets an LLM command one team in Pezz RTS.
 // Env: PEZ_TEAM (required, 0-based), PEZ_PLAYER (display name, e.g. "Claude"), PEZ_URL (default http://127.0.0.1:7777)
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -29,7 +29,7 @@ async function call(path, { method = "GET", body } = {}) {
       body: body ? JSON.stringify(body) : undefined,
     });
   } catch (e) {
-    throw new Error(`Pez game is not reachable at ${BASE} (${e.cause?.code || e.message}). Is the game running?`);
+    throw new Error(`Pezz game is not reachable at ${BASE} (${e.cause?.code || e.message}). Is the game running?`);
   }
   const text = await res.text();
   if (!res.ok) throw new Error(`HTTP ${res.status}: ${text}`);

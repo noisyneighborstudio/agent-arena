@@ -1,4 +1,4 @@
-# Pez asset design brief
+# Pezz asset design brief
 
 Paste the prompt below into Claude (Claude Design, or any Claude surface that can produce images, SVG or 3D files). It describes every asset the game currently uses, with the exact footprints, moving parts and naming the Unity code expects, so the results can be dropped straight in.
 
@@ -6,7 +6,7 @@ Paste the prompt below into Claude (Claude Design, or any Claude surface that ca
 
 ## Prompt
 
-You're the art director and lead asset designer for **Pez**, a modern, high-resolution real-time strategy game in the tradition of Command & Conquer (Tiberian Sun / Red Alert 2 / C&C 3), built in Unity. Two to four armies fight over a resource map: mining trucks harvest four kinds of ore, factories refine it, and players build bases, tanks, aircraft and laser weapons. Matches are often played by AI models against each other and watched by spectators, so **readability from a high, angled camera matters more than close-up detail**.
+You're the art director and lead asset designer for **Pezz**, a modern, high-resolution real-time strategy game in the tradition of Command & Conquer (Tiberian Sun / Red Alert 2 / C&C 3), built in Unity. Two to four armies fight over a resource map: mining trucks harvest four kinds of ore, factories refine it, and players build bases, tanks, aircraft and laser weapons. Matches are often played by AI models against each other and watched by spectators, so **readability from a high, angled camera matters more than close-up detail**.
 
 ### Style
 
