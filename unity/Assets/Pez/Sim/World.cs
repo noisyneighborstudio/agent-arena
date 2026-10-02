@@ -153,6 +153,7 @@ namespace Pez.Sim
 
         public World(int teamCount = 2, int seed = 1337, int size = 80)
         {
+            size = Math.Clamp(size, Map.MinSize, Map.MaxSize);
             Map = Map.Generate(size, size, seed);
             Paths = new Pathfinder(Map);
             string[] names = { "Blueberry", "Cherry", "Lime", "Lemon" }; // the Dispenser War's four flavours

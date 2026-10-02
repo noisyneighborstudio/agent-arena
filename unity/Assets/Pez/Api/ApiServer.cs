@@ -151,7 +151,7 @@ namespace Pez.Api
                 case "":
                 case "/api":
                     contentType = "text/plain";
-                    return "Pezz RTS control API\n\nGET  /api/rules\nGET  /api/state?team=N[&since=SEQ]\nGET  /api/map?team=N\nGET  /api/alerts?team=N[&since=SEQ&min=medium|high|critical]\nGET  /api/wait?team=N&seconds=S[&since=ALERT_SEQ&events_since=SEQ&min=high|critical|none]  (returns early on a new priority alert)\nPOST /api/command?team=N   body: {\"commands\":[...]} | [...] | {...}\nPOST /api/join?team=N      body: {\"name\":\"Claude\"}\nGET  /api/status\nPOST /api/admin/restart    body: {\"seed\":1,\"controllers\":[\"llm\",\"llm\"],\"speed\":1}\nPOST /api/admin/speed      body: {\"speed\":0.5}\nPOST /api/admin/orders?team=N  body: {\"text\":\"standing orders for that team's commander\"}\n\n" + Commands.Help;
+                    return "Pezz RTS control API\n\nGET  /api/rules\nGET  /api/state?team=N[&since=SEQ]\nGET  /api/map?team=N\nGET  /api/alerts?team=N[&since=SEQ&min=medium|high|critical]\nGET  /api/wait?team=N&seconds=S[&since=ALERT_SEQ&events_since=SEQ&min=high|critical|none]  (returns early on a new priority alert)\nPOST /api/command?team=N   body: {\"commands\":[...]} | [...] | {...}\nPOST /api/join?team=N      body: {\"name\":\"Claude\"}\nGET  /api/status\nPOST /api/admin/restart    body: {\"seed\":1,\"map_size\":112,\"controllers\":[\"llm\",\"llm\"],\"speed\":1}\nPOST /api/admin/speed      body: {\"speed\":0.5}\nPOST /api/admin/orders?team=N  body: {\"text\":\"standing orders for that team's commander\"}\n\n" + Commands.Help;
                 case "/api/rules":
                     return Json.Write(StateView.Rules());
                 case "/api/state":
@@ -225,13 +225,18 @@ namespace Pez.Api
                 case "/api/admin/restart":
                     {
                         var d = p.Body != null ? Json.Parse(p.Body) as Dictionary<string, object> : null;
-                        var cfg = new GameConfig { Seed = (int)(d?.Num("seed", game.Config.Seed) ?? game.Config.Seed), Speed = d?.Num("speed", game.Speed) ?? game.Speed };
+                        var cfg = new GameConfig
+                        {
+                            Seed = (int)(d?.Num("seed", game.Config.Seed) ?? game.Config.Seed),
+                            Speed = d?.Num("speed", game.Speed) ?? game.Speed,
+                            MapSize = (int)(d?.Num("map_size", game.Config.MapSize) ?? game.Config.MapSize),
+                        };
                         if (d != null && d.TryGetValue("controllers", out var cs) && cs is List<object> cl2) cfg.Controllers = cl2.Select(x => x.ToString()).ToArray();
                         else cfg.Controllers = game.Config.Controllers;
                         if (d != null && d.TryGetValue("orders", out var os) && os is List<object> ol) cfg.Orders = ol.Select(x => x?.ToString() ?? "").ToArray();
                         else cfg.Orders = game.Config.Orders;
                         game.Restart(cfg);
-                        return Json.Write(new JObj().Set("ok", true).Set("seed", cfg.Seed).Set("controllers", cfg.Controllers.ToList()));
+                        return Json.Write(new JObj().Set("ok", true).Set("seed", cfg.Seed).Set("map_size", game.World.Map.W).Set("controllers", cfg.Controllers.ToList()));
                     }
                 case "/api/admin/screenshot":
                     {
@@ -283,7 +288,7 @@ namespace Pez.Api
             var w = game.World;
             return new JObj()
                 .Set("tick", w.Tick).Set("time_s", (float)Math.Round(w.Time, 1))
-                .Set("speed", game.Speed).Set("paused", game.Paused)
+                .Set("speed", game.Speed).Set("paused", game.Paused).Set("map_size", w.Map.W)
                 .Set("game_over", w.GameOver).Set("winner", w.Winner)
                 .Set("sim_errors", w.Errors).Set("last_sim_error", w.LastError)
                 .Set("teams", w.Teams.Select(t => new JObj()

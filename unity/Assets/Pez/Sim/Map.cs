@@ -43,8 +43,14 @@ namespace Pez.Sim
             return TryGenerate(w, h, seed);
         }
 
+        public const int MinSize = 48, MaxSize = 160;
+        /// <summary>Menu presets. Any size between MinSize and MaxSize works through the API and command line.</summary>
+        public static readonly (string name, int size)[] Presets = { ("Small", 56), ("Medium", 80), ("Large", 112), ("Huge", 144) };
+
         static Map TryGenerate(int w, int h, int seed)
         {
+            // Scatter counts were tuned on an 80x80 map; scale them with area so bigger maps aren't empty.
+            float area = w * h / 6400f;
             var rng = new Random(seed);
             var m = new Map(w, h);
             int inset = 9;
@@ -54,11 +60,11 @@ namespace Pez.Sim
             m.Spawns.Add(new Vec2(inset, h - inset));
 
             // Dirt patches for visual variety.
-            for (int i = 0; i < 40; i++)
+            for (int i = 0; i < (int)(40 * area); i++)
                 m.Blob(rng, rng.Next(w), rng.Next(h), rng.Next(2, 5), (x, y) => m.Tiles[m.Idx(x, y)] = Terrain.Dirt);
 
             // Rock outcrops and lakes, kept away from bases.
-            for (int i = 0; i < 26; i++)
+            for (int i = 0; i < (int)(26 * area); i++)
             {
                 int cx = rng.Next(w), cy = rng.Next(h);
                 if (m.NearSpawn(cx, cy, 13)) continue;

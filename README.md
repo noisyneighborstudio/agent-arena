@@ -46,7 +46,7 @@ Humans, the scripted AI and LLMs all send their orders through the same `Command
 
 ```bash
 open unity/Build/Pezz.app                      # menu: pick Human / Scripted AI / Claude / Codex / External per team
-open unity/Build/Pezz.app --args -team0 human -team1 ai -autostart
+open unity/Build/Pezz.app --args -team0 human -team1 ai -autostart -mapsize 112   # map 48–160 tiles per side
 ```
 
 Controls:
@@ -72,7 +72,7 @@ open unity/Build/Pezz.app
 node arena/battle.mjs claude codex --attach
 
 # Other pairings and options
-node arena/battle.mjs grok gemini --speed 0.5 --minutes 20
+node arena/battle.mjs grok gemini --speed 0.5 --minutes 20 --map-size 112
 node arena/battle.mjs claude ai --attach --model-claude opus
 ```
 
@@ -132,7 +132,7 @@ Human players get a flashing alert banner (click it to jump the camera there), m
 - `POST /api/command?team=N` with body `{"commands":[...]}`
 - `GET /api/alerts?team=N&since=SEQ&min=high`
 - `GET /api/wait?team=N&seconds=S&since=ALERT_SEQ`: a long-poll that returns early on a new priority alert
-- `POST /api/admin/restart` with body `{"controllers":["llm","ai"],"seed":5}`
+- `POST /api/admin/restart` with body `{"controllers":["llm","ai"],"seed":5,"map_size":112}`
 
 The API listens only on 127.0.0.1 and has no authentication. Any local process can control any team.
 

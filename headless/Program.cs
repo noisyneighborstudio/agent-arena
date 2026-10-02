@@ -8,7 +8,7 @@ using Pez.Sim;
 namespace Pez.Headless
 {
     /// <summary>
-    /// pez-headless [--port 7777] [--controllers llm,ai] [--seed N] [--speed 1] [--selftest]
+    /// pez-headless [--port 7777] [--controllers llm,ai] [--seed N] [--map-size 80] [--speed 1] [--selftest]
     /// Runs the game with no graphics. LLMs connect over the HTTP API (usually via the MCP server).
     /// --selftest plays AI vs AI as fast as possible and prints the result.
     /// </summary>
@@ -20,6 +20,7 @@ namespace Pez.Headless
             var cfg = new GameConfig
             {
                 Seed = int.Parse(Arg("--seed", "1337")),
+                MapSize = int.Parse(Arg("--map-size", "80")),
                 Speed = float.Parse(Arg("--speed", "1"), System.Globalization.CultureInfo.InvariantCulture),
                 Controllers = Arg("--controllers", "llm,ai").Split(','),
             };

@@ -116,7 +116,7 @@ namespace Pez.View
         void Menu(float sw, float sh)
         {
             Fill(new Rect(0, 0, sw, sh), new Color(0.02f, 0.03f, 0.04f, 0.72f));
-            var r = new Rect(sw / 2 - 330, sh / 2 - 300, 660, 600);
+            var r = new Rect(sw / 2 - 330, sh / 2 - 320, 660, 640);
             Fill(r, new Color(0.08f, 0.09f, 0.1f, 0.95f));
             GUILayout.BeginArea(new Rect(r.x + 24, r.y + 18, r.width - 48, r.height - 36));
             var big = new GUIStyle(title) { fontSize = 40 };
@@ -152,6 +152,13 @@ namespace Pez.View
             var seedStr = GUILayout.TextField(cfg.Seed.ToString(), GUILayout.Width(100));
             if (int.TryParse(seedStr, out var s)) cfg.Seed = s;
             if (GUILayout.Button("Random", GUILayout.Width(80))) cfg.Seed = Random.Range(1, 99999);
+            GUILayout.EndHorizontal();
+            GUILayout.Space(4);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Map size", label, GUILayout.Width(80));
+            int curSize = System.Array.FindIndex(Map.Presets, p => p.size == cfg.MapSize);
+            int nextSize = GUILayout.Toolbar(curSize, Map.Presets.Select(p => $"{p.name} {p.size}").ToArray());
+            if (nextSize != curSize && nextSize >= 0) cfg.MapSize = Map.Presets[nextSize].size;
             GUILayout.EndHorizontal();
             GUILayout.Space(12);
             GUILayout.Label($"LLM control API: <b>http://127.0.0.1:{Runner.Port}/</b>  {(Runner.ApiError != null ? "<color=#ff6644>(" + Runner.ApiError + ")</color>" : "")}", small);

@@ -44,6 +44,7 @@ namespace Pez.Headless
             Specialists();
             DefendersRespond();
             UnarmedAttackMove();
+            MapSizes();
             Console.WriteLine(failures == 0 ? "\nAll tests passed." : $"\n{failures} test(s) FAILED.");
             return failures == 0 ? 0 : 1;
         }
@@ -367,6 +368,21 @@ namespace Pez.Headless
             Check(w.Errors == 0, $"no sim errors ({w.Errors}{(w.LastError != null ? ": " + w.LastError : "")})");
             Check(Vec2.Dist(medic.Pos, new Vec2(27, 14)) < 3f && Vec2.Dist(truck.Pos, new Vec2(27, 14)) < 3f, "unarmed units simply travel with the attack");
             Check(foe.Dead || foe.Hp < foe.Def.MaxHp, "the armed unit still fights");
+        }
+        static void MapSizes()
+        {
+            foreach (var size in new[] { 56, 112, 144 })
+            {
+                var w = new World(2, 7, size);
+                // Start beside the HQ (its own tiles are blocked) and path to beside the enemy HQ.
+                var from = w.Paths.NearestPassable(new Int2((int)w.Teams[0].StartPos.X, (int)w.Teams[0].StartPos.Y - 2)).Center;
+                var to = w.Paths.NearestPassable(new Int2((int)w.Teams[1].StartPos.X, (int)w.Teams[1].StartPos.Y - 2)).Center;
+                var path = w.Paths.Find(from, to, 40000);
+                bool connected = path != null && path.Count > 0 && Vec2.Dist(path[path.Count - 1], to) < 1.5f;
+                int rock = w.Map.Tiles.Count(t => t == Terrain.Rock);
+                Check(w.Map.W == size && connected, $"{size}x{size} map generates with both bases connected ({rock} rock tiles)");
+            }
+            Check(new World(2, 7, 9999).Map.W == Map.MaxSize && new World(2, 7, 1).Map.W == Map.MinSize, "map size is clamped to 48-160");
         }
     }
 }

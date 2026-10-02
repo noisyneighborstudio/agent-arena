@@ -7,7 +7,7 @@
 //
 // Players: claude | codex | grok | gemini | ai | human | external (human/external only make sense with --attach)
 // Options: --attach (use the game already running at --url, e.g. Unity), --no-restart (join the current game as-is),
-//          --url, --speed, --seed, --minutes, --model-<player> <model>, --effort-<player> <low|medium|high|...>
+//          --url, --speed, --seed, --map-size 80, --minutes, --model-<player> <model>, --effort-<player> <low|medium|high|...>
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -27,6 +27,7 @@ if (players.length < 2) {
 const URL_BASE = opt("url", "http://127.0.0.1:7777");
 const SPEED = Number(opt("speed", "1"));
 const SEED = Number(opt("seed", String(Math.floor(Math.random() * 100000))));
+const MAP_SIZE = Number(opt("map-size", "80")); // 48-160 tiles per side
 const MINUTES = Number(opt("minutes", "30"));
 const TEAM_NAMES = ["Blueberry", "Cherry", "Lime", "Lemon"];
 const DISPLAY = { claude: "Claude", codex: "Codex", grok: "Grok", gemini: "Gemini", ai: "Scripted AI", human: "Human", external: "External" };
@@ -148,7 +149,7 @@ async function main() {
   }
   await waitForServer();
   const controllers = players.map((p) => (p === "ai" ? "ai" : p === "human" ? "human" : "llm"));
-  if (!flag("no-restart")) await api("/api/admin/restart", { seed: SEED, speed: SPEED, controllers });
+  if (!flag("no-restart")) await api("/api/admin/restart", { seed: SEED, speed: SPEED, map_size: MAP_SIZE, controllers });
   console.log(`Pezz arena: ${players.map((p, i) => `${TEAM_NAMES[i]}=${DISPLAY[p] ?? p}${opt(`model-${p}`) ? ` (${opt(`model-${p}`)}${opt(`effort-${p}`) ? " " + opt(`effort-${p}`) : ""})` : ""}`).join(" vs ")} | seed ${SEED} | speed ${SPEED} | logs ${path.relative(ROOT, LOGDIR)}`);
 
   const agents = players.map((p, i) => (NO_AGENT.includes(p) ? null : runAgent(i, p)));
