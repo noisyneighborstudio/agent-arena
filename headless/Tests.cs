@@ -55,6 +55,7 @@ namespace Pez.Headless
             WaitPacing();
             DeepMining();
             NoGridlock();
+            LastHqSpills();
             AiGoesDeep();
             Console.WriteLine(failures == 0 ? "\nAll tests passed." : $"\n{failures} test(s) FAILED.");
             return failures == 0 ? 0 : 1;
@@ -296,6 +297,25 @@ namespace Pez.Headless
             Run(w3, 25);
             Check(Vec2.Dist(runner.Pos, new Vec2(48, 41.2f)) < 1.5f, $"a tank driving through a parked crowd arrives (at {runner.Pos})");
             Check(w.Errors == 0 && w2.Errors == 0 && w3.Errors == 0, "no sim errors");
+        }
+
+        static void LastHqSpills()
+        {
+            var w = new World(2, 7, 80);
+            var t1 = w.Teams[1];
+            t1.Add("steel", 800); t1.Add("iron_ore", 500);
+            var hq = w.Owned(1).First(e => e.Def.Key == "command_center");
+            var foot = new Int2(hq.Origin.X + 1, hq.Origin.Y + 1);
+            int oreBefore = w.Map.Ore[w.Map.Idx(foot.X, foot.Y)];
+            var shooter = w.SpawnUnit(0, "heavy_tank", w.Owned(0).First(e => e.IsStructure));
+            hq.Hp = 1;
+            Commands.Execute(w, 0, Cmd("type", "attack", "units", new[] { shooter.Id }, "target", hq.Id)); // may be out of sight; damage directly below
+            var dmg = typeof(World).GetMethod("Damage", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            dmg.Invoke(w, new object[] { hq, 50f, shooter, 0 });
+            Check(hq.Dead && t1.Stock.Count == 0, "when a team's last command center falls its stockpile is gone");
+            int salvage = 0; for (int y = 0; y < 3; y++) for (int x = 0; x < 3; x++) salvage += w.Map.Ore[w.Map.Idx(hq.Origin.X + x, hq.Origin.Y + y)];
+            Check(salvage > 500 && w.Map.Ore[w.Map.Idx(foot.X, foot.Y)] > oreBefore, $"and lies on the footprint as salvage ore anyone can mine ({salvage} units)");
+            Check(w.Alerts.Active(w, 0).Any(a => a.Kind == "salvage_available") && w.Alerts.Active(w, 1).Any(a => a.Kind == "stockpile_lost"), "everyone is told: the loser and the would-be scavengers");
         }
 
         static void RepairTruck()

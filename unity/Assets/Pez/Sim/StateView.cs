@@ -287,8 +287,9 @@ namespace Pez.Sim
         /// Bumped whenever players gain a capability or a rule changes, so the gateway can tell agents what's new.
         /// 3: fuel, refuel, together, waypoints, set_retreat, radar contacts, format=json, build options, resign when stalled.
         /// 4: deep mining (geological_surveyor, survey, drill_rig, deep_mine, deep_deposits).
+        /// 5: a team's last command center falling spills its stockpile as salvage; infantry slower than vehicles.
         /// </summary>
-        public const int RulesVersion = 4;
+        public const int RulesVersion = 5;
 
         public static JObj Rules()
         {
@@ -302,6 +303,8 @@ namespace Pez.Sim
                 "Specialists: engineers capture enemy buildings below 50% HP; snipers delete infantry from range 9; commandos C4 buildings. APCs and transport choppers carry infantry (load/unload). Mine layers plant hidden mines. Flak tracks are mobile anti-air. Mammoth tanks are super-heavy and self-repair to 50%. Recon drones are cheap flying scouts.",
                 "Repair trucks (factory) fix vehicles, aircraft and structures for steel; medics (barracks) heal infantry for free. Both auto-tend anything damaged within 6 tiles when idle, so park them behind your army.",
                 "Aircraft ignore terrain. Only rockets, lasers, SAMs, gunships (and weakly, rifles/mg) can hit them. Stealth bombers are invisible except within 3 tiles of your units or inside your radar dome range.",
+                "Protect your command center: when a team's LAST command center is destroyed, its entire stockpile spills out as salvage ore on the footprint, and anyone's trucks can mine it (first come, first served). The team plays on with whatever else it has.",
+                "Infantry walk (0.8-1.05 tiles/s); every vehicle is faster. Use APCs, transport choppers or together:true to keep mixed groups together.",
                 "Deep mining: surface ore runs out. A geological_surveyor (factory) 'survey's a spot for 8s and finds the deep deposits within 12 tiles; they appear in deep_deposits for your team only. Drive a drill_rig onto one (within 3 tiles) and 'deploy' it into a deep_mine, which pumps 4 ore/s of that deposit's type straight into your stockpile until it runs dry (it needs 50 power). One mine per deposit.",
                 "Radar: a radar_dome lists enemy aircraft within 28 tiles as radar_contacts (even beyond its sight) and raises an 'enemy aircraft on radar' alert, high priority when they're near your base.",
                 "Orders: move and attack_move take \"waypoints\" (and \"loop\":true to patrol) and \"together\":true (keep the slowest unit's pace). set_retreat makes units pull back to base on their own below an HP %.",

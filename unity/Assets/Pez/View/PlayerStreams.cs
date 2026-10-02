@@ -28,6 +28,9 @@ namespace Pez.View
         const float StreamPitch = 55f;
         /// <summary>The boards' framing, as on the main view (RtsCamera.BoardOrthoSize).</summary>
         float DefaultSize => RtsCamera.BoardOrthoSize;
+        /// <summary>Where a viewer can look: anywhere on the map, corners included (the view may hang off the edge).</summary>
+        static Vector3 OnMap(World w, Vector3 focus) => new Vector3(Mathf.Clamp(focus.x, 0, w.Map.W), 0, Mathf.Clamp(focus.z, 0, w.Map.H));
+
         Vector3 OverMap(World w, Vector3 focus, float size, float yaw) =>
             RtsCamera.KeepOverMap(focus, size, Width / (float)Height, yaw, StreamPitch, new Vector2(w.Map.W, w.Map.H));
 
@@ -60,7 +63,7 @@ namespace Pez.View
                 if (!float.IsNaN(op.X) && !float.IsNaN(op.Y)) m.focus = new Vector3(op.X, 0, op.Y); // "look at x,y"
                 m.size = Mathf.Clamp(m.size * op.Zoom, 8f, 40f); // the art pack's zoom range
                 m.yaw += op.Yaw;
-                m.focus = OverMap(w, m.focus, m.size, m.yaw);
+                m.focus = OnMap(w, m.focus); // looking around reaches the corners
                 m.until = Time.unscaledTime + 20f;
                 manual[op.Team] = m;
                 state[op.Team] = (m.focus, st.last - SnapshotInterval, st.seat); // render the change right away
@@ -142,7 +145,7 @@ namespace Pez.View
             if (followed != null)
             {
                 float fdt = s.last == 0 ? 10f : Time.unscaledTime - s.last;
-                focus = Vector3.Lerp(s.focus, OverMap(w, WorldView.W(followed.Pos), size, yaw), 1f - Mathf.Exp(-fdt * 6f));
+                focus = Vector3.Lerp(s.focus, OnMap(w, WorldView.W(followed.Pos)), 1f - Mathf.Exp(-fdt * 6f));
                 if (manual.ContainsKey(team)) manual[team] = (focus, size, yaw, Time.unscaledTime + 20f); // keep the viewer's zoom while following
             }
             else if (manual.TryGetValue(team, out m) && Time.unscaledTime < m.until) { focus = m.focus; size = m.size; yaw = m.yaw; }

@@ -346,6 +346,52 @@ namespace Pez.Sim
                     o.KnownEnemyStructures.Remove(id);
         }
 
+        /// <summary>Spread ore values (per ore type) over these tiles as salvage anyone can mine. Returns the total.</summary>
+        float SpillSalvage(float[] value, List<Int2> tiles)
+        {
+            float total = value.Sum();
+            if (total <= 0 || tiles.Count == 0) return 0;
+            // Each ore type gets its share of the footprint (biggest share first).
+            var order = Enumerable.Range(0, 4).Where(k => value[k] > 0).OrderByDescending(k => value[k]).ToList();
+            int ti = 0;
+            foreach (var k in order)
+            {
+                int n = Math.Max(1, (int)MathF.Round(tiles.Count * value[k] / total));
+                for (int j = 0; j < n; j++, ti++)
+                {
+                    var p = tiles[ti % tiles.Count];
+                    int i = Map.Idx(p.X, p.Y);
+                    Map.Tiles[i] = Terrain.Dirt;
+                    Map.OreType[i] = (byte)k;
+                    Map.Ore[i] = Math.Min(Map.MaxOrePerTile, Map.Ore[i] + (int)(value[k] / n));
+                }
+            }
+            MapVersion++;
+            return total;
+        }
+
+        /// <summary>
+        /// A team's last command center has fallen: everything in its stockpile spills out as salvage ore on the
+        /// footprint, first come, first served. (The team plays on with whatever else it has.)
+        /// </summary>
+        void ReleaseStockpile(Entity cc)
+        {
+            var t = Teams[cc.Team];
+            var value = new float[4];
+            foreach (var kv in t.Stock) if (SalvageOf.TryGetValue(kv.Key, out var sv) && kv.Value > 0) value[sv.ore] += kv.Value * sv.mult;
+            var tiles = new List<Int2>();
+            for (int y = 0; y < cc.Def.SizeY; y++) for (int x = 0; x < cc.Def.SizeX; x++) tiles.Add(new Int2(cc.Origin.X + x, cc.Origin.Y + y));
+            float total = SpillSalvage(value, tiles);
+            t.Stock.Clear();
+            if (total <= 0) return;
+            var where = StateView.Sector(Map, cc.Center);
+            string msg = $"{t.Name}'s last command center fell at sector {where}: its stockpile spilled out as about {(int)total} units of salvage ore. First come, first served.";
+            Emit("chat", -1, text: msg);
+            Alerts.Raise(this, t.Id, "stockpile_lost", Priority.Critical, cc.Center, hit: false).Lost.Add($"your whole stockpile ({(int)total} units) spilled out as salvage at {where}; anyone can mine it, so get your trucks there first");
+            foreach (var other in Teams.Where(o => o.Id != t.Id && !o.Left && !o.Defeated))
+                Alerts.Raise(this, other.Id, "salvage_available", Priority.High, cc.Center, hit: false).Lost.Add($"{(int)total} units of salvage ore at {where}");
+        }
+
         public string Leave(int teamId, string reason = null)
         {
             var t = Teams[teamId];
@@ -366,22 +412,7 @@ namespace Pez.Sim
                 Remove(e);
             }
             if (tiles.Count == 0) tiles.Add(Int2.Of(t.StartPos));
-            // Spread each ore type over its share of the old footprint (biggest share first).
-            float total = value.Sum();
-            var order = Enumerable.Range(0, 4).Where(k => value[k] > 0).OrderByDescending(k => value[k]).ToList();
-            int ti = 0;
-            foreach (var k in order)
-            {
-                int n = Math.Max(1, (int)MathF.Round(tiles.Count * value[k] / total));
-                for (int j = 0; j < n && ti < tiles.Count; j++, ti++)
-                {
-                    var p = tiles[ti];
-                    int i = Map.Idx(p.X, p.Y);
-                    Map.Tiles[i] = Terrain.Dirt;
-                    Map.OreType[i] = (byte)k;
-                    Map.Ore[i] = Math.Min(Map.MaxOrePerTile, Map.Ore[i] + (int)(value[k] / n));
-                }
-            }
+            float total = SpillSalvage(value, tiles);
             t.Left = true;
             t.Defeated = true;
             t.Stock.Clear();
@@ -1245,7 +1276,9 @@ namespace Pez.Sim
                 if (t.IsStructure) Teams[t.Team].Stats.StructuresLost++; else Teams[t.Team].Stats.UnitsLost++;
                 var lost = Alerts.Raise(this, t.Team, t.IsStructure ? "structure_lost" : "units_lost", t.IsStructure ? Priority.Critical : Priority.Medium, t.Center, attacker: src);
                 lost.Lost.Add($"{t.Def.Key} #{t.Id}");
+                bool lastHq = t.Def.Key == "command_center" && !Entities.Any(o => !o.Dead && o != t && o.Team == t.Team && o.Def.Key == "command_center");
                 Remove(t);
+                if (lastHq) ReleaseStockpile(t);
             }
         }
 

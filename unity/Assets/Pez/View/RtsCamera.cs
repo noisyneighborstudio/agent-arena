@@ -88,7 +88,9 @@ namespace Pez.View
             if (dragging && !Following && GroundPoint(Input.mousePosition, out var now)) Focus += dragAnchor - now;
 
             Distance = Mathf.Clamp(Distance, MinDist, MaxDist); // the API and stream viewers can set it directly
-            if (Cam.orthographic) Focus = KeepOverMap(Focus, Distance, Cam.aspect, Yaw, Pitch, Bounds);
+            // Anywhere on the map, corners included: the view may hang off the edge (the off-axis map is a diamond on screen,
+            // so keeping the whole view over the map made its corners unreachable).
+            if (Cam.orthographic) { Focus.x = Mathf.Clamp(Focus.x, 0, Bounds.x); Focus.z = Mathf.Clamp(Focus.z, 0, Bounds.y); }
             else
             {
                 Focus.x = Mathf.Clamp(Focus.x, 0, Bounds.x);
