@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace Pez.Sim
 {
@@ -14,6 +15,8 @@ namespace Pez.Sim
         public readonly int[] Occupant;    // structure id occupying the tile, 0 = none
         public readonly List<Vec2> Spawns = new List<Vec2>();
         public const int MaxOrePerTile = 1000;
+        /// <summary>While growing, restricts terrain edits to the new strip (null = anywhere).</summary>
+        Func<int, int, bool> writable;
 
         public Map(int w, int h)
         {
@@ -106,7 +109,7 @@ namespace Pez.Sim
             for (int y = cy - r - 1; y <= cy + r + 1; y++)
                 for (int x = cx - r - 1; x <= cx + r + 1; x++)
                 {
-                    if (!InBounds(x, y)) continue;
+                    if (!InBounds(x, y) || (writable != null && !writable(x, y))) continue;
                     float d = MathF.Sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy));
                     if (d <= r + (float)rng.NextDouble() * 0.9f) set(x, y);
                 }
@@ -117,11 +120,116 @@ namespace Pez.Sim
             Blob(rng, cx, cy, r, (x, y) =>
             {
                 int i = Idx(x, y);
+                if (Occupant[i] != 0 || Ore[i] > 0) return; // never bury buildings or overwrite live ore
                 Tiles[i] = Terrain.Dirt;
                 OreType[i] = type;
                 float d = MathF.Sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy));
                 Ore[i] = Math.Min(MaxOrePerTile, (int)(rng.Next(min, max) * (1.2f - d / (r + 1))));
             });
+        }
+
+        /// <summary>
+        /// A bigger copy of this map for a new player. Existing tiles keep their coordinates (nobody's positions
+        /// change mid-game); the new strip along the east and north edges gets terrain, a base site with its own
+        /// iron and copper, and a neutral crystal and uranium deposit. The new site is always reachable.
+        /// </summary>
+        public Map Grown(int newW, int newH, int seed, IList<Vec2> bases, out Vec2 spawn)
+        {
+            var m = new Map(newW, newH);
+            for (int y = 0; y < H; y++)
+                for (int x = 0; x < W; x++)
+                {
+                    int a = Idx(x, y), b = m.Idx(x, y);
+                    m.Tiles[b] = Tiles[a]; m.Ore[b] = Ore[a]; m.OreType[b] = OreType[a]; m.Occupant[b] = Occupant[a];
+                }
+            m.Spawns.AddRange(Spawns);
+            var rng = new Random(seed);
+            int oldW = W, oldH = H;
+            bool InNew(int x, int y) => x >= oldW || y >= oldH;
+
+            // Base site: inset from the new edges, as far as possible from every existing base.
+            const int inset = 9;
+            var cands = new List<Vec2>();
+            for (int x = inset; x <= newW - inset; x += 3) cands.Add(new Vec2(x, newH - inset));
+            for (int y = inset; y <= newH - inset; y += 3) cands.Add(new Vec2(newW - inset, y));
+            spawn = cands.OrderByDescending(c => bases.Count == 0 ? 0 : bases.Min(b => Vec2.Dist(b, c))).First();
+            var sp = spawn;
+
+            // Terrain scatter, only in the new strip and clear of the new base.
+            m.writable = InNew;
+            float area = (newW * newH - oldW * oldH) / 6400f;
+            for (int i = 0; i < (int)(40 * area); i++)
+                m.Blob(rng, oldW + rng.Next(newW - oldW), rng.Next(newH), rng.Next(2, 5), (x, y) => m.Tiles[m.Idx(x, y)] = Terrain.Dirt);
+            for (int i = 0; i < (int)(40 * area); i++)
+                m.Blob(rng, rng.Next(newW), oldH + rng.Next(newH - oldH), rng.Next(2, 5), (x, y) => m.Tiles[m.Idx(x, y)] = Terrain.Dirt);
+            for (int i = 0; i < (int)(26 * area) + 1; i++)
+            {
+                bool east = rng.NextDouble() < 0.5;
+                int cx = east ? oldW + rng.Next(newW - oldW) : rng.Next(newW), cy = east ? rng.Next(newH) : oldH + rng.Next(newH - oldH);
+                if (Vec2.Dist(new Vec2(cx, cy), sp) < 13 || bases.Any(b => Vec2.Dist(new Vec2(cx, cy), b) < 13)) continue;
+                var t = rng.NextDouble() < 0.7 ? Terrain.Rock : Terrain.Water;
+                m.Blob(rng, cx, cy, rng.Next(1, 3), (x, y) => { if (m.Occupant[m.Idx(x, y)] == 0 && m.Ore[m.Idx(x, y)] == 0) m.Tiles[m.Idx(x, y)] = t; });
+            }
+            m.writable = null;
+
+            // Open ground for the base itself.
+            for (int y = (int)sp.Y - 6; y <= (int)sp.Y + 6; y++)
+                for (int x = (int)sp.X - 6; x <= (int)sp.X + 6; x++)
+                    if (m.InBounds(x, y) && m.Occupant[m.Idx(x, y)] == 0 && m.Tiles[m.Idx(x, y)] >= Terrain.Rock) m.Tiles[m.Idx(x, y)] = Terrain.Grass;
+
+            // Resources to accommodate the newcomer: its own iron and copper, plus a contested crystal/uranium deposit.
+            var centre = new Vec2(newW / 2f, newH / 2f);
+            var dir = (centre - sp).Normalized; var side = new Vec2(-dir.Y, dir.X);
+            var iron = sp + dir * 9f; var copper = sp + dir * 5f + side * 7f;
+            m.OreField(rng, (int)iron.X, (int)iron.Y, 3, 260, 460, Iron);
+            m.OreField(rng, (int)copper.X, (int)copper.Y, 2, 200, 340, Copper);
+            var mid = Vec2.Lerp(sp, centre, 0.45f) + side * 6f;
+            m.OreField(rng, (int)mid.X, (int)mid.Y, 2, 90, 170, Crystal);
+            var mid2 = Vec2.Lerp(sp, centre, 0.55f) - side * 5f;
+            m.OreField(rng, (int)mid2.X, (int)mid2.Y, 1, 70, 130, Uranium);
+
+            m.Spawns.Add(sp);
+            if (bases.Count > 0) m.EnsureConnected(bases[0], sp);
+            return m;
+        }
+
+        /// <summary>If b isn't reachable from a, carve a 2-wide dirt road between them.</summary>
+        public void EnsureConnected(Vec2 a, Vec2 b)
+        {
+            var reach = Reachable(Int2.Of(a));
+            if (reach[Idx((int)b.X, (int)b.Y)]) return;
+            int steps = (int)(Vec2.Dist(a, b) * 2) + 1;
+            for (int k = 0; k <= steps; k++)
+            {
+                var p = Vec2.Lerp(a, b, k / (float)steps);
+                for (int dy = 0; dy <= 1; dy++)
+                    for (int dx = 0; dx <= 1; dx++)
+                    {
+                        int x = (int)p.X + dx, y = (int)p.Y + dy;
+                        if (InBounds(x, y) && Occupant[Idx(x, y)] == 0 && Tiles[Idx(x, y)] >= Terrain.Rock) Tiles[Idx(x, y)] = Terrain.Dirt;
+                    }
+            }
+        }
+
+        bool[] Reachable(Int2 start)
+        {
+            var seen = new bool[W * H];
+            var q = new Queue<Int2>();
+            if (!InBounds(start.X, start.Y)) return seen;
+            q.Enqueue(start);
+            seen[Idx(start.X, start.Y)] = true;
+            while (q.Count > 0)
+            {
+                var c = q.Dequeue();
+                for (int d = 0; d < 4; d++)
+                {
+                    int nx = c.X + (d == 0 ? 1 : d == 1 ? -1 : 0), ny = c.Y + (d == 2 ? 1 : d == 3 ? -1 : 0);
+                    if (!TerrainPassable(nx, ny) || seen[Idx(nx, ny)]) continue;
+                    seen[Idx(nx, ny)] = true;
+                    q.Enqueue(new Int2(nx, ny));
+                }
+            }
+            return seen;
         }
 
         bool SpawnsConnected()

@@ -51,6 +51,8 @@ namespace Pez.Sim
         public bool[] Visible;
         /// <summary>Tiles this team has ever seen. Everything else is shroud.</summary>
         public bool[] Explored;
+        /// <summary>Open arena: the player left for good (their base became salvage).</summary>
+        public bool Left;
         public readonly List<ProdItem> StructureQueue = new List<ProdItem>();
         public readonly Dictionary<Producer, List<ProdItem>> UnitQueues = new Dictionary<Producer, List<ProdItem>>
         {
@@ -70,8 +72,17 @@ namespace Pez.Sim
         public const int TickRate = 20;
         public const float Dt = 1f / TickRate;
 
-        public readonly Map Map;
-        public readonly Pathfinder Paths;
+        public Map Map { get; private set; }
+        public Pathfinder Paths { get; private set; }
+        /// <summary>Bumped whenever the map's tiles change wholesale (growth, salvage), so views can rebuild terrain.</summary>
+        public int MapVersion;
+
+        // ---- Open arena: players can join and leave mid-game
+        public bool Open;
+        public int MaxPlayers = 8;
+        public int MaxMapSize = Map.MaxSize;
+        public int GrowStep = 16;
+        public static readonly string[] Flavors = { "Blueberry", "Cherry", "Lime", "Lemon", "Grape", "Orange", "Mint", "Raspberry" };
         public readonly List<Team> Teams = new List<Team>();
         public readonly Dictionary<int, Entity> ById = new Dictionary<int, Entity>();
         public readonly List<Entity> Entities = new List<Entity>();
@@ -156,21 +167,141 @@ namespace Pez.Sim
             size = Math.Clamp(size, Map.MinSize, Map.MaxSize);
             Map = Map.Generate(size, size, seed);
             Paths = new Pathfinder(Map);
-            string[] names = { "Blueberry", "Cherry", "Lime", "Lemon" }; // the Dispenser War's four flavours
-            for (int t = 0; t < teamCount; t++)
-            {
-                var team = new Team { Id = t, Name = names[t], StartPos = Map.Spawns[t], Visible = new bool[Map.W * Map.H], Explored = new bool[Map.W * Map.H] };
-                Teams.Add(team);
-                // Enough raw ore for a power plant; everything after that has to be mined.
-                team.Add("iron_ore", 500);
-                team.Add("copper_ore", 150);
-                var s = Int2.Of(team.StartPos);
-                var hq = SpawnStructure(t, "command_center", new Int2(s.X - 1, s.Y - 1), 1f);
-                SpawnUnit(t, "mining_truck", hq);
-                for (int i = 0; i < 2; i++) SpawnUnit(t, "rifleman", hq);
-            }
+            for (int t = 0; t < teamCount; t++) CreateTeam(Map.Spawns[t]);
             UpdatePower();
             UpdateVisibility();
+        }
+
+        Team CreateTeam(Vec2 spawn)
+        {
+            int t = Teams.Count;
+            var team = new Team { Id = t, Name = Flavors[t % Flavors.Length], StartPos = spawn, Visible = new bool[Map.W * Map.H], Explored = new bool[Map.W * Map.H] };
+            Teams.Add(team);
+            // Enough raw ore for a power plant; everything after that has to be mined.
+            team.Add("iron_ore", 500);
+            team.Add("copper_ore", 150);
+            var s = Int2.Of(spawn);
+            var hq = SpawnStructure(t, "command_center", new Int2(s.X - 1, s.Y - 1), 1f);
+            SpawnUnit(t, "mining_truck", hq);
+            for (int i = 0; i < 2; i++) SpawnUnit(t, "rifleman", hq);
+            return team;
+        }
+
+        // ------------------------------------------------------------------ open arena: join and leave
+
+        public int ActivePlayers => Teams.Count(t => !t.Left && !t.Defeated);
+
+        /// <summary>
+        /// A new player joins mid-game. The map grows (east and north, existing coordinates unchanged) to make
+        /// room and add resources, up to MaxMapSize; at the cap, a free base site is reused. Returns null with a
+        /// reason if the arena is full.
+        /// </summary>
+        public Team AddTeam(string controller, string playerName, out string error)
+        {
+            error = null;
+            if (!Open) { error = "this game is not open for joining"; return null; }
+            if (ActivePlayers >= MaxPlayers || Teams.Count >= Flavors.Length) { error = $"arena is full ({MaxPlayers} players)"; return null; }
+            var bases = Teams.Where(t => !t.Left && !t.Defeated).Select(t => t.StartPos).ToList();
+            Vec2 spawn;
+            int size = Math.Max(Map.W, Map.H);
+            if (size + GrowStep <= MaxMapSize)
+            {
+                var grown = Map.Grown(Map.W + GrowStep, Map.H + GrowStep, Tick * 7919 + Teams.Count, bases, out spawn);
+                ReplaceMap(grown);
+            }
+            else
+            {
+                // At the size cap: reuse a site nobody holds.
+                var free = Map.Spawns.Where(s => bases.All(b => Vec2.Dist(b, s) > 16) && Map.Occupant[Map.Idx((int)s.X, (int)s.Y)] == 0)
+                                     .OrderByDescending(s => bases.Count == 0 ? 0 : bases.Min(b => Vec2.Dist(b, s))).ToList();
+                if (free.Count == 0) { error = "arena is at its maximum size and every base site is taken"; return null; }
+                spawn = free[0];
+            }
+            var team = CreateTeam(spawn);
+            team.Controller = controller;
+            team.PlayerName = playerName;
+            UpdatePower();
+            UpdateVisibility();
+            Emit("joined", team.Id, pos: spawn, text: $"{playerName} joined as {team.Name} at sector {StateView.Sector(Map, spawn)}. The map is now {Map.W}x{Map.H}.");
+            Emit("chat", -1, text: $"{playerName} joined as {team.Name} at sector {StateView.Sector(Map, spawn)}.");
+            return team;
+        }
+
+        void ReplaceMap(Map m)
+        {
+            int oldW = Map.W, oldH = Map.H;
+            foreach (var t in Teams)
+            {
+                var vis = new bool[m.W * m.H]; var exp = new bool[m.W * m.H];
+                for (int y = 0; y < oldH; y++)
+                    for (int x = 0; x < oldW; x++) { vis[m.Idx(x, y)] = t.Visible[y * oldW + x]; exp[m.Idx(x, y)] = t.Explored[y * oldW + x]; }
+                t.Visible = vis; t.Explored = exp;
+            }
+            Map = m;
+            Paths = new Pathfinder(m);
+            cells = null; // spatial grid is sized to the map
+            MapVersion++;
+        }
+
+        static readonly Dictionary<string, (byte ore, float mult)> SalvageOf = new Dictionary<string, (byte, float)>
+        {
+            { "iron_ore", (Map.Iron, 1f) }, { "steel", (Map.Iron, 1f) },
+            { "copper_ore", (Map.Copper, 1f) }, { "copper", (Map.Copper, 1f) }, { "circuits", (Map.Copper, 2f) },
+            { "crystal", (Map.Crystal, 1f) }, { "lenses", (Map.Crystal, 2f) }, { "composite", (Map.Crystal, 2f) },
+            { "uranium", (Map.Uranium, 1f) }, { "plasma", (Map.Uranium, 2f) },
+        };
+
+        /// <summary>
+        /// A player leaves for good. Their buildings, units and stockpile become salvage: ore piles on the old
+        /// base's footprint that anyone's mining trucks can collect, first come, first served.
+        /// </summary>
+        public string Leave(int teamId)
+        {
+            var t = Teams[teamId];
+            if (t.Left) return "already left";
+            var value = new float[4];
+            void AddCost(Dictionary<string, int> cost, float f) { foreach (var kv in cost) if (SalvageOf.TryGetValue(kv.Key, out var s)) value[s.ore] += kv.Value * s.mult * f; }
+            foreach (var kv in t.Stock) if (SalvageOf.TryGetValue(kv.Key, out var s) && kv.Value > 0) value[s.ore] += kv.Value * s.mult;
+            var tiles = new List<Int2>();
+            foreach (var e in Entities.Where(e => !e.Dead && e.Team == teamId).ToList())
+            {
+                if (e.IsStructure)
+                {
+                    AddCost(e.Def.Key == "command_center" ? new Dictionary<string, int> { { "iron_ore", 1500 }, { "copper_ore", 500 } } : e.Def.Cost, 0.6f * e.BuildProgress);
+                    for (int y = 0; y < e.Def.SizeY; y++) for (int x = 0; x < e.Def.SizeX; x++) tiles.Add(new Int2(e.Origin.X + x, e.Origin.Y + y));
+                }
+                else if (!e.IsMine) AddCost(e.Def.Cost, 0.5f);
+                Emit("salvaged", e.Team, e.Id, 0, e.Center, key: e.Def.Key); // dismantled, not destroyed: no wreck
+                Remove(e);
+            }
+            if (tiles.Count == 0) tiles.Add(Int2.Of(t.StartPos));
+            // Spread each ore type over its share of the old footprint (biggest share first).
+            float total = value.Sum();
+            var order = Enumerable.Range(0, 4).Where(k => value[k] > 0).OrderByDescending(k => value[k]).ToList();
+            int ti = 0;
+            foreach (var k in order)
+            {
+                int n = Math.Max(1, (int)MathF.Round(tiles.Count * value[k] / total));
+                for (int j = 0; j < n && ti < tiles.Count; j++, ti++)
+                {
+                    var p = tiles[ti];
+                    int i = Map.Idx(p.X, p.Y);
+                    Map.Tiles[i] = Terrain.Dirt;
+                    Map.OreType[i] = (byte)k;
+                    Map.Ore[i] = Math.Min(Map.MaxOrePerTile, Map.Ore[i] + (int)(value[k] / n));
+                }
+            }
+            t.Left = true;
+            t.Defeated = true;
+            t.Stock.Clear();
+            MapVersion++;
+            var where = StateView.Sector(Map, t.StartPos);
+            string msg = $"{t.PlayerName ?? t.Name} ({t.Name}) left the arena. Their base at sector {where} is now about {(int)total} units of salvage ore. First come, first served.";
+            Emit("left", teamId, pos: t.StartPos, text: msg);
+            Emit("chat", -1, text: msg);
+            foreach (var other in Teams.Where(o => !o.Left && !o.Defeated))
+                Alerts.Raise(this, other.Id, "salvage_available", Priority.High, t.StartPos, hit: false).Lost.Add($"{(int)total} units of salvage ore");
+            return msg;
         }
 
         // ------------------------------------------------------------------ entities
@@ -1215,6 +1346,18 @@ namespace Pez.Sim
 
         void CheckVictory()
         {
+            if (Open)
+            {
+                // An open arena never ends: teams that lose every structure are out, everyone else plays on.
+                foreach (var team in Teams)
+                {
+                    if (team.Defeated || Entities.Any(e => !e.Dead && e.Team == team.Id && e.IsStructure)) continue;
+                    team.Defeated = true;
+                    foreach (var e in Entities.Where(e => !e.Dead && e.Team == team.Id).ToList()) { Emit("destroyed", e.Team, e.Id, 0, e.Center, key: e.Def.Key); Remove(e); }
+                    Emit("defeated", team.Id, text: $"{team.Name} ({team.PlayerName ?? team.Controller}) has been eliminated");
+                }
+                return;
+            }
             foreach (var team in Teams)
             {
                 if (team.Defeated) continue;

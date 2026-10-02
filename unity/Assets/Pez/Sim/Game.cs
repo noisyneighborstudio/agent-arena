@@ -11,6 +11,10 @@ namespace Pez.Sim
         public string[] Controllers = { "human", "ai" };
         /// <summary>Per team: initial standing orders for an LLM commander (may be null/empty).</summary>
         public string[] Orders = { "", "" };
+        /// <summary>Open arena: outside agents can join and leave mid-game; the map grows with each join.</summary>
+        public bool Open;
+        public int MaxPlayers = 8;
+        public int MaxMapSize = Map.MaxSize;
     }
 
     /// <summary>Owns a World plus who controls each team, and advances it in real time.</summary>
@@ -29,7 +33,7 @@ namespace Pez.Sim
         {
             Config = cfg;
             Speed = cfg.Speed;
-            World = new World(cfg.Controllers.Length, cfg.Seed, cfg.MapSize);
+            World = new World(cfg.Controllers.Length, cfg.Seed, cfg.MapSize) { Open = cfg.Open, MaxPlayers = cfg.MaxPlayers, MaxMapSize = cfg.MaxMapSize };
             ais.Clear();
             for (int i = 0; i < cfg.Controllers.Length; i++)
             {

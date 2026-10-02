@@ -96,6 +96,11 @@ namespace Pez.Api
                 {
                     payload = Handle(game, p, ref contentType, ref status);
                 }
+                catch (UnauthorizedAccessException ex)
+                {
+                    status = 401;
+                    payload = Json.Write(new JObj().Set("ok", false).Set("error", ex.Message));
+                }
                 catch (Exception ex)
                 {
                     status = 400;
@@ -131,12 +136,51 @@ namespace Pez.Api
             .Set("orders_changed", wt.OrdersSince >= 0 && w.Teams.Count > wt.Team && w.Teams[wt.Team].OrdersVersion > wt.OrdersSince)
             .Set("state", StateView.TeamState(w, Math.Min(wt.Team, w.Teams.Count - 1), wt.EventSince));
 
-        static int TeamParam(HttpListenerRequest req, World w)
+        // ---- Player tokens (open arena). Control tokens act for one team; view tokens only read its fogged view.
+        readonly Dictionary<string, (World world, int team)> controlTokens = new Dictionary<string, (World, int)>();
+        readonly Dictionary<string, (World world, int team)> viewTokens = new Dictionary<string, (World, int)>();
+
+        static string NewToken()
         {
+            var bytes = new byte[24];
+            using (var rng = System.Security.Cryptography.RandomNumberGenerator.Create()) rng.GetBytes(bytes);
+            return BitConverter.ToString(bytes).Replace("-", "").ToLowerInvariant();
+        }
+
+        static string TokenFrom(HttpListenerRequest req)
+        {
+            var auth = req.Headers["Authorization"];
+            if (auth != null && auth.StartsWith("Bearer ")) return auth.Substring(7).Trim();
+            return req.QueryString["token"];
+        }
+
+        /// <summary>The team a request acts for: from its control token, or (local callers) an explicit team=N.</summary>
+        int TeamParam(HttpListenerRequest req, World w)
+        {
+            var tok = TokenFrom(req);
+            if (tok != null)
+            {
+                if (!controlTokens.TryGetValue(tok, out var owner) || owner.world != w) throw new UnauthorizedAccessException("unknown or expired token; join again");
+                if (w.Teams[owner.team].Left) throw new UnauthorizedAccessException("you left this arena; join again to play");
+                return owner.team;
+            }
             var s = req.QueryString["team"];
             if (s == null || !int.TryParse(s, out var t) || t < 0 || t >= w.Teams.Count)
-                throw new ArgumentException($"query parameter team=0..{w.Teams.Count - 1} is required");
+                throw new ArgumentException($"query parameter team=0..{w.Teams.Count - 1} (or a player token) is required");
             return t;
+        }
+
+        /// <summary>Team for a read-only view: a view token, a control token, team=N, or -1 for the all-seeing spectator.</summary>
+        int ViewTeam(HttpListenerRequest req, World w)
+        {
+            var vt = req.QueryString["view"];
+            if (vt != null)
+            {
+                if (!viewTokens.TryGetValue(vt, out var owner) || owner.world != w) throw new UnauthorizedAccessException("unknown or expired view link");
+                return owner.team;
+            }
+            if (TokenFrom(req) != null || req.QueryString["team"] != null) return TeamParam(req, w);
+            return -1;
         }
 
         string Handle(Game game, Pending p, ref string contentType, ref int status)
@@ -195,12 +239,49 @@ namespace Pez.Api
                     return StateView.AsciiMap(w, TeamParam(req, w));
                 case "/api/status":
                     return Json.Write(Status(game));
+                case "/api/register":
+                    {
+                        // Open arena: a new outside player joins. Returns a control token (keep it secret) and a
+                        // read-only view token for their personal web view.
+                        if (method != "POST") { status = 405; return "{\"ok\":false,\"error\":\"POST required\"}"; }
+                        var d = Json.Parse(p.Body ?? "{}") as Dictionary<string, object>;
+                        var name = Text.Name(d?.Str("name"));
+                        var team = w.AddTeam("llm", name, out var err);
+                        if (team == null) { status = 409; return Json.Write(new JObj().Set("ok", false).Set("error", err)); }
+                        var token = NewToken(); var view = NewToken();
+                        controlTokens[token] = (w, team.Id);
+                        viewTokens[view] = (w, team.Id);
+                        Log($"Player joined: {name} as {team.Name} (team {team.Id}); map now {w.Map.W}x{w.Map.H}");
+                        return Json.Write(new JObj().Set("ok", true).Set("token", token).Set("view_token", view)
+                            .Set("team", team.Id).Set("flavor", team.Name).Set("name", name)
+                            .Set("base", $"{(int)team.StartPos.X},{(int)team.StartPos.Y} sector {StateView.Sector(w.Map, team.StartPos)}")
+                            .Set("map", $"{w.Map.W}x{w.Map.H}"));
+                    }
+                case "/api/leave":
+                    {
+                        if (method != "POST") { status = 405; return "{\"ok\":false,\"error\":\"POST required\"}"; }
+                        int team = TeamParam(req, w);
+                        var msg = w.Leave(team);
+                        Log(msg);
+                        return Json.Write(new JObj().Set("ok", true).Set("result", msg));
+                    }
+                case "/api/lobby":
+                    return Json.Write(new JObj()
+                        .Set("open", w.Open).Set("map", $"{w.Map.W}x{w.Map.H}").Set("max_map", w.MaxMapSize)
+                        .Set("players", w.ActivePlayers).Set("max_players", w.MaxPlayers).Set("time_s", (float)Math.Round(w.Time, 1))
+                        .Set("teams", w.Teams.Select(t => new JObj().Set("flavor", t.Name).Set("player", t.PlayerName ?? t.Controller)
+                            .Set("status", t.Left ? "left" : t.Defeated ? "eliminated" : "playing")
+                            .Set("structures", w.Owned(t.Id).Count(e => e.IsStructure)).Set("kills", t.Stats.Kills)).ToList()));
+                case "/api/view/map":
+                    return Json.Write(ViewMap(w, ViewTeam(req, w)));
+                case "/api/view/frame":
+                    return Json.Write(ViewFrame(w, ViewTeam(req, w)));
                 case "/api/join":
                     {
                         int team = TeamParam(req, w);
                         var d = p.Body != null ? Json.Parse(p.Body) as Dictionary<string, object> : null;
-                        var name = d?.Str("name") ?? "LLM";
-                        w.Teams[team].PlayerName = name.Length > 40 ? name.Substring(0, 40) : name;
+                        var name = Text.Name(d?.Str("name") ?? "LLM");
+                        w.Teams[team].PlayerName = name;
                         if (w.Teams[team].Controller != "human") w.Teams[team].Controller = "llm";
                         w.Emit("chat", team, text: $"{name} has taken command of {w.Teams[team].Name}.");
                         return Json.Write(new JObj().Set("ok", true).Set("team", team).Set("name", w.Teams[team].Name));
@@ -230,6 +311,7 @@ namespace Pez.Api
                             Seed = (int)(d?.Num("seed", game.Config.Seed) ?? game.Config.Seed),
                             Speed = d?.Num("speed", game.Speed) ?? game.Speed,
                             MapSize = (int)(d?.Num("map_size", game.Config.MapSize) ?? game.Config.MapSize),
+                            Open = d != null && d.TryGetValue("open", out var op) ? op is bool ob && ob : game.Config.Open,
                         };
                         if (d != null && d.TryGetValue("controllers", out var cs) && cs is List<object> cl2) cfg.Controllers = cl2.Select(x => x.ToString()).ToArray();
                         else cfg.Controllers = game.Config.Controllers;
@@ -282,6 +364,70 @@ namespace Pez.Api
             "critical" => Priority.Critical,
             _ => def,
         };
+
+        // ---- Web viewer data (a player's fogged view, or everything for the spectator)
+
+        static JObj ViewMap(World w, int team)
+        {
+            var m = w.Map;
+            var tiles = new System.Text.StringBuilder(m.W * m.H);
+            var ore = new System.Text.StringBuilder(m.W * m.H);
+            for (int i = 0; i < m.Tiles.Length; i++)
+            {
+                tiles.Append("gdrw"[(int)m.Tiles[i]]);
+                ore.Append(m.Ore[i] <= 0 ? '.' : "icxu"[m.OreType[i]]);
+            }
+            return new JObj().Set("w", m.W).Set("h", m.H).Set("version", w.MapVersion).Set("tiles", tiles.ToString()).Set("ore", ore.ToString())
+                .Set("team", team).Set("flavor", team >= 0 ? w.Teams[team].Name : "Spectator");
+        }
+
+        static JObj ViewFrame(World w, int team)
+        {
+            var m = w.Map;
+            string shroud = null;
+            if (team >= 0)
+            {
+                var t = w.Teams[team];
+                var sb = new System.Text.StringBuilder(m.W * m.H);
+                for (int i = 0; i < t.Visible.Length; i++) sb.Append(t.Visible[i] ? '2' : t.Explored[i] ? '1' : '0');
+                shroud = sb.ToString();
+            }
+            var ents = new List<object>();
+            foreach (var e in w.Entities)
+            {
+                if (e.Dead || e.IsCarried) continue;
+                bool known = team < 0 || w.IsVisibleTo(team, e) || (e.IsStructure && w.Teams[team].KnownEnemyStructures.ContainsKey(e.Id));
+                if (!known) continue;
+                var c = e.Center;
+                ents.Add(new List<object> { e.Id, e.Def.Key, e.Team, Math.Round(c.X, 2), Math.Round(c.Y, 2), (int)(100 * e.Hp / e.Def.MaxHp),
+                    Math.Round(e.Facing, 2), e.IsStructure ? (int)(e.BuildProgress * 100) : -1, e.IsStructure ? e.Def.SizeX : 0 });
+            }
+            var shots = new List<object>();
+            long since = w.Events.Count > 0 ? w.Events[w.Events.Count - 1].Seq - 400 : 0;
+            foreach (var ev in w.Events)
+            {
+                if (ev.Seq < since || w.Tick - ev.Tick > 10) continue;
+                if (ev.Type != "shot" && ev.Type != "fire" && ev.Type != "hit" && ev.Type != "destroyed") continue;
+                if (team >= 0 && ev.Team != team && !w.Teams[team].Visible[m.Idx(Math.Clamp((int)ev.Pos.X, 0, m.W - 1), Math.Clamp((int)ev.Pos.Y, 0, m.H - 1))]) continue;
+                shots.Add(new List<object> { ev.Seq, ev.Type, Math.Round(ev.Pos.X, 1), Math.Round(ev.Pos.Y, 1), Math.Round(ev.Pos2.X, 1), Math.Round(ev.Pos2.Y, 1), ev.Team });
+            }
+            var o = new JObj().Set("tick", w.Tick).Set("time_s", (float)Math.Round(w.Time, 1)).Set("version", w.MapVersion)
+                .Set("teams", w.Teams.Select(t => new JObj().Set("id", t.Id).Set("flavor", t.Name).Set("player", t.PlayerName ?? t.Controller)
+                    .Set("status", t.Left ? "left" : t.Defeated ? "eliminated" : "playing").Set("kills", t.Stats.Kills)).ToList())
+                .Set("entities", ents).Set("effects", shots)
+                .Set("chat", w.Events.Where(e => e.Type == "chat").Reverse().Take(8).Reverse()
+                    .Select(e => $"{(e.Team >= 0 ? w.Teams[e.Team].Name : "arena")}: {e.Text}").ToList());
+            if (shroud != null) o.Set("shroud", shroud);
+            if (team >= 0)
+            {
+                var t = w.Teams[team];
+                o.Set("you", new JObj().Set("team", team).Set("flavor", t.Name).Set("player", t.PlayerName).Set("stockpile", StateView.Stockpile(t))
+                    .Set("power", $"{t.PowerUsed}/{t.PowerProduced}").Set("status", t.Left ? "left" : t.Defeated ? "eliminated" : "playing"));
+                o.Set("alerts", w.Alerts.Active(w, team).Take(4).Select(a => AlertLog.Describe(w, a)).ToList());
+                o.Set("standing_orders", t.StandingOrders);
+            }
+            return o;
+        }
 
         public static JObj Status(Game game)
         {

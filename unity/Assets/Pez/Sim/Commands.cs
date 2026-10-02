@@ -62,8 +62,8 @@ namespace Pez.Sim
                     case "cancel": return Cancel(w, team, c);
                     case "say":
                         {
-                            var text = c.Str("text", "");
-                            if (text.Length > 280) text = text.Substring(0, 280);
+                            var text = Text.Clean(c.Str("text", ""), 200);
+                            if (text.Length == 0) return Err("text is empty");
                             w.Emit("chat", team, text: text);
                             return Ok();
                         }

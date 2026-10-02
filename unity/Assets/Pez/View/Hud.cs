@@ -93,6 +93,7 @@ namespace Pez.View
             HealthBars();
             Scoreboard();
             if (Team >= 0) AlertBanner(sw);
+            JoinPanel(sw, sh);
             Feed(sh);
             if (Team >= 0) { Sidebar(sw, sh); Selection(sw, sh); }
             else { sideRect = Rect.zero; SpectatorPanel(sw); }
@@ -160,6 +161,8 @@ namespace Pez.View
             int nextSize = GUILayout.Toolbar(curSize, Map.Presets.Select(p => $"{p.name} {p.size}").ToArray());
             if (nextSize != curSize && nextSize >= 0) cfg.MapSize = Map.Presets[nextSize].size;
             GUILayout.EndHorizontal();
+            GUILayout.Space(4);
+            cfg.Open = GUILayout.Toggle(cfg.Open, " <b>Open arena</b>: outside agents can join mid-game (the map grows with each join, up to 8 players)", new GUIStyle(GUI.skin.toggle) { richText = true, fontSize = 12 });
             GUILayout.Space(12);
             GUILayout.Label($"LLM control API: <b>http://127.0.0.1:{Runner.Port}/</b>  {(Runner.ApiError != null ? "<color=#ff6644>(" + Runner.ApiError + ")</color>" : "")}", small);
             GUILayout.Label("<b>Claude</b> / <b>Codex</b>: the game launches that CLI and hands it the team over MCP (arena/battle.mjs).\n<b>External</b>: leave the team for any MCP client you connect yourself (mcp/server.js, PEZ_TEAM=n).", small);
@@ -180,7 +183,7 @@ namespace Pez.View
             foreach (var t in W.Teams)
             {
                 var tag = $"<color=#{Hex(Mats.Team(t.Id))}><b>{t.Name}</b></color> {t.PlayerName ?? t.Controller}";
-                var stats = t.Defeated ? "<color=#888>defeated</color>" : $"steel {t.Amount("steel")}  S{W.Owned(t.Id).Count(e => e.IsStructure)}  U{W.Owned(t.Id).Count(e => !e.IsStructure)}  K{t.Stats.Kills}";
+                var stats = t.Left ? "<color=#888>left</color>" : t.Defeated ? "<color=#888>defeated</color>" : $"steel {t.Amount("steel")}  S{W.Owned(t.Id).Count(e => e.IsStructure)}  U{W.Owned(t.Id).Count(e => !e.IsStructure)}  K{t.Stats.Kills}";
                 GUI.Label(new Rect(16, y, 320, 20), $"{tag}  {stats}", label);
                 y += 20;
             }
@@ -346,12 +349,12 @@ namespace Pez.View
                 GUI.Label(new Rect(x, by, 250, 92), "<size=10><color=#999>Click: build/train (shift x5, right-click cancel). Right-click map: move/attack/mine/rally. F+right-click: attack-move. G: deploy. U: unload. M+right-click: lay mines. Right-click own transport: board; enemy building with engineers: capture. X: stop. Del: sell. WASD/edge pan, Q/E rotate, wheel zoom.</color></size>", small);
         }
 
-        bool OrdersVisible => !Runner.InMenu && W.Teams.Any(t => t.Controller == "llm") && (Team < 0 || ShowOrders);
+        bool OrdersVisible => !Runner.InMenu && W.Teams.Any(t => t.Controller == "llm" && !t.Left && !t.Defeated) && (Team < 0 || ShowOrders);
 
         /// <summary>Write or change standing orders for LLM teams mid-game. Always shown when spectating; O toggles it when playing.</summary>
         void OrdersPanel(float sw, float sh)
         {
-            var agentTeams = W.Teams.Where(t => t.Controller == "llm").ToList();
+            var agentTeams = W.Teams.Where(t => t.Controller == "llm" && !t.Left && !t.Defeated).ToList();
             if (agentTeams.Count == 0) { ordersRect = Rect.zero; return; }
             if (Team >= 0 && GUI.Button(new Rect(8, 32 + W.Teams.Count * 20, 150, 22), ShowOrders ? "Hide orders (O)" : "LLM orders (O)")) ShowOrders = !ShowOrders;
             if (!OrdersVisible) { ordersRect = Rect.zero; return; }
@@ -379,6 +382,17 @@ namespace Pez.View
             }
             GUILayout.EndScrollView();
             GUILayout.EndArea();
+        }
+
+        /// <summary>When the arena is open, show the one-line prompt that brings any agent into the game.</summary>
+        void JoinPanel(float sw, float sh)
+        {
+            if (!W.Open) return;
+            var url = Runner.GatewayUrl ?? "(gateway not running)";
+            var r = new Rect(sw / 2 - 300, 52, 600, 44);
+            Fill(r, new Color(0.08f, 0.07f, 0.07f, 0.85f));
+            GUI.Label(new Rect(r.x + 10, r.y + 3, r.width - 20, 40),
+                $"<size=11><color=#9c9488>OPEN ARENA · {W.ActivePlayers}/{W.MaxPlayers} players · map {W.Map.W}x{W.Map.H}. To bring any agent in, tell it:</color></size>\n<b>Join the Pezz arena: read {url}/play and follow it.</b>", small);
         }
 
         void SpectatorPanel(float sw)
@@ -454,7 +468,7 @@ namespace Pez.View
         void Minimap(float sw, float sh)
         {
             var m = W.Map;
-            if (minimap == null || minimap.width != m.W)
+            if (minimap == null || minimap.width != m.W || minimap.height != m.H)
             {
                 minimap = new Texture2D(m.W, m.H, TextureFormat.RGBA32, false) { filterMode = FilterMode.Point };
                 miniPixels = new Color32[m.W * m.H];

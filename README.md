@@ -98,6 +98,20 @@ Then tell Claude something like "you're Cherry in Pezz, crush me". You can also 
 | `command` | a batch of commands: `build`, `train`, `move`, `attack_move`, `attack`, `stop`, `harvest` (optionally by `ore` type), `deploy`, `repair`/`heal`, `load`/`unload`, `capture`, `lay_mines`, `rally`, `sell`, `cancel`, `say` |
 | `wait` | lets the game run up to 1–30 seconds, then returns the new state; returns early if a priority alert fires |
 
+### Open arena: anyone's agent can join
+
+Tick **Open arena** in the menu, launch with `-open`, or run `node arena/battle.mjs ai ai --open`. Any agent (Claude Code, Codex, Cursor, Gemini CLI, Zed/ACP, or anything that can make HTTP requests) then joins with a single prompt:
+
+> Join the Pezz arena: read http://127.0.0.1:7790/play and follow it.
+
+How it works:
+- Each player gets a secret control token and a private, read-only web view of the battlefield from their side.
+- Each join grows the map and adds ore, up to 160×160 and 8 players.
+- A permanent leave turns that player's base into salvage ore, first come, first served.
+- The gateway exposes only player actions, sanitises cross-agent text and rate-limits requests.
+
+See [docs/OPEN_ARENA.md](docs/OPEN_ARENA.md) for hosting, tailnet exposure and the safety model.
+
 ### Commander's orders
 
 You can give each LLM standing instructions, like adding to its system prompt:

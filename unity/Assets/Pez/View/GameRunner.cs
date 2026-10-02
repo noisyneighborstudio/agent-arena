@@ -9,7 +9,7 @@ namespace Pez.View
     /// <summary>
     /// Owns the Game, the HTTP API and the view. Created automatically at startup (see Bootstrap),
     /// so the project needs no authored scene content.
-    /// Command line: -team0 human|ai|claude|codex|llm -team1 ... -model0 sonnet -effort0 medium -orders0 "text" -seed N -mapsize 80 -port 7777 -speed 1 -autostart
+    /// Command line: -team0 human|ai|claude|codex|llm -team1 ... -model0 sonnet -effort0 medium -orders0 "text" -seed N -mapsize 80 -open -port 7777 -speed 1 -autostart
     /// </summary>
     public class GameRunner : MonoBehaviour
     {
@@ -26,7 +26,10 @@ namespace Pez.View
         public Hud Hud { get; private set; }
         public readonly List<(float time, int team, string text)> CommandFeed = new List<(float, int, string)>();
         public string AgentStatus;
-        System.Diagnostics.Process agentProc;
+        System.Diagnostics.Process agentProc, gatewayProc;
+        /// <summary>URL outside agents use to join (the local gateway; expose it with tailscale serve).</summary>
+        public string GatewayUrl;
+        public int GatewayPort = 7790;
         World viewWorld;
         bool startingFromMenu;
         bool firstView = true;
@@ -56,6 +59,7 @@ namespace Pez.View
                 Speed = float.Parse(Arg("-speed", "1"), System.Globalization.CultureInfo.InvariantCulture),
                 Controllers = new[] { Arg("-team0", "human"), Arg("-team1", "ai") },
                 Orders = new[] { Arg("-orders0", ""), Arg("-orders1", "") },
+                Open = args.Contains("-open"),
             };
         }
 
@@ -166,9 +170,10 @@ namespace Pez.View
             startingFromMenu = true;
             // The sim only knows "llm"; which CLI plays is the launcher's business.
             var simControllers = cfg.Controllers.Select(c => AgentClis.Contains(c) ? "llm" : c).ToArray();
-            Game.Restart(new GameConfig { Seed = cfg.Seed, Speed = cfg.Speed, MapSize = cfg.MapSize, Controllers = simControllers, Orders = (string[])cfg.Orders?.Clone() });
+            Game.Restart(new GameConfig { Seed = cfg.Seed, Speed = cfg.Speed, MapSize = cfg.MapSize, Controllers = simControllers, Orders = (string[])cfg.Orders?.Clone(), Open = cfg.Open });
             InMenu = false;
             if (cfg.Controllers.Any(c => AgentClis.Contains(c))) LaunchAgents(cfg.Controllers);
+            if (cfg.Open) LaunchGateway(); else StopGateway();
         }
 
         /// <summary>Repo root (for arena/battle.mjs): -repo arg, else derived from the app or editor location.</summary>
@@ -213,6 +218,38 @@ namespace Pez.View
             catch (System.Exception ex) { AgentStatus = "Agent launch failed: " + ex.Message; Debug.LogError(AgentStatus); }
         }
 
+        /// <summary>Start the arena gateway (mcp/gateway.js) so outside agents can join this game.</summary>
+        void LaunchGateway()
+        {
+            if (gatewayProc != null && !gatewayProc.HasExited) return;
+            var root = RepoRoot();
+            if (root == null) { AgentStatus = "Can't find the repo to start the arena gateway; launch with -repo /path/to/pez"; return; }
+            var log = System.IO.Path.Combine(root, "arena", "logs", "gateway.log");
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(log));
+            var args = System.Environment.GetCommandLineArgs();
+            int gi = System.Array.IndexOf(args, "-gatewayport");
+            if (gi >= 0 && gi + 1 < args.Length && int.TryParse(args[gi + 1], out var gp)) GatewayPort = gp;
+            int ui = System.Array.IndexOf(args, "-gatewayurl"); // the public (e.g. tailnet) URL to show and to put in links
+            var url = ui >= 0 && ui + 1 < args.Length ? args[ui + 1] : System.Environment.GetEnvironmentVariable("PEZZ_PUBLIC_URL");
+            var pub = string.IsNullOrEmpty(url) ? "" : $"PEZZ_PUBLIC_URL='{url}' ";
+            var cmd = $"cd '{root}' && PEZZ_GAME=http://127.0.0.1:{Port} PEZZ_GATEWAY_PORT={GatewayPort} {pub}exec node mcp/gateway.js > '{log}' 2>&1";
+            try
+            {
+                gatewayProc = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("/bin/zsh", $"-lic \"{cmd}\"") { UseShellExecute = false, CreateNoWindow = true });
+                GatewayUrl = string.IsNullOrEmpty(url) ? $"http://127.0.0.1:{GatewayPort}" : url.TrimEnd('/');
+                Debug.Log($"Arena gateway on {GatewayUrl}");
+            }
+            catch (System.Exception ex) { AgentStatus = "Gateway launch failed: " + ex.Message; }
+        }
+
+        void StopGateway()
+        {
+            if (gatewayProc == null) return;
+            try { if (!gatewayProc.HasExited) System.Diagnostics.Process.Start("/bin/kill", $"-TERM {gatewayProc.Id}")?.WaitForExit(2000); } catch { }
+            gatewayProc = null;
+            GatewayUrl = null;
+        }
+
         void StopAgents()
         {
             if (agentProc == null) return;
@@ -235,6 +272,7 @@ namespace Pez.View
             View = new GameObject("World").AddComponent<WorldView>();
             View.Init(viewWorld, HumanTeam);
             Camera.Bounds = new Vector2(viewWorld.Map.W, viewWorld.Map.H);
+            View.MapRebuilt = () => Camera.Bounds = new Vector2(viewWorld.Map.W, viewWorld.Map.H); // the arena grew
             var focus = HumanTeam >= 0 ? viewWorld.Teams[HumanTeam].StartPos : new Vec2(viewWorld.Map.W / 2f, viewWorld.Map.H / 2f);
             Camera.LookAt(WorldView.W(focus) + new Vector3(3, 0, 3));
             Camera.Distance = HumanTeam >= 0 ? 9f : Mathf.Min(Camera.MaxDist, viewWorld.Map.W * 0.375f); // spectators see most of the map
@@ -262,8 +300,8 @@ namespace Pez.View
             View.Sync(Game.Alpha);
         }
 
-        void OnDestroy() { StopAgents(); Api?.Stop(); }
-        void OnApplicationQuit() { StopAgents(); Api?.Stop(); }
+        void OnDestroy() { StopAgents(); StopGateway(); Api?.Stop(); }
+        void OnApplicationQuit() { StopAgents(); StopGateway(); Api?.Stop(); }
     }
 
     public static class Bootstrap

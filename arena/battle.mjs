@@ -7,7 +7,7 @@
 //
 // Players: claude | codex | grok | gemini | ai | human | external (human/external only make sense with --attach)
 // Options: --attach (use the game already running at --url, e.g. Unity), --no-restart (join the current game as-is),
-//          --url, --speed, --seed, --map-size 80, --minutes, --model-<player> <model>, --effort-<player> <low|medium|high|...>
+//          --open (outside agents can join via mcp/gateway.js), --url, --speed, --seed, --map-size 80, --minutes, --model-<player> <model>, --effort-<player> <low|medium|high|...>
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -140,16 +140,23 @@ async function runAgent(team, player) {
   }
 }
 
-let headless;
+let headless, gateway;
 async function main() {
   if (!flag("attach")) {
     const proj = path.join(ROOT, "headless");
     spawnSync("dotnet", ["build", "-v", "q", proj], { stdio: "inherit" });
-    headless = spawn("dotnet", ["run", "--no-build", "--project", proj, "--", "--port", new URL(URL_BASE).port || "7777", "--speed", String(SPEED)], { stdio: ["ignore", fs.openSync(path.join(LOGDIR, "server.log"), "a"), "inherit"] });
+    const hargs = ["run", "--no-build", "--project", proj, "--", "--port", new URL(URL_BASE).port || "7777", "--speed", String(SPEED)];
+    if (flag("open")) hargs.push("--open");
+    headless = spawn("dotnet", hargs, { stdio: ["ignore", fs.openSync(path.join(LOGDIR, "server.log"), "a"), "inherit"] });
   }
   await waitForServer();
+  if (flag("open")) {
+    // Outside agents join through the gateway: "Join the Pezz arena: read <gateway>/play and follow it."
+    gateway = spawn("node", [path.join(ROOT, "mcp", "gateway.js")], { env: { ...process.env, PEZZ_GAME: URL_BASE }, stdio: ["ignore", fs.openSync(path.join(LOGDIR, "gateway.log"), "a"), "inherit"] });
+    console.log("Open arena: outside agents join with  \"Join the Pezz arena: read http://127.0.0.1:7790/play and follow it.\"");
+  }
   const controllers = players.map((p) => (p === "ai" ? "ai" : p === "human" ? "human" : "llm"));
-  if (!flag("no-restart")) await api("/api/admin/restart", { seed: SEED, speed: SPEED, map_size: MAP_SIZE, controllers });
+  if (!flag("no-restart")) await api("/api/admin/restart", { seed: SEED, speed: SPEED, map_size: MAP_SIZE, controllers, open: flag("open") });
   console.log(`Pezz arena: ${players.map((p, i) => `${TEAM_NAMES[i]}=${DISPLAY[p] ?? p}${opt(`model-${p}`) ? ` (${opt(`model-${p}`)}${opt(`effort-${p}`) ? " " + opt(`effort-${p}`) : ""})` : ""}`).join(" vs ")} | seed ${SEED} | speed ${SPEED} | logs ${path.relative(ROOT, LOGDIR)}`);
 
   const agents = players.map((p, i) => (NO_AGENT.includes(p) ? null : runAgent(i, p)));
@@ -171,6 +178,7 @@ async function main() {
   }
   for (const c of children) c.kill("SIGTERM");
   headless?.kill("SIGTERM");
+  gateway?.kill("SIGTERM");
   await Promise.race([Promise.all(agents.filter(Boolean)), new Promise((r) => setTimeout(r, 3000))]);
   process.exit(0);
 }

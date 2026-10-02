@@ -75,6 +75,7 @@ namespace Pez.Sim
             "enemy_near_base" => "ENEMY NEAR BASE",
             "stealth_detected" => "STEALTH BOMBER DETECTED",
             "units_lost" => "UNITS LOST",
+            "salvage_available" => "SALVAGE AVAILABLE",
             _ => "COMBAT",
         };
 

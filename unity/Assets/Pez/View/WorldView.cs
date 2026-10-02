@@ -52,16 +52,35 @@ namespace Pez.View
             tgo.transform.SetParent(transform, false);
             Terrain = tgo.AddComponent<TerrainView>();
             Terrain.Build(w.Map);
+            mapVersion = w.MapVersion;
             lastSeq = w.Events.Count > 0 ? w.Events[w.Events.Count - 1].Seq : 0;
         }
 
         bool Shown(Entity e) => !e.IsCarried && (PovTeam < 0 || World.IsVisibleTo(PovTeam, e)) ||
                                 (e.IsStructure && World.Teams[PovTeam].KnownEnemyStructures.ContainsKey(e.Id));
 
+        int mapVersion;
+
+        /// <summary>The map grew (a player joined) or salvage appeared (a player left): rebuild the terrain.</summary>
+        void RebuildTerrain()
+        {
+            if (Terrain != null) Destroy(Terrain.gameObject);
+            var tgo = new GameObject("Terrain");
+            tgo.transform.SetParent(transform, false);
+            Terrain = tgo.AddComponent<TerrainView>();
+            Terrain.Build(World.Map);
+            mapVersion = World.MapVersion;
+            nextFog = 0;
+            MapRebuilt?.Invoke();
+        }
+
+        public System.Action MapRebuilt;
+
         public void Sync(float alpha)
         {
             alpha = Mathf.Clamp01(alpha);
             var w = World;
+            if (w.MapVersion != mapVersion) RebuildTerrain();
             var seen = new HashSet<int>();
             foreach (var e in w.Entities)
             {
@@ -89,7 +108,9 @@ namespace Pez.View
             if (rig.HasModel && rig.Root.gameObject.activeInHierarchy)
             {
                 rig.Model.transform.SetParent(transform, true);
-                rig.Emerge.StartCoroutine(rig.Emerge.PlayRemove(v.Destroyed, v.E.IsStructure ? 1.2f : 1.5f));
+                // Vehicles leave a wreck for a while; infantry and dismantled forces just sink away.
+                bool wreck = v.Destroyed && v.E.Def.Armor != Armor.Infantry;
+                rig.Emerge.StartCoroutine(rig.Emerge.PlayRemove(wreck, v.E.IsStructure ? 1.2f : 1.5f));
             }
             Destroy(rig.Root.gameObject);
         }
