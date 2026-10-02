@@ -16,19 +16,70 @@ namespace Pez.View
     public class FrameServer : MonoBehaviour
     {
         public int Port = 7778;
-        public float Interval = 0.2f;
+        public float IdleInterval = 0.2f; // the host's view when nobody is streaming it
         public int Width = 1280;
+        public const int StreamFps = 60, Quality = 70, MainView = -1;
         TcpListener listener;
         Thread thread;
-        volatile byte[] latest;
 
-        // Per-player live streams: frames are only rendered for teams someone requested in the last 10 seconds.
+        // Live streams, keyed by team (MainView is the host's screen): frames are only rendered for streams someone
+        // requested in the last 10 seconds. Each new frame bumps the stream's sequence number and wakes its watchers.
         static readonly System.Collections.Concurrent.ConcurrentDictionary<int, byte[]> teamFrames = new System.Collections.Concurrent.ConcurrentDictionary<int, byte[]>();
         static readonly System.Collections.Concurrent.ConcurrentDictionary<int, System.DateTime> teamWanted = new System.Collections.Concurrent.ConcurrentDictionary<int, System.DateTime>();
         public static bool Wanted(int team) => teamWanted.TryGetValue(team, out var t) && (System.DateTime.UtcNow - t).TotalSeconds < 10;
+        // Streams with a live viewer render at StreamFps; ones only polled for snapshots render slower.
+        static readonly System.Collections.Concurrent.ConcurrentDictionary<int, int> watchers = new System.Collections.Concurrent.ConcurrentDictionary<int, int>();
+        public static bool Streaming(int team) => watchers.TryGetValue(team, out var n) && n > 0;
         static readonly System.Collections.Concurrent.ConcurrentDictionary<int, System.DateTime> frameAt = new System.Collections.Concurrent.ConcurrentDictionary<int, System.DateTime>();
-        public static void Submit(int team, byte[] jpg) { teamFrames[team] = jpg; frameAt[team] = System.DateTime.UtcNow; }
+        static readonly object frameSignal = new object();
+        static readonly System.Collections.Generic.Dictionary<int, (int seq, long stamp)> frameSeq = new System.Collections.Generic.Dictionary<int, (int, long)>();
+        static int Seq(int team) => frameSeq.TryGetValue(team, out var f) ? f.seq : 0;
+
+        /// <summary>Publish a stream's frame. Encodes finish out of order, so one older than the last published is dropped.</summary>
+        public static void Submit(int team, byte[] jpg, long stamp)
+        {
+            lock (frameSignal)
+            {
+                frameSeq.TryGetValue(team, out var f);
+                if (stamp <= f.stamp) return;
+                teamFrames[team] = jpg; frameAt[team] = System.DateTime.UtcNow;
+                frameSeq[team] = (f.seq + 1, stamp);
+                Monitor.PulseAll(frameSignal);
+            }
+        }
         public static void Forget(int team) { teamFrames.TryRemove(team, out _); }
+
+        // Frames are read back from the GPU asynchronously and JPEG-encoded on worker threads, so a 60fps stream
+        // doesn't stall the game. A stream with too many frames in flight skips rendering until they land.
+        static readonly int[] inFlight = new int[9]; // MainView and teams 0-7
+        static readonly System.Collections.Concurrent.ConcurrentBag<byte[]> pixelPool = new System.Collections.Concurrent.ConcurrentBag<byte[]>();
+        public static bool Busy(int team) => Volatile.Read(ref inFlight[team + 1]) >= 3;
+
+        /// <summary>Encode src (an R8G8B8A8_SRGB, non-MSAA texture) as the stream's next frame.</summary>
+        public static void Encode(RenderTexture src, int team)
+        {
+            int w = src.width, h = src.height;
+            long stamp = Time.frameCount;
+            Interlocked.Increment(ref inFlight[team + 1]);
+            UnityEngine.Rendering.AsyncGPUReadback.Request(src, 0, req =>
+            {
+                if (req.hasError) { Interlocked.Decrement(ref inFlight[team + 1]); return; }
+                var data = req.GetData<byte>();
+                if (!pixelPool.TryTake(out var px) || px.Length != data.Length) px = new byte[data.Length];
+                data.CopyTo(px);
+                ThreadPool.QueueUserWorkItem(_ =>
+                {
+                    try
+                    {
+                        // The bytes are already sRGB-encoded: encode them as-is.
+                        var jpg = ImageConversion.EncodeArrayToJPG(px, UnityEngine.Experimental.Rendering.GraphicsFormat.R8G8B8A8_UNorm, (uint)w, (uint)h, 0, Quality);
+                        Submit(team, jpg, stamp);
+                    }
+                    catch (System.Exception ex) { Debug.LogWarning("Frame encode failed: " + ex.Message); }
+                    finally { pixelPool.Add(px); Interlocked.Decrement(ref inFlight[team + 1]); }
+                });
+            });
+        }
 
         /// <summary>Camera input from a stream viewer: team -1 is the host's main view, 0-7 a player's own stream.</summary>
         public struct CamOp { public int Team; public float Dx, Dy, Zoom, Yaw, X, Y; } // X/Y: absolute focus (NaN = keep)
@@ -41,7 +92,6 @@ namespace Pez.View
         }
         volatile bool running;
         RenderTexture full, small;
-        Texture2D readback;
 
         const string Page = @"<!doctype html><html><head><meta name=viewport content='width=device-width,initial-scale=1'><title>Pezz</title>
 <style>html,body{margin:0;background:#0b0c0e;height:100%;display:flex;align-items:center;justify-content:center;overflow:hidden}
@@ -58,8 +108,8 @@ addEventListener('mouseup',()=>drag=null);
 addEventListener('mousemove',e=>{if(!drag)return;const r=img.getBoundingClientRect();acc.dx-=(e.clientX-drag.x)/r.width;acc.dy+=(e.clientY-drag.y)/r.height;drag={x:e.clientX,y:e.clientY};flush()});
 addEventListener('wheel',e=>{e.preventDefault();acc.zoom*=e.deltaY<0?0.9:1.11;flush()},{passive:false});
 addEventListener('keydown',e=>{const k=e.key.toLowerCase();const s=.08;if(k==='a'||k==='arrowleft')acc.dx-=s;if(k==='d'||k==='arrowright')acc.dx+=s;if(k==='w'||k==='arrowup')acc.dy+=s;if(k==='s'||k==='arrowdown')acc.dy-=s;if(k==='q')acc.yaw+=15;if(k==='e')acc.yaw-=15;flush()});
-async function loop(){try{const r=await fetch('frame.jpg?'+Date.now(),{cache:'no-store'});if(r.ok){const u=URL.createObjectURL(await r.blob());const old=img.src;img.src=u;if(old.startsWith('blob:'))URL.revokeObjectURL(old);}}catch(e){}setTimeout(loop,150);}
-loop();</script></body></html>";
+// The stream is MJPEG: the browser shows each frame as it arrives. Reconnect if it drops (e.g. the game restarted).
+img.onerror=()=>setTimeout(()=>img.src='stream?'+Date.now(),1000);img.src='stream';</script></body></html>";
 
         void Start()
         {
@@ -79,30 +129,27 @@ loop();</script></body></html>";
         IEnumerator Capture()
         {
             var wait = new WaitForEndOfFrame();
+            float last = -999f;
             while (running)
             {
-                yield return new WaitForSecondsRealtime(Interval);
                 yield return wait;
+                float gap = Streaming(MainView) ? 0.75f / StreamFps : IdleInterval;
+                if (Time.unscaledTime - last < gap || Busy(MainView)) continue;
                 int sw = Screen.width, sh = Screen.height;
                 if (sw <= 0 || sh <= 0) continue;
+                last = Time.unscaledTime;
                 int w = Mathf.Min(Width, sw), h = Mathf.RoundToInt(w * sh / (float)sw);
                 if (full == null || full.width != sw || full.height != sh) { if (full != null) full.Release(); full = new RenderTexture(sw, sh, 0); }
                 if (small == null || small.width != w || small.height != h)
                 {
                     if (small != null) small.Release();
-                    small = new RenderTexture(w, h, 0);
-                    readback = new Texture2D(w, h, TextureFormat.RGB24, false);
+                    small = new RenderTexture(w, h, 0, UnityEngine.Experimental.Rendering.GraphicsFormat.R8G8B8A8_SRGB);
                 }
                 ScreenCapture.CaptureScreenshotIntoRenderTexture(full);
                 // The captured texture is upside down on top-left-origin APIs (Metal).
                 if (SystemInfo.graphicsUVStartsAtTop) Graphics.Blit(full, small, new Vector2(1, -1), new Vector2(0, 1));
                 else Graphics.Blit(full, small);
-                var prev = RenderTexture.active;
-                RenderTexture.active = small;
-                readback.ReadPixels(new Rect(0, 0, w, h), 0, 0, false);
-                readback.Apply(false);
-                RenderTexture.active = prev;
-                latest = readback.EncodeToJPG(72);
+                Encode(small, MainView);
             }
         }
 
@@ -112,9 +159,50 @@ loop();</script></body></html>";
             {
                 TcpClient client;
                 try { client = listener.AcceptTcpClient(); } catch { break; }
-                ThreadPool.QueueUserWorkItem(_ => Handle(client));
+                // A thread per connection: streams hold theirs for as long as someone watches.
+                new Thread(() => Handle(client)) { IsBackground = true, Name = "PezFrameClient" }.Start();
             }
         }
+
+        /// <summary>Push every new frame of a stream as multipart MJPEG until the viewer goes away.</summary>
+        void PushFrames(NetworkStream stream, int team)
+        {
+            watchers.AddOrUpdate(team, 1, (_, n) => n + 1);
+            try { PushFramesUntilGone(stream, team); }
+            finally { watchers.AddOrUpdate(team, 0, (_, n) => n - 1); }
+        }
+
+        void PushFramesUntilGone(NetworkStream stream, int team)
+        {
+            stream.WriteTimeout = 5000;
+            var head = Encoding.ASCII.GetBytes("HTTP/1.1 200 OK\r\nContent-Type: multipart/x-mixed-replace; boundary=pezframe\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n");
+            stream.Write(head, 0, head.Length);
+            int sent = -1;
+            var lastFrame = System.DateTime.UtcNow;
+            while (running)
+            {
+                teamWanted[team] = System.DateTime.UtcNow;
+                int seq;
+                lock (frameSignal)
+                {
+                    if ((seq = Seq(team)) == sent)
+                    {
+                        Monitor.Wait(frameSignal, 500);
+                        // Nothing for a while (the seat emptied, or the game is in its menu): end it; the viewer reconnects.
+                        if (Seq(team) == sent && (System.DateTime.UtcNow - lastFrame).TotalSeconds > 10) return;
+                        continue;
+                    }
+                }
+                sent = seq;
+                if (!teamFrames.TryGetValue(team, out var jpg) || jpg == null) continue;
+                lastFrame = System.DateTime.UtcNow;
+                var part = Encoding.ASCII.GetBytes($"--pezframe\r\nContent-Type: image/jpeg\r\nContent-Length: {jpg.Length}\r\n\r\n");
+                stream.Write(part, 0, part.Length);
+                stream.Write(jpg, 0, jpg.Length);
+                stream.Write(CrLf, 0, 2);
+            }
+        }
+        static readonly byte[] CrLf = { 13, 10 };
 
         void Handle(TcpClient client)
         {
@@ -123,6 +211,7 @@ loop();</script></body></html>";
                 using (client)
                 using (var stream = client.GetStream())
                 {
+                    client.NoDelay = true;
                     stream.ReadTimeout = 3000;
                     // Read just the request line; headers are irrelevant here.
                     var line = new StringBuilder();
@@ -133,6 +222,8 @@ loop();</script></body></html>";
                     byte[] body; string status = "200 OK", type;
                     var cm = System.Text.RegularExpressions.Regex.Match(path, @"^/(?:team/(\d+)/)?cam(\?.*)?$");
                     var tm = System.Text.RegularExpressions.Regex.Match(path, @"^/team/(\d+)\.jpg");
+                    var sm = System.Text.RegularExpressions.Regex.Match(path, @"^/(?:team/(\d+)/)?stream(\?.*)?$");
+                    if (sm.Success) { PushFrames(stream, sm.Groups[1].Success ? int.Parse(sm.Groups[1].Value) : MainView); return; }
                     if (cm.Success)
                     {
                         // dx/dy: pan as a fraction of the view; zoom: multiplier; yaw: degrees.
@@ -158,7 +249,7 @@ loop();</script></body></html>";
                     }
                     else if (path.Contains("frame.jpg"))
                     {
-                        body = latest;
+                        teamFrames.TryGetValue(MainView, out body);
                         type = "image/jpeg";
                         if (body == null) { body = new byte[0]; status = "503 Service Unavailable"; }
                     }

@@ -20,6 +20,7 @@
 //      empty overflow room after this many minutes, default 10), PEZZ_ENGINE (headless engine dll for overflow rooms),
 //      PEZZ_WATCH_DELAY (seconds the public /watch spectator view lags the game, default 45)
 import http from "node:http";
+import { Readable } from "node:stream";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -226,6 +227,35 @@ async function liveFrame(res, view) {
   const buf = Buffer.from(await r.arrayBuffer());
   res.writeHead(200, { "content-type": "image/jpeg", "cache-control": "no-store", "content-length": buf.length });
   res.end(buf);
+}
+
+// The live stream: multipart MJPEG at up to 60fps. It's piped with backpressure, so a slow connection gets fewer,
+// fresher frames rather than a growing backlog. The link is re-checked as it plays, so the stream ends if its seat
+// changes hands.
+const liveStreams = new Map(); // view token -> open streams
+async function liveStream(res, view) {
+  const who = await whoIs(view);
+  if (!who.room.frames) return send(res, 404, { ok: false, error: "no live renderer in this room (map view only)" });
+  if ((liveStreams.get(view) ?? 0) >= 3) return send(res, 429, { ok: false, error: "too many open streams for this view" });
+  const ac = new AbortController();
+  let r;
+  try { r = await fetch(`${who.room.frames}/team/${who.team}/stream`, { signal: ac.signal }); } catch { return send(res, 404, { ok: false, error: "no live renderer on this server (map view only)" }); }
+  if (!r.ok || !r.body) return send(res, 404, { ok: false, error: "no live stream" });
+  liveStreams.set(view, (liveStreams.get(view) ?? 0) + 1);
+  res.writeHead(200, { "content-type": r.headers.get("content-type"), "cache-control": "no-store, no-transform", "x-content-type-options": "nosniff", "x-accel-buffering": "no" });
+  const recheck = setInterval(async () => {
+    try { if ((await whoIs(view)).team === who.team) return; } catch {}
+    ac.abort();
+  }, 10000);
+  res.on("close", () => {
+    clearInterval(recheck);
+    ac.abort();
+    const n = (liveStreams.get(view) ?? 1) - 1;
+    if (n > 0) liveStreams.set(view, n); else liveStreams.delete(view);
+  });
+  const body = Readable.fromWeb(r.body);
+  body.on("error", () => res.destroy());
+  body.pipe(res);
 }
 
 async function liveCam(res, view, q) {
@@ -476,6 +506,8 @@ const server = http.createServer(async (req, res) => {
     const V = "((?:r\\d{1,3}-)?[a-f0-9]{48})";
     const lm = p.match(new RegExp(`^/view/${V}/live\\.jpg$`));
     if (lm) return await liveFrame(res, lm[1]);
+    const sm = p.match(new RegExp(`^/view/${V}/live\\.mjpg$`));
+    if (sm) return await liveStream(res, sm[1]);
     const cm = p.match(new RegExp(`^/view/${V}/cam$`));
     if (cm) return await liveCam(res, cm[1], url.searchParams);
     const vm = p.match(new RegExp(`^/view/${V}(/map|/frame)?$`));

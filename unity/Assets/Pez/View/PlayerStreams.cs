@@ -7,18 +7,20 @@ namespace Pez.View
 {
     /// <summary>
     /// Per-player live streams: a second camera renders each watched team's view in turn (only what that team can
-    /// see, under its own fog) and hands JPEG frames to the FrameServer. A small director keeps the camera on the
-    /// action: an active alert, otherwise the army in combat, otherwise the base.
+    /// see, under its own fog) and hands its frames to the FrameServer: every frame (up to FrameServer.StreamFps) while
+    /// someone is watching the stream live, a few a second when it's only polled for snapshots. A small director keeps
+    /// the camera on the action: an active alert, otherwise the army in combat, otherwise the base.
     /// </summary>
     public class PlayerStreams : MonoBehaviour
     {
         public GameRunner Runner;
         public int Width = 1280, Height = 720;
-        public float Interval = 0.15f; // per stream: about 6-7 frames a second
+        public float SnapshotInterval = 0.15f; // a stream polled for snapshots (the look tool), not watched live
         Camera cam;
-        RenderTexture rt;
-        Texture2D tex;
+        RenderTexture rt, resolved;
         readonly Dictionary<int, (Vector3 focus, float last, int seat)> state = new Dictionary<int, (Vector3, float, int)>();
+        // The director's target is a scan over every entity: refresh it a few times a second, not every frame.
+        readonly Dictionary<int, (Vector3 target, float at)> directed = new Dictionary<int, (Vector3, float)>();
         // A viewer looking around takes over the stream camera; the director returns after 20 seconds of no input.
         readonly Dictionary<int, (Vector3 focus, float size, float yaw, float until)> manual = new Dictionary<int, (Vector3, float, float, float)>();
         const float StreamPitch = 55f;
@@ -30,7 +32,7 @@ namespace Pez.View
             cam.CopyFrom(main);
             cam.enabled = false; // rendered manually
             rt = new RenderTexture(Width, Height, 24) { antiAliasing = 2 };
-            tex = new Texture2D(Width, Height, TextureFormat.RGB24, false);
+            resolved = new RenderTexture(Width, Height, 0, UnityEngine.Experimental.Rendering.GraphicsFormat.R8G8B8A8_SRGB); // the async readback can't read MSAA
         }
 
         void LateUpdate()
@@ -51,20 +53,27 @@ namespace Pez.View
                 m.yaw += op.Yaw;
                 m.until = Time.unscaledTime + 20f;
                 manual[op.Team] = m;
-                state[op.Team] = (m.focus, st.last - Interval, st.seat); // render the change right away
+                state[op.Team] = (m.focus, st.last - SnapshotInterval, st.seat); // render the change right away
             }
-            // Render at most one stream per frame: the watched team that has waited longest.
-            int pick = -1; float oldest = float.MaxValue;
+            bool rendered = false;
             for (int t = 0; t < w.Teams.Count && t < 8; t++)
             {
                 if (!FrameServer.Wanted(t) || w.Teams[t].Left) continue;
                 state.TryGetValue(t, out var s);
-                if (s.seat != w.Teams[t].Seat) { s = (Vector3.zero, 0, w.Teams[t].Seat); FrameServer.Forget(t); } // seat changed hands
+                if (s.seat != w.Teams[t].Seat) { s = (Vector3.zero, 0, w.Teams[t].Seat); FrameServer.Forget(t); directed.Remove(t); } // seat changed hands
                 state[t] = s;
-                if (Time.unscaledTime - s.last < Interval) continue;
-                if (s.last < oldest) { oldest = s.last; pick = t; }
+                // Live streams render every frame (the 0.75 absorbs frame-time jitter at the cap).
+                float gap = FrameServer.Streaming(t) ? 0.75f / FrameServer.StreamFps : SnapshotInterval;
+                if (Time.unscaledTime - s.last < gap || FrameServer.Busy(t)) continue;
+                Render(w, view, t);
+                rendered = true;
             }
-            if (pick >= 0) Render(w, view, pick);
+            if (rendered)
+            {
+                // Back to the local view (and its sun) before the main camera draws.
+                RtsCamera.AimSun(Runner.Camera.Yaw);
+                view.SetPov(view.PovTeam);
+            }
         }
 
         Vector3 Director(World w, int team)
@@ -89,7 +98,8 @@ namespace Pez.View
             if (manual.TryGetValue(team, out var m) && Time.unscaledTime < m.until) { focus = m.focus; size = m.size; yaw = m.yaw; }
             else
             {
-                var target = Director(w, team);
+                if (!directed.TryGetValue(team, out var d) || Time.unscaledTime - d.at > 0.25f) directed[team] = d = (Director(w, team), Time.unscaledTime);
+                var target = d.target;
                 float dt = s.last == 0 ? 10f : Time.unscaledTime - s.last;
                 focus = s.last == 0 ? target : Vector3.Lerp(s.focus, target, 1f - Mathf.Exp(-dt * 1.5f));
             }
@@ -108,15 +118,8 @@ namespace Pez.View
             cam.targetTexture = rt;
             cam.Render();
             cam.targetTexture = null;
-            RtsCamera.AimSun(Runner.Camera.Yaw);
-            view.SetPov(view.PovTeam); // back to the local view before the main camera draws
-
-            var prev = RenderTexture.active;
-            RenderTexture.active = rt;
-            tex.ReadPixels(new Rect(0, 0, Width, Height), 0, 0, false);
-            tex.Apply(false);
-            RenderTexture.active = prev;
-            FrameServer.Submit(team, tex.EncodeToJPG(72));
+            Graphics.Blit(rt, resolved);
+            FrameServer.Encode(resolved, team);
         }
     }
 }
