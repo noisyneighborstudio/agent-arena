@@ -268,7 +268,8 @@ export function registerPlayTools(server, getPlayer, beforeEach = async () => {}
       description: "Issue one or more commands to your team in a single call. Each returns ok/error. Examples: " +
         '{"type":"build","structure":"power_plant"} (auto-placed), {"type":"train","unit":"light_tank","count":3}, ' +
         '{"type":"attack_move","units":"idle","x":50,"y":50}, {"type":"attack","units":[12,13],"target":40}, ' +
-        '{"type":"harvest","units":[3],"ore":"crystal"}, {"type":"deploy","units":[57]} (outpost_truck -> outpost), {"type":"repair","units":[61],"target":12} (repair truck), {"type":"heal","units":[70],"target":33} (medic), {"type":"load","units":[20,21],"transport":40}, {"type":"unload","units":[40]}, {"type":"capture","units":[52],"target":7} (engineer), {"type":"lay_mines","units":[60],"x":30,"y":30,"count":4}, {"type":"say","text":"gg"}',
+        '{"type":"harvest","units":[3],"ore":"crystal"}, {"type":"survey","units":[29],"x":14,"y":100} (geological_surveyor: finds deep deposits within 12 tiles), {"type":"deploy","units":[57]} (outpost_truck -> outpost, or drill_rig -> deep_mine on a surveyed deposit), ' +
+        '{"type":"move","units":[4,5,6],"x":60,"y":60,"together":true,"waypoints":[[70,60],[70,70]],"loop":false}, {"type":"set_retreat","units":"all","below_pct":30}, {"type":"refuel","units":[12]}, {"type":"repair","units":[61],"target":12} (repair truck), {"type":"heal","units":[70],"target":33} (medic), {"type":"load","units":[20,21],"transport":40}, {"type":"unload","units":[40]}, {"type":"capture","units":[52],"target":7} (engineer), {"type":"lay_mines","units":[60],"x":30,"y":30,"count":4}, {"type":"say","text":"gg"}',
       inputSchema: { commands: z.array(Command).min(1).max(40).describe("Commands to execute in order"), format: Format },
     },
     run((p, a) => a.format === "json" ? p.commandJson(a.commands) : p.commandText(a.commands)));
