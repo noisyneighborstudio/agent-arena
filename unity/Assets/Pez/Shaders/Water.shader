@@ -29,6 +29,12 @@ Shader "Pez/Water"
             float s = sin(IN.worldPos.x * 0.8 + _Time.y) * sin(IN.worldPos.z * 0.6 + _Time.y * 0.8) * 0.5 + 0.5;
             fixed4 c = lerp(_Deep, _Color, s * 0.5 + 0.25);
             o.Albedo = c.rgb;
+            // Moving glints and fizz so it reads as liquid from a high orthographic camera, not as a hole.
+            float g1 = sin(IN.worldPos.x * 3.1 + IN.worldPos.z * 1.7 + _Time.y * 1.6);
+            float g2 = sin(IN.worldPos.x * -1.3 + IN.worldPos.z * 2.9 + _Time.y * 1.1);
+            float glint = pow(saturate(g1 * g2), 12);
+            float fizz = step(0.985, frac(sin(dot(floor(IN.worldPos.xz * 6 + _Time.y * 0.5), float2(12.9898, 78.233))) * 43758.5453));
+            o.Emission = (glint * 0.35 + fizz * 0.25) * fixed3(1.0, 0.85, 0.7);
             o.Smoothness = _Glossiness;
             o.Metallic = 0;
             o.Alpha = c.a;

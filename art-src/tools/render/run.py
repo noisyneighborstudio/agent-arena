@@ -29,6 +29,10 @@ async def main():
                 d = await pg.evaluate('(m) => renderMap(m)', mode)
                 save(f"{ROOT}/renders/map_{mode}.png", d)
             print('map done')
+        if what == 'terrain':
+            d = await pg.evaluate('() => renderTerrain()')
+            save(f"{ROOT}/renders/terrain_cliffs.png", d)
+            print('terrain done')
         if what == 'hero':
             d = await pg.evaluate('() => renderMap("offaxis", 3200, 1800, true)')
             save(f"{ROOT}/concept/hero_offaxis.png", d)

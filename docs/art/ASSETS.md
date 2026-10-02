@@ -9,14 +9,15 @@ These are blockout assets, built to the brief's exact technical contract (footpr
 | `models/structures/` | 16 structures as `.glb` |
 | `models/units/` | 14 units as `.glb` |
 | `models/ores/` | 4 ore tiles as `.glb`, each with 5 `cluster_N` nodes |
+| `models/terrain/` | 9 faceted boulders (`boulder_s1`…`l3`), plus `demo_massif.glb` and its rock grid as a reference |
 | `models/manifest.json` | Per asset: file, triangle count, node list and bounds |
 | `icons/` | 34 sidebar icons, 256×192 PNG, three-quarter view on a dark background, no text |
 | `unity/MOTION.md` | How every asset moves and behaves, plus how it emerges and is removed. **Start here.** |
 | `unity/motion.json` | The same spec as data |
-| `unity/Scripts/` | `PezMotion.cs` (drives the nodes), `PezEmerge.cs` (build, exit, lift, regrow and remove transforms), `PezMotionProfiles.cs` (generated numbers), `PezPalette.cs` |
+| `unity/Scripts/` | `PezMotion.cs` (drives the nodes), `PezEmerge.cs` (build, exit, lift, regrow and remove transforms), `PezMotionProfiles.cs` (generated numbers), `PezPalette.cs`, `PezCliffBuilder.cs` and `PezCliffs.cs` (rocks and mountains from the pathing grid) |
 | `palette/` | `pez_palette.json` and `pez.gpl` (GIMP/Aseprite/Krita) |
 | `concept/` | Style guide, off-axis hero render, original on-axis illustration (PNG and SVG) |
-| `renders/` | Gameplay map rendered from these models, on-axis perspective and off-axis orthographic, plus build-sequence strips |
+| `renders/` | Gameplay map rendered from these models, on-axis perspective and off-axis orthographic, plus build-sequence strips and the rocks fix (`terrain_cliffs.png`) |
 | `tools/` | The Python and three.js generators, so you can tweak and rebuild |
 
 ## Conventions (all models)
@@ -46,6 +47,15 @@ These are blockout assets, built to the brief's exact technical contract (footpr
    - **New units:** `StartCoroutine(emerge.PlayExit(factoryMotion))`, or `PlayLift(airfieldMotion, 2.4f)` for aircraft.
    - **Removal:** `StartCoroutine(emerge.PlayRemove(destroyed: true))`.
 5. **Nothing pops.** Don't instantiate a visible model at full size outside these calls. The terrain must be opaque at y = 0, because it is what hides the stages while they rise.
+
+## Rocks and mountains
+
+Add `PezCliffs` (with a MeshFilter and MeshRenderer) to an empty GameObject at the map origin. Assign 5 materials in this order: crust T0 `#7A604C`, crust T1 `#8E7259`, crust T2 `#A58A6C`, licorice face `#2E2629`, talus `#4A3D3A`. Assign the 9 boulder prefabs, then call `cliffs.Build(blockedGrid)` once at map load.
+
+- **Where the shapes come from.** The blocked grid stays the pathing truth. The visual outline follows it to within about 0.3 of a tile.
+- **How the massifs are built.** Thick masses become 2–3 terraces; thin ridges stay as one mesa; a single blocked tile becomes a small butte.
+- **Parity with the Python tool.** `tools/terrain_kit.py` is the same algorithm. Run through mono against a Unity stub, the C# port produced identical output on the demo map (3,970 triangles, 101 boulders, matching hashes).
+- **Ground.** Keep value variation at or under 8%. Large dark noise clouds read as shadows.
 
 ## What these models are not (yet)
 

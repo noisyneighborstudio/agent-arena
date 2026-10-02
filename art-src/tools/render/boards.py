@@ -9,7 +9,7 @@ BLOB = {
  '5b820ed3ac0cea089ebc95a41c0fdeea':'mining_truck.png','a1936fec4566dc358df406375391018a':'rifleman.png','c637e6d3d24e6b2badc452cad93c795d':'gunship.png',
  'd41637501b6f395cebba4c8a004b1973':'factory.png','be535b352884c2d5b90452243f2f3da3':'power_plant.png','35a7fbc12b4b876dcda7d933a9e66495':'laser_tower.png',
  'bfd525e47c95d3f6b9cc16855c64a10b':'artillery.png','c84fcd0cb08bd29d3c96aeb2f925132a':'hero_offaxis.png','4e870289e272d4e15e95134e5c80a555':'command_center_strip.png',
- '60a1286de57bda238ea4136f7e94a8c0':'factory_strip.png'}
+ '60a1286de57bda238ea4136f7e94a8c0':'factory_strip.png','17f228bc255212d84107d526097c5f38':'terrain_before.png','a64d144ad86e6a22d16143844862ba4f':'terrain_after.png'}
 def flatten(name):
     s = open(SRC + name).read()
     body = re.search(r'<x-dc>(.*)</x-dc>', s, re.S).group(1)

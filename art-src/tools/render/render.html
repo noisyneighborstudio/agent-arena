@@ -262,6 +262,43 @@ window.renderMap = async (mode, w = 1920, h = 1080, hero = false) => {
   r.render(scene, cam);
   return r.domElement.toDataURL('image/png');
 };
+
+// ---------------------------------------------------------------- terrain demo (cliffs + boulders)
+function softGround(base = '#C2AE87') {
+  const cv = document.createElement('canvas'); cv.width = cv.height = 1024;
+  const g = cv.getContext('2d'); g.fillStyle = base; g.fillRect(0, 0, 1024, 1024);
+  let seed = 11; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  for (let i = 0; i < 160; i++) { g.fillStyle = rnd() > .5 ? 'rgba(255,240,210,.06)' : 'rgba(90,70,40,.06)'; g.beginPath(); g.ellipse(rnd() * 1024, rnd() * 1024, 40 + rnd() * 120, 30 + rnd() * 80, rnd() * 3, 0, 7); g.fill(); }
+  for (let i = 0; i < 2500; i++) { g.fillStyle = 'rgba(120,95,60,.18)'; g.fillRect(rnd() * 1024, rnd() * 1024, 2, 2); }
+  g.strokeStyle = 'rgba(0,0,0,.05)'; g.lineWidth = 1;
+  for (let i = 0; i <= 40; i++) { const p = i * 1024 / 40; g.beginPath(); g.moveTo(p, 0); g.lineTo(p, 1024); g.stroke(); g.beginPath(); g.moveTo(0, p); g.lineTo(1024, p); g.stroke(); }
+  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; return t;
+}
+window.renderTerrain = async (w = 1536, h = 1820, viewH = 30) => {
+  const r = makeRenderer(w, h);
+  const scene = new THREE.Scene(); scene.background = new THREE.Color(0x2A2420);
+  const sun = lights(scene, 1, 30);
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(90, 90), new THREE.MeshStandardMaterial({ map: softGround(), roughness: 1 }));
+  ground.rotation.x = -Math.PI / 2; ground.position.set(20, 0, 17); ground.receiveShadow = true; scene.add(ground);
+  const cl = instance(await load('terrain', 'demo_massif'));
+  cl.traverse(n => { if (n.isMesh) n.material.flatShading = true; });
+  scene.add(cl);
+  // ore fields + two tanks for scale
+  for (const [x, z] of [[2.5, 16], [3.5, 16], [2.5, 17], [3.5, 17], [4.5, 16.5], [2, 18], [3, 18]]) await place(scene, 'ores', 'crystal', null, -x, z);
+  for (const [x, z] of [[33, 4], [34, 4], [35, 4], [33, 5], [34, 5], [35, 5], [36, 4.5], [34, 3]]) await place(scene, 'ores', 'iron_ore', null, -x, z);
+  await place(scene, 'units', 'light_tank', 'blue', -13.5, 19, -70);
+  await place(scene, 'units', 'light_tank', 'red', -21, 6.5, 120);
+  await place(scene, 'units', 'heavy_tank', 'red', -19.5, 5.5, 140);
+  const target = new THREE.Vector3(27, 0, 19.5);
+  const cam = new THREE.OrthographicCamera(-viewH * w / h / 2, viewH * w / h / 2, viewH / 2, -viewH / 2, .1, 200);
+  const pitch = THREE.MathUtils.degToRad(55), yaw = THREE.MathUtils.degToRad(45), dist = 50;
+  cam.position.set(target.x + Math.sin(yaw) * Math.cos(pitch) * dist, Math.sin(pitch) * dist, target.z - Math.cos(yaw) * Math.cos(pitch) * dist);
+  cam.lookAt(target);
+  env(r, scene); sunFrom(sun, cam, target, 30);
+  sun.shadow.camera.left = -30; sun.shadow.camera.right = 30; sun.shadow.camera.top = 30; sun.shadow.camera.bottom = -30; sun.shadow.camera.updateProjectionMatrix();
+  r.render(scene, cam);
+  return r.domElement.toDataURL('image/png');
+};
 window.ready = true;
 </script>
 </body></html>

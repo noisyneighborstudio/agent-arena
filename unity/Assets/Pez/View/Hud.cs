@@ -461,7 +461,7 @@ namespace Pez.View
                 {
                     Color c = m.Ore[i] > 0 ? WorldView.OreColors[m.OreType[i]] : m.Tiles[i] switch
                     {
-                        Terrain.Rock => new Color(0.4f, 0.38f, 0.36f),
+                        Terrain.Rock => new Color(0.3f, 0.24f, 0.22f), // licorice massifs
                         Terrain.Water => new Color(0.1f, 0.3f, 0.45f),
                         Terrain.Dirt => TerrainView.Dirt,
                         _ => TerrainView.GrassA,

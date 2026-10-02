@@ -21,7 +21,10 @@ The look comes from the v0.2 art handoff, "The Dispenser War". The handoff is in
   - The `M_Team` material on each model is tinted per team flavour: Blueberry, Cherry, Lime, Lemon.
   - The game drives the pack's `PezMotion` and `PezEmerge` scripts from the simulation: turrets aim, barrels recoil, doors roll up for new units, truck bins fill and tip, airfield lifts rise, and buildings rise in four stages. Destroyed units leave wrecks for a while.
 - **Placeholders:** units the pack doesn't cover yet use procedural placeholder shapes. Those are the engineer, sniper, commando, APC, flak track, mine layer, mine, mammoth tank, recon drone and transport chopper.
-- **Camera:** off-axis orthographic (yaw 45°, pitch 55°). The terrain is biscuit ground with a faint tile grid, licorice cliffs, cola water and cotton-candy trees.
+- **Camera:** off-axis orthographic (yaw 45°, pitch 55°).
+- **Terrain:** biscuit ground with a faint tile grid, kept within the handoff's 8% "quiet ground" rule. Cola lakes have a shore band and glints, and cotton-candy trees line the edges.
+- **Rocks (handoff v0.3):** tiered licorice massifs with faceted boulders, built from the pathing grid by the pack's `PezCliffBuilder`. The dark rim is exactly where movement is blocked.
+- **Brown patches (open decision 4):** they were cosmetic dirt tiles with no gameplay meaning, so they're now subtle ground variation. The other brown areas are the cola lakes, which are impassable.
 - **HUD:** the sidebar uses the pack's icons, and the minimap shows sectors A–H (west to east) by 1–8 (north to south). Alerts and the LLM order feed include the sector.
 - **Regenerating the blockouts:** the pack's generators are in `art-src/`.
 

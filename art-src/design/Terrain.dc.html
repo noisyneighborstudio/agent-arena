@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Pez rocks and mountains</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@600;700&amp;family=IBM+Plex+Mono:wght@400&amp;family=IBM+Plex+Sans:wght@400;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#ECE4D2}a:hover{color:#FFFFFF}
+</style>
+</helmet>
+<div style="width: 1712px; height: 1640px; box-sizing: border-box; padding: 48px; background: #101317; color: #E8EBEE; font-family: 'IBM Plex Sans', sans-serif; display: flex; flex-direction: column; gap: 32px">
+<header style="display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 1px solid #2A3138; padding-bottom: 24px">
+<h1 style="margin: 0; font-family: 'Chakra Petch', sans-serif; font-weight: 700; font-size: 44px">Rocks and mountains</h1>
+<span style="font-family: 'IBM Plex Mono', monospace; font-size: 14px; color: #9BA5AE">same camera · built from the rock grid by PezCliffBuilder</span>
+</header>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 80px">
+<figure style="margin: 0; display: flex; flex-direction: column; gap: 12px">
+<img src="/_blob/17f228bc255212d84107d526097c5f38" alt="Current build: grey noise mounds with scattered spheres" style="width: 768px; height: 910px; border-radius: 10px">
+<figcaption style="font-family: 'Chakra Petch', sans-serif; font-weight: 600; font-size: 20px">Now</figcaption>
+</figure>
+<figure style="margin: 0; display: flex; flex-direction: column; gap: 12px">
+<img src="/_blob/a64d144ad86e6a22d16143844862ba4f" alt="Fix: tiered licorice massifs with dark rims, lighter terraces and boulders at the base" style="width: 768px; height: 910px; border-radius: 10px">
+<figcaption style="font-family: 'Chakra Petch', sans-serif; font-weight: 600; font-size: 20px">Fix: tiered licorice massifs</figcaption>
+</figure>
+</div>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 80px">
+<section style="display: flex; flex-direction: column; gap: 14px">
+<h2 style="margin: 0; font-family: 'Chakra Petch', sans-serif; font-weight: 600; font-size: 20px; letter-spacing: 0.06em; text-transform: uppercase">Why it fails</h2>
+<div style="border-top: 2px solid #2A3138; padding-top: 12px"><div style="font-weight: 600">No edge</div><div style="font-size: 15px; line-height: 1.5; color: #9BA5AE">Noise humps fade into the ground, so nobody can see where pathing is blocked.</div></div>
+<div style="border-top: 2px solid #2A3138; padding-top: 12px"><div style="font-weight: 600">Spheres, not rock</div><div style="font-size: 15px; line-height: 1.5; color: #9BA5AE">Round balls scattered on a blob read as bubbles or mould. There are no facets and no silhouette.</div></div>
+<div style="border-top: 2px solid #2A3138; padding-top: 12px"><div style="font-weight: 600">Same value as shadow</div><div style="font-size: 15px; line-height: 1.5; color: #9BA5AE">The grey-purple masses match the ground's dark noise clouds, so rock, shadow and dirt blur together.</div></div>
+<div style="border-top: 2px solid #2A3138; padding-top: 12px"><div style="font-weight: 600">No height</div><div style="font-size: 15px; line-height: 1.5; color: #9BA5AE">Every mass is one low bump. Nothing reads as a mountain at 40 px per tile.</div></div>
+</section>
+<section style="display: flex; flex-direction: column; gap: 14px">
+<h2 style="margin: 0; font-family: 'Chakra Petch', sans-serif; font-weight: 600; font-size: 20px; letter-spacing: 0.06em; text-transform: uppercase">Rules</h2>
+<div style="border-top: 2px solid #2A3138; padding-top: 12px"><div style="font-weight: 600">The dark rim is the blocked line</div><div style="font-size: 15px; line-height: 1.5; color: #9BA5AE">Licorice walls follow the blocked tiles to within about 0.3 of a tile. The darkest thing on the terrain is a cliff wall.</div></div>
+<div style="border-top: 2px solid #2A3138; padding-top: 12px"><div style="font-weight: 600">Thickness becomes height</div><div style="font-size: 15px; line-height: 1.5; color: #9BA5AE">Thick masses climb 2–3 terraces (1.0, +0.85, +0.7) with uneven widths. The crust lightens on each tier, so the top is brightest. Thin ridges stay as one mesa.</div></div>
+<div style="border-top: 2px solid #2A3138; padding-top: 12px"><div style="font-weight: 600">Faceted, never round</div><div style="font-size: 15px; line-height: 1.5; color: #9BA5AE">Flat-shaded low-poly faces. Boulders come in 3 sizes × 3 shapes, at the wall base and as crumble on the terraces.</div></div>
+<div style="border-top: 2px solid #2A3138; padding-top: 12px"><div style="font-weight: 600">Quiet ground</div><div style="font-size: 15px; line-height: 1.5; color: #9BA5AE">Ground value varies by at most 8%. Large dark noise clouds read as fake shadows and fight both the cliffs and the units.</div></div>
+</section>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1712,"height":1640}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

@@ -40,7 +40,7 @@ namespace Pez.View
         {
             x = Mathf.Clamp(x, 0, map.W - 1); y = Mathf.Clamp(y, 0, map.H - 1);
             var t = map.TerrainAt(x, y);
-            return t == Terrain.Rock ? 0.9f + Mathf.PerlinNoise(x * 0.5f, y * 0.5f) * 0.9f : t == Terrain.Water ? -0.55f : 0f;
+            return t == Terrain.Water ? -0.55f : 0f; // rock height comes from the cliff massifs, not the ground mesh
         }
 
         Color TileColor(int x, int y)
@@ -48,12 +48,15 @@ namespace Pez.View
             x = Mathf.Clamp(x, 0, map.W - 1); y = Mathf.Clamp(y, 0, map.H - 1);
             int i = map.Idx(x, y);
             if (map.Ore[i] > 0) return Color.Lerp(OreGround, WorldView.OreColors[map.OreType[i]], 0.25f);
+            // Cola lakes get a light shore band so they read as liquid, not as holes in the ground.
+            if (map.Tiles[i] != Terrain.Water && NextToWater(x, y)) return Color.Lerp(GrassA, PezPalette.TerrainShore, 0.75f);
             switch (map.Tiles[i])
             {
-                case Terrain.Rock: return RockC;
                 case Terrain.Water: return Seabed;
-                case Terrain.Dirt: return Dirt;
-                default: return Color.Lerp(GrassA, GrassB, Mathf.PerlinNoise(x * 0.15f + 3.1f, y * 0.15f + 7.7f));
+                // Dirt patches are purely cosmetic: keep them within the art pack's 8% "quiet ground" rule so they
+                // don't read as holes or shadows. Rock tiles sit under the massifs and use the ground colour.
+                case Terrain.Dirt: return GrassA * 0.975f;
+                default: return Color.Lerp(GrassA, GrassA * 1.02f, Mathf.PerlinNoise(x * 0.15f + 3.1f, y * 0.15f + 7.7f));
             }
         }
 
@@ -73,8 +76,7 @@ namespace Pez.View
                     float h = Mathf.Lerp(Mathf.Lerp(TileHeight(x0, y0), TileHeight(x0 + 1, y0), tx), Mathf.Lerp(TileHeight(x0, y0 + 1), TileHeight(x0 + 1, y0 + 1), tx), ty);
                     var c = Color.Lerp(Color.Lerp(TileColor(x0, y0), TileColor(x0 + 1, y0), tx), Color.Lerp(TileColor(x0, y0 + 1), TileColor(x0 + 1, y0 + 1), tx), ty);
                     // Rocks get craggy noise; open ground stays near y=0 so picking with a flat plane is accurate.
-                    if (h > 0.05f) h += (Mathf.PerlinNoise(fx * 1.7f, fy * 1.7f) - 0.5f) * 0.5f * h;
-                    else h += (Mathf.PerlinNoise(fx * 0.8f + 11, fy * 0.8f + 5) - 0.5f) * 0.05f;
+                    if (h > -0.05f) h += (Mathf.PerlinNoise(fx * 0.8f + 11, fy * 0.8f + 5) - 0.5f) * 0.05f;
                     int i = vy * vw + vx;
                     verts[i] = new Vector3(fx, h, fy);
                     cols[i] = c.linear; // vertex colours aren't converted in linear colour space
@@ -95,7 +97,9 @@ namespace Pez.View
             go.transform.SetParent(transform, false);
             go.AddComponent<MeshFilter>().sharedMesh = mesh;
             var r = go.AddComponent<MeshRenderer>();
-            r.sharedMaterial = Mats.Terrain();
+            var groundMat = new Material(Mats.Terrain());
+            groundMat.SetFloat("_DetailStrength", 0.035f); // quiet ground: large dark noise clouds read as fake shadows
+            r.sharedMaterial = groundMat;
             r.receiveShadows = true;
 
             // Skirt: a big dark plane under the map so the edges don't float in the void.
@@ -106,8 +110,8 @@ namespace Pez.View
         void BuildWater()
         {
             var water = new Material(Mats.Water());
-            water.SetColor("_Color", new Color(0.29f, 0.16f, 0.1f, 0.85f)); // cola
-            water.SetColor("_Deep", new Color(0.14f, 0.07f, 0.05f, 0.95f));
+            water.SetColor("_Color", new Color(0.42f, 0.24f, 0.14f, 0.8f)); // cola, lit
+            water.SetColor("_Deep", new Color(0.2f, 0.1f, 0.06f, 0.92f));
             var t = Models.Part(transform, PrimitiveType.Plane, new Vector3(map.W / 2f, -0.18f, map.H / 2f), new Vector3(map.W / 10f, 1, map.H / 10f), water);
             t.name = "Water";
             t.GetComponent<Renderer>().shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
@@ -116,19 +120,30 @@ namespace Pez.View
         void BuildRocks()
         {
             var rng = new System.Random(map.W * 31 + map.H);
-            var rockMats = new[] { Mats.Lit(PezPalette.TerrainLicoriceCliffTop, 0.35f, 0), Mats.Lit(PezPalette.TerrainLicoriceCliffFace, 0.4f, 0), Mats.Lit((Color)PezPalette.TerrainLicoriceCliffTop * 1.2f, 0.3f, 0) };
             var parent = new GameObject("Rocks").transform;
             parent.SetParent(transform, false);
+            // Tiered licorice massifs built from the blocked grid: the dark rim is exactly where pathing stops.
+            var rockGrid = new bool[map.W, map.H];
             for (int y = 0; y < map.H; y++)
                 for (int x = 0; x < map.W; x++)
-                {
-                    if (map.TerrainAt(x, y) != Terrain.Rock || rng.NextDouble() > 0.55) continue;
-                    float s = 0.5f + (float)rng.NextDouble() * 0.9f;
-                    var p = new Vector3(x + 0.5f + (float)(rng.NextDouble() - 0.5), TileHeight(x, y) * 0.8f, y + 0.5f + (float)(rng.NextDouble() - 0.5));
-                    var rock = Models.Part(parent, PrimitiveType.Sphere, p, new Vector3(s, s * (0.6f + (float)rng.NextDouble() * 0.8f), s * 0.9f), rockMats[rng.Next(3)],
-                        new Vector3(rng.Next(360), rng.Next(360), rng.Next(360)));
-                    decor.Add((map.Idx(x, y), rock.gameObject));
-                }
+                    rockGrid[x, y] = map.TerrainAt(x, y) == Terrain.Rock;
+            var cliffsGo = new GameObject("Cliffs", typeof(MeshFilter), typeof(MeshRenderer));
+            cliffsGo.transform.SetParent(transform, false);
+            var cliffs = cliffsGo.AddComponent<PezCliffs>();
+            cliffs.materials = new[]
+            {
+                Mats.Lit(Hex("7A604C"), 0.08f, 0), Mats.Lit(Hex("8E7259"), 0.08f, 0), Mats.Lit(Hex("A58A6C"), 0.08f, 0), // crust tiers
+                Mats.Lit(Hex("2E2629"), 0.2f, 0),  // licorice face
+                Mats.Lit(Hex("4A3D3A"), 0.1f, 0),  // talus
+            };
+            string[] boulders = { "s1", "s2", "s3", "m1", "m2", "m3", "l1", "l2", "l3" };
+            cliffs.boulderPrefabs = boulders.Select(b => Resources.Load<GameObject>("PezModels/terrain/boulder_" + b)).ToArray();
+            cliffs.Build(rockGrid);
+            foreach (var r in cliffsGo.GetComponentsInChildren<Renderer>())
+            {
+                r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
+                r.receiveShadows = true;
+            }
             // Scattered trees on open grass far from the bases add life to the field.
             var trunk = Mats.Lit(PezPalette.MaterialsKraft, 0.1f, 0);
             var leaves = new[] { Mats.Lit(PezPalette.TerrainCottonCandyTree, 0.15f, 0), Mats.Lit((Color)PezPalette.TerrainCottonCandyTree * 0.85f, 0.15f, 0) }; // cotton candy
@@ -137,9 +152,8 @@ namespace Pez.View
                 int x = rng.Next(map.W), y = rng.Next(map.H);
                 // Only on the map rim, so trees never sit on playable tiles.
                 bool rim = x < 2 || y < 2 || x >= map.W - 2 || y >= map.H - 2;
-                bool nearRock = map.TerrainAt(x, y) == Terrain.Rock;
-                if (!rim && !nearRock) continue;
-                var p = new Vector3(x + (float)rng.NextDouble(), nearRock ? TileHeight(x, y) * 0.7f : 0, y + (float)rng.NextDouble());
+                if (!rim || map.TerrainAt(x, y) != Terrain.Grass) continue;
+                var p = new Vector3(x + (float)rng.NextDouble(), 0, y + (float)rng.NextDouble());
                 float s = 0.7f + (float)rng.NextDouble() * 0.6f;
                 var tree = new GameObject("tree").transform;
                 tree.SetParent(parent, false);
@@ -210,6 +224,16 @@ namespace Pez.View
             double a = rng.NextDouble() * System.Math.PI * 2, r = 0.4 + rng.NextDouble() * 0.6;
             return new Vector2((float)(System.Math.Cos(a) * r), (float)(System.Math.Sin(a) * r));
         }
+
+        bool NextToWater(int x, int y)
+        {
+            for (int dy = -1; dy <= 1; dy++)
+                for (int dx = -1; dx <= 1; dx++)
+                    if (map.InBounds(x + dx, y + dy) && map.TerrainAt(x + dx, y + dy) == Terrain.Water) return true;
+            return false;
+        }
+
+        static Color Hex(string h) => ColorUtility.TryParseHtmlString("#" + h, out var c) ? c : Color.magenta;
 
         void BuildFog()
         {
