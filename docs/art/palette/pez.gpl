@@ -1,0 +1,34 @@
+GIMP Palette
+Name: Pez
+Columns: 8
+#
+ 46 115 255	team/blue
+242  46  31	team/red
+ 51 217  77	team/green
+255 209  38	team/yellow
+236 228 210	materials/cream_plastic
+ 74  79  87	materials/smoke_plastic
+142 151 159	materials/spring_steel
+200 205 211	materials/foil
+169 132  90	materials/kraft
+ 30  27  29	materials/licorice
+185 174 152	materials/sugar_pad
+246 242 232	materials/bone
+ 58  36  64	materials/grape_vent
+ 63 230 255	emissive/cyan_laser_optics
+255  62 200	emissive/magenta_plasma_fusion
+182 255  59	emissive/acid_uranium_electronics
+255 162  46	emissive/amber_industry_docking
+138  58  36	ore/iron_ore
+200 116  47	ore/copper_ore
+111 194 166	ore/copper_patina
+143 228 255	ore/crystal
+182 255  59	ore/uranium
+125 110  85	terrain/biscuit_ground
+142 127  99	terrain/biscuit_light
+106  92  70	terrain/biscuit_dark
+ 74  63  64	terrain/licorice_cliff_top
+ 36  30  32	terrain/licorice_cliff_face
+ 58  34  24	terrain/cola_water
+160 138 104	terrain/shore
+138 115 133	terrain/cotton_candy_tree

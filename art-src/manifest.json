@@ -1,0 +1,830 @@
+[
+ {
+  "key": "command_center",
+  "kind": "structures",
+  "file": "models/structures/command_center.glb",
+  "tris": 548,
+  "nodes": [
+   "command_center",
+   "door",
+   "spinner",
+   "stage_0",
+   "stage_1",
+   "stage_2",
+   "stage_3"
+  ],
+  "bounds": [
+   [
+    -1.46,
+    0.0,
+    -1.46
+   ],
+   [
+    1.46,
+    2.39,
+    1.46
+   ]
+  ]
+ },
+ {
+  "key": "outpost",
+  "kind": "structures",
+  "file": "models/structures/outpost.glb",
+  "tris": 484,
+  "nodes": [
+   "outpost",
+   "stage_0",
+   "stage_1",
+   "stage_2",
+   "stage_3"
+  ],
+  "bounds": [
+   [
+    -0.96,
+    0.0,
+    -0.96
+   ],
+   [
+    0.96,
+    1.82,
+    0.96
+   ]
+  ]
+ },
+ {
+  "key": "power_plant",
+  "kind": "structures",
+  "file": "models/structures/power_plant.glb",
+  "tris": 1464,
+  "nodes": [
+   "power_plant",
+   "stage_0",
+   "stage_2",
+   "stage_1",
+   "stage_3"
+  ],
+  "bounds": [
+   [
+    -0.96,
+    0.0,
+    -0.96
+   ],
+   [
+    0.96,
+    1.625,
+    0.96
+   ]
+  ]
+ },
+ {
+  "key": "mining_refinery",
+  "kind": "structures",
+  "file": "models/structures/mining_refinery.glb",
+  "tris": 544,
+  "nodes": [
+   "mining_refinery",
+   "door",
+   "stage_0",
+   "stage_1",
+   "stage_3",
+   "stage_2"
+  ],
+  "bounds": [
+   [
+    -1.46,
+    0.0,
+    -1.46
+   ],
+   [
+    1.46,
+    2.37,
+    1.46
+   ]
+  ]
+ },
+ {
+  "key": "barracks",
+  "kind": "structures",
+  "file": "models/structures/barracks.glb",
+  "tris": 212,
+  "nodes": [
+   "barracks",
+   "door",
+   "stage_0",
+   "stage_1",
+   "stage_2",
+   "stage_3"
+  ],
+  "bounds": [
+   [
+    -0.96,
+    0.0,
+    -0.96
+   ],
+   [
+    0.96,
+    1.38,
+    0.96
+   ]
+  ]
+ },
+ {
+  "key": "factory",
+  "kind": "structures",
+  "file": "models/structures/factory.glb",
+  "tris": 200,
+  "nodes": [
+   "factory",
+   "door",
+   "stage_0",
+   "stage_2",
+   "stage_3"
+  ],
+  "bounds": [
+   [
+    -1.46,
+    0.0,
+    -1.46
+   ],
+   [
+    1.46,
+    1.55,
+    1.46
+   ]
+  ]
+ },
+ {
+  "key": "electronics_plant",
+  "kind": "structures",
+  "file": "models/structures/electronics_plant.glb",
+  "tris": 280,
+  "nodes": [
+   "electronics_plant",
+   "stage_0",
+   "stage_2",
+   "stage_3",
+   "stage_1"
+  ],
+  "bounds": [
+   [
+    -0.96,
+    0.0,
+    -0.96
+   ],
+   [
+    0.96,
+    1.15,
+    0.96
+   ]
+  ]
+ },
+ {
+  "key": "optics_lab",
+  "kind": "structures",
+  "file": "models/structures/optics_lab.glb",
+  "tris": 860,
+  "nodes": [
+   "optics_lab",
+   "spinner",
+   "stage_0",
+   "stage_1",
+   "stage_2",
+   "stage_3"
+  ],
+  "bounds": [
+   [
+    -0.96,
+    0.0,
+    -0.96
+   ],
+   [
+    0.96,
+    1.17,
+    0.96
+   ]
+  ]
+ },
+ {
+  "key": "enrichment_plant",
+  "kind": "structures",
+  "file": "models/structures/enrichment_plant.glb",
+  "tris": 1328,
+  "nodes": [
+   "enrichment_plant",
+   "stage_0",
+   "stage_1",
+   "stage_2",
+   "stage_3"
+  ],
+  "bounds": [
+   [
+    -0.96,
+    0.0,
+    -0.96
+   ],
+   [
+    0.96,
+    1.31,
+    0.96
+   ]
+  ]
+ },
+ {
+  "key": "composite_foundry",
+  "kind": "structures",
+  "file": "models/structures/composite_foundry.glb",
+  "tris": 232,
+  "nodes": [
+   "composite_foundry",
+   "stage_0",
+   "stage_2",
+   "stage_3",
+   "stage_1"
+  ],
+  "bounds": [
+   [
+    -0.96,
+    0.0,
+    -0.96
+   ],
+   [
+    0.96,
+    1.25,
+    0.96
+   ]
+  ]
+ },
+ {
+  "key": "fusion_reactor",
+  "kind": "structures",
+  "file": "models/structures/fusion_reactor.glb",
+  "tris": 2428,
+  "nodes": [
+   "fusion_reactor",
+   "spinner",
+   "stage_0",
+   "stage_1",
+   "stage_3",
+   "stage_2"
+  ],
+  "bounds": [
+   [
+    -1.46,
+    0.0,
+    -1.46
+   ],
+   [
+    1.46,
+    1.35,
+    1.46
+   ]
+  ]
+ },
+ {
+  "key": "airfield",
+  "kind": "structures",
+  "file": "models/structures/airfield.glb",
+  "tris": 1092,
+  "nodes": [
+   "airfield",
+   "lift",
+   "stage_0",
+   "stage_2",
+   "stage_3"
+  ],
+  "bounds": [
+   [
+    -1.46,
+    0.0,
+    -1.46
+   ],
+   [
+    1.46,
+    1.56,
+    1.46
+   ]
+  ]
+ },
+ {
+  "key": "radar_dome",
+  "kind": "structures",
+  "file": "models/structures/radar_dome.glb",
+  "tris": 1888,
+  "nodes": [
+   "radar_dome",
+   "spinner",
+   "stage_0",
+   "stage_1",
+   "stage_2",
+   "stage_3"
+  ],
+  "bounds": [
+   [
+    -0.96,
+    0.0,
+    -0.96
+   ],
+   [
+    0.96,
+    1.39,
+    0.96
+   ]
+  ]
+ },
+ {
+  "key": "gun_turret",
+  "kind": "structures",
+  "file": "models/structures/gun_turret.glb",
+  "tris": 208,
+  "nodes": [
+   "gun_turret",
+   "turret",
+   "barrel",
+   "stage_2"
+  ],
+  "bounds": [
+   [
+    -0.45,
+    0.0,
+    -0.45
+   ],
+   [
+    0.45,
+    0.735,
+    0.7
+   ]
+  ]
+ },
+ {
+  "key": "sam_site",
+  "kind": "structures",
+  "file": "models/structures/sam_site.glb",
+  "tris": 756,
+  "nodes": [
+   "sam_site",
+   "turret",
+   "barrel",
+   "stage_1"
+  ],
+  "bounds": [
+   [
+    -0.45,
+    0.0,
+    -0.45
+   ],
+   [
+    0.45,
+    0.894,
+    0.45
+   ]
+  ]
+ },
+ {
+  "key": "laser_tower",
+  "kind": "structures",
+  "file": "models/structures/laser_tower.glb",
+  "tris": 300,
+  "nodes": [
+   "laser_tower",
+   "turret",
+   "barrel",
+   "stage_1",
+   "stage_2",
+   "stage_3"
+  ],
+  "bounds": [
+   [
+    -0.45,
+    0.0,
+    -0.45
+   ],
+   [
+    0.45,
+    1.96,
+    0.45
+   ]
+  ]
+ },
+ {
+  "key": "mining_truck",
+  "kind": "units",
+  "file": "models/units/mining_truck.glb",
+  "tris": 260,
+  "nodes": [
+   "mining_truck",
+   "spinner",
+   "bin",
+   "bin_ore"
+  ],
+  "bounds": [
+   [
+    -0.31,
+    -0.007,
+    -0.5
+   ],
+   [
+    0.31,
+    0.51,
+    0.53
+   ]
+  ]
+ },
+ {
+  "key": "repair_truck",
+  "kind": "units",
+  "file": "models/units/repair_truck.glb",
+  "tris": 528,
+  "nodes": [
+   "repair_truck",
+   "turret",
+   "barrel"
+  ],
+  "bounds": [
+   [
+    -0.285,
+    0.0,
+    -0.445
+   ],
+   [
+    0.285,
+    0.741,
+    0.445
+   ]
+  ]
+ },
+ {
+  "key": "outpost_truck",
+  "kind": "units",
+  "file": "models/units/outpost_truck.glb",
+  "tris": 608,
+  "nodes": [
+   "outpost_truck"
+  ],
+  "bounds": [
+   [
+    -0.32,
+    0.0,
+    -0.522
+   ],
+   [
+    0.32,
+    0.68,
+    0.522
+   ]
+  ]
+ },
+ {
+  "key": "scout_buggy",
+  "kind": "units",
+  "file": "models/units/scout_buggy.glb",
+  "tris": 552,
+  "nodes": [
+   "scout_buggy",
+   "turret",
+   "barrel"
+  ],
+  "bounds": [
+   [
+    -0.26,
+    0.0,
+    -0.32
+   ],
+   [
+    0.26,
+    0.44,
+    0.32
+   ]
+  ]
+ },
+ {
+  "key": "light_tank",
+  "kind": "units",
+  "file": "models/units/light_tank.glb",
+  "tris": 200,
+  "nodes": [
+   "light_tank",
+   "turret",
+   "barrel"
+  ],
+  "bounds": [
+   [
+    -0.31,
+    0.0,
+    -0.45
+   ],
+   [
+    0.31,
+    0.4,
+    0.687
+   ]
+  ]
+ },
+ {
+  "key": "heavy_tank",
+  "kind": "units",
+  "file": "models/units/heavy_tank.glb",
+  "tris": 292,
+  "nodes": [
+   "heavy_tank",
+   "turret",
+   "barrel"
+  ],
+  "bounds": [
+   [
+    -0.4,
+    0.0,
+    -0.6
+   ],
+   [
+    0.4,
+    0.4,
+    0.906
+   ]
+  ]
+ },
+ {
+  "key": "artillery",
+  "kind": "units",
+  "file": "models/units/artillery.glb",
+  "tris": 200,
+  "nodes": [
+   "artillery",
+   "turret",
+   "barrel"
+  ],
+  "bounds": [
+   [
+    -0.31,
+    0.0,
+    -0.45
+   ],
+   [
+    0.31,
+    1.121,
+    0.518
+   ]
+  ]
+ },
+ {
+  "key": "laser_tank",
+  "kind": "units",
+  "file": "models/units/laser_tank.glb",
+  "tris": 436,
+  "nodes": [
+   "laser_tank",
+   "turret",
+   "barrel"
+  ],
+  "bounds": [
+   [
+    -0.35,
+    0.0,
+    -0.55
+   ],
+   [
+    0.35,
+    0.4,
+    0.82
+   ]
+  ]
+ },
+ {
+  "key": "gunship",
+  "kind": "units",
+  "file": "models/units/gunship.glb",
+  "tris": 520,
+  "nodes": [
+   "gunship",
+   "spinner",
+   "turret",
+   "barrel"
+  ],
+  "bounds": [
+   [
+    -0.7,
+    -0.01,
+    -0.85
+   ],
+   [
+    0.7,
+    0.468,
+    0.7
+   ]
+  ]
+ },
+ {
+  "key": "stealth_bomber",
+  "kind": "units",
+  "file": "models/units/stealth_bomber.glb",
+  "tris": 72,
+  "nodes": [
+   "stealth_bomber"
+  ],
+  "bounds": [
+   [
+    -0.703,
+    0.07,
+    -0.384
+   ],
+   [
+    0.703,
+    0.2,
+    0.4
+   ]
+  ]
+ },
+ {
+  "key": "rifleman",
+  "kind": "units",
+  "file": "models/units/rifleman.glb",
+  "tris": 176,
+  "nodes": [
+   "rifleman",
+   "turret",
+   "barrel"
+  ],
+  "bounds": [
+   [
+    -0.13,
+    0.0,
+    -0.07
+   ],
+   [
+    0.13,
+    0.543,
+    0.29
+   ]
+  ]
+ },
+ {
+  "key": "rocket_soldier",
+  "kind": "units",
+  "file": "models/units/rocket_soldier.glb",
+  "tris": 324,
+  "nodes": [
+   "rocket_soldier",
+   "turret",
+   "barrel"
+  ],
+  "bounds": [
+   [
+    -0.13,
+    0.0,
+    -0.07
+   ],
+   [
+    0.13,
+    0.543,
+    0.265
+   ]
+  ]
+ },
+ {
+  "key": "laser_trooper",
+  "kind": "units",
+  "file": "models/units/laser_trooper.glb",
+  "tris": 188,
+  "nodes": [
+   "laser_trooper",
+   "turret",
+   "barrel"
+  ],
+  "bounds": [
+   [
+    -0.13,
+    0.0,
+    -0.07
+   ],
+   [
+    0.13,
+    0.543,
+    0.29
+   ]
+  ]
+ },
+ {
+  "key": "medic",
+  "kind": "units",
+  "file": "models/units/medic.glb",
+  "tris": 176,
+  "nodes": [
+   "medic"
+  ],
+  "bounds": [
+   [
+    -0.13,
+    0.0,
+    -0.118
+   ],
+   [
+    0.13,
+    0.543,
+    0.07
+   ]
+  ]
+ },
+ {
+  "key": "iron_ore",
+  "kind": "ores",
+  "file": "models/ores/iron_ore.glb",
+  "tris": 180,
+  "nodes": [
+   "iron_ore",
+   "cluster_0",
+   "cluster_1",
+   "cluster_2",
+   "cluster_3",
+   "cluster_4"
+  ],
+  "bounds": [
+   [
+    -0.417,
+    0.004,
+    -0.39
+   ],
+   [
+    0.404,
+    0.194,
+    0.443
+   ]
+  ]
+ },
+ {
+  "key": "copper_ore",
+  "kind": "ores",
+  "file": "models/ores/copper_ore.glb",
+  "tris": 1380,
+  "nodes": [
+   "copper_ore",
+   "cluster_0",
+   "cluster_1",
+   "cluster_2",
+   "cluster_3",
+   "cluster_4"
+  ],
+  "bounds": [
+   [
+    -0.427,
+    0.018,
+    -0.445
+   ],
+   [
+    0.424,
+    0.204,
+    0.423
+   ]
+  ]
+ },
+ {
+  "key": "crystal",
+  "kind": "ores",
+  "file": "models/ores/crystal.glb",
+  "tris": 150,
+  "nodes": [
+   "crystal",
+   "cluster_0",
+   "cluster_1",
+   "cluster_2",
+   "cluster_3",
+   "cluster_4"
+  ],
+  "bounds": [
+   [
+    -0.404,
+    -0.0,
+    -0.409
+   ],
+   [
+    0.411,
+    0.31,
+    0.4
+   ]
+  ]
+ },
+ {
+  "key": "uranium",
+  "kind": "ores",
+  "file": "models/ores/uranium.glb",
+  "tris": 480,
+  "nodes": [
+   "uranium",
+   "cluster_0",
+   "cluster_1",
+   "cluster_2",
+   "cluster_3",
+   "cluster_4"
+  ],
+  "bounds": [
+   [
+    -0.363,
+    0.0,
+    -0.373
+   ],
+   [
+    0.396,
+    0.239,
+    0.399
+   ]
+  ]
+ }
+]

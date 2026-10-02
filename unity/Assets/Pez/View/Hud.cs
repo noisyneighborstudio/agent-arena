@@ -30,6 +30,23 @@ namespace Pez.View
         readonly Dictionary<int, string> drafts = new Dictionary<int, string>();
         Vector2 ordersScroll;
 
+        static readonly Dictionary<string, Texture2D> icons = new Dictionary<string, Texture2D>();
+        /// <summary>Art-pack sidebar icon (Resources/PezIcons/<key>.png), or null.</summary>
+        public static Texture2D Icon(string key)
+        {
+            if (!icons.TryGetValue(key, out var t)) icons[key] = t = Resources.Load<Texture2D>("PezIcons/" + key);
+            return t;
+        }
+
+        /// <summary>Overlay an icon on the left of a build button.</summary>
+        void ButtonIcon(Rect r, string key)
+        {
+            var icon = Icon(key);
+            if (icon == null) return;
+            float h = r.height - 4;
+            GUI.DrawTexture(new Rect(r.x + 2, r.y + 2, h * 4f / 3f, h), icon, ScaleMode.ScaleAndCrop);
+        }
+
         bool IsAgentTeam(int t) => t >= 0 && t < W.Teams.Count && W.Teams[t].Controller == "llm";
 
         public bool IsOverUi(Vector2 mouse)
@@ -110,7 +127,7 @@ namespace Pez.View
             for (int t = 0; t < cfg.Controllers.Length; t++)
             {
                 GUILayout.BeginHorizontal();
-                GUILayout.Label($"<color=#{Hex(Mats.Team(t))}><b>{new[] { "Blue", "Red", "Green", "Yellow" }[t]}</b></color>", label, GUILayout.Width(80));
+                GUILayout.Label($"<color=#{Hex(Mats.Team(t))}><b>{Mats.TeamNames[t]}</b></color>", label, GUILayout.Width(80));
                 int cur = System.Array.IndexOf(ControllerOptions, cfg.Controllers[t]);
                 int next = GUILayout.Toolbar(System.Math.Max(0, cur), new[] { "Human", "Scripted AI", "Claude", "Codex", "External" });
                 if (next != cur) cfg.Controllers[t] = ControllerOptions[next];
@@ -169,13 +186,21 @@ namespace Pez.View
             foreach (var a in W.Alerts.Active(W, Team))
                 if (a.Priority >= Priority.High && (W.Tick - a.LastTick) * World.Dt < 8f) { top = a; break; }
             if (top == null) return;
+            // Status colours never use team hues: licorice banner, black/cream hazard stripe, cream text.
             bool crit = top.Priority == Priority.Critical;
-            float flash = crit ? 0.55f + Mathf.PingPong(Time.unscaledTime * 2.5f, 0.35f) : 0.75f;
-            var r = new Rect(sw / 2 - 230, 10, 460, 34);
-            Fill(r, crit ? new Color(0.55f, 0.04f, 0.03f, flash) : new Color(0.5f, 0.3f, 0.02f, flash));
-            var style = new GUIStyle(title) { alignment = TextAnchor.MiddleCenter, fontSize = 17 };
-            style.normal.textColor = Color.white;
-            if (GUI.Button(r, $"!! {AlertLog.Label(top.Kind)} ({(int)top.Pos.X},{(int)top.Pos.Y})  <size=11>click to view</size>", style))
+            var r = new Rect(sw / 2 - 250, 10, 500, 34);
+            Fill(r, new Color(0.08f, 0.07f, 0.07f, 0.92f));
+            float phase = crit ? Mathf.Repeat(Time.unscaledTime * 24f, 12f) : 0f;
+            for (int i = -1; i < 4; i++)
+            {
+                var cream = new Color(0.93f, 0.89f, 0.82f, 1f);
+                Fill(new Rect(r.x + 4 + i * 12 + phase, r.y + 4, 6, r.height - 8), cream);
+            }
+            Fill(new Rect(r.x, r.y, 4, r.height), new Color(0.08f, 0.07f, 0.07f, 1f));
+            Fill(new Rect(r.x + 52, r.y, 2, r.height), new Color(0.08f, 0.07f, 0.07f, 1f));
+            var style = new GUIStyle(title) { alignment = TextAnchor.MiddleLeft, fontSize = 15 };
+            style.normal.textColor = new Color(0.95f, 0.92f, 0.86f);
+            if (GUI.Button(new Rect(r.x + 60, r.y, r.width - 64, r.height), $"<b>{(crit ? "CRITICAL" : "HIGH")}</b>  {AlertLog.Label(top.Kind).ToLowerInvariant()} at {StateView.Sector(W.Map, top.Pos)}  <size=11>({(int)top.Pos.X},{(int)top.Pos.Y}) · click to view</size>", style))
                 Runner.Camera.LookAt(WorldView.W(top.Pos));
         }
 
@@ -258,6 +283,7 @@ namespace Pez.View
             // Shrink button rows so every structure and unit fits above the help text.
             int rows = (Defs.All.Values.Count(d => d.IsStructure && d.Buildable) + 1) / 2 + (Defs.All.Values.Count(d => !d.IsStructure && d.BuiltBy != Producer.None) + 1) / 2;
             float bh = Mathf.Clamp((sh - 100 - y - 50) / rows - 2, 22, 32);
+            var iconCell = new GUIStyle(cell) { padding = new RectOffset((int)((bh - 4) * 4f / 3f) + 6, 3, 2, 2) };
 
             GUI.Label(new Rect(x, y, 250, 18), "<b>STRUCTURES</b>", label); y += 19;
             col = 0;
@@ -268,8 +294,10 @@ namespace Pez.View
                 bool placing = input.PlacingKey == d.Key;
                 GUI.enabled = missing == null;
                 var tip = $"<b>{d.Name}</b>: {d.Description}\nCost: {d.CostText}" + (missing != null ? $"\n<color=#ff7755>{missing}</color>" : "");
-                if (GUI.Button(new Rect(x + col * (bw + 2), y, bw, bh), new GUIContent($"{(placing ? "▶" : "")}{d.Name}{extra}\n<size=9>{CostLine(d, t)}</size>", tip), cell))
+                var br = new Rect(x + col * (bw + 2), y, bw, bh);
+                if (GUI.Button(br, new GUIContent($"{(placing ? "▶" : "")}{d.Name}{extra}\n<size=9>{CostLine(d, t)}</size>", tip), Icon(d.Key) != null ? iconCell : cell))
                     input.PlacingKey = placing ? null : d.Key;
+                ButtonIcon(br, d.Key);
                 GUI.enabled = true;
                 col ^= 1;
                 if (col == 0) y += bh + 2;
@@ -287,7 +315,10 @@ namespace Pez.View
                 GUI.enabled = missing == null;
                 var tip = $"<b>{d.Name}</b>: {d.Description}\nCost: {d.CostText}" + (missing != null ? $"\n<color=#ff7755>{missing}</color>" : "");
                 var label2 = $"{d.Name}{(queued > 0 ? $" <color=#7fd0ff>x{queued}{prog}</color>" : "")}\n<size=9>{CostLine(d, t)}</size>";
-                if (GUI.Button(new Rect(x + col * (bw + 2), y, bw, bh), new GUIContent(label2, tip), cell))
+                var ur = new Rect(x + col * (bw + 2), y, bw, bh);
+                bool clicked = GUI.Button(ur, new GUIContent(label2, tip), Icon(d.Key) != null ? iconCell : cell);
+                ButtonIcon(ur, d.Key);
+                if (clicked)
                 {
                     if (Event.current.button == 1) input.Exec("type", "cancel", "unit", d.Key);
                     else input.Exec("type", "train", "unit", d.Key, "count", Event.current.shift ? 5 : 1);
@@ -363,6 +394,8 @@ namespace Pez.View
             if (sel.Count == 0) return;
             var r = new Rect(sw / 2 - 260, sh - 70, 520, 60);
             Fill(r, new Color(0, 0, 0, 0.55f));
+            var selIcon = sel.Count == 1 ? Icon(sel[0].Def.Key) : null;
+            if (selIcon != null) { GUI.DrawTexture(new Rect(r.x + 6, r.y + 6, 64, 48), selIcon, ScaleMode.ScaleAndCrop); r.x += 70; r.width -= 70; }
             string text;
             if (sel.Count == 1)
             {
@@ -462,6 +495,20 @@ namespace Pez.View
             // Camera focus marker
             var f = Runner.Camera.Focus;
             var mp = new Vector2(miniRect.x + f.x / m.W * size, miniRect.y + (1 - f.z / m.H) * size);
+            // Sector grid: A-H west to east, 1-8 north to south (the frame LLM orders and alerts use).
+            var gridCol = new Color(1f, 1f, 1f, 0.18f);
+            var lbl = new GUIStyle(small) { fontSize = 9, alignment = TextAnchor.UpperLeft, wordWrap = false };
+            lbl.normal.textColor = new Color(1f, 1f, 1f, 0.6f);
+            for (int i = 1; i < 8; i++)
+            {
+                Fill(new Rect(miniRect.x + size * i / 8f, miniRect.y, 1, size), gridCol);
+                Fill(new Rect(miniRect.x, miniRect.y + size * i / 8f, size, 1), gridCol);
+            }
+            for (int i = 0; i < 8; i++)
+            {
+                GUI.Label(new Rect(miniRect.x + size * i / 8f + 2, miniRect.y, 14, 12), ((char)('A' + i)).ToString(), lbl);
+                if (i > 0) GUI.Label(new Rect(miniRect.x + 1, miniRect.y + size * i / 8f + 1, 14, 12), (i + 1).ToString(), lbl);
+            }
             Fill(new Rect(mp.x - 3, mp.y - 3, 6, 6), Color.white);
             // Pulsing pings where alerts are firing.
             foreach (var a in W.Alerts.All)

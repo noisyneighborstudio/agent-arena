@@ -1,0 +1,48 @@
+{
+ "team": {
+  "blue": "#2E73FF",
+  "red": "#F22E1F",
+  "green": "#33D94D",
+  "yellow": "#FFD126"
+ },
+ "team_names": {
+  "blue": "Blueberry",
+  "red": "Cherry",
+  "green": "Lime",
+  "yellow": "Lemon"
+ },
+ "materials": {
+  "cream_plastic": "#ECE4D2",
+  "smoke_plastic": "#4A4F57",
+  "spring_steel": "#8E979F",
+  "foil": "#C8CDD3",
+  "kraft": "#A9845A",
+  "licorice": "#1E1B1D",
+  "sugar_pad": "#B9AE98",
+  "bone": "#F6F2E8",
+  "grape_vent": "#3A2440"
+ },
+ "emissive": {
+  "cyan_laser_optics": "#3FE6FF",
+  "magenta_plasma_fusion": "#FF3EC8",
+  "acid_uranium_electronics": "#B6FF3B",
+  "amber_industry_docking": "#FFA22E"
+ },
+ "ore": {
+  "iron_ore": "#8A3A24",
+  "copper_ore": "#C8742F",
+  "copper_patina": "#6FC2A6",
+  "crystal": "#8FE4FF",
+  "uranium": "#B6FF3B"
+ },
+ "terrain": {
+  "biscuit_ground": "#7D6E55",
+  "biscuit_light": "#8E7F63",
+  "biscuit_dark": "#6A5C46",
+  "licorice_cliff_top": "#4A3F40",
+  "licorice_cliff_face": "#241E20",
+  "cola_water": "#3A2218",
+  "shore": "#A08A68",
+  "cotton_candy_tree": "#8A7385"
+ }
+}

@@ -155,7 +155,7 @@ namespace Pez.Sim
         {
             Map = Map.Generate(size, size, seed);
             Paths = new Pathfinder(Map);
-            string[] names = { "Blue", "Red", "Green", "Yellow" };
+            string[] names = { "Blueberry", "Cherry", "Lime", "Lemon" }; // the Dispenser War's four flavours
             for (int t = 0; t < teamCount; t++)
             {
                 var team = new Team { Id = t, Name = names[t], StartPos = Map.Spawns[t], Visible = new bool[Map.W * Map.H], Explored = new bool[Map.W * Map.H] };

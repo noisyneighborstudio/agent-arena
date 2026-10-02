@@ -28,6 +28,8 @@ Material:
     - _DetailScale: 1.7
     - _DetailStrength: 0.12
     - _Glossiness: 0.15
+    - _GridStrength: 0.12
+    - _GridWidth: 0.025
     - _Metallic: 0
     m_Colors:
     - _Color: {r: 1, g: 1, b: 1, a: 1}

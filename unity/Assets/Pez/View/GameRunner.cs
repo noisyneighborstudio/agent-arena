@@ -95,7 +95,7 @@ namespace Pez.View
                     var type = c.Str("type", "?");
                     if (type == "say") return; // already shown as chat
                     var what = c.Str("structure") ?? c.Str("unit") ?? (c.ContainsKey("target") ? $"#{c.Num("target")}" : null);
-                    var where = !float.IsNaN(c.Num("x")) ? $" @{c.Num("x"):0},{c.Num("y"):0}" : "";
+                    var where = !float.IsNaN(c.Num("x")) ? $" @{c.Num("x"):0},{c.Num("y"):0} [{StateView.Sector(Game.World.Map, new Vec2(c.Num("x"), c.Num("y")))}]" : "";
                     var units = c.TryGetValue("units", out var u) ? (u is List<object> l ? $" {l.Count} units" : $" {u}") : "";
                     bool ok = r != null && r.TryGetValue("ok", out var o) && o is bool b && b;
                     summary = $"{type} {what}{units}{where} {(ok ? "<color=#7f7>✓</color>" : $"<color=#f75>✗ {r?.Str("error")}</color>")}";
@@ -120,15 +120,15 @@ namespace Pez.View
             sun.shadowNormalBias = 0.25f;
             RenderSettings.sun = sun;
             RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Trilight;
-            RenderSettings.ambientSkyColor = new Color(0.5f, 0.58f, 0.7f);
-            RenderSettings.ambientEquatorColor = new Color(0.42f, 0.42f, 0.38f);
-            RenderSettings.ambientGroundColor = new Color(0.2f, 0.18f, 0.14f);
-            RenderSettings.fog = true;
+            RenderSettings.ambientSkyColor = new Color(0.62f, 0.62f, 0.66f);
+            RenderSettings.ambientEquatorColor = new Color(0.5f, 0.47f, 0.42f);
+            RenderSettings.ambientGroundColor = new Color(0.26f, 0.22f, 0.18f);
+            RenderSettings.fog = false; // no distance haze in an orthographic view
             RenderSettings.fogMode = FogMode.Linear;
             RenderSettings.fogColor = new Color(0.55f, 0.62f, 0.68f);
             RenderSettings.fogStartDistance = 55f;
             RenderSettings.fogEndDistance = 160f;
-            QualitySettings.shadowDistance = 110f;
+            QualitySettings.shadowDistance = 260f; // the orthographic camera sits 150 units back
             QualitySettings.shadowCascades = 4;
             QualitySettings.shadowResolution = ShadowResolution.VeryHigh;
             QualitySettings.antiAliasing = 4;
@@ -139,10 +139,11 @@ namespace Pez.View
             var cam = camGo.GetComponent<UnityEngine.Camera>();
             if (cam == null) cam = camGo.AddComponent<UnityEngine.Camera>();
             cam.clearFlags = CameraClearFlags.SolidColor;
-            cam.backgroundColor = RenderSettings.fogColor;
+            cam.backgroundColor = PezPalette.TerrainLicoriceCliffFace;
+            cam.orthographic = true; // art pack decision 9: off-axis orthographic
             cam.fieldOfView = 38f;
-            cam.nearClipPlane = 0.3f;
-            cam.farClipPlane = 400f;
+            cam.nearClipPlane = 1f;
+            cam.farClipPlane = 500f;
             cam.allowHDR = true;
             cam.allowMSAA = true;
             if (camGo.GetComponent<AudioListener>() == null) camGo.AddComponent<AudioListener>();
@@ -234,8 +235,8 @@ namespace Pez.View
             View.Init(viewWorld, HumanTeam);
             Camera.Bounds = new Vector2(viewWorld.Map.W, viewWorld.Map.H);
             var focus = HumanTeam >= 0 ? viewWorld.Teams[HumanTeam].StartPos : new Vec2(viewWorld.Map.W / 2f, viewWorld.Map.H / 2f);
-            Camera.LookAt(WorldView.W(focus) + new Vector3(4, 0, 2));
-            Camera.Distance = HumanTeam >= 0 ? 24f : 60f;
+            Camera.LookAt(WorldView.W(focus) + new Vector3(3, 0, 3));
+            Camera.Distance = HumanTeam >= 0 ? 9f : 30f;
             CommandFeed.Clear();
             // A restart that came from the API (e.g. the LLM arena) should start playing immediately.
             if (!startingFromMenu && !firstView) InMenu = false;

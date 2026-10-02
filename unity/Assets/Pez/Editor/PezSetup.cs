@@ -1,4 +1,5 @@
 using System.IO;
+using System.Linq;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -68,6 +69,24 @@ namespace Pez.EditorTools
             var args = System.Environment.GetCommandLineArgs();
             int i = System.Array.IndexOf(args, "-pezOut");
             return i >= 0 && i + 1 < args.Length ? args[i + 1] : "Build/Pez.app";
+        }
+
+        /// <summary>Batchmode check that the art pack imported: node names, materials and shaders per model.</summary>
+        [MenuItem("Pez/Verify Models")]
+        public static void VerifyModels()
+        {
+            var models = Resources.LoadAll<GameObject>("PezModels");
+            Debug.Log($"PEZVERIFY {models.Length} models");
+            foreach (var m in models)
+            {
+                var nodes = string.Join(",", m.GetComponentsInChildren<Transform>(true).Select(t => t.name)
+                    .Where(n => n == "turret" || n == "barrel" || n == "spinner" || n == "bin" || n == "bin_ore" || n == "door" || n == "lift" || n.StartsWith("stage_") || n.StartsWith("cluster_")));
+                var mats = m.GetComponentsInChildren<Renderer>(true).SelectMany(r => r.sharedMaterials).Where(x => x != null).Select(x => $"{x.name}[{x.shader.name}]").Distinct();
+                var b = new Bounds();
+                foreach (var r in m.GetComponentsInChildren<Renderer>(true)) b.Encapsulate(r.bounds);
+                Debug.Log($"PEZVERIFY {m.name}: nodes={nodes} bounds={b.min}..{b.max} mats={string.Join(" ", mats)}");
+            }
+            if (Application.isBatchMode) EditorApplication.Exit(models.Length > 0 ? 0 : 1);
         }
 
         [MenuItem("Pez/Build macOS")]

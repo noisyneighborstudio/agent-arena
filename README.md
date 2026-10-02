@@ -13,6 +13,18 @@ This is an MVP spike. All the art is procedural, built from primitives, so the g
 - **Combat:** A* pathfinding, aircraft that ignore terrain, weapons that can or can't hit air, splash damage, projectiles, beams and artillery arcs.
 - **Win condition:** destroy every enemy structure.
 
+## Art
+
+The look comes from the v0.2 art handoff, "The Dispenser War". The handoff is in [docs/art/](docs/art/): `HANDOFF.md`, `BRIEF_v2.md`, the motion spec and the boards.
+
+- **Models:** 34 glTF blockout models (16 structures, 14 units, 4 ore tiles) in `unity/Assets/Pez/Resources/PezModels/`, imported with glTFast.
+  - The `M_Team` material on each model is tinted per team flavour: Blueberry, Cherry, Lime, Lemon.
+  - The game drives the pack's `PezMotion` and `PezEmerge` scripts from the simulation: turrets aim, barrels recoil, doors roll up for new units, truck bins fill and tip, airfield lifts rise, and buildings rise in four stages. Destroyed units leave wrecks for a while.
+- **Placeholders:** units the pack doesn't cover yet use procedural placeholder shapes. Those are the engineer, sniper, commando, APC, flak track, mine layer, mine, mammoth tank, recon drone and transport chopper.
+- **Camera:** off-axis orthographic (yaw 45°, pitch 55°). The terrain is biscuit ground with a faint tile grid, licorice cliffs, cola water and cotton-candy trees.
+- **HUD:** the sidebar uses the pack's icons, and the minimap shows sectors A–H (west to east) by 1–8 (north to south). Alerts and the LLM order feed include the sector.
+- **Regenerating the blockouts:** the pack's generators are in `art-src/`.
+
 ## Layout
 
 ```
@@ -42,7 +54,7 @@ Controls:
 
 ## Battle of the LLMs
 
-The easiest way: open the game, set Blue to **Claude** and Red to **Codex**, and press Start. The game launches both CLIs itself and switches to spectator mode. To start straight into a battle, run `open unity/Build/Pez.app --args -team0 claude -team1 codex -autostart`.
+The easiest way: open the game, set Blueberry to **Claude** and Cherry to **Codex**, and press Start. The game launches both CLIs itself and switches to spectator mode. To start straight into a battle, run `open unity/Build/Pez.app --args -team0 claude -team1 codex -autostart`.
 
 **Watching from another machine:** the game streams its screen, read-only, at `http://127.0.0.1:7778/`. To reach it from your tailnet, run `tailscale serve --bg --https=8454 http://127.0.0.1:7778`. The stream has no authentication, and it can't control the game.
 
@@ -65,13 +77,13 @@ Each agent runs non-interactively, has only the `pez` MCP tools, and is relaunch
 
 ## Play against an LLM by chatting
 
-You command Blue with the mouse, and the LLM gets Red through the MCP server:
+You command Blueberry with the mouse, and the LLM gets Cherry through the MCP server:
 
 ```bash
 claude mcp add pez -e PEZ_TEAM=1 -e PEZ_PLAYER=Claude -- node /path/to/pez/mcp/server.js
 ```
 
-Then tell Claude something like "you're Red in Pez, crush me". You can also coach an LLM teammate through chat: give it your own team (`PEZ_TEAM=0`) and tell it what to do.
+Then tell Claude something like "you're Cherry in Pez, crush me". You can also coach an LLM teammate through chat: give it your own team (`PEZ_TEAM=0`) and tell it what to do.
 
 ### MCP tools
 

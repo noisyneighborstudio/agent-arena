@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace Pez.View
@@ -7,6 +8,11 @@ namespace Pez.View
     {
         public Transform Root, Body, Turret, Barrel, Spinner, Bin;
         public float Altitude;
+        // Art-pack models (glTF from the v0.2 handoff) are driven by the pack's own components.
+        public GameObject Model;
+        public PezMotion Motion;
+        public PezEmerge Emerge;
+        public bool HasModel => Model != null;
         public Vector3 BarrelRest;
     }
 
@@ -44,11 +50,68 @@ namespace Pez.View
             return t;
         }
 
+        static readonly Dictionary<string, GameObject> modelCache = new Dictionary<string, GameObject>();
+        static readonly Dictionary<(Material, int), Material> tinted = new Dictionary<(Material, int), Material>();
+        static readonly Dictionary<string, float> Altitudes = new Dictionary<string, float> { { "gunship", 2.4f }, { "stealth_bomber", 3.2f } };
+
+        /// <summary>The art pack's model for a key (Resources/PezModels/<key>.glb), or null if there isn't one yet.</summary>
+        public static GameObject ModelFor(string key)
+        {
+            if (!modelCache.TryGetValue(key, out var m)) modelCache[key] = m = Resources.Load<GameObject>("PezModels/" + key);
+            return m;
+        }
+
+        /// <summary>Swap every M_Team material for a copy tinted to the team's flavour.</summary>
+        public static void TintTeam(GameObject go, int team)
+        {
+            var color = Mats.Team(team);
+            foreach (var r in go.GetComponentsInChildren<Renderer>(true))
+            {
+                var mats = r.sharedMaterials;
+                bool changed = false;
+                for (int i = 0; i < mats.Length; i++)
+                {
+                    var m = mats[i];
+                    if (m == null || !m.name.StartsWith("M_Team")) continue;
+                    if (!tinted.TryGetValue((m, team), out var t))
+                    {
+                        t = new Material(m) { name = m.name + "_t" + team, enableInstancing = true };
+                        t.color = color; // baseColorFactor is the shader's [MainColor]
+                        tinted[(m, team)] = t;
+                    }
+                    mats[i] = t;
+                    changed = true;
+                }
+                if (changed) r.sharedMaterials = mats;
+                r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
+                r.receiveShadows = true;
+            }
+        }
+
         public static Rig Build(string key, int team)
         {
             var root = new GameObject(key).transform;
             var rig = new Rig { Root = root };
             rig.Body = Empty(root, "body");
+            var prefab = ModelFor(key);
+            if (prefab != null)
+            {
+                var go = Object.Instantiate(prefab, rig.Body, false);
+                go.name = key; // PezMotion reads its profile from the object name
+                TintTeam(go, team);
+                rig.Model = go;
+                rig.Turret = PezMotion.FindDeep(go.transform, "turret");
+                rig.Barrel = PezMotion.FindDeep(go.transform, "barrel");
+                rig.Spinner = PezMotion.FindDeep(go.transform, "spinner");
+                rig.Bin = PezMotion.FindDeep(go.transform, "bin");
+                rig.Motion = go.AddComponent<PezMotion>();
+                // Visual turrets keep up with the sim's aim so shots leave the barrel, not the side of it.
+                if (rig.Motion.profile.turretYawSpeed > 0) rig.Motion.profile.turretYawSpeed = Mathf.Max(rig.Motion.profile.turretYawSpeed, 240f);
+                rig.Emerge = go.AddComponent<PezEmerge>();
+                if (Altitudes.TryGetValue(key, out var alt)) rig.Altitude = alt;
+                if (rig.Barrel != null) rig.BarrelRest = rig.Barrel.localPosition;
+                return rig;
+            }
             var tc = Mats.Team(team);
             var teamMat = Mats.Lit(tc, 0.45f, 0.25f);
             var teamDark = Mats.Lit(tc * 0.55f, 0.35f, 0.2f);

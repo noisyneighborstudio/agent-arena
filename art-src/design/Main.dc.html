@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Pez style guide</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&amp;family=IBM+Plex+Mono:wght@400;500&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#8FE4FF}a:hover{color:#C9F3FF}
+</style>
+</helmet>
+<div style="width: 1600px; height: 3560px; box-sizing: border-box; padding: 64px; background: #101317; color: #E8EBEE; font-family: 'IBM Plex Sans', sans-serif; display: flex; flex-direction: column; gap: 48px">
+
+<header style="display: flex; justify-content: space-between; align-items: flex-end; gap: 48px; padding-bottom: 32px; border-bottom: 1px solid #2A3138">
+<div>
+<div style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; letter-spacing: 0.2em; color: #9BA5AE">VISUAL STYLE GUIDE · v0.1 · THE DISPENSER WAR</div>
+<h1 style="margin: 10px 0 0; font-family: 'Chakra Petch', sans-serif; font-weight: 700; font-size: 104px; line-height: 0.9; letter-spacing: 0.02em">PEZ</h1>
+</div>
+<p style="margin: 0; max-width: 660px; font-size: 18px; line-height: 1.55; color: #C5CCD2">Four flavours go to war over sugar. Armies are built from molded plastic, spring steel and foil: toys engineered like real machines. The world stays unflavoured and muted so that team colour and glow carry the meaning. Every asset must read from 25 units up, where one tile is about 40 px.</p>
+</header>
+
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 48px">
+<section>
+<div style="display: flex; align-items: baseline; gap: 12px; margin-bottom: 20px"><span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #8A949D">01</span><h2 style="margin: 0; font-family: 'Chakra Petch', sans-serif; font-weight: 600; font-size: 22px; letter-spacing: 0.06em; text-transform: uppercase">Team flavours</h2></div>
+<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px">
+<div><div style="height: 120px; border-radius: 10px; background: #2E73FF"></div><div style="margin-top: 10px; font-weight: 600">Blueberry</div><div style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #9BA5AE">Blue #2E73FF</div></div>
+<div><div style="height: 120px; border-radius: 10px; background: #F22E1F"></div><div style="margin-top: 10px; font-weight: 600">Cherry</div><div style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #9BA5AE">Red #F22E1F</div></div>
+<div><div style="height: 120px; border-radius: 10px; background: #33D94D"></div><div style="margin-top: 10px; font-weight: 600">Lime</div><div style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #9BA5AE">Green #33D94D</div></div>
+<div><div style="height: 120px; border-radius: 10px; background: #FFD126"></div><div style="margin-top: 10px; font-weight: 600">Lemon</div><div style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #9BA5AE">Yellow #FFD126</div></div>
+</div>
+<ul style="margin: 20px 0 0; padding-left: 18px; font-size: 15px; line-height: 1.6; color: #C5CCD2">
+<li>The flavour is the glossy plastic of heads, caps and roofs. It is never emissive.</li>
+<li>15–25% of the surface; infantry and aircraft 35%. Top-facing surfaces first, because the camera mostly sees roofs.</li>
+<li>One mask channel, tinted at runtime. Nothing else in the world uses these four hues at full saturation.</li>
+</ul>
+</section>
+
+<section>
+<div style="display: flex; align-items: baseline; gap: 12px; margin-bottom: 20px"><span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #8A949D">02</span><h2 style="margin: 0; font-family: 'Chakra Petch', sans-serif; font-weight: 600; font-size: 22px; letter-spacing: 0.06em; text-transform: uppercase">Unflavoured materials</h2></div>
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px">
+<div style="background: #181D22; border-radius: 10px; padding: 12px"><div style="height: 56px; border-radius: 6px; background: #ECE4D2"></div><div style="margin-top: 10px; font-weight: 600">Cream plastic</div><div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #9BA5AE">#ECE4D2 · M0 S.80</div><div style="font-size: 13px; color: #9BA5AE; margin-top: 4px">Building shells, walls</div></div>
+<div style="background: #181D22; border-radius: 10px; padding: 12px"><div style="height: 56px; border-radius: 6px; background: #4A4F57"></div><div style="margin-top: 10px; font-weight: 600">Smoke plastic</div><div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #9BA5AE">#4A4F57 · M0 S.75</div><div style="font-size: 13px; color: #9BA5AE; margin-top: 4px">Vehicle stems, hulls</div></div>
+<div style="background: #181D22; border-radius: 10px; padding: 12px"><div style="height: 56px; border-radius: 6px; background: #8E979F"></div><div style="margin-top: 10px; font-weight: 600">Spring steel</div><div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #9BA5AE">#8E979F · M.70 S.60</div><div style="font-size: 13px; color: #9BA5AE; margin-top: 4px">Barrels, coils, hinges</div></div>
+<div style="background: #181D22; border-radius: 10px; padding: 12px"><div style="height: 56px; border-radius: 6px; background: #C8CDD3"></div><div style="margin-top: 10px; font-weight: 600">Foil</div><div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #9BA5AE">#C8CDD3 · M.55 S.65</div><div style="font-size: 13px; color: #9BA5AE; margin-top: 4px">Crinkled normal; armour wrap</div></div>
+<div style="background: #181D22; border-radius: 10px; padding: 12px"><div style="height: 56px; border-radius: 6px; background: #A9845A"></div><div style="margin-top: 10px; font-weight: 600">Kraft card</div><div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #9BA5AE">#A9845A · M0 S.20</div><div style="font-size: 13px; color: #9BA5AE; margin-top: 4px">Crates, packaging, pads</div></div>
+<div style="background: #181D22; border-radius: 10px; padding: 12px"><div style="height: 56px; border-radius: 6px; background: repeating-linear-gradient(135deg, #1E1B1D 0 10px, #ECE4D2 10px 20px)"></div><div style="margin-top: 10px; font-weight: 600">Licorice + hazard</div><div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #9BA5AE">#1E1B1D · M0 S.60</div><div style="font-size: 13px; color: #9BA5AE; margin-top: 4px">Tracks, tyres; black/cream stripe ≤3%</div></div>
+</div>
+</section>
+</div>
+
+<section>
+<div style="display: flex; align-items: baseline; gap: 12px; margin-bottom: 20px"><span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #8A949D">03</span><h2 style="margin: 0; font-family: 'Chakra Petch', sans-serif; font-weight: 600; font-size: 22px; letter-spacing: 0.06em; text-transform: uppercase">Glow means function</h2><span style="font-size: 15px; color: #9BA5AE; margin-left: 12px">Emissive area ≤5% of a model. Same for every team.</span></div>
+<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px">
+<div style="background: #181D22; border-radius: 12px; padding: 22px; display: flex; flex-direction: column; gap: 10px">
+<div style="width: 40px; height: 40px; border-radius: 50%; background: #3FE6FF; box-shadow: 0 0 28px #3FE6FF"></div>
+<div style="font-family: 'Chakra Petch', sans-serif; font-weight: 600; font-size: 20px; margin-top: 6px">Rock-candy cyan</div>
+<div style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #9BA5AE">#3FE6FF</div>
+<div style="font-size: 15px; line-height: 1.5; color: #C5CCD2">Lasers and optics. laser_tower, laser_tank, laser_trooper, optics_lab prism, crystal ore, power_plant cores.</div>
+</div>
+<div style="background: #181D22; border-radius: 12px; padding: 22px; display: flex; flex-direction: column; gap: 10px">
+<div style="width: 40px; height: 40px; border-radius: 50%; background: #FF3EC8; box-shadow: 0 0 28px #FF3EC8"></div>
+<div style="font-family: 'Chakra Petch', sans-serif; font-weight: 600; font-size: 20px; margin-top: 6px">Taffy magenta</div>
+<div style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #9BA5AE">#FF3EC8</div>
+<div style="font-size: 15px; line-height: 1.5; color: #C5CCD2">Plasma and fusion. fusion_reactor core, plasma beam effects. Reserved for plasma weapons only.</div>
+</div>
+<div style="background: #181D22; border-radius: 12px; padding: 22px; display: flex; flex-direction: column; gap: 10px">
+<div style="width: 40px; height: 40px; border-radius: 50%; background: #B6FF3B; box-shadow: 0 0 28px #B6FF3B"></div>
+<div style="font-family: 'Chakra Petch', sans-serif; font-weight: 600; font-size: 20px; margin-top: 6px">Sour acid</div>
+<div style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #9BA5AE">#B6FF3B · revised</div>
+<div style="font-size: 15px; line-height: 1.5; color: #C5CCD2">Uranium and electronics. Pushed toward chartreuse and always glowing, so it never reads as Lime team.</div>
+</div>
+<div style="background: #181D22; border-radius: 12px; padding: 22px; display: flex; flex-direction: column; gap: 10px">
+<div style="width: 40px; height: 40px; border-radius: 50%; background: #FFA22E; box-shadow: 0 0 28px #FFA22E"></div>
+<div style="font-family: 'Chakra Petch', sans-serif; font-weight: 600; font-size: 20px; margin-top: 6px">Caramel amber</div>
+<div style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #9BA5AE">#FFA22E</div>
+<div style="font-size: 15px; line-height: 1.5; color: #C5CCD2">Industry and docking. Refinery dock, vehicle exits, airfield, nav and warning beacons.</div>
+</div>
+</div>
+</section>
+
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 48px">
+<section>
+<div style="display: flex; align-items: baseline; gap: 12px; margin-bottom: 20px"><span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #8A949D">04</span><h2 style="margin: 0; font-family: 'Chakra Petch', sans-serif; font-weight: 600; font-size: 22px; letter-spacing: 0.06em; text-transform: uppercase">Shape language: everything dispenses</h2></div>
+<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px">
+<div style="background: #181D22; border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 8px">
+<svg viewBox="0 0 120 96" style="width: 100%; height: 96px"><rect x="44" y="10" width="32" height="80" rx="8" fill="#4A4F57"></rect><rect x="47" y="13" width="10" height="74" rx="4" fill="#5C626B"></rect><rect x="52" y="48" width="16" height="32" rx="3" fill="#2A2E33"></rect><rect x="54" y="51" width="12" height="5" rx="2" fill="#2E73FF"></rect><rect x="54" y="59" width="12" height="5" rx="2" fill="#2E73FF"></rect><rect x="54" y="67" width="12" height="5" rx="2" fill="#2E73FF"></rect></svg>
+<div style="font-weight: 600">Stem</div><div style="font-size: 14px; line-height: 1.45; color: #9BA5AE">The body. Hulls and towers are stems; a window shows the magazine.</div>
+</div>
+<div style="background: #181D22; border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 8px">
+<svg viewBox="0 0 120 96" style="width: 100%; height: 96px"><rect x="40" y="50" width="40" height="40" rx="6" fill="#4A4F57"></rect><g transform="rotate(-24 40 50)"><rect x="38" y="20" width="44" height="32" rx="9" fill="#2E73FF"></rect><rect x="44" y="25" width="14" height="5" rx="2.5" fill="#FFFFFF" opacity="0.5"></rect><rect x="38" y="46" width="44" height="5" fill="#1D4FC4"></rect></g><circle cx="40" cy="50" r="4" fill="#8E979F"></circle></svg>
+<div style="font-weight: 600">Head</div><div style="font-size: 14px; line-height: 1.45; color: #9BA5AE">Flip-top, hinged, team colour. Heads are turrets, cranes and hatches.</div>
+</div>
+<div style="background: #181D22; border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 8px">
+<svg viewBox="0 0 120 96" style="width: 100%; height: 96px"><polyline points="40,14 80,22 40,30 80,38 40,46 80,54 40,62 80,70 40,78 80,86" fill="none" style="stroke: #8E979F; stroke-width: 6; stroke-linecap: round; stroke-linejoin: round"></polyline><polyline points="40,14 80,22 40,30 80,38 40,46" fill="none" style="stroke: #C3CAD0; stroke-width: 2; stroke-linecap: round"></polyline></svg>
+<div style="font-weight: 600">Spring</div><div style="font-size: 14px; line-height: 1.45; color: #9BA5AE">Visible coil means power or reload. Compressed coil = loaded.</div>
+</div>
+<div style="background: #181D22; border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 8px">
+<svg viewBox="0 0 120 96" style="width: 100%; height: 96px"><rect x="34" y="62" width="52" height="20" rx="8" fill="#A9845A"></rect><rect x="38" y="40" width="48" height="20" rx="8" fill="#8A3A24" transform="rotate(-6 62 50)"></rect><rect x="42" y="44" width="16" height="5" rx="2.5" fill="#B4553A" transform="rotate(-6 62 50)"></rect><rect x="40" y="18" width="44" height="20" rx="8" fill="#ECE4D2" transform="rotate(5 62 28)"></rect></svg>
+<div style="font-weight: 600">Brick</div><div style="font-size: 14px; line-height: 1.45; color: #9BA5AE">Rounded candy brick. Ammo, ore, payload and the resource icon base.</div>
+</div>
+</div>
+</section>
+
+<section>
+<div style="display: flex; align-items: baseline; gap: 12px; margin-bottom: 20px"><span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #8A949D">05</span><h2 style="margin: 0; font-family: 'Chakra Petch', sans-serif; font-weight: 600; font-size: 22px; letter-spacing: 0.06em; text-transform: uppercase">Tell the tech apart</h2></div>
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px">
+<div style="background: #181D22; border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 8px">
+<svg viewBox="0 0 160 120" style="width: 100%; height: 132px; background: #2A2620; border-radius: 8px">
+<rect x="58" y="30" width="52" height="80" rx="9" fill="#000000" opacity="0.3"></rect>
+<rect x="52" y="24" width="12" height="76" rx="5" fill="#1E1B1D"></rect><rect x="96" y="24" width="12" height="76" rx="5" fill="#1E1B1D"></rect>
+<rect x="60" y="26" width="40" height="72" rx="8" fill="#4A4F57"></rect><rect x="63" y="29" width="12" height="66" rx="5" fill="#5C626B"></rect>
+<rect x="70" y="72" width="20" height="20" rx="3" fill="#2A2E33"></rect><rect x="72" y="74" width="16" height="4" rx="2" fill="#2E73FF"></rect><rect x="72" y="80" width="16" height="4" rx="2" fill="#2E73FF"></rect><rect x="72" y="86" width="16" height="4" rx="2" fill="#2E73FF"></rect>
+<rect x="75" y="10" width="10" height="32" rx="2" fill="#8E979F"></rect><rect x="72" y="5" width="16" height="9" rx="3" fill="#A9B1B8"></rect>
+<rect x="66" y="38" width="28" height="26" rx="7" fill="#2E73FF"></rect><rect x="66" y="58" width="28" height="3" fill="#1D4FC4"></rect><rect x="69" y="41" width="11" height="4" rx="2" fill="#FFFFFF" opacity="0.5"></rect>
+</svg>
+<div style="font-weight: 600">Conventional</div><div style="font-size: 14px; line-height: 1.45; color: #9BA5AE">No glow. Thick steel barrel, brick muzzle. Fires bricks; smoke and sugar dust.</div>
+</div>
+<div style="background: #181D22; border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 8px">
+<svg viewBox="0 0 160 120" style="width: 100%; height: 132px; background: #2A2620; border-radius: 8px">
+<defs><filter id="gl1" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="2.5" result="b"></feGaussianBlur><feMerge><feMergeNode in="b"></feMergeNode><feMergeNode in="SourceGraphic"></feMergeNode></feMerge></filter></defs>
+<rect x="58" y="30" width="52" height="80" rx="9" fill="#000000" opacity="0.3"></rect>
+<rect x="52" y="24" width="12" height="76" rx="5" fill="#1E1B1D"></rect><rect x="96" y="24" width="12" height="76" rx="5" fill="#1E1B1D"></rect>
+<rect x="60" y="26" width="40" height="72" rx="8" fill="#4A4F57"></rect><rect x="63" y="29" width="12" height="66" rx="5" fill="#5C626B"></rect>
+<rect x="70" y="72" width="20" height="20" rx="3" fill="#2A2E33"></rect><rect x="72" y="76" width="16" height="12" rx="3" fill="#3FE6FF" opacity="0.55"></rect>
+<rect x="78" y="14" width="4" height="28" fill="#8E979F"></rect>
+<g filter="url(#gl1)"><rect x="74" y="20" width="12" height="3" rx="1.5" fill="#3FE6FF"></rect><rect x="74" y="27" width="12" height="3" rx="1.5" fill="#3FE6FF"></rect><rect x="74" y="34" width="12" height="3" rx="1.5" fill="#3FE6FF"></rect><polygon points="80,1 87,10 80,16 73,10" fill="#3FE6FF"></polygon></g><polygon points="80,2 84,9 80,11" fill="#E8FDFF"></polygon>
+<rect x="66" y="38" width="28" height="26" rx="7" fill="#2E73FF"></rect><rect x="66" y="58" width="28" height="3" fill="#1D4FC4"></rect><rect x="69" y="41" width="11" height="4" rx="2" fill="#FFFFFF" opacity="0.5"></rect>
+</svg>
+<div style="font-weight: 600">Laser</div><div style="font-size: 14px; line-height: 1.45; color: #9BA5AE">Thin barrel, cyan coils, rock-candy prism tip. Hard straight beam.</div>
+</div>
+<div style="background: #181D22; border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 8px">
+<svg viewBox="0 0 160 120" style="width: 100%; height: 132px; background: #2A2620; border-radius: 8px">
+<defs><filter id="gl2" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="2.5" result="b"></feGaussianBlur><feMerge><feMergeNode in="b"></feMergeNode><feMergeNode in="SourceGraphic"></feMergeNode></feMerge></filter></defs>
+<rect x="58" y="30" width="52" height="80" rx="9" fill="#000000" opacity="0.3"></rect>
+<rect x="52" y="24" width="12" height="76" rx="5" fill="#1E1B1D"></rect><rect x="96" y="24" width="12" height="76" rx="5" fill="#1E1B1D"></rect>
+<rect x="60" y="26" width="40" height="72" rx="8" fill="#4A4F57"></rect><rect x="63" y="29" width="12" height="66" rx="5" fill="#5C626B"></rect>
+<rect x="70" y="72" width="20" height="20" rx="3" fill="#2A2E33"></rect><circle cx="80" cy="82" r="6" fill="#FF3EC8" opacity="0.55"></circle>
+<rect x="71" y="14" width="18" height="30" rx="8" fill="#4A2D44"></rect>
+<g filter="url(#gl2)"><circle cx="80" cy="51" r="21" fill="none" style="stroke: #FF3EC8; stroke-width: 2.5"></circle><circle cx="80" cy="18" r="6.5" fill="#FF3EC8"></circle></g><circle cx="80" cy="18" r="2.5" fill="#FFE3F6"></circle>
+<rect x="66" y="38" width="28" height="26" rx="7" fill="#2E73FF"></rect><rect x="66" y="58" width="28" height="3" fill="#1D4FC4"></rect><rect x="69" y="41" width="11" height="4" rx="2" fill="#FFFFFF" opacity="0.5"></rect>
+</svg>
+<div style="font-weight: 600">Plasma</div><div style="font-size: 14px; line-height: 1.45; color: #9BA5AE">Stubby emitter, magenta ring and core. Soft taffy bolt that wobbles in flight.</div>
+</div>
+</div>
+</section>
+</div>
+
+<div style="display: grid; grid-template-columns: 2fr 1fr; gap: 48px">
+<section>
+<div style="display: flex; align-items: baseline; gap: 12px; margin-bottom: 20px"><span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #8A949D">06</span><h2 style="margin: 0; font-family: 'Chakra Petch', sans-serif; font-weight: 600; font-size: 22px; letter-spacing: 0.06em; text-transform: uppercase">Ores: raw candy</h2><span style="font-size: 15px; color: #9BA5AE; margin-left: 12px">4–6 clusters per tile, 0.1–0.35 tall, shrinking as mined</span></div>
+<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px">
+<div style="background: #181D22; border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 8px">
+<svg viewBox="0 0 160 96" style="width: 100%; height: 96px; background: #2A2620; border-radius: 8px"><ellipse cx="80" cy="66" rx="58" ry="16" fill="#5A2416" opacity="0.45"></ellipse><rect x="34" y="44" width="40" height="20" rx="8" fill="#8A3A24" transform="rotate(-14 54 54)"></rect><rect x="38" y="46" width="16" height="5" rx="2.5" fill="#B4553A" transform="rotate(-14 54 54)"></rect><rect x="70" y="30" width="34" height="18" rx="7" fill="#7A321F" transform="rotate(20 87 39)"></rect><rect x="74" y="32" width="12" height="4" rx="2" fill="#B4553A" transform="rotate(20 87 39)"></rect><rect x="92" y="50" width="38" height="20" rx="8" fill="#8A3A24" transform="rotate(-4 111 60)"></rect><rect x="96" y="52" width="14" height="5" rx="2.5" fill="#B4553A" transform="rotate(-4 111 60)"></rect></svg>
+<div style="font-weight: 600">iron_ore</div><div style="font-size: 14px; color: #9BA5AE">Cinnamon bricks, rust red, matte sugar crust</div>
+</div>
+<div style="background: #181D22; border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 8px">
+<svg viewBox="0 0 160 96" style="width: 100%; height: 96px; background: #2A2620; border-radius: 8px"><ellipse cx="80" cy="66" rx="58" ry="16" fill="#6B3D18" opacity="0.45"></ellipse><rect x="30" y="42" width="42" height="22" rx="9" fill="#C8742F" transform="rotate(10 51 53)"></rect><circle cx="44" cy="50" r="3" fill="#6FC2A6"></circle><circle cx="58" cy="56" r="4" fill="#6FC2A6"></circle><rect x="76" y="26" width="36" height="20" rx="8" fill="#B5662A" transform="rotate(-18 94 36)"></rect><circle cx="98" cy="34" r="3.5" fill="#6FC2A6"></circle><rect x="96" y="50" width="36" height="20" rx="8" fill="#C8742F"></rect><rect x="100" y="52" width="12" height="4" rx="2" fill="#E3965A"></rect><circle cx="122" cy="62" r="3" fill="#6FC2A6"></circle></svg>
+<div style="font-weight: 600">copper_ore</div><div style="font-size: 14px; color: #9BA5AE">Orange bricks with mint-speckle patina</div>
+</div>
+<div style="background: #181D22; border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 8px">
+<svg viewBox="0 0 160 96" style="width: 100%; height: 96px; background: #2A2620; border-radius: 8px"><defs><filter id="gl3" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="3" result="b"></feGaussianBlur><feMerge><feMergeNode in="b"></feMergeNode><feMergeNode in="SourceGraphic"></feMergeNode></feMerge></filter></defs><ellipse cx="80" cy="70" rx="56" ry="14" fill="#2C5E6B" opacity="0.5"></ellipse><g filter="url(#gl3)"><polygon points="52,72 58,30 68,72" fill="#8FE4FF"></polygon><polygon points="66,74 78,14 90,74" fill="#8FE4FF"></polygon><polygon points="90,72 104,36 110,72" fill="#8FE4FF"></polygon><polygon points="40,74 42,52 52,74" fill="#8FE4FF"></polygon></g><polygon points="78,14 84,74 90,74" fill="#3FA9C9"></polygon><polygon points="58,30 62,72 68,72" fill="#3FA9C9"></polygon><polygon points="104,36 106,72 110,72" fill="#3FA9C9"></polygon></svg>
+<div style="font-weight: 600">crystal</div><div style="font-size: 14px; color: #9BA5AE">Rock-candy shards, ice-blue, glowing</div>
+</div>
+<div style="background: #181D22; border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 8px">
+<svg viewBox="0 0 160 96" style="width: 100%; height: 96px; background: #2A2620; border-radius: 8px"><defs><filter id="gl4" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="3" result="b"></feGaussianBlur><feMerge><feMergeNode in="b"></feMergeNode><feMergeNode in="SourceGraphic"></feMergeNode></feMerge></filter></defs><ellipse cx="80" cy="72" rx="54" ry="13" fill="#4E7A12" opacity="0.5"></ellipse><g filter="url(#gl4)"><rect x="54" y="34" width="12" height="40" rx="6" fill="#B6FF3B" transform="rotate(-10 60 54)"></rect><rect x="72" y="20" width="14" height="54" rx="7" fill="#B6FF3B"></rect><rect x="94" y="38" width="12" height="36" rx="6" fill="#B6FF3B" transform="rotate(12 100 56)"></rect></g><rect x="80" y="24" width="4" height="46" rx="2" fill="#4E7A12" opacity="0.5"></rect></svg>
+<div style="font-weight: 600">uranium</div><div style="font-size: 14px; color: #9BA5AE">Sour rods, acid chartreuse, glowing</div>
+</div>
+</div>
+</section>
+
+<section>
+<div style="display: flex; align-items: baseline; gap: 12px; margin-bottom: 20px"><span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #8A949D">07</span><h2 style="margin: 0; font-family: 'Chakra Petch', sans-serif; font-weight: 600; font-size: 22px; letter-spacing: 0.06em; text-transform: uppercase">Scale test</h2></div>
+<div style="background: #181D22; border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 18px">
+<div style="display: flex; align-items: center; gap: 20px">
+<div style="width: 40px; height: 40px; background: #2A2620; outline: 1px solid #4A443A; display: flex; align-items: center; justify-content: center"><svg viewBox="40 0 80 120" style="width: 28px; height: 40px"><rect x="52" y="24" width="12" height="76" rx="5" fill="#1E1B1D"></rect><rect x="96" y="24" width="12" height="76" rx="5" fill="#1E1B1D"></rect><rect x="60" y="26" width="40" height="72" rx="8" fill="#4A4F57"></rect><rect x="75" y="10" width="10" height="32" rx="2" fill="#8E979F"></rect><rect x="66" y="38" width="28" height="26" rx="7" fill="#2E73FF"></rect></svg></div>
+<div><div style="font-weight: 600">25 units · 40 px per tile</div><div style="font-size: 14px; color: #9BA5AE">Head, barrel and stem all read.</div></div>
+</div>
+<div style="display: flex; align-items: center; gap: 20px">
+<div style="width: 40px; height: 40px; display: flex; align-items: center; justify-content: center"><div style="width: 14px; height: 14px; background: #2A2620; outline: 1px solid #4A443A; display: flex; align-items: center; justify-content: center"><svg viewBox="40 0 80 120" style="width: 10px; height: 14px"><rect x="52" y="24" width="56" height="76" rx="8" fill="#4A4F57"></rect><rect x="62" y="34" width="36" height="34" rx="7" fill="#2E73FF"></rect></svg></div></div>
+<div><div style="font-weight: 600">70 units · 14 px per tile</div><div style="font-size: 14px; color: #9BA5AE">Only the head colour survives. That is why it sits on top.</div></div>
+</div>
+</div>
+</section>
+</div>
+
+<section>
+<div style="display: flex; align-items: baseline; gap: 12px; margin-bottom: 20px"><span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #8A949D">08</span><h2 style="margin: 0; font-family: 'Chakra Petch', sans-serif; font-weight: 600; font-size: 22px; letter-spacing: 0.06em; text-transform: uppercase">Rules</h2></div>
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px">
+<div style="border-top: 2px solid #2A3138; padding-top: 14px"><div style="font-weight: 600; font-size: 17px">Silhouette first</div><div style="font-size: 15px; line-height: 1.5; color: #9BA5AE; margin-top: 6px">Recognisable from outline alone. Weapons and working parts +20%; infantry weapons and heads +40%.</div></div>
+<div style="border-top: 2px solid #2A3138; padding-top: 14px"><div style="font-weight: 600; font-size: 17px">The world is unflavoured</div><div style="font-size: 15px; line-height: 1.5; color: #9BA5AE; margin-top: 6px">Terrain and props stay muted: biscuit plains, licorice cliffs, cola water, dusty cotton-candy trees. Saturation belongs to teams and glow.</div></div>
+<div style="border-top: 2px solid #2A3138; padding-top: 14px"><div style="font-weight: 600; font-size: 17px">Gloss tells material</div><div style="font-size: 15px; line-height: 1.5; color: #9BA5AE; margin-top: 6px">Team plastic is glossy with a hard top-left highlight; steel is brushed; foil is crinkled. Push the contrast between materials, such as gloss plastic beside matte licorice.</div></div>
+<div style="border-top: 2px solid #2A3138; padding-top: 14px"><div style="font-weight: 600; font-size: 17px">70 / 30 surface</div><div style="font-size: 15px; line-height: 1.5; color: #9BA5AE; margin-top: 6px">70% clean rest areas of flat plastic. 30% detail, made up of team mask (15–25%), glow (≤5%) and grilles. Detail sits on top, not underneath.</div></div>
+<div style="border-top: 2px solid #2A3138; padding-top: 14px"><div style="font-weight: 600; font-size: 17px">Top is brightest</div><div style="font-size: 15px; line-height: 1.5; color: #9BA5AE; margin-top: 6px">The highest contrast and brightest values sit on top-facing surfaces. Undersides, lower hulls and legs get minimal detail and darker values.</div></div>
+<div style="border-top: 2px solid #2A3138; padding-top: 14px"><div style="font-weight: 600; font-size: 17px">Baked AO, no cast shadows</div><div style="font-size: 15px; line-height: 1.5; color: #9BA5AE; margin-top: 6px">Bake AO and a soft top-down gradient (+10% at the top, −15% at the base) into albedo, so units stay readable in fog. Never paint directional or cast shadows.</div></div>
+<div style="border-top: 2px solid #2A3138; padding-top: 14px"><div style="font-weight: 600; font-size: 17px">Light</div><div style="font-size: 15px; line-height: 1.5; color: #9BA5AE; margin-top: 6px">Warm sun from the upper left of the screen, cool sky fill. Shadows fall to the lower right in the off-axis view.</div></div>
+<div style="border-top: 2px solid #2A3138; padding-top: 14px"><div style="font-weight: 600; font-size: 17px">Doors face south</div><div style="font-size: 15px; line-height: 1.5; color: #9BA5AE; margin-top: 6px">Exits, docks and dispensing slots on −Z, toward the camera.</div></div>
+<div style="border-top: 2px solid #2A3138; padding-top: 14px"><div style="font-weight: 600; font-size: 17px">Pivot and scale</div><div style="font-size: 15px; line-height: 1.5; color: #9BA5AE; margin-top: 6px">1 tile = 1 unit = 1 m. Pivot at ground, footprint centre. 0.04 margin on every side.</div></div>
+</div>
+</section>
+
+<section>
+<div style="display: flex; align-items: baseline; gap: 12px; margin-bottom: 20px"><span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #8A949D">09</span><h2 style="margin: 0; font-family: 'Chakra Petch', sans-serif; font-weight: 600; font-size: 22px; letter-spacing: 0.06em; text-transform: uppercase">Nothing pops</h2><span style="font-size: 15px; color: #9BA5AE; margin-left: 12px">Every spawn, build, deploy, regrowth, sale and death is a transform over time.</span></div>
+<img src="/_blob/4e870289e272d4e15e95134e5c80a555" alt="Command center rising out of its pad in five steps" style="width: 1472px; height: 245px; display: block; border-radius: 10px">
+<div style="display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; margin-top: 14px; font-size: 14px; line-height: 1.45">
+<div><div style="font-family: 'IBM Plex Mono', monospace; color: #9BA5AE">0–10%</div><div>Pad lifts flush (stage_0)</div></div>
+<div><div style="font-family: 'IBM Plex Mono', monospace; color: #9BA5AE">10–45%</div><div>Walls rise through the pad (stage_1)</div></div>
+<div><div style="font-family: 'IBM Plex Mono', monospace; color: #9BA5AE">45–75%</div><div>Upper body rises (stage_2)</div></div>
+<div><div style="font-family: 'IBM Plex Mono', monospace; color: #9BA5AE">75–95%</div><div>Heads and caps rise, 4% spring overshoot (stage_3)</div></div>
+<div><div style="font-family: 'IBM Plex Mono', monospace; color: #9BA5AE">95–100%</div><div>Turrets rise, spinners spin up</div></div>
+</div>
+<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-top: 24px">
+<div style="border-top: 2px solid #2A3138; padding-top: 12px"><div style="font-weight: 600">Vehicles</div><div style="font-size: 14px; line-height: 1.5; color: #9BA5AE; margin-top: 4px">Spawn behind the factory door. The door rolls up and the unit drives out 1.5 tiles south.</div></div>
+<div style="border-top: 2px solid #2A3138; padding-top: 12px"><div style="font-weight: 600">Infantry</div><div style="font-size: 14px; line-height: 1.5; color: #9BA5AE; margin-top: 4px">Walk out through the barracks door, one at a time.</div></div>
+<div style="border-top: 2px solid #2A3138; padding-top: 12px"><div style="font-weight: 600">Aircraft</div><div style="font-size: 14px; line-height: 1.5; color: #9BA5AE; margin-top: 4px">Rise on the airfield lift from −0.6, spin up, then climb to cruise altitude.</div></div>
+<div style="border-top: 2px solid #2A3138; padding-top: 12px"><div style="font-weight: 600">Ore and removal</div><div style="font-size: 14px; line-height: 1.5; color: #9BA5AE; margin-top: 4px">Ore regrows from below ground. Destroyed or sold things sink in reverse.</div></div>
+</div>
+</section>
+
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 48px">
+<section>
+<div style="display: flex; align-items: baseline; gap: 12px; margin-bottom: 20px"><span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #8A949D">10</span><h2 style="margin: 0; font-family: 'Chakra Petch', sans-serif; font-weight: 600; font-size: 22px; letter-spacing: 0.06em; text-transform: uppercase">Camera</h2></div>
+<div style="display: flex; gap: 20px; align-items: flex-start">
+<img src="/_blob/11d75f6d81e4a162b8b853faa4ca9d89" alt="Off-axis orthographic view" style="width: 300px; height: 169px; object-fit: cover; border-radius: 8px">
+<ul style="margin: 0; padding-left: 18px; font-size: 15px; line-height: 1.6; color: #C5CCD2">
+<li>Off-axis orthographic: yaw 45°, pitch 55°.</li>
+<li>Zoom changes the ortho height, from 8 (close) to 40 (strategic).</li>
+<li>Two faces of every building show, so model both the south and east faces.</li>
+<li>The minimap stays north-up with sectors A–H and 1–8, because LLM orders use grid coordinates.</li>
+</ul>
+</div>
+</section>
+<section>
+<div style="display: flex; align-items: baseline; gap: 12px; margin-bottom: 20px"><span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #8A949D">11</span><h2 style="margin: 0; font-family: 'Chakra Petch', sans-serif; font-weight: 600; font-size: 22px; letter-spacing: 0.06em; text-transform: uppercase">Status never uses team hues</h2></div>
+<div style="display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; align-items: stretch; border: 1px solid #3A4047; border-radius: 8px; overflow: hidden"><span style="width: 24px; background: repeating-linear-gradient(135deg, #1E1B1D 0 6px, #ECE4D2 6px 12px)"></span><span style="padding: 8px 14px; font-size: 15px"><b style="font-family: 'Chakra Petch', sans-serif; letter-spacing: 0.1em">CRITICAL</b> Hazard stripe, not red</span></div>
+<div style="display: flex; align-items: stretch; border: 1px solid #3A4047; border-radius: 8px; overflow: hidden"><span style="width: 24px; background: #FFA22E"></span><span style="padding: 8px 14px; font-size: 15px"><b style="font-family: 'Chakra Petch', sans-serif; letter-spacing: 0.1em">HIGH</b> Caramel amber</span></div>
+<div style="display: flex; gap: 12px; align-items: center; margin-top: 6px; font-size: 14px; color: #9BA5AE">
+<span>Health</span>
+<div style="width: 90px; height: 8px; border-radius: 4px; background: #2A3138"><div style="width: 90%; height: 8px; border-radius: 4px; background: #ECE4D2"></div></div>
+<div style="width: 90px; height: 8px; border-radius: 4px; background: #2A3138"><div style="width: 50%; height: 8px; border-radius: 4px; background: #FFA22E"></div></div>
+<div style="width: 90px; height: 8px; border-radius: 4px; background: #2A3138"><div style="width: 20%; height: 8px; border-radius: 4px; background: repeating-linear-gradient(135deg, #1E1B1D 0 4px, #ECE4D2 4px 8px)"></div></div>
+<span>cream → amber → hazard</span>
+</div>
+</div>
+</section>
+</div>
+
+<section>
+<div style="display: flex; align-items: baseline; gap: 12px; margin-bottom: 20px"><span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #8A949D">12</span><h2 style="margin: 0; font-family: 'Chakra Petch', sans-serif; font-weight: 600; font-size: 22px; letter-spacing: 0.06em; text-transform: uppercase">Budgets</h2><span style="font-size: 15px; color: #9BA5AE; margin-left: 12px">LOD0 triangles. LOD1 at 50%. Four armies on screen means hundreds of units.</span></div>
+<table style="width: 100%; border-collapse: collapse; font-size: 15px">
+<thead><tr><th style="padding: 10px 12px; text-align: left; font-family: 'Chakra Petch', sans-serif; font-weight: 600; font-size: 14px; letter-spacing: 0.06em; color: #9BA5AE; border-bottom: 1px solid #2A3138">Asset</th><th style="padding: 10px 12px; text-align: left; font-family: 'Chakra Petch', sans-serif; font-weight: 600; font-size: 14px; letter-spacing: 0.06em; color: #9BA5AE; border-bottom: 1px solid #2A3138">Triangles</th><th style="padding: 10px 12px; text-align: left; font-family: 'Chakra Petch', sans-serif; font-weight: 600; font-size: 14px; letter-spacing: 0.06em; color: #9BA5AE; border-bottom: 1px solid #2A3138">Textures</th><th style="padding: 10px 12px; text-align: left; font-family: 'Chakra Petch', sans-serif; font-weight: 600; font-size: 14px; letter-spacing: 0.06em; color: #9BA5AE; border-bottom: 1px solid #2A3138">Rig</th></tr></thead>
+<tbody><tr><td style="padding: 10px 12px; border-bottom: 1px solid #22282E; font-weight: 600">Infantry</td><td style="padding: 10px 12px; border-bottom: 1px solid #22282E; font-family: 'IBM Plex Mono', monospace">1,000–2,000</td><td style="padding: 10px 12px; border-bottom: 1px solid #22282E; font-family: 'IBM Plex Mono', monospace">512²</td><td style="padding: 10px 12px; border-bottom: 1px solid #22282E; color: #9BA5AE">≤ 20 bones; rigid weapon on barrel</td></tr><tr><td style="padding: 10px 12px; border-bottom: 1px solid #22282E; font-weight: 600">Vehicles</td><td style="padding: 10px 12px; border-bottom: 1px solid #22282E; font-family: 'IBM Plex Mono', monospace">3,000–7,000</td><td style="padding: 10px 12px; border-bottom: 1px solid #22282E; font-family: 'IBM Plex Mono', monospace">1024²</td><td style="padding: 10px 12px; border-bottom: 1px solid #22282E; color: #9BA5AE">Rigid nodes, not bones: turret, barrel, spinner, bin</td></tr><tr><td style="padding: 10px 12px; border-bottom: 1px solid #22282E; font-weight: 600">Aircraft</td><td style="padding: 10px 12px; border-bottom: 1px solid #22282E; font-family: 'IBM Plex Mono', monospace">4,000–8,000</td><td style="padding: 10px 12px; border-bottom: 1px solid #22282E; font-family: 'IBM Plex Mono', monospace">1024²</td><td style="padding: 10px 12px; border-bottom: 1px solid #22282E; color: #9BA5AE">Rotor and edge lights on nodes or shader</td></tr><tr><td style="padding: 10px 12px; border-bottom: 1px solid #22282E; font-weight: 600">Small structures (1×1, 2×2)</td><td style="padding: 10px 12px; border-bottom: 1px solid #22282E; font-family: 'IBM Plex Mono', monospace">5,000–10,000</td><td style="padding: 10px 12px; border-bottom: 1px solid #22282E; font-family: 'IBM Plex Mono', monospace">1024² unique + shared trim</td><td style="padding: 10px 12px; border-bottom: 1px solid #22282E; color: #9BA5AE">Build stages 0–3, door or lift node</td></tr><tr><td style="padding: 10px 12px; border-bottom: 1px solid #22282E; font-weight: 600">Large structures (3×3)</td><td style="padding: 10px 12px; border-bottom: 1px solid #22282E; font-family: 'IBM Plex Mono', monospace">10,000–18,000</td><td style="padding: 10px 12px; border-bottom: 1px solid #22282E; font-family: 'IBM Plex Mono', monospace">2048² shared trim + 1024² unique</td><td style="padding: 10px 12px; border-bottom: 1px solid #22282E; color: #9BA5AE">Trim sheets and tileables for walls</td></tr><tr><td style="padding: 10px 12px; border-bottom: 1px solid #22282E; font-weight: 600">Ore tile</td><td style="padding: 10px 12px; border-bottom: 1px solid #22282E; font-family: 'IBM Plex Mono', monospace">≤ 800</td><td style="padding: 10px 12px; border-bottom: 1px solid #22282E; font-family: 'IBM Plex Mono', monospace">Shared 512² atlas</td><td style="padding: 10px 12px; border-bottom: 1px solid #22282E; color: #9BA5AE">5 cluster nodes</td></tr></tbody>
+</table>
+</section>
+
+<section>
+<div style="display: flex; align-items: baseline; gap: 12px; margin-bottom: 20px"><span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #8A949D">13</span><h2 style="margin: 0; font-family: 'Chakra Petch', sans-serif; font-weight: 600; font-size: 22px; letter-spacing: 0.06em; text-transform: uppercase">Buildings and animation</h2></div>
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px">
+<div style="border-top: 2px solid #2A3138; padding-top: 14px"><div style="font-weight: 600; font-size: 17px">Damage states</div><div style="font-size: 15px; line-height: 1.5; color: #9BA5AE; margin-top: 6px">Intact, 50% and 25% (scorch decals, broken panels, fire and smoke sockets), then rubble. Rubble keeps the exact footprint so the pathing lines stay readable.</div></div>
+<div style="border-top: 2px solid #2A3138; padding-top: 14px"><div style="font-weight: 600; font-size: 17px">Upgrades add parts</div><div style="font-size: 15px; line-height: 1.5; color: #9BA5AE; margin-top: 6px">An upgrade bolts on a visible module, such as a second stack, a bigger dish or an extra hopper. It rises like a build stage and never changes colour alone.</div></div>
+<div style="border-top: 2px solid #2A3138; padding-top: 14px"><div style="font-weight: 600; font-size: 17px">Anchored to the ground</div><div style="font-size: 15px; line-height: 1.5; color: #9BA5AE; margin-top: 6px">Every structure sits on its sugar pad (stage_0) with a dark dirt-skirt decal 0.15 past the footprint. Units get a soft contact-shadow decal.</div></div>
+<div style="border-top: 2px solid #2A3138; padding-top: 14px"><div style="font-weight: 600; font-size: 17px">Snappy combat</div><div style="font-size: 15px; line-height: 1.5; color: #9BA5AE; margin-top: 6px">Idle to firing within 3 frames. Turret slew and laser charge are deliberate telegraphs; the shot itself is instant. Recoil out ≤ 0.05 s.</div></div>
+<div style="border-top: 2px solid #2A3138; padding-top: 14px"><div style="font-weight: 600; font-size: 17px">Vertex shaders for ambience</div><div style="font-size: 15px; line-height: 1.5; color: #9BA5AE; margin-top: 6px">Flags, antennas, cotton-candy trees, the crane hook and the hover bob all run in a vertex shader, not on bones or nodes.</div></div>
+<div style="border-top: 2px solid #2A3138; padding-top: 14px"><div style="font-weight: 600; font-size: 17px">Glow shows state</div><div style="font-size: 15px; line-height: 1.5; color: #9BA5AE; margin-top: 6px">Coils charge before a shot, cores pulse with load and flicker on low power. Glow never just decorates.</div></div>
+</div>
+</section>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1600,"height":3560}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Pez motion reference</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@600;700&amp;family=IBM+Plex+Mono:wght@400;500&amp;family=IBM+Plex+Sans:wght@400;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#ECE4D2}a:hover{color:#FFFFFF}
+td,th{padding:4px 0;text-align:left;font-weight:400}
+</style>
+</helmet>
+<div style="width: 1712px; height: 1480px; box-sizing: border-box; padding: 48px; background: #101317; color: #E8EBEE; font-family: 'IBM Plex Sans', sans-serif; display: flex; flex-direction: column; gap: 32px">
+<header style="display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 1px solid #2A3138; padding-bottom: 24px">
+<h1 style="margin: 0; font-family: 'Chakra Petch', sans-serif; font-weight: 700; font-size: 44px">Motion reference</h1>
+<span style="font-family: 'IBM Plex Mono', monospace; font-size: 14px; color: #9BA5AE">tiles/s · °/s · rpm · full per-asset spec in unity/MOTION.md</span>
+</header>
+
+<section style="display: flex; flex-direction: column; gap: 12px">
+<h2 style="margin: 0; font-family: 'Chakra Petch', sans-serif; font-weight: 600; font-size: 20px; letter-spacing: 0.06em; text-transform: uppercase">Factory: build, then the door rolls up</h2>
+<img src="/_blob/60a1286de57bda238ea4136f7e94a8c0" alt="Factory rising out of its pad, then its roll-up door opening" style="width: 1616px; height: 269px; border-radius: 10px">
+</section>
+
+<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px">
+
+<div style="background: #181D22; border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 10px">
+<div style="font-family: 'Chakra Petch', sans-serif; font-weight: 600; font-size: 20px">Tracked</div>
+<div style="font-size: 14px; line-height: 1.5; color: #C5CCD2">Pivot-turns in place. Over 60° off heading: stop, turn, then drive. Nose pitches up 2° on acceleration and dips 3° when braking (0.25 s spring). The hull follows the slope.</div>
+<table style="border-collapse: collapse; font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #9BA5AE; width: 100%"><tbody>
+<tr><td>mining_truck</td><td>1.6</td><td>110°</td></tr><tr><td>light_tank</td><td>2.4</td><td>120°</td></tr><tr><td>heavy_tank</td><td>1.4</td><td>70°</td></tr><tr><td>artillery</td><td>1.5</td><td>80°</td></tr><tr><td>laser_tank</td><td>1.8</td><td>100°</td></tr>
+</tbody></table>
+</div>
+
+<div style="background: #181D22; border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 10px">
+<div style="font-family: 'Chakra Petch', sans-serif; font-weight: 600; font-size: 20px">Wheeled</div>
+<div style="font-size: 14px; line-height: 1.5; color: #C5CCD2">Can't turn in place. Steers on a curve and reverses for tight corners. Body rolls 4° into turns. The buggy's suspension bounces (k 120).</div>
+<table style="border-collapse: collapse; font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #9BA5AE; width: 100%"><tbody>
+<tr><td>repair_truck</td><td>2.0</td><td>r 0.8</td></tr><tr><td>outpost_truck</td><td>1.3</td><td>r 1.0</td></tr><tr><td>scout_buggy</td><td>3.6</td><td>r 0.5</td></tr>
+</tbody></table>
+</div>
+
+<div style="background: #181D22; border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 10px">
+<div style="font-family: 'Chakra Petch', sans-serif; font-weight: 600; font-size: 20px">Rotor</div>
+<div style="font-size: 14px; line-height: 1.5; color: #C5CCD2">The gunship hovers at 2.4. It strafes and turns in place, leans 12° into velocity and 8° into turns. Rotor at 600 rpm, 1 s spin-up on the lift. Rockets fire in salvos of 4, alternating sides.</div>
+<table style="border-collapse: collapse; font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #9BA5AE; width: 100%"><tbody>
+<tr><td>gunship</td><td>3.0</td><td>140°</td></tr><tr><td>chin turret</td><td>±120°</td><td>220°/s</td></tr><tr><td>hover bob</td><td>±0.05</td><td>2.2 s</td></tr>
+</tbody></table>
+</div>
+
+<div style="background: #181D22; border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 10px">
+<div style="font-family: 'Chakra Petch', sans-serif; font-weight: 600; font-size: 20px">Fixed wing</div>
+<div style="font-size: 14px; line-height: 1.5; color: #C5CCD2">The bomber flies at 3.2 and never stops (minimum speed 2.5). It banks up to 35°. Bombing run: 6 drops 0.2 s apart, then it circles back to rearm. With no orders it loiters in a 3-tile circle.</div>
+<table style="border-collapse: collapse; font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #9BA5AE; width: 100%"><tbody>
+<tr><td>stealth_bomber</td><td>4.5</td><td>45°</td></tr><tr><td>takeoff climb</td><td>to 3.2</td><td>2.5 tiles</td></tr>
+</tbody></table>
+</div>
+
+<div style="background: #181D22; border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 10px">
+<div style="font-family: 'Chakra Petch', sans-serif; font-weight: 600; font-size: 20px">Infantry</div>
+<div style="font-size: 14px; line-height: 1.5; color: #C5CCD2">Turns almost instantly. Arms (turret) aim ±70° before the body turns. Walk bob is 0.02. Squads form a diamond 0.3 apart. They go prone when shot.</div>
+<table style="border-collapse: collapse; font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #9BA5AE; width: 100%"><tbody>
+<tr><td>rifleman</td><td>1.1</td><td>3-round burst</td></tr><tr><td>rocket_soldier</td><td>0.9</td><td>stop to fire</td></tr><tr><td>laser_trooper</td><td>1.0</td><td>0.25 s charge</td></tr><tr><td>medic</td><td>1.2</td><td>kneel to heal</td></tr>
+</tbody></table>
+</div>
+
+<div style="background: #181D22; border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 10px">
+<div style="font-family: 'Chakra Petch', sans-serif; font-weight: 600; font-size: 20px">Recoil</div>
+<div style="font-size: 14px; line-height: 1.5; color: #C5CCD2">Recoil moves along the barrel's own −Z, out fast and back slow with ease-out. The hull kicks back on heavy shots. Laser weapons have no recoil: they charge, then fire a beam.</div>
+<table style="border-collapse: collapse; font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #9BA5AE; width: 100%"><tbody>
+<tr><td>light_tank</td><td>0.12</td><td>0.06 / 0.35 s</td></tr><tr><td>heavy_tank</td><td>0.16</td><td>twin, 0.15 s apart</td></tr><tr><td>artillery</td><td>0.20</td><td>0.08 / 0.6 s</td></tr><tr><td>gun_turret</td><td>0.10</td><td>0.05 / 0.3 s</td></tr>
+</tbody></table>
+</div>
+
+<div style="background: #181D22; border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 10px">
+<div style="font-family: 'Chakra Petch', sans-serif; font-weight: 600; font-size: 20px">Defences</div>
+<div style="font-size: 14px; line-height: 1.5; color: #C5CCD2">Turrets yaw with no overshoot and fire within 5°. The SAM rack leads air targets. The laser tower's coils light bottom to top during its 0.3 s charge, and the prism spins during the 0.6 s beam.</div>
+<table style="border-collapse: collapse; font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #9BA5AE; width: 100%"><tbody>
+<tr><td>gun_turret</td><td>120°/s</td><td>360°</td></tr><tr><td>sam_site</td><td>200°/s</td><td>−10…−70°</td></tr><tr><td>laser_tower</td><td>180°/s</td><td>1.0 s cooldown</td></tr>
+</tbody></table>
+</div>
+
+<div style="background: #181D22; border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 10px">
+<div style="font-family: 'Chakra Petch', sans-serif; font-weight: 600; font-size: 20px">Spinners</div>
+<div style="font-size: 14px; line-height: 1.5; color: #C5CCD2">Each spinner runs at an idle speed and a working speed, and ramps between them. The crane aims at the build site and then swings. The radar snaps to a new contact and holds for 1 s.</div>
+<table style="border-collapse: collapse; font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #9BA5AE; width: 100%"><tbody>
+<tr><td>mining cutter</td><td>0 → 240</td><td>X axis</td></tr><tr><td>optics prism</td><td>20 → 60</td><td>bobs ±0.04</td></tr><tr><td>fusion core</td><td>45 → 120</td><td>tumbles 10°/s</td></tr><tr><td>radar dish</td><td>12</td><td>snap 180°/s</td></tr>
+</tbody></table>
+</div>
+
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1712,"height":1480}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

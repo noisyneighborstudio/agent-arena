@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Pez sidebar icons</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@600;700&amp;family=IBM+Plex+Mono:wght@400&amp;family=IBM+Plex+Sans:wght@400;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#ECE4D2}a:hover{color:#FFFFFF}
+</style>
+</helmet>
+<div style="width: 1712px; height: 2140px; box-sizing: border-box; padding: 48px; background: #101317; color: #E8EBEE; font-family: 'IBM Plex Sans', sans-serif; display: flex; flex-direction: column; gap: 40px">
+<header style="display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 1px solid #2A3138; padding-bottom: 24px">
+<h1 style="margin: 0; font-family: 'Chakra Petch', sans-serif; font-weight: 700; font-size: 44px">Sidebar icons</h1>
+<span style="font-family: 'IBM Plex Mono', monospace; font-size: 14px; color: #9BA5AE">256 × 192 PNG · three-quarter view · no text · rendered from the blockout models in Blueberry</span>
+</header>
+<section style="display: flex; flex-direction: column; gap: 16px">
+<h2 style="margin: 0; font-family: 'Chakra Petch', sans-serif; font-weight: 600; font-size: 20px; letter-spacing: 0.06em; text-transform: uppercase">Structures</h2>
+<div style="display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 16px">
+<sc-for list="{{structures}}" as="it" hint-placeholder-count="16">
+<figure style="margin: 0; display: flex; flex-direction: column; gap: 8px"><img src="{{it.src}}" alt="{{it.key}}" style="width: 256px; height: 192px; border-radius: 8px; outline: 1px solid #2A3138"><figcaption style="display: flex; justify-content: space-between; font-size: 14px"><span style="font-family: 'IBM Plex Mono', monospace">{{it.key}}</span><span style="color: #9BA5AE">{{it.size}}</span></figcaption></figure>
+</sc-for>
+</div>
+</section>
+<section style="display: flex; flex-direction: column; gap: 16px">
+<h2 style="margin: 0; font-family: 'Chakra Petch', sans-serif; font-weight: 600; font-size: 20px; letter-spacing: 0.06em; text-transform: uppercase">Units</h2>
+<div style="display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 16px">
+<sc-for list="{{units}}" as="it" hint-placeholder-count="14">
+<figure style="margin: 0; display: flex; flex-direction: column; gap: 8px"><img src="{{it.src}}" alt="{{it.key}}" style="width: 256px; height: 192px; border-radius: 8px; outline: 1px solid #2A3138"><figcaption style="display: flex; justify-content: space-between; font-size: 14px"><span style="font-family: 'IBM Plex Mono', monospace">{{it.key}}</span><span style="color: #9BA5AE">{{it.size}}</span></figcaption></figure>
+</sc-for>
+</div>
+</section>
+<section style="display: flex; flex-direction: column; gap: 16px">
+<h2 style="margin: 0; font-family: 'Chakra Petch', sans-serif; font-weight: 600; font-size: 20px; letter-spacing: 0.06em; text-transform: uppercase">Ores</h2>
+<div style="display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 16px">
+<sc-for list="{{ores}}" as="it" hint-placeholder-count="4">
+<figure style="margin: 0; display: flex; flex-direction: column; gap: 8px"><img src="{{it.src}}" alt="{{it.key}}" style="width: 256px; height: 192px; border-radius: 8px; outline: 1px solid #2A3138"><figcaption style="display: flex; justify-content: space-between; font-size: 14px"><span style="font-family: 'IBM Plex Mono', monospace">{{it.key}}</span><span style="color: #9BA5AE">{{it.size}}</span></figcaption></figure>
+</sc-for>
+</div>
+</section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1712,"height":2140}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const b = (id) => '/_blob/' + id;
+    const structures = [
+      ['command_center', '27276910bf696ebb08c6edfc721e9261', '3×3'], ['outpost', '5a1a502e90d13f2717b033e450c1158f', '2×2'],
+      ['power_plant', 'be535b352884c2d5b90452243f2f3da3', '2×2'], ['mining_refinery', '57392b1498d7c7cd5ab085d413545bf3', '3×3'],
+      ['barracks', '1076992603525b1dd2cf93ccdfcf05dd', '2×2'], ['factory', 'd41637501b6f395cebba4c8a004b1973', '3×3'],
+      ['electronics_plant', '0813ed468c18b259bf6a96c569e7ecbc', '2×2'], ['optics_lab', 'c00cecd6944dffbd9387ce6717799c79', '2×2'],
+      ['enrichment_plant', '08368255fe230d97dd8a7d955423b777', '2×2'], ['composite_foundry', '25b03adbb23a525c8a7e3c462d477169', '2×2'],
+      ['fusion_reactor', '2803ec593223b6a10c66c6c796a53da1', '3×3'], ['airfield', '960701f6325d27debc5b505bd4b3fa83', '3×3'],
+      ['radar_dome', 'f67b01ef479fc13ff29e37995bc9b884', '2×2'], ['gun_turret', '973d328aa4d3f01f69273b9b89618cb4', '1×1'],
+      ['sam_site', 'c42c34e211c651577851aec8238b29b6', '1×1'], ['laser_tower', '35a7fbc12b4b876dcda7d933a9e66495', '1×1'],
+    ];
+    const units = [
+      ['mining_truck', '5b820ed3ac0cea089ebc95a41c0fdeea', '1.0'], ['repair_truck', '31ccc2424cf4fdaf5785da29720cb6f5', '0.95'],
+      ['outpost_truck', '9d1e743f763fd0d043c320c02ca859c3', '1.1'], ['scout_buggy', 'a3601bbd913a9d0fad0cbfcad0bc78ea', '0.7'],
+      ['light_tank', '67c21869cccbf90e65d730331c0ae3b2', '0.9'], ['heavy_tank', '1012be89ed9b9f087d87eacf829ac3c4', '1.2'],
+      ['artillery', 'bfd525e47c95d3f6b9cc16855c64a10b', '0.9'], ['laser_tank', 'c15331406f08b6114fb818caaa91d8d5', '1.1'],
+      ['gunship', 'c637e6d3d24e6b2badc452cad93c795d', '1.2'], ['stealth_bomber', '33b9ff27915231f8aa18dc407874336e', '1.0'],
+      ['rifleman', 'a1936fec4566dc358df406375391018a', '0.55 tall'], ['rocket_soldier', '20b097c9413ae0f368e3cc33cd340dcf', '0.55 tall'],
+      ['laser_trooper', '5cbb7a34a0f0ce92dcd189d7518f00be', '0.55 tall'], ['medic', '5ae56fd78d5020b996954e9ed187ed7c', '0.55 tall'],
+    ];
+    const ores = [
+      ['iron_ore', '6185fb0a93fb2480ad8825f6e59b464c', '1×1'], ['copper_ore', '8829e6a299fb6b039e7b9f9def4b6aeb', '1×1'],
+      ['crystal', '85ab9c65b22b67d1d92a12e07b43d64f', '1×1'], ['uranium', '1ecc4b5f456903f87feaad3b5ad81380', '1×1'],
+    ];
+    const map = (rows) => rows.map(([key, id, size]) => ({ key, src: b(id), size }));
+    return { structures: map(structures), units: map(units), ores: map(ores) };
+  }
+}
+</script>
+</body>
+</html>

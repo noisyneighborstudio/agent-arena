@@ -72,13 +72,9 @@ namespace Pez.View
             return m;
         }
 
-        public static readonly Color[] TeamColors =
-        {
-            new Color(0.18f, 0.45f, 1f),
-            new Color(0.95f, 0.18f, 0.12f),
-            new Color(0.2f, 0.85f, 0.3f),
-            new Color(1f, 0.82f, 0.15f),
-        };
+        // Team flavours from the art pack's palette: Blueberry, Cherry, Lime, Lemon.
+        public static readonly Color[] TeamColors = { PezPalette.TeamBlue, PezPalette.TeamRed, PezPalette.TeamGreen, PezPalette.TeamYellow };
+        public static readonly string[] TeamNames = { "Blueberry", "Cherry", "Lime", "Lemon" };
         public static Color Team(int t) => t >= 0 && t < TeamColors.Length ? TeamColors[t] : Color.white;
     }
 }

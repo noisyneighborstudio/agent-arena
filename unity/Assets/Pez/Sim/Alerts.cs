@@ -83,7 +83,7 @@ namespace Pez.Sim
         {
             var parts = new List<string>();
             float ago = (w.Tick - a.LastTick) * World.Dt;
-            parts.Add($"{a.Priority.ToString().ToUpperInvariant()} {Label(a.Kind)} at ({(int)a.Pos.X},{(int)a.Pos.Y}), {(ago < 1 ? "now" : $"{ago:0}s ago")}" +
+            parts.Add($"{a.Priority.ToString().ToUpperInvariant()} {Label(a.Kind)} at ({(int)a.Pos.X},{(int)a.Pos.Y}) sector {StateView.Sector(w.Map, a.Pos)}, {(ago < 1 ? "now" : $"{ago:0}s ago")}" +
                       (a.Count > 1 ? $", {a.Count} hits since {a.StartTick * World.Dt:0}s" : ""));
 
             var victims = a.Victims.Select(w.Get).Where(e => e != null).ToList();

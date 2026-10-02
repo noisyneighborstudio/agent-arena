@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using Pez.Sim;
 using UnityEngine;
 using Terrain = Pez.Sim.Terrain;
@@ -17,12 +18,13 @@ namespace Pez.View
         bool[] explored; // null = everything revealed (spectator)
         float nextOreUpdate;
 
-        public static readonly Color GrassA = new Color(0.27f, 0.42f, 0.16f);
-        public static readonly Color GrassB = new Color(0.36f, 0.47f, 0.2f);
-        public static readonly Color Dirt = new Color(0.47f, 0.38f, 0.26f);
-        public static readonly Color OreGround = new Color(0.45f, 0.32f, 0.2f);
-        public static readonly Color RockC = new Color(0.42f, 0.4f, 0.38f);
-        public static readonly Color Seabed = new Color(0.25f, 0.27f, 0.2f);
+        // Sugar Flats: biscuit ground, licorice cliffs, cola water (art pack palette).
+        public static readonly Color GrassA = PezPalette.TerrainBiscuitGround;
+        public static readonly Color GrassB = PezPalette.TerrainBiscuitLight;
+        public static readonly Color Dirt = PezPalette.TerrainBiscuitDark;
+        public static readonly Color OreGround = PezPalette.TerrainBiscuitDark;
+        public static readonly Color RockC = PezPalette.TerrainLicoriceCliffTop;
+        public static readonly Color Seabed = PezPalette.TerrainShore;
 
         public void Build(Map m)
         {
@@ -103,7 +105,10 @@ namespace Pez.View
 
         void BuildWater()
         {
-            var t = Models.Part(transform, PrimitiveType.Plane, new Vector3(map.W / 2f, -0.18f, map.H / 2f), new Vector3(map.W / 10f, 1, map.H / 10f), Mats.Water());
+            var water = new Material(Mats.Water());
+            water.SetColor("_Color", new Color(0.29f, 0.16f, 0.1f, 0.85f)); // cola
+            water.SetColor("_Deep", new Color(0.14f, 0.07f, 0.05f, 0.95f));
+            var t = Models.Part(transform, PrimitiveType.Plane, new Vector3(map.W / 2f, -0.18f, map.H / 2f), new Vector3(map.W / 10f, 1, map.H / 10f), water);
             t.name = "Water";
             t.GetComponent<Renderer>().shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
         }
@@ -111,7 +116,7 @@ namespace Pez.View
         void BuildRocks()
         {
             var rng = new System.Random(map.W * 31 + map.H);
-            var rockMats = new[] { Mats.Lit(new Color(0.38f, 0.36f, 0.34f), 0.15f, 0), Mats.Lit(new Color(0.3f, 0.29f, 0.28f), 0.2f, 0), Mats.Lit(new Color(0.48f, 0.45f, 0.4f), 0.1f, 0) };
+            var rockMats = new[] { Mats.Lit(PezPalette.TerrainLicoriceCliffTop, 0.35f, 0), Mats.Lit(PezPalette.TerrainLicoriceCliffFace, 0.4f, 0), Mats.Lit((Color)PezPalette.TerrainLicoriceCliffTop * 1.2f, 0.3f, 0) };
             var parent = new GameObject("Rocks").transform;
             parent.SetParent(transform, false);
             for (int y = 0; y < map.H; y++)
@@ -125,8 +130,8 @@ namespace Pez.View
                     decor.Add((map.Idx(x, y), rock.gameObject));
                 }
             // Scattered trees on open grass far from the bases add life to the field.
-            var trunk = Mats.Lit(new Color(0.3f, 0.2f, 0.12f), 0.1f, 0);
-            var leaves = new[] { Mats.Lit(new Color(0.12f, 0.3f, 0.1f), 0.1f, 0), Mats.Lit(new Color(0.18f, 0.36f, 0.12f), 0.1f, 0) };
+            var trunk = Mats.Lit(PezPalette.MaterialsKraft, 0.1f, 0);
+            var leaves = new[] { Mats.Lit(PezPalette.TerrainCottonCandyTree, 0.15f, 0), Mats.Lit((Color)PezPalette.TerrainCottonCandyTree * 0.85f, 0.15f, 0) }; // cotton candy
             for (int i = 0; i < 140; i++)
             {
                 int x = rng.Next(map.W), y = rng.Next(map.H);
@@ -144,8 +149,32 @@ namespace Pez.View
             }
         }
 
+        readonly List<(int idx, PezEmerge e, int start, int shown)> oreTiles = new List<(int, PezEmerge, int, int)>();
+
         void BuildOre()
         {
+            // Art-pack ore tiles: five clusters per tile that sink as the tile is mined out.
+            var oreModels = new GameObject[4];
+            for (int k = 0; k < 4; k++) oreModels[k] = Resources.Load<GameObject>("PezModels/ores/" + Defs.Ores[k]);
+            if (oreModels.All(m => m != null))
+            {
+                var parent0 = new GameObject("Ore").transform;
+                parent0.SetParent(transform, false);
+                var rng0 = new System.Random(99);
+                for (int i = 0; i < map.Ore.Length; i++)
+                {
+                    if (map.Ore[i] <= 0) continue;
+                    int x = i % map.W, y = i / map.W;
+                    var go = Instantiate(oreModels[map.OreType[i]], parent0, false);
+                    go.transform.localPosition = new Vector3(x + 0.5f, 0, y + 0.5f);
+                    go.transform.localRotation = Quaternion.Euler(0, rng0.Next(4) * 90, 0);
+                    foreach (var r in go.GetComponentsInChildren<Renderer>()) r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                    var em = go.AddComponent<PezEmerge>();
+                    oreTiles.Add((i, em, map.Ore[i], 5));
+                    decor.Add((i, go));
+                }
+                return;
+            }
             var rng = new System.Random(99);
             // Iron and copper are dull metallic rock; crystal and uranium glow.
             Material[][] mats =
@@ -255,6 +284,15 @@ namespace Pez.View
         {
             if (map == null || Time.time < nextOreUpdate) return;
             nextOreUpdate = Time.time + 0.5f;
+            for (int n = 0; n < oreTiles.Count; n++)
+            {
+                var (idx, em, start, shown) = oreTiles[n];
+                // Clusters disappear one by one as the tile's ore runs down.
+                int want = map.Ore[idx] <= 0 ? 0 : Mathf.Clamp(Mathf.CeilToInt(5f * map.Ore[idx] / start), 1, 5);
+                if (want == shown || !em.gameObject.activeInHierarchy) continue; // sinking needs a live object; shrouded tiles catch up later
+                for (int c = 0; c < 5; c++) em.SetClusterAmount(c, c < want ? 1f : 0f);
+                oreTiles[n] = (idx, em, start, want);
+            }
             foreach (var (idx, t, s) in crystals)
             {
                 float f = Mathf.Clamp01(map.Ore[idx] / 300f);

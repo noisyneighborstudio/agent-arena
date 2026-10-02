@@ -10,6 +10,13 @@ namespace Pez.Sim
     {
         static string R(float v) => v.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
 
+        /// <summary>Minimap sector for a point: columns A-H west to east, rows 1-8 north to south.</summary>
+        public static string Sector(Map m, Vec2 p)
+        {
+            int col = Math.Clamp((int)(p.X / (m.W / 8f)), 0, 7), row = Math.Clamp((int)(p.Y / (m.H / 8f)), 0, 7);
+            return $"{(char)('A' + col)}{8 - row}";
+        }
+
         public static JObj TeamState(World w, int team, long sinceSeq = 0)
         {
             var t = w.Teams[team];
@@ -23,7 +30,7 @@ namespace Pez.Sim
                     .Set("stockpile", Stockpile(t))
                     .Set("power", $"{t.PowerProduced} produced / {t.PowerUsed} used" + (t.LowPower ? " (LOW POWER: production at half speed, build a power_plant)" : ""))
                     .Set("start", $"{R(t.StartPos.X)},{R(t.StartPos.Y)}"))
-                .Set("map", $"{w.Map.W}x{w.Map.H} tiles; x grows east, y grows north");
+                .Set("map", $"{w.Map.W}x{w.Map.H} tiles; x grows east, y grows north. Spectators see sectors A-H (west to east) by 1-8 (north to south), {w.Map.W / 8} tiles each; mention them in say messages if you like");
 
             // Alerts go near the top: they're what a commander should look at first.
             var active = w.Alerts.Active(w, team).ToList();

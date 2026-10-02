@@ -2,12 +2,16 @@ using UnityEngine;
 
 namespace Pez.View
 {
-    /// <summary>Angled RTS camera: WASD/arrows/edge-pan, middle-drag pan, scroll zoom, Q/E rotate.</summary>
+    /// <summary>
+    /// RTS camera: WASD/arrows/edge-pan, middle-drag pan, scroll zoom, Q/E rotate.
+    /// Default is the art pack's off-axis orthographic view (yaw 45°, pitch 55°): constant unit scale and two
+    /// readable faces per building. In orthographic mode Distance is the half-height of the view in tiles.
+    /// </summary>
     public class RtsCamera : MonoBehaviour
     {
         public Vector3 Focus;
-        public float Distance = 26f, Yaw = 0f, Pitch = 52f;
-        public float MinDist = 8f, MaxDist = 70f;
+        public float Distance = 12f, Yaw = 45f, Pitch = 55f;
+        public float MinDist = 4f, MaxDist = 45f;
         public Vector2 Bounds = new Vector2(64, 64);
         public bool EdgePan = true;
         public Camera Cam { get; private set; }
@@ -60,11 +64,21 @@ namespace Pez.View
 
             Focus.x = Mathf.Clamp(Focus.x, 0, Bounds.x);
             Focus.z = Mathf.Clamp(Focus.z, -4, Bounds.y);
-            // Look a bit more top-down when zoomed out.
-            float pitch = Mathf.Lerp(Pitch, 68f, Mathf.InverseLerp(MinDist, MaxDist, Distance));
-            var rot = Quaternion.Euler(pitch, Yaw, 0);
-            transform.position = Focus - rot * Vector3.forward * Distance;
-            transform.rotation = rot;
+            if (Cam.orthographic)
+            {
+                var rot = Quaternion.Euler(Pitch, Yaw, 0);
+                Cam.orthographicSize = Distance;
+                transform.position = Focus - rot * Vector3.forward * 150f;
+                transform.rotation = rot;
+            }
+            else
+            {
+                // Perspective: look a bit more top-down when zoomed out.
+                float pitch = Mathf.Lerp(Pitch, 68f, Mathf.InverseLerp(MinDist, MaxDist, Distance));
+                var rot = Quaternion.Euler(pitch, Yaw, 0);
+                transform.position = Focus - rot * Vector3.forward * Distance;
+                transform.rotation = rot;
+            }
         }
 
         public bool GroundPoint(Vector3 screen, out Vector3 p)

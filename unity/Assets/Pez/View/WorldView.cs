@@ -13,6 +13,13 @@ namespace Pez.View
             public Rig Rig;
             public Transform Ring;
             public float Recoil;
+            // Art-pack model state
+            public float LastFire = -99f, DoorTimer;
+            public bool Destroyed, Tipped;
+            public int PrevCargo;
+            public float BuiltShown = -1f;
+            public Vector3? SpawnFrom;
+            public float SpawnT;
         }
 
         public World World { get; private set; }
@@ -22,10 +29,10 @@ namespace Pez.View
         readonly Dictionary<int, (Vector3 start, float total)> projectileStart = new Dictionary<int, (Vector3, float)>();
         public static readonly Color[] OreColors =
         {
-            new Color(0.62f, 0.32f, 0.22f), // iron_ore: rust
-            new Color(0.95f, 0.55f, 0.2f),  // copper_ore: orange
-            new Color(0.3f, 0.75f, 1f),     // crystal: ice blue
-            new Color(0.45f, 1f, 0.25f),    // uranium: toxic green
+            PezPalette.OreIronOre,   // cinnamon
+            PezPalette.OreCopperOre, // copper with mint patina
+            PezPalette.OreCrystal,   // ice
+            PezPalette.OreUranium,   // sour acid
         };
         long lastSeq;
         float nextFog;
@@ -66,21 +73,54 @@ namespace Pez.View
                 if (!show) continue;
                 UpdateView(v, alpha);
             }
+            PlayEvents();
             var gone = new List<int>();
             foreach (var kv in Views) if (!seen.Contains(kv.Key)) gone.Add(kv.Key);
-            foreach (var id in gone) { Destroy(Views[id].Rig.Root.gameObject); Views.Remove(id); Selected.Remove(id); }
+            foreach (var id in gone) { Retire(Views[id]); Views.Remove(id); Selected.Remove(id); }
 
             SyncProjectiles(alpha);
-            PlayEvents();
             if (Time.time >= nextFog) { nextFog = Time.time + 0.2f; Terrain.UpdateFog(w, PovTeam); }
+        }
+
+        /// <summary>Nothing pops off the map: art-pack models sink or collapse (wrecks linger) before they're destroyed.</summary>
+        void Retire(EV v)
+        {
+            var rig = v.Rig;
+            if (rig.HasModel && rig.Root.gameObject.activeInHierarchy)
+            {
+                rig.Model.transform.SetParent(transform, true);
+                rig.Emerge.StartCoroutine(rig.Emerge.PlayRemove(v.Destroyed, v.E.IsStructure ? 1.2f : 1.5f));
+            }
+            Destroy(rig.Root.gameObject);
+        }
+
+        bool Producing(Entity e)
+        {
+            var t = World.Teams[e.Team];
+            if (e.Def.Key == "command_center") return t.StructureQueue.Count > 0;
+            if (e.Def.Key == "radar_dome") return e.IsComplete && !t.LowPower;
+            if (e.Def.Produces != Producer.None && t.UnitQueues.TryGetValue(e.Def.Produces, out var q)) return q.Count > 0;
+            return e.Working;
+        }
+
+        /// <summary>Point the model's turret where the sim says it's facing; idle turrets scan.</summary>
+        void Aim(EV v)
+        {
+            var e = v.E;
+            bool engaged = Time.time - v.LastFire < 3f || e.Order == Order.Attack;
+            if (!engaged) { v.Rig.Motion.ClearAim(); return; }
+            var dir = new Vector3(Mathf.Cos(e.TurretFacing), 0, Mathf.Sin(e.TurretFacing));
+            v.Rig.Motion.AimAt(v.Rig.Root.position + dir * 5f);
         }
 
         EV Create(Entity e)
         {
             var rig = Models.Build(e.Def.Key, e.Team);
             rig.Root.SetParent(transform, false);
-            // Units read better a touch larger than their collision radius.
-            if (!e.IsStructure) rig.Body.localScale = Vector3.one * (e.Def.Armor == Armor.Infantry ? 1.5f : 1.2f);
+            // Units read better a touch larger than their collision radius. Art-pack infantry are built at 0.55 tall;
+            // the handoff recommends 1.3-1.4x so they read at game zoom.
+            if (!e.IsStructure)
+                rig.Body.localScale = Vector3.one * (rig.HasModel ? (e.Def.Armor == Armor.Infantry ? 1.35f : 1f) : (e.Def.Armor == Armor.Infantry ? 1.5f : 1.2f));
             var ring = Models.Part(rig.Root, PrimitiveType.Cylinder, new Vector3(0, 0.03f, 0), Vector3.one, Mats.Unlit(new Color(0.3f, 1f, 0.4f, 0.55f)));
             float r = e.IsStructure ? Mathf.Max(e.Def.SizeX, e.Def.SizeY) * 0.75f : e.Def.Radius * 2.6f;
             ring.localScale = new Vector3(r, 0.003f, r);
@@ -95,7 +135,15 @@ namespace Pez.View
         {
             var e = v.E;
             var rig = v.Rig;
-            if (e.IsStructure)
+            if (e.IsStructure && rig.HasModel)
+            {
+                // Build stages rise out of the pad as construction progresses.
+                if (!Mathf.Approximately(v.BuiltShown, e.BuildProgress)) { rig.Emerge.SetBuildProgress(e.BuildProgress); v.BuiltShown = e.BuildProgress; }
+                rig.Motion.SetWorking(e.IsComplete && Producing(e));
+                if (rig.Turret != null) Aim(v);
+                if (v.DoorTimer > 0 && (v.DoorTimer -= Time.deltaTime) <= 0) rig.Motion.SetDoorOpen(false);
+            }
+            else if (e.IsStructure)
             {
                 // Construction: the building rises out of its foundation.
                 float p = e.BuildProgress;
@@ -120,26 +168,57 @@ namespace Pez.View
                 var pos = Vec2.Lerp(e.PrevPos, e.Pos, alpha);
                 float alt = rig.Altitude > 0 ? rig.Altitude + Mathf.Sin(Time.time * 1.7f + e.Id) * 0.08f : 0;
                 rig.Root.position = W(pos, alt);
+                if (v.SpawnFrom.HasValue)
+                {
+                    // New units roll out of their producer's door (or rise off the airfield lift) instead of popping in.
+                    v.SpawnT = Mathf.Min(1f, v.SpawnT + Time.deltaTime / 0.9f);
+                    float k = 1f - Mathf.Pow(1f - v.SpawnT, 3f);
+                    rig.Root.position = Vector3.Lerp(v.SpawnFrom.Value, rig.Root.position, k);
+                    if (v.SpawnT >= 1f) v.SpawnFrom = null;
+                }
                 var targetRot = Quaternion.Euler(0, Yaw(e.Facing), 0);
                 rig.Root.rotation = Quaternion.Slerp(rig.Root.rotation, targetRot, Time.deltaTime * 14f);
-                if (rig.Spinner != null && e.IsAir) rig.Spinner.Rotate(0, 1400f * Time.deltaTime, 0, Space.Self);
-                if (rig.Spinner != null && !e.IsAir)
+                if (rig.HasModel)
                 {
-                    bool working = e.Order == Order.Harvest && !e.Moving && e.HarvestTile.HasValue;
-                    rig.Spinner.Rotate(working ? 600f * Time.deltaTime : 0, 0, 0, Space.Self);
+                    if (rig.Turret != null) Aim(v);
+                    if (e.IsAir) rig.Motion.SetWorking(true);
+                    if (e.IsHarvester)
+                    {
+                        rig.Motion.SetBinLoad(e.Cargo / (float)e.Def.HarvestCapacity);
+                        rig.Motion.SetWorking(e.Order == Order.Harvest && !e.Moving && e.HarvestTile.HasValue);
+                        // Tip the bin when unloading starts, and open the refinery dock door.
+                        if (e.Order == Order.ReturnOre && e.Cargo < v.PrevCargo && !v.Tipped)
+                        {
+                            rig.Motion.TipBin();
+                            v.Tipped = true;
+                            OpenDoorNear(e.Team, e.Pos, 2.5f, 2f);
+                        }
+                        if (e.Cargo == 0) v.Tipped = false;
+                        v.PrevCargo = e.Cargo;
+                    }
                 }
-                else if (rig.Turret != null) rig.Turret.rotation = Quaternion.Slerp(rig.Turret.rotation, Quaternion.Euler(0, Yaw(e.TurretFacing), 0), Time.deltaTime * 16f);
-                if (rig.Bin != null)
+                else
                 {
-                    rig.Bin.gameObject.SetActive(e.Cargo > 0);
-                    if (e.CargoType >= 0) rig.Bin.GetComponent<Renderer>().sharedMaterial = Mats.Glow(OreColors[e.CargoType], 0.8f);
+                    // Procedural placeholder (units the art pack doesn't cover yet).
+                    if (rig.Spinner != null && e.IsAir) rig.Spinner.Rotate(0, 1400f * Time.deltaTime, 0, Space.Self);
+                    else if (rig.Spinner != null)
+                    {
+                        bool working = e.Order == Order.Harvest && !e.Moving && e.HarvestTile.HasValue;
+                        rig.Spinner.Rotate(working ? 600f * Time.deltaTime : 0, 0, 0, Space.Self);
+                    }
+                    else if (rig.Turret != null) rig.Turret.rotation = Quaternion.Slerp(rig.Turret.rotation, Quaternion.Euler(0, Yaw(e.TurretFacing), 0), Time.deltaTime * 16f);
+                    if (rig.Bin != null)
+                    {
+                        rig.Bin.gameObject.SetActive(e.Cargo > 0);
+                        if (e.CargoType >= 0) rig.Bin.GetComponent<Renderer>().sharedMaterial = Mats.Glow(OreColors[e.CargoType], 0.8f);
+                    }
                 }
                 // Aircraft bank into turns.
                 if (e.IsAir) rig.Body.localRotation = Quaternion.Euler(e.Moving ? 6f : 0, 0, Mathf.Clamp(Mathf.DeltaAngle(rig.Root.eulerAngles.y, Yaw(e.Facing)) * 0.6f, -25f, 25f));
                 // Infantry bob while walking.
                 if (e.Def.Armor == Armor.Infantry) rig.Body.localPosition = new Vector3(0, e.Moving ? Mathf.Abs(Mathf.Sin(Time.time * 12f + e.Id)) * 0.04f : 0, 0);
             }
-            if (rig.Barrel != null)
+            if (rig.Barrel != null && !rig.HasModel)
             {
                 v.Recoil = Mathf.MoveTowards(v.Recoil, 0, Time.deltaTime * 0.6f);
                 rig.Barrel.localPosition = rig.BarrelRest + Vector3.back * v.Recoil;
@@ -231,6 +310,21 @@ namespace Pez.View
                         Fx.MuzzleFlash(MuzzleOf(ev.A, ev.Pos), ev.Key == "heavy_cannon" ? 0.2f : 0.13f);
                         Kick(ev.A, 0.08f);
                         break;
+                    case "trained":
+                        if (Views.TryGetValue(ev.A, out var tv2))
+                        {
+                            var def2 = Defs.Get(ev.Key);
+                            var producer = OpenDoorNear(ev.Team, ev.Pos, 3f, 1.6f);
+                            if (producer != null)
+                            {
+                                if (def2.IsAir && producer.E.Def.Key == "airfield") { producer.Rig.Motion.SnapLiftDown(); producer.Rig.Motion.SetLiftUp(true); }
+                                // Start at the door (south face) and roll out to where the sim placed it.
+                                var c = producer.E.Center;
+                                tv2.SpawnFrom = def2.IsAir ? W(c, 0.2f) : W(new Vec2(c.X, producer.E.Origin.Y + 0.3f));
+                                tv2.SpawnT = 0;
+                            }
+                        }
+                        break;
                     case "captured":
                         Fx.Beam(W(ev.Pos, 0.2f), W(ev.Pos, 4f), Mats.Team(ev.Team), 0.25f);
                         Fx.MuzzleFlash(W(ev.Pos, 0.6f), 0.4f);
@@ -255,6 +349,7 @@ namespace Pez.View
                         }
                     case "destroyed":
                         {
+                            if (Views.TryGetValue(ev.A, out var dead)) dead.Destroyed = true;
                             var def = Defs.Get(ev.Key);
                             float size = def.IsStructure ? def.SizeX * 1.2f : def.Armor == Armor.Infantry ? 0.35f : 1f;
                             if (def.Armor == Armor.Infantry) { Fx.Explosion(W(ev.Pos), 0.2f); break; }
@@ -280,7 +375,25 @@ namespace Pez.View
 
         void Kick(int id, float amount)
         {
-            if (Views.TryGetValue(id, out var v)) v.Recoil = amount;
+            if (!Views.TryGetValue(id, out var v)) return;
+            v.LastFire = Time.time;
+            if (v.Rig.HasModel) v.Rig.Motion.Fire(); else v.Recoil = amount;
+        }
+
+        /// <summary>Open the roll-up door of the team's structure nearest a point (unit exits, truck docking).</summary>
+        EV OpenDoorNear(int team, Vec2 p, float within, float seconds)
+        {
+            EV best = null; float bd = within;
+            foreach (var v in Views.Values)
+            {
+                if (v.E.Team != team || !v.E.IsStructure || !v.Rig.HasModel) continue;
+                float d = v.E.DistFrom(p);
+                if (d < bd) { bd = d; best = v; }
+            }
+            if (best == null) return null;
+            best.Rig.Motion.SetDoorOpen(true);
+            best.DoorTimer = seconds;
+            return best;
         }
     }
 }

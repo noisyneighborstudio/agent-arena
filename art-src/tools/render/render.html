@@ -1,0 +1,267 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>html,body{margin:0;background:#14171A}canvas{display:block}</style>
+<script type="importmap">{"imports":{"three":"./node_modules/three/build/three.module.js","three/addons/":"./node_modules/three/examples/jsm/"}}</script>
+</head><body>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
+const loader = new GLTFLoader();
+const cache = {};
+const TEAM = { blue: 0x2E73FF, red: 0xF22E1F, green: 0x33D94D, yellow: 0xFFD126 };
+async function load(kind, key) {
+  const k = kind + '/' + key;
+  if (!cache[k]) cache[k] = await loader.loadAsync(`../pack/models/${kind}/${key}.glb`);
+  return cache[k].scene;
+}
+function instance(src, team) {
+  const o = src.clone(true);
+  o.traverse(n => {
+    if (n.isMesh) {
+      n.castShadow = true; n.receiveShadow = true;
+      n.material = n.material.clone();
+      if (n.material.name === 'M_Team' && team) n.material.color.setHex(TEAM[team]);
+      if (n.material.emissive && n.material.emissive.getHex() !== 0) n.material.emissiveIntensity = 1.3;
+    }
+  });
+  return o;
+}
+function lights(scene, strength = 1, shadowBox = 4) {
+  scene.add(new THREE.HemisphereLight(0xBFD4FF, 0x5A4A36, 0.9 * strength));
+  const sun = new THREE.DirectionalLight(0xFFE6C4, 2.6 * strength);
+  sun.position.set(-6, 10, 4);   // upper-left from the camera's point of view (camera looks toward +Z)
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  Object.assign(sun.shadow.camera, { left: -shadowBox, right: shadowBox, top: shadowBox, bottom: -shadowBox, near: .1, far: 60 });
+  sun.shadow.bias = -0.0005; sun.shadow.normalBias = 0.02;
+  scene.add(sun); scene.add(sun.target);
+  return sun;
+}
+let envTex = null;
+function env(r, scene) {
+  if (!envTex) envTex = new THREE.PMREMGenerator(r).fromScene(new RoomEnvironment(), 0.04).texture;
+  scene.environment = envTex; scene.environmentIntensity = 0.45;
+}
+function sunFrom(sun, cam, target, dist = 12) {
+  // warm sun from the camera's upper-left
+  const fwd = new THREE.Vector3().subVectors(target, cam.position).setY(0).normalize();
+  const left = new THREE.Vector3(fwd.z, 0, -fwd.x);   // screen-left for a camera looking along fwd (three.js)
+  sun.position.copy(target).addScaledVector(left, dist * .6).addScaledVector(fwd, dist * .25).add(new THREE.Vector3(0, dist, 0));
+  sun.target.position.copy(target);
+}
+function makeRenderer(w, h) {
+  const r = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+  r.setPixelRatio(1); r.setSize(w, h);
+  r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFSoftShadowMap;
+  r.outputColorSpace = THREE.SRGBColorSpace;
+  r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = 1.05;
+  document.body.innerHTML = ''; document.body.appendChild(r.domElement);
+  return r;
+}
+function setStages(obj, p) {
+  const W = [[0, .1], [.1, .45], [.45, .75], [.75, .95]];
+  const box = new THREE.Box3();
+  for (let i = 0; i < 4; i++) {
+    const s = obj.getObjectByName('stage_' + i); if (!s) continue;
+    if (s.userData.h === undefined) { s.position.y = 0; s.updateMatrixWorld(true); box.setFromObject(s); s.userData.h = i === 0 ? .17 : box.max.y + .02; }
+    const k = Math.min(Math.max((p - W[i][0]) / (W[i][1] - W[i][0]), 0), 1);
+    s.position.y = -s.userData.h * (1 - (1 - Math.pow(1 - k, 3)));
+  }
+  const s1 = obj.getObjectByName('stage_1') || obj.getObjectByName('stage_2') || obj.getObjectByName('stage_3');
+  for (const n of ['door', 'lift']) { const t = obj.getObjectByName(n); if (!t) continue; if (t.userData.y0 === undefined) t.userData.y0 = t.position.y; t.position.y = t.userData.y0 + (s1 ? s1.position.y : 0); }
+  const f = Math.min(Math.max((p - .95) / .05, 0), 1);
+  for (const n of ['turret', 'spinner']) {
+    const t = obj.getObjectByName(n); if (!t || t.parent.name.startsWith('stage') === false && t.parent !== obj) continue;
+    if (t.userData.y0 === undefined) t.userData.y0 = t.position.y;
+    t.position.y = t.userData.y0 - .3 * (1 - (1 - Math.pow(1 - f, 3)));
+  }
+}
+
+// ---------------------------------------------------------------- icon: 256x192, three-quarter view, dark bg
+window.renderIcon = async (kind, key) => {
+  const r = makeRenderer(256, 192);
+  const scene = new THREE.Scene(); scene.background = new THREE.Color(0x14171A);
+  const o = instance(await load(kind, key), 'blue'); scene.add(o);
+  const box = new THREE.Box3().setFromObject(o), size = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
+  const rad = size.length() / 2;
+  lights(scene, 1, rad * 2);
+  const floor = new THREE.Mesh(new THREE.CircleGeometry(rad * 1.6, 48), new THREE.ShadowMaterial({ opacity: .35 }));
+  floor.rotation.x = -Math.PI / 2; floor.position.y = box.min.y + .001; floor.receiveShadow = true; scene.add(floor);
+  const cam = new THREE.PerspectiveCamera(26, 256 / 192, .01, 100);
+  const dir = new THREE.Vector3(-0.75, 0.62, -1).normalize();   // front-left, above: shows the south (door) face
+  const dist = rad / Math.sin(THREE.MathUtils.degToRad(26 / 2)) * 0.82;
+  cam.position.copy(c).addScaledVector(dir, dist); cam.lookAt(c);
+  env(r, scene); sunFrom(scene.children.find(n => n.isDirectionalLight), cam, c, rad * 4);
+  r.render(scene, cam);
+  return r.domElement.toDataURL('image/png');
+};
+
+// ---------------------------------------------------------------- build sequence strip frame
+window.renderBuild = async (kind, key, p, w = 360, h = 300) => {
+  const r = makeRenderer(w, h);
+  const scene = new THREE.Scene(); scene.background = new THREE.Color(0x14171A);
+  const o = instance(await load(kind, key), 'blue'); scene.add(o);
+  setStages(o, 1); o.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(o), c = box.getCenter(new THREE.Vector3()), rad = box.getSize(new THREE.Vector3()).length() / 2;
+  setStages(o, p);
+  const d = o.getObjectByName('door'); if (d && p >= 1 && key === 'factory') d.scale.y = .05;
+  lights(scene, 1, rad * 2);
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(rad * 5, rad * 5), new THREE.MeshStandardMaterial({ color: 0x7D6E55, roughness: 1 }));
+  ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
+  const cam = new THREE.PerspectiveCamera(30, w / h, .01, 100);
+  const dir = new THREE.Vector3(-0.7, 0.75, -1).normalize();
+  cam.position.copy(c).addScaledVector(dir, rad / Math.sin(THREE.MathUtils.degToRad(15)) * .85); cam.lookAt(c);
+  env(r, scene); sunFrom(scene.children.find(n => n.isDirectionalLight), cam, c, rad * 4);
+  r.render(scene, cam);
+  return r.domElement.toDataURL('image/png');
+};
+
+// ---------------------------------------------------------------- gameplay map
+function groundTexture() {
+  const cv = document.createElement('canvas'); cv.width = cv.height = 2048;
+  const g = cv.getContext('2d');
+  g.fillStyle = '#7D6E55'; g.fillRect(0, 0, 2048, 2048);
+  let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  for (let i = 0; i < 220; i++) { g.fillStyle = rnd() > .5 ? 'rgba(142,127,99,.35)' : 'rgba(106,92,70,.35)'; g.beginPath(); g.ellipse(rnd() * 2048, rnd() * 2048, 40 + rnd() * 160, 30 + rnd() * 90, rnd() * 3, 0, 7); g.fill(); }
+  for (let i = 0; i < 3000; i++) { g.fillStyle = 'rgba(160,145,115,.5)'; g.fillRect(rnd() * 2048, rnd() * 2048, 3, 3); }
+  g.strokeStyle = 'rgba(0,0,0,.07)'; g.lineWidth = 2;
+  for (let i = 0; i <= 32; i++) { g.beginPath(); g.moveTo(i * 64, 0); g.lineTo(i * 64, 2048); g.stroke(); g.beginPath(); g.moveTo(0, i * 64); g.lineTo(2048, i * 64); g.stroke(); }
+  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; return t;
+}
+function decal(scene, x, z, rx, rz, color, opacity) {
+  const m = new THREE.Mesh(new THREE.CircleGeometry(1, 40), new THREE.MeshStandardMaterial({ color, transparent: true, opacity, roughness: 1, depthWrite: false }));
+  m.rotation.x = -Math.PI / 2; m.scale.set(rx, rz, 1); m.position.set(-x, .005, z); m.receiveShadow = true; scene.add(m);
+}
+async function place(scene, kind, key, team, x, z, yaw = 0, opts = {}) {
+  const o = instance(await load(kind, key), team);
+  o.position.set(-x, opts.y || 0, z); o.rotation.y = THREE.MathUtils.degToRad(-yaw);
+  if (opts.turret !== undefined) { const t = o.getObjectByName('turret'); if (t) t.rotation.y = THREE.MathUtils.degToRad(-opts.turret); }
+  if (opts.build !== undefined) setStages(o, opts.build);
+  if (opts.door) { const d = o.getObjectByName('door'); if (d) d.scale.y = .05; }
+  if (opts.bin !== undefined) { const b = o.getObjectByName('bin_ore'); if (b) b.scale.y = Math.max(opts.bin, .001); }
+  scene.add(o); return o;
+}
+function beam(scene, a, b, color, width = .06) {
+  a = a.clone(); a.x = -a.x; b = b.clone(); b.x = -b.x;
+  const d = new THREE.Vector3().subVectors(b, a), len = d.length();
+  const core = new THREE.Mesh(new THREE.CylinderGeometry(width * .35, width * .35, len, 8), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+  const glow = new THREE.Mesh(new THREE.CylinderGeometry(width, width, len, 8), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: .55, blending: THREE.AdditiveBlending, depthWrite: false }));
+  for (const m of [core, glow]) { m.position.copy(a).addScaledVector(d, .5); m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.clone().normalize()); scene.add(m); }
+}
+function blast(scene, x, y, z, s) {
+  const cols = [[0xFFF6D6, .35], [0xFFD36B, .6], [0xFF8A1F, 1]];
+  for (const [c, r] of cols) { const m = new THREE.Mesh(new THREE.SphereGeometry(r * s, 20, 14), new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: r === 1 ? .55 : .9, depthWrite: false })); m.position.set(-x, y, z); scene.add(m); }
+  for (let i = 0; i < 6; i++) { const m = new THREE.Mesh(new THREE.SphereGeometry(s * (.6 + i * .15), 12, 10), new THREE.MeshStandardMaterial({ color: 0x3A3026, transparent: true, opacity: .35, roughness: 1, depthWrite: false })); m.position.set(-x - i * .12, y + .4 + i * .35, z + i * .1); scene.add(m); }
+}
+
+window.renderMap = async (mode, w = 1920, h = 1080, hero = false) => {
+  const r = makeRenderer(w, h);
+  const scene = new THREE.Scene(); scene.background = new THREE.Color(0x2A2420);
+  scene.fog = new THREE.Fog(0x2A2420, 40, 90);
+  const sun = lights(scene, 1, 22); sun.position.set(-14, 22, 8); sun.target.position.set(0, 0, 4);
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(64, 64), new THREE.MeshStandardMaterial({ map: groundTexture(), roughness: 1 }));
+  ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
+  ground.material.map.repeat.set(1, 1);
+  // licorice cliff (north-west) and cola water (south-east)
+  const cliff = new THREE.Mesh(new THREE.BoxGeometry(14, 1.6, 6), new THREE.MeshStandardMaterial({ color: 0x3A3132, roughness: .7 }));
+  cliff.position.set(12, .8, 19); cliff.rotation.y = -.12; cliff.castShadow = cliff.receiveShadow = true; scene.add(cliff);
+  const cliffTop = new THREE.Mesh(new THREE.BoxGeometry(14.2, .06, 6.2), new THREE.MeshStandardMaterial({ color: 0x4A3F40, roughness: .9 }));
+  cliffTop.position.set(12, 1.63, 19); cliffTop.rotation.y = -.12; scene.add(cliffTop);
+  const water = new THREE.Mesh(new THREE.CircleGeometry(9, 48), new THREE.MeshStandardMaterial({ color: 0x3A2218, roughness: .08, metalness: .2 }));
+  water.rotation.x = -Math.PI / 2; water.position.set(-14, .02, -10); water.scale.set(1.3, .8, 1); scene.add(water);
+  const shore = new THREE.Mesh(new THREE.RingGeometry(9, 9.6, 48), new THREE.MeshStandardMaterial({ color: 0xA08A68, roughness: 1 }));
+  shore.rotation.x = -Math.PI / 2; shore.position.set(-14, .015, -10); shore.scale.set(1.3, .8, 1); scene.add(shore);
+  // cotton-candy trees
+  const treeMat = new THREE.MeshStandardMaterial({ color: 0x8A7385, roughness: .9 });
+  for (let [x, z, s] of [[-13, 6, .9], [-12, 4.5, .7], [-14, 2, .8], [9, 13, .9], [10.5, 12, .7], [6, -6, .8], [16, 2, .9], [15, 4, .7]]) {
+    s *= .55; const t = new THREE.Mesh(new THREE.IcosahedronGeometry(s, 1), treeMat); t.position.set(-x, s * 1.4, z); t.castShadow = true; scene.add(t);
+    const st = new THREE.Mesh(new THREE.CylinderGeometry(.06, .08, s * .8), new THREE.MeshStandardMaterial({ color: 0xECE4D2 })); st.position.set(-x, s * .4, z); scene.add(st);
+  }
+  // ore fields
+  decal(scene, 3.5, -2.5, 2.4, 1.8, 0x5A2416, .35); decal(scene, 7.5, -4, 1.6, 1.3, 0x2C5E6B, .45); decal(scene, -2, 10, 1.4, 1.2, 0x4E7A12, .4);
+  for (const [x, z] of [[2.5, -2], [3.5, -2], [4.5, -2], [2.5, -3], [3.5, -3], [4.5, -3], [3, -4]]) await place(scene, 'ores', 'iron_ore', null, x, z);
+  for (const [x, z] of [[7, -3.5], [8, -3.5], [7.5, -4.5]]) await place(scene, 'ores', 'crystal', null, x, z);
+  for (const [x, z] of [[-2.5, 10], [-1.5, 10], [-2, 11]]) await place(scene, 'ores', 'uranium', null, x, z);
+  for (const [x, z] of [[11, 9], [12, 9]]) await place(scene, 'ores', 'copper_ore', null, x, z);
+  // ---- Blueberry base (south-west)
+  const B = 'blue', R = 'red', S = 'structures', U = 'units';
+  await place(scene, S, 'command_center', B, -4.5, 2.5);
+  await place(scene, S, 'power_plant', B, -8, 3);
+  await place(scene, S, 'power_plant', B, -8, 0.5);
+  await place(scene, S, 'mining_refinery', B, -1, 0.5);
+  await place(scene, S, 'factory', B, -4.5, -1.5, 0, { door: true });
+  await place(scene, S, 'barracks', B, -8, -2.5);
+  await place(scene, S, 'radar_dome', B, -1.5, 4.5);
+  await place(scene, S, 'optics_lab', B, -8.5, 6);
+  await place(scene, S, 'fusion_reactor', B, -4.5, 6.5, 0, { build: .6 });   // under construction
+  await place(scene, S, 'laser_tower', B, 2.5, 3.5, 0, { turret: 50 });
+  await place(scene, S, 'gun_turret', B, 3, 1, 0, { turret: 70 });
+  await place(scene, S, 'sam_site', B, 1, 5.5, 0, { turret: 30 });
+  await place(scene, S, 'airfield', B, -11.5, -4);
+  await place(scene, U, 'mining_truck', B, 3.5, -2.5, 140, { bin: .6 });
+  await place(scene, U, 'mining_truck', B, -1, -1.7, 0, { bin: 1 });
+  await place(scene, U, 'light_tank', B, -4.5, -3.4, 180);
+  await place(scene, U, 'heavy_tank', B, 4.5, 4, 70, { turret: -10 });
+  await place(scene, U, 'light_tank', B, 5, 2, 80, { turret: -5 });
+  await place(scene, U, 'repair_truck', B, 3.3, 5.2, 120, { turret: -40 });
+  for (const [x, z] of [[1.8, 2], [2.1, 2.3], [1.7, 2.5], [2.2, 2.7]]) await place(scene, U, 'rifleman', B, x, z, 70);
+  await place(scene, U, 'medic', B, 1.4, 2.9, 70);
+  await place(scene, U, 'gunship', B, -10, -1.5, 30, { y: 2.4 });
+  // ---- Cherry attack (north-east)
+  await place(scene, U, 'light_tank', R, 9, 6, -110, { turret: 5 });
+  await place(scene, U, 'light_tank', R, 10, 4, -100, { turret: 0 });
+  await place(scene, U, 'heavy_tank', R, 11.5, 7, -115, { turret: 10 });
+  await place(scene, U, 'laser_tank', R, 10.5, 1.5, -85, { turret: -5 });
+  await place(scene, U, 'artillery', R, 15, 10, -125, { turret: -5 });
+  await place(scene, U, 'scout_buggy', R, 8, 8.5, -130);
+  for (const [x, z] of [[8, 2.2], [8.3, 2.6], [8.6, 2.1], [8.9, 2.5]]) await place(scene, U, 'rocket_soldier', R, x, z, -90);
+  await place(scene, U, 'laser_trooper', R, 8.7, 3, -95);
+  await place(scene, U, 'gunship', R, 6.5, -0.5, -120, { y: 2.4 });
+  await place(scene, U, 'stealth_bomber', R, 2, 9, -150, { y: 3.2 });
+  await place(scene, U, 'outpost_truck', R, 13, 3, -100);
+  await place(scene, S, 'outpost', R, 15.5, 6);
+  // ---- combat
+  beam(scene, new THREE.Vector3(2.5 + .25, 2.05, 3.5 + .21), new THREE.Vector3(9, .3, 6), 0x3FE6FF);
+  beam(scene, new THREE.Vector3(10.5 - .6, .38, 1.55), new THREE.Vector3(5.1, .32, 2.05), 0x3FE6FF, .05);
+  blast(scene, 3.1, .6, 1.05, .45);
+  blast(scene, -3.8, 1.2, 2.2, .35);
+  // ---- camera
+  let cam;
+  const target = hero ? new THREE.Vector3(-3.2, 0, 4.2) : new THREE.Vector3(-1.5, 0, 3);
+  if (mode === 'onaxis') {
+    cam = new THREE.PerspectiveCamera(38, w / h, .1, 200);
+    const pitch = THREE.MathUtils.degToRad(58), dist = 25;
+    cam.position.set(target.x, target.y + Math.sin(pitch) * dist, target.z - Math.cos(pitch) * dist);
+  } else {
+    const viewH = hero ? 13 : 17;
+    cam = new THREE.OrthographicCamera(-viewH * w / h / 2, viewH * w / h / 2, viewH / 2, -viewH / 2, .1, 200);
+    const pitch = THREE.MathUtils.degToRad(55), yaw = THREE.MathUtils.degToRad(45), dist = 40;
+    cam.position.set(target.x + Math.sin(yaw) * Math.cos(pitch) * dist, Math.sin(pitch) * dist, target.z - Math.cos(yaw) * Math.cos(pitch) * dist);
+  }
+  cam.lookAt(target);
+  env(r, scene); sunFrom(sun, cam, target, 22);
+  scene.fog = mode === 'onaxis' ? scene.fog : null;
+  if (hero) {
+    const lineMat = new THREE.LineBasicMaterial({ color: 0x1A1512, transparent: true, opacity: .75 });
+    const meshes = []; scene.traverse(n => { if (n.isMesh && n.geometry && !(n.geometry.type === 'PlaneGeometry') && !(n.material && n.material.transparent)) meshes.push(n); });
+    for (const m of meshes) { const e = new THREE.LineSegments(new THREE.EdgesGeometry(m.geometry, 32), lineMat); m.add(e); }
+    scene.traverse(n => { if (n.isMesh && n.material.emissive && n.material.emissive.getHex() !== 0) n.material.emissiveIntensity = 3.2; });
+    const comp = new EffectComposer(r);
+    comp.addPass(new RenderPass(scene, cam));
+    comp.addPass(new UnrealBloomPass(new THREE.Vector2(w, h), 0.45, 0.35, 3.2));
+    comp.addPass(new OutputPass());
+    comp.render();
+    return r.domElement.toDataURL('image/png');
+  }
+  r.render(scene, cam);
+  return r.domElement.toDataURL('image/png');
+};
+window.ready = true;
+</script>
+</body></html>
