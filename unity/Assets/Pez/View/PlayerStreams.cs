@@ -47,7 +47,7 @@ namespace Pez.View
                 var fwd = Quaternion.Euler(0, m.yaw, 0) * Vector3.forward;
                 m.focus += right * op.Dx * m.size * 2f * Width / Height + fwd * op.Dy * m.size * 2f / Mathf.Sin(StreamPitch * Mathf.Deg2Rad);
                 if (!float.IsNaN(op.X) && !float.IsNaN(op.Y)) m.focus = new Vector3(op.X, 0, op.Y); // "look at x,y"
-                m.size = Mathf.Clamp(m.size * op.Zoom, 5f, 40f);
+                m.size = Mathf.Clamp(m.size * op.Zoom, 8f, 40f); // the art pack's zoom range
                 m.yaw += op.Yaw;
                 m.until = Time.unscaledTime + 20f;
                 manual[op.Team] = m;
@@ -104,9 +104,11 @@ namespace Pez.View
             view.Terrain.UpdateTeamFog(w, team);
 
             view.SetPov(team);
+            RtsCamera.AimSun(yaw); // the sun sits at the upper left of whichever view renders
             cam.targetTexture = rt;
             cam.Render();
             cam.targetTexture = null;
+            RtsCamera.AimSun(Runner.Camera.Yaw);
             view.SetPov(view.PovTeam); // back to the local view before the main camera draws
 
             var prev = RenderTexture.active;

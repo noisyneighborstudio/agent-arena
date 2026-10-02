@@ -24,7 +24,10 @@ namespace Pez.View
         public static readonly Color Dirt = PezPalette.TerrainBiscuitDark;
         public static readonly Color OreGround = PezPalette.TerrainBiscuitDark;
         public static readonly Color RockC = PezPalette.TerrainLicoriceCliffTop;
-        public static readonly Color Seabed = PezPalette.TerrainShore;
+        public static readonly Color Seabed = PezPalette.TerrainColaWater; // dark under the cola so lakes don't read as tan holes
+        // Shroud and fog in licorice (vertex colours bypass the sRGB conversion, so convert once here).
+        static Color? fogTint;
+        static Color FogTint => fogTint ??= ((Color)PezPalette.MaterialsLicorice).linear;
 
         public void Build(Map m)
         {
@@ -99,19 +102,23 @@ namespace Pez.View
             var r = go.AddComponent<MeshRenderer>();
             var groundMat = new Material(Mats.Terrain());
             groundMat.SetFloat("_DetailStrength", 0.035f); // quiet ground: large dark noise clouds read as fake shadows
+            groundMat.SetFloat("_GridStrength", 0.06f); // the art pack's tile grid is a faint 5-7% line, inside the 8% quiet-ground budget
             r.sharedMaterial = groundMat;
             r.receiveShadows = true;
 
-            // Skirt: a big dark plane under the map so the edges don't float in the void.
-            var skirt = Models.Part(transform, PrimitiveType.Plane, new Vector3(map.W / 2f, -0.6f, map.H / 2f), new Vector3(map.W / 2f, 1, map.H / 2f), Mats.Lit(new Color(0.12f, 0.14f, 0.1f), 0, 0));
+            // Skirt: a big dark plane under the map so the edges don't float in the void. Warm licorice like the art
+            // pack's map backdrop (#2A2420), not an off-palette olive.
+            var skirt = Models.Part(transform, PrimitiveType.Plane, new Vector3(map.W / 2f, -0.6f, map.H / 2f), new Vector3(map.W / 2f, 1, map.H / 2f), Mats.Lit(new Color32(42, 36, 32, 255), 0, 0));
             skirt.name = "Skirt";
         }
 
         void BuildWater()
         {
             var water = new Material(Mats.Water());
-            water.SetColor("_Color", new Color(0.42f, 0.24f, 0.14f, 0.8f)); // cola, lit
-            water.SetColor("_Deep", new Color(0.2f, 0.1f, 0.06f, 0.92f));
+            // Cola #3A2218, glossy and near-opaque: the art pack's lakes are the darkest, shiniest thing on the ground.
+            var cola = (Color)PezPalette.TerrainColaWater;
+            water.SetColor("_Color", new Color(cola.r * 1.25f, cola.g * 1.25f, cola.b * 1.25f, 0.9f));
+            water.SetColor("_Deep", new Color(cola.r * 0.6f, cola.g * 0.6f, cola.b * 0.6f, 0.97f));
             var t = Models.Part(transform, PrimitiveType.Plane, new Vector3(map.W / 2f, -0.18f, map.H / 2f), new Vector3(map.W / 10f, 1, map.H / 10f), water);
             t.name = "Water";
             t.GetComponent<Renderer>().shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
@@ -180,6 +187,7 @@ namespace Pez.View
                     if (map.Ore[i] <= 0) continue;
                     int x = i % map.W, y = i / map.W;
                     var go = Instantiate(oreModels[map.OreType[i]], parent0, false);
+                    Models.FlatShade(go); // faceted bricks and shards, as in the art pack's renders
                     go.transform.localPosition = new Vector3(x + 0.5f, 0, y + 0.5f);
                     go.transform.localRotation = Quaternion.Euler(0, rng0.Next(4) * 90, 0);
                     foreach (var r in go.GetComponentsInChildren<Renderer>()) r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
@@ -315,7 +323,7 @@ namespace Pez.View
                             if (exp[map.Idx(tx, ty)]) known++;
                         }
                     float a = total == 0 ? 0 : (1f - seen / (float)total) * 0.5f + (1f - known / (float)total) * 0.48f;
-                    colors[y * vw + x] = new Color(0.02f, 0.03f, 0.05f, a);
+                    colors[y * vw + x] = new Color(FogTint.r, FogTint.g, FogTint.b, a);
                 }
         }
 
@@ -348,7 +356,7 @@ namespace Pez.View
                             if (exp[map.Idx(tx, ty)]) known++;
                         }
                     float a = total == 0 ? 0 : (1f - seen / (float)total) * 0.5f + (1f - known / (float)total) * 0.48f;
-                    fogColors[y * vw + x] = new Color(0.02f, 0.03f, 0.05f, a);
+                    fogColors[y * vw + x] = new Color(FogTint.r, FogTint.g, FogTint.b, a);
                 }
             fogMesh.colors = fogColors;
         }

@@ -20,6 +20,8 @@ namespace Pez.View
             public float BuiltShown = -1f;
             public Vector3? SpawnFrom;
             public float SpawnT;
+            // Hull feel (MOTION.md): nose-up under acceleration, dip when braking, kick back on firing.
+            public float HullSpeed, HullPitch, HullPitchVel;
         }
 
         public World World { get; private set; }
@@ -132,7 +134,8 @@ namespace Pez.View
                 if (!on) { if (dome != null) { Destroy(dome.gameObject); shields.Remove(t.Id); } continue; }
                 if (dome == null)
                 {
-                    var c = Mats.Team(t.Id); c.a = 0.13f;
+                    // Protection is a status, and status never uses team hues: a faint cream dome for every team.
+                    var c = Mats.Cream; c.a = 0.07f;
                     dome = Models.Part(transform, PrimitiveType.Sphere, W(t.StartPos), new Vector3(13f, 7f, 13f), Mats.Unlit(c, true));
                     dome.GetComponent<Renderer>().shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
                     shields[t.Id] = dome;
@@ -183,10 +186,11 @@ namespace Pez.View
             // the handoff recommends 1.3-1.4x so they read at game zoom.
             if (!e.IsStructure)
                 rig.Body.localScale = Vector3.one * (rig.HasModel ? (e.Def.Armor == Armor.Infantry ? 1.35f : 1f) : (e.Def.Armor == Armor.Infantry ? 1.5f : 1.2f));
-            var ring = Models.Part(rig.Root, PrimitiveType.Cylinder, new Vector3(0, 0.03f, 0), Vector3.one, Mats.Unlit(new Color(0.3f, 1f, 0.4f, 0.55f)));
+            // Selection rings are cream for every team (HUD kit); ownership already shows on the model.
+            var ring = Models.SelectionRing(rig.Root, Mats.Unlit(new Color(Mats.Cream.r, Mats.Cream.g, Mats.Cream.b, 0.9f)));
+            ring.localPosition = new Vector3(0, 0.03f, 0);
             float r = e.IsStructure ? Mathf.Max(e.Def.SizeX, e.Def.SizeY) * 0.75f : e.Def.Radius * 2.6f;
-            ring.localScale = new Vector3(r, 0.003f, r);
-            ring.GetComponent<Renderer>().shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            ring.localScale = new Vector3(r, 1f, r);
             ring.gameObject.SetActive(false);
             var v = new EV { E = e, Rig = rig, Ring = ring };
             if (e.IsStructure) rig.Root.position = W(e.Center);
@@ -240,6 +244,7 @@ namespace Pez.View
                 }
                 var targetRot = Quaternion.Euler(0, Yaw(e.Facing), 0);
                 rig.Root.rotation = Quaternion.Slerp(rig.Root.rotation, targetRot, Time.deltaTime * 14f);
+                if (!e.IsAir && e.Def.Armor != Armor.Infantry) HullFeel(v);
                 if (rig.HasModel)
                 {
                     if (rig.Turret != null) Aim(v);
@@ -287,6 +292,20 @@ namespace Pez.View
             }
             bool sel = Selected.Contains(e.Id);
             if (v.Ring.gameObject.activeSelf != sel) v.Ring.gameObject.SetActive(sel);
+        }
+
+        /// <summary>Acceleration pitches the hull nose-up 2 degrees, braking dips it 3 (a 0.25 s spring on the visual body).</summary>
+        void HullFeel(EV v)
+        {
+            float dt = Time.deltaTime;
+            if (dt <= 0) return;
+            float speed = Vec2.Dist(v.E.PrevPos, v.E.Pos) / World.Dt;
+            float smoothed = Mathf.Lerp(v.HullSpeed, speed, 1f - Mathf.Exp(-dt * 6f));
+            float accel = (smoothed - v.HullSpeed) / dt;
+            v.HullSpeed = smoothed;
+            float target = Mathf.Clamp(-accel * 1.5f, -2f, 3f); // nose-up is negative pitch
+            v.HullPitch = Mathf.SmoothDamp(v.HullPitch, target, ref v.HullPitchVel, 0.25f, Mathf.Infinity, dt);
+            v.Rig.Body.localRotation = Quaternion.Euler(v.HullPitch, 0, 0);
         }
 
         void SyncProjectiles(float alpha)
@@ -350,8 +369,8 @@ namespace Pez.View
                             bool beam = ev.Key == "laser" || ev.Key == "beam";
                             if (beam)
                             {
-                                var c = ev.Key == "beam" ? new Color(1f, 0.35f, 0.95f, 1f) : new Color(0.35f, 0.95f, 1f, 1f);
-                                Fx.Beam(from, to, c, ev.Key == "beam" ? 0.12f : 0.06f);
+                                // Lasers (including the laser tank's beam cannon) are rock-candy cyan; magenta is for plasma only.
+                                Fx.Beam(from, to, PezPalette.EmissiveCyanLaserOptics, ev.Key == "beam" ? 0.12f : 0.06f);
                                 Fx.MuzzleFlash(to, 0.1f);
                             }
                             else if (ev.Key == "c4")
@@ -397,7 +416,8 @@ namespace Pez.View
                             bool heal = ev.Type == "heal";
                             var from = MuzzleOf(ev.A, ev.Pos);
                             var to = W(ev.Pos2, HeightOf(ev.B, heal ? 0.3f : 0.5f));
-                            Fx.Beam(from, to, heal ? new Color(0.3f, 1f, 0.45f, 0.8f) : new Color(1f, 0.75f, 0.25f, 0.9f), heal ? 0.05f : 0.035f);
+                            // Heal beam: team-neutral cream-white. Welding beam: caramel amber.
+                            Fx.Beam(from, to, heal ? new Color(0.96f, 0.95f, 0.91f, 0.8f) : new Color(Mats.Amber.r, Mats.Amber.g, Mats.Amber.b, 0.9f), heal ? 0.05f : 0.035f);
                             if (!heal) Fx.MuzzleFlash(to, 0.05f); // welding sparks
                             break;
                         }
@@ -440,6 +460,7 @@ namespace Pez.View
             if (!Views.TryGetValue(id, out var v)) return;
             v.LastFire = Time.time;
             if (v.Rig.HasModel) v.Rig.Motion.Fire(); else v.Recoil = amount;
+            if (!v.E.IsStructure && !v.E.IsAir && v.E.Def.Armor != Armor.Infantry) v.HullPitch -= 1.5f; // hull kicks back (nose up)
         }
 
         /// <summary>Open the roll-up door of the team's structure nearest a point (unit exits, truck docking).</summary>

@@ -101,7 +101,7 @@ namespace Pez.View
             for (int i = 0; i < smoke; i++)
             {
                 var g = Blob(pos + Random.insideUnitSphere * size * 0.4f + Vector3.up * size * 0.3f, size * Random.Range(0.3f, 0.6f),
-                    new Color(0.15f, 0.14f, 0.13f, 0.55f), false, Random.Range(1.2f, 2.4f), 2.5f);
+                    new Color(0.227f, 0.188f, 0.149f, 0.5f), false, Random.Range(1.2f, 2.4f), 2.5f); // warm sugar-dust smoke #3A3026
                 g.GetComponent<FxLife>().Velocity = new Vector3(Random.Range(-0.3f, 0.3f), Random.Range(0.5f, 1.2f), Random.Range(-0.3f, 0.3f)) * Mathf.Sqrt(size);
             }
             int sparks = Mathf.Clamp((int)(size * 8), 3, 20);

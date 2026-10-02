@@ -72,6 +72,15 @@ namespace Pez.View
             return m;
         }
 
+        // Status colours never use team hues (art pack rule 6): cream for normal/selection, amber for high, the
+        // black-and-cream hazard stripe for critical. HUD panels and border from the HUD kit.
+        public static readonly Color Cream = PezPalette.MaterialsCreamPlastic;
+        public static readonly Color Amber = PezPalette.EmissiveAmberIndustryDocking;
+        public static readonly Color Licorice = PezPalette.MaterialsLicorice;
+        public static readonly Color Panel = new Color32(16, 19, 23, 230);
+        public static readonly Color PanelBorder = new Color32(42, 49, 56, 255);
+        public static readonly Color MutedText = new Color32(155, 165, 174, 255);
+
         // Team flavours from the art pack's palette: Blueberry, Cherry, Lime, Lemon.
         // Open arenas seat up to eight: four more flavours beyond the art pack's original four.
         public static readonly Color[] TeamColors =

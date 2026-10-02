@@ -23,11 +23,14 @@ namespace Pez.View
     /// </summary>
     public static class Models
     {
-        static readonly Color Steel = new Color(0.42f, 0.44f, 0.46f);
-        static readonly Color DarkSteel = new Color(0.16f, 0.17f, 0.18f);
-        static readonly Color Concrete = new Color(0.62f, 0.6f, 0.56f);
-        static readonly Color Track = new Color(0.09f, 0.09f, 0.09f);
-        static readonly Color Skin = new Color(0.85f, 0.67f, 0.52f);
+        // Placeholder materials follow the art pack's neutral palette: the world stays unflavoured, and the four
+        // team hues (plus hazard yellow and red) are never used outside the team mask.
+        static readonly Color Steel = PezPalette.MaterialsSpringSteel;
+        static readonly Color DarkSteel = PezPalette.MaterialsSmokePlastic;
+        static readonly Color Concrete = PezPalette.MaterialsSugarPad;
+        static readonly Color Track = PezPalette.MaterialsLicorice;
+        static readonly Color Skin = PezPalette.MaterialsCreamPlastic;
+        static readonly Color Kraft = PezPalette.MaterialsKraft;
 
         public static Transform Part(Transform parent, PrimitiveType type, Vector3 pos, Vector3 scale, Material mat, Vector3 euler = default)
         {
@@ -58,6 +61,108 @@ namespace Pez.View
         public static GameObject ModelFor(string key)
         {
             if (!modelCache.TryGetValue(key, out var m)) modelCache[key] = m = Resources.Load<GameObject>("PezModels/" + key);
+            return m;
+        }
+
+        static Mesh dashedRing;
+
+        /// <summary>
+        /// The HUD kit's selection ring: a flat dashed circle (diameter 1, in XZ), drawn in cream for every team.
+        /// </summary>
+        public static Transform SelectionRing(Transform parent, Material mat)
+        {
+            if (dashedRing == null)
+            {
+                const int dashes = 20, steps = 4;
+                const float outer = 0.5f, inner = 0.44f, fill = 0.6f; // each dash covers 60% of its slot
+                var verts = new List<Vector3>();
+                var tris = new List<int>();
+                for (int d = 0; d < dashes; d++)
+                {
+                    float a0 = d * Mathf.PI * 2f / dashes, a1 = a0 + Mathf.PI * 2f / dashes * fill;
+                    int start = verts.Count;
+                    for (int k = 0; k <= steps; k++)
+                    {
+                        float a = Mathf.Lerp(a0, a1, k / (float)steps);
+                        var dir = new Vector3(Mathf.Cos(a), 0, Mathf.Sin(a));
+                        verts.Add(dir * outer);
+                        verts.Add(dir * inner);
+                    }
+                    for (int k = 0; k < steps; k++)
+                    {
+                        int o = start + k * 2;
+                        tris.AddRange(new[] { o, o + 1, o + 2, o + 2, o + 1, o + 3 });
+                    }
+                }
+                dashedRing = new Mesh { name = "selection_ring" };
+                dashedRing.SetVertices(verts);
+                var white = new Color[verts.Count];
+                for (int i = 0; i < white.Length; i++) white[i] = Color.white;
+                dashedRing.colors = white;
+                dashedRing.SetTriangles(tris, 0);
+                dashedRing.RecalculateBounds();
+            }
+            var go = new GameObject("ring", typeof(MeshFilter), typeof(MeshRenderer));
+            go.GetComponent<MeshFilter>().sharedMesh = dashedRing;
+            var r = go.GetComponent<MeshRenderer>();
+            r.sharedMaterial = mat;
+            r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            r.receiveShadows = false;
+            go.transform.SetParent(parent, false);
+            return go.transform;
+        }
+
+        static readonly Dictionary<Mesh, Mesh> flatMeshes = new Dictionary<Mesh, Mesh>();
+
+        /// <summary>
+        /// The art pack's .glb files carry no normals and share vertices between faces. glTFast fills the gap with
+        /// Mesh.RecalculateNormals, which smooths across every corner, so boxes shade like pillows. The handoff's
+        /// renders (three.js) flat-shade normal-less meshes: unweld each mesh once and recompute, so every face is flat.
+        /// </summary>
+        public static void FlatShade(GameObject go)
+        {
+            foreach (var mf in go.GetComponentsInChildren<MeshFilter>(true))
+            {
+                var src = mf.sharedMesh;
+                if (src == null) continue;
+                if (!flatMeshes.TryGetValue(src, out var flat)) flatMeshes[src] = flat = Unweld(src);
+                mf.sharedMesh = flat;
+            }
+        }
+
+        static Mesh Unweld(Mesh src)
+        {
+            if (!src.isReadable || src.GetTopology(0) != MeshTopology.Triangles) return src;
+            var v = src.vertices;
+            var uv = src.uv;
+            var col = src.colors;
+            bool hasUv = uv.Length == v.Length, hasCol = col.Length == v.Length;
+            var verts = new List<Vector3>();
+            var uvs = new List<Vector2>();
+            var cols = new List<Color>();
+            var subs = new List<int[]>();
+            for (int s = 0; s < src.subMeshCount; s++)
+            {
+                var tris = src.GetTriangles(s);
+                var outTris = new int[tris.Length];
+                for (int i = 0; i < tris.Length; i++)
+                {
+                    outTris[i] = verts.Count;
+                    verts.Add(v[tris[i]]);
+                    if (hasUv) uvs.Add(uv[tris[i]]);
+                    if (hasCol) cols.Add(col[tris[i]]);
+                }
+                subs.Add(outTris);
+            }
+            var m = new Mesh { name = src.name + "_flat" };
+            if (verts.Count > 65000) m.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
+            m.SetVertices(verts);
+            if (hasUv) m.SetUVs(0, uvs);
+            if (hasCol) m.SetColors(cols);
+            m.subMeshCount = subs.Count;
+            for (int s = 0; s < subs.Count; s++) m.SetTriangles(subs[s], s);
+            m.RecalculateNormals();
+            m.RecalculateBounds();
             return m;
         }
 
@@ -98,6 +203,7 @@ namespace Pez.View
             {
                 var go = Object.Instantiate(prefab, rig.Body, false);
                 go.name = key; // PezMotion reads its profile from the object name
+                FlatShade(go);
                 TintTeam(go, team);
                 rig.Model = go;
                 rig.Turret = PezMotion.FindDeep(go.transform, "turret");
@@ -145,46 +251,48 @@ namespace Pez.View
                 case "commando":
                     {
                         float s = 0.85f;
-                        Part(b, PrimitiveType.Capsule, new Vector3(0, 0.22f * s, 0), new Vector3(0.16f, 0.2f, 0.12f) * s, teamMat);
-                        Part(b, PrimitiveType.Sphere, new Vector3(0, 0.5f * s, 0), Vector3.one * 0.1f * s, Mats.Lit(Skin, 0.2f, 0));
-                        Part(b, PrimitiveType.Sphere, new Vector3(0, 0.53f * s, -0.005f), new Vector3(0.11f, 0.06f, 0.11f) * s, teamDark);
+                        // Smoke-plastic body; the team colour sits on the helmet, on top, where it reads at full zoom-out.
+                        Part(b, PrimitiveType.Capsule, new Vector3(0, 0.22f * s, 0), new Vector3(0.16f, 0.2f, 0.12f) * s, Mats.Lit(DarkSteel, 0.5f, 0));
+                        Part(b, PrimitiveType.Sphere, new Vector3(0, 0.5f * s, 0), Vector3.one * 0.1f * s, Mats.Lit(Skin, 0.6f, 0));
+                        Part(b, PrimitiveType.Sphere, new Vector3(0, 0.53f * s, -0.005f), new Vector3(0.11f, 0.06f, 0.11f) * s, teamMat);
                         rig.Turret = Empty(b, "arms", new Vector3(0, 0.32f * s, 0));
                         if (key == "rifleman")
                             rig.Barrel = Part(rig.Turret, PrimitiveType.Cube, new Vector3(0.06f, 0, 0.12f), new Vector3(0.03f, 0.04f, 0.26f), dark);
                         else if (key == "engineer")
                         {
                             // Hard hat and toolbox.
-                            Part(b, PrimitiveType.Sphere, new Vector3(0, 0.55f * s, 0), new Vector3(0.14f, 0.07f, 0.14f) * s, Mats.Lit(new Color(1f, 0.8f, 0.1f), 0.5f, 0.1f));
-                            rig.Barrel = Part(rig.Turret, PrimitiveType.Cube, new Vector3(0.1f, -0.1f, 0.03f), new Vector3(0.07f, 0.06f, 0.12f), Mats.Lit(new Color(0.85f, 0.2f, 0.1f), 0.4f, 0.3f));
+                            Part(b, PrimitiveType.Sphere, new Vector3(0, 0.55f * s, 0), new Vector3(0.14f, 0.07f, 0.14f) * s, teamMat);
+                            rig.Barrel = Part(rig.Turret, PrimitiveType.Cube, new Vector3(0.1f, -0.1f, 0.03f), new Vector3(0.07f, 0.06f, 0.12f), Mats.Lit(Kraft, 0.2f, 0f));
                         }
                         else if (key == "sniper")
                         {
                             // Ghillie-dark body overlay and a long scoped rifle.
-                            Part(b, PrimitiveType.Capsule, new Vector3(0, 0.22f * s, 0), new Vector3(0.17f, 0.2f, 0.13f) * s, Mats.Lit(new Color(0.2f, 0.26f, 0.14f), 0.05f, 0));
+                            Part(b, PrimitiveType.Capsule, new Vector3(0, 0.22f * s, 0), new Vector3(0.17f, 0.2f, 0.13f) * s, Mats.Lit(Kraft * 0.6f, 0.05f, 0));
                             rig.Barrel = Part(rig.Turret, PrimitiveType.Cube, new Vector3(0.06f, 0, 0.2f), new Vector3(0.025f, 0.035f, 0.46f), dark);
-                            Part(rig.Barrel, PrimitiveType.Cylinder, new Vector3(0, 1.4f, 0.05f), new Vector3(0.9f, 0.12f, 0.9f), Mats.Glow(new Color(0.4f, 0.9f, 1f), 1.5f), new Vector3(90, 0, 0));
+                            Part(rig.Barrel, PrimitiveType.Cylinder, new Vector3(0, 1.4f, 0.05f), new Vector3(0.9f, 0.12f, 0.9f), Mats.Glow(PezPalette.EmissiveCyanLaserOptics, 1.5f), new Vector3(90, 0, 0));
                         }
                         else if (key == "commando")
                         {
                             // Beret and a satchel of charges.
-                            Part(b, PrimitiveType.Sphere, new Vector3(0.02f, 0.55f * s, 0), new Vector3(0.13f, 0.04f, 0.13f) * s, Mats.Lit(new Color(0.1f, 0.1f, 0.1f), 0.2f, 0));
-                            Part(b, PrimitiveType.Cube, new Vector3(0, 0.26f * s, -0.09f), new Vector3(0.14f, 0.12f, 0.07f) * s, Mats.Lit(new Color(0.3f, 0.25f, 0.15f), 0.2f, 0));
-                            rig.Barrel = Part(rig.Turret, PrimitiveType.Cube, new Vector3(0.08f, 0, 0.08f), new Vector3(0.06f, 0.05f, 0.08f), Mats.Glow(new Color(1f, 0.2f, 0.1f), 2f));
+                            Part(b, PrimitiveType.Sphere, new Vector3(0.02f, 0.55f * s, 0), new Vector3(0.13f, 0.04f, 0.13f) * s, Mats.Lit(Track, 0.4f, 0));
+                            Part(b, PrimitiveType.Cube, new Vector3(0, 0.26f * s, -0.09f), new Vector3(0.14f, 0.12f, 0.07f) * s, Mats.Lit(Kraft, 0.2f, 0));
+                            rig.Barrel = Part(rig.Turret, PrimitiveType.Cube, new Vector3(0.08f, 0, 0.08f), new Vector3(0.06f, 0.05f, 0.08f), Mats.Glow(PezPalette.EmissiveAmberIndustryDocking, 2f));
                         }
                         else if (key == "medic")
                         {
                             // White pack with a red cross on the back, no weapon.
-                            Part(b, PrimitiveType.Cube, new Vector3(0, 0.27f * s, -0.08f), new Vector3(0.14f, 0.16f, 0.07f) * s, Mats.Lit(new Color(0.92f, 0.92f, 0.9f), 0.3f, 0));
-                            Part(b, PrimitiveType.Cube, new Vector3(0, 0.27f * s, -0.12f), new Vector3(0.1f, 0.03f, 0.01f) * s, Mats.Glow(new Color(1f, 0.1f, 0.1f), 1.5f));
-                            Part(b, PrimitiveType.Cube, new Vector3(0, 0.27f * s, -0.12f), new Vector3(0.03f, 0.1f, 0.01f) * s, Mats.Glow(new Color(1f, 0.1f, 0.1f), 1.5f));
+                            // White pack with a team-coloured plus (never a red cross: it would read as Cherry).
+                            Part(b, PrimitiveType.Cube, new Vector3(0, 0.27f * s, -0.08f), new Vector3(0.14f, 0.16f, 0.07f) * s, Mats.Lit(PezPalette.MaterialsBone, 0.3f, 0));
+                            Part(b, PrimitiveType.Cube, new Vector3(0, 0.27f * s, -0.12f), new Vector3(0.1f, 0.03f, 0.01f) * s, teamMat);
+                            Part(b, PrimitiveType.Cube, new Vector3(0, 0.27f * s, -0.12f), new Vector3(0.03f, 0.1f, 0.01f) * s, teamMat);
                         }
                         else if (key == "laser_trooper")
                         {
                             rig.Barrel = Part(rig.Turret, PrimitiveType.Cube, new Vector3(0.06f, 0, 0.13f), new Vector3(0.045f, 0.05f, 0.28f), Mats.Lit(new Color(0.85f, 0.88f, 0.9f), 0.8f, 0.6f));
-                            Part(rig.Barrel, PrimitiveType.Cube, new Vector3(0, 0.6f, 0), new Vector3(0.6f, 0.3f, 0.9f), Mats.Glow(new Color(0.2f, 0.9f, 1f), 3f));
+                            Part(rig.Barrel, PrimitiveType.Cube, new Vector3(0, 0.6f, 0), new Vector3(0.6f, 0.3f, 0.9f), Mats.Glow(PezPalette.EmissiveCyanLaserOptics, 3f));
                         }
                         else
-                            rig.Barrel = Part(rig.Turret, PrimitiveType.Cylinder, new Vector3(0.08f, 0.07f, 0.02f), new Vector3(0.07f, 0.17f, 0.07f), Mats.Lit(new Color(0.3f, 0.35f, 0.2f), 0.3f, 0.3f), new Vector3(90, 0, 0));
+                            rig.Barrel = Part(rig.Turret, PrimitiveType.Cylinder, new Vector3(0.08f, 0.07f, 0.02f), new Vector3(0.07f, 0.17f, 0.07f), Mats.Lit(Kraft, 0.3f, 0f), new Vector3(90, 0, 0));
                         break;
                     }
                 case "command_center":
@@ -347,19 +455,20 @@ namespace Pez.View
                 case "apc":
                     for (int i = 0; i < 6; i++)
                         Part(b, PrimitiveType.Cylinder, new Vector3(i % 2 == 0 ? -0.28f : 0.28f, 0.11f, -0.3f + (i / 2) * 0.3f), new Vector3(0.2f, 0.05f, 0.2f), track, new Vector3(0, 0, 90));
-                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.27f, 0), new Vector3(0.52f, 0.26f, 0.95f), teamMat);
-                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.3f, 0.47f), new Vector3(0.5f, 0.18f, 0.1f), teamDark, new Vector3(-30, 0, 0));
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.27f, 0), new Vector3(0.52f, 0.26f, 0.95f), Mats.Lit(DarkSteel, 0.5f, 0f));
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.41f, 0), new Vector3(0.44f, 0.02f, 0.6f), teamMat); // team roof band
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.3f, 0.47f), new Vector3(0.5f, 0.18f, 0.1f), Mats.Lit(DarkSteel, 0.5f, 0f), new Vector3(-30, 0, 0));
                     Part(b, PrimitiveType.Cube, new Vector3(0, 0.25f, -0.49f), new Vector3(0.32f, 0.2f, 0.02f), dark);
                     rig.Turret = Empty(b, "mg", new Vector3(0, 0.44f, 0.1f));
-                    Part(rig.Turret, PrimitiveType.Cylinder, Vector3.zero, new Vector3(0.14f, 0.04f, 0.14f), teamDark);
+                    Part(rig.Turret, PrimitiveType.Cylinder, Vector3.zero, new Vector3(0.14f, 0.04f, 0.14f), teamMat);
                     rig.Barrel = Part(rig.Turret, PrimitiveType.Cube, new Vector3(0, 0.04f, 0.15f), new Vector3(0.035f, 0.035f, 0.3f), dark);
                     break;
                 case "flak_track":
                     Part(b, PrimitiveType.Cube, new Vector3(-0.25f, 0.11f, 0), new Vector3(0.15f, 0.22f, 0.85f), track);
                     Part(b, PrimitiveType.Cube, new Vector3(0.25f, 0.11f, 0), new Vector3(0.15f, 0.22f, 0.85f), track);
-                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.24f, 0), new Vector3(0.42f, 0.16f, 0.8f), teamMat);
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.24f, 0), new Vector3(0.42f, 0.16f, 0.8f), Mats.Lit(DarkSteel, 0.5f, 0f));
                     rig.Turret = Empty(b, "flak", new Vector3(0, 0.38f, -0.05f));
-                    Part(rig.Turret, PrimitiveType.Cube, Vector3.zero, new Vector3(0.3f, 0.14f, 0.26f), teamDark);
+                    Part(rig.Turret, PrimitiveType.Cube, Vector3.zero, new Vector3(0.3f, 0.14f, 0.26f), teamMat);
                     rig.Barrel = Empty(rig.Turret, "guns", new Vector3(0, 0.06f, 0.05f));
                     for (int i = 0; i < 4; i++)
                         Part(rig.Barrel, PrimitiveType.Cylinder, new Vector3(-0.09f + (i % 2) * 0.18f, 0.08f + (i / 2) * 0.07f, 0.16f), new Vector3(0.035f, 0.18f, 0.035f), steel, new Vector3(50, 0, 0));
@@ -367,26 +476,27 @@ namespace Pez.View
                 case "minelayer":
                     Part(b, PrimitiveType.Cube, new Vector3(-0.25f, 0.11f, 0), new Vector3(0.15f, 0.22f, 0.9f), track);
                     Part(b, PrimitiveType.Cube, new Vector3(0.25f, 0.11f, 0), new Vector3(0.15f, 0.22f, 0.9f), track);
-                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.26f, 0.15f), new Vector3(0.44f, 0.2f, 0.55f), teamMat);
-                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.3f, -0.3f), new Vector3(0.4f, 0.24f, 0.3f), Mats.Lit(new Color(0.95f, 0.75f, 0.1f), 0.4f, 0.3f));
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.26f, 0.15f), new Vector3(0.44f, 0.2f, 0.55f), Mats.Lit(DarkSteel, 0.5f, 0f));
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.37f, 0.25f), new Vector3(0.36f, 0.02f, 0.3f), teamMat); // team cab roof
+                    Part(b, PrimitiveType.Cube, new Vector3(0, 0.3f, -0.3f), new Vector3(0.4f, 0.24f, 0.3f), Mats.Lit(Kraft, 0.2f, 0f));
                     for (int i = 0; i < 3; i++) Part(b, PrimitiveType.Cylinder, new Vector3(-0.12f + i * 0.12f, 0.45f, -0.3f), new Vector3(0.1f, 0.02f, 0.1f), dark);
                     break;
                 case "mine":
                     Part(b, PrimitiveType.Cylinder, new Vector3(0, 0.03f, 0), new Vector3(0.32f, 0.03f, 0.32f), dark);
                     Part(b, PrimitiveType.Cylinder, new Vector3(0, 0.065f, 0), new Vector3(0.22f, 0.01f, 0.22f), teamMat);
-                    Part(b, PrimitiveType.Sphere, new Vector3(0, 0.08f, 0), Vector3.one * 0.05f, Mats.Glow(new Color(1f, 0.15f, 0.1f), 3f));
+                    Part(b, PrimitiveType.Sphere, new Vector3(0, 0.08f, 0), Vector3.one * 0.05f, Mats.Glow(PezPalette.EmissiveAmberIndustryDocking, 3f));
                     break;
                 case "mammoth_tank":
                     Tank(rig, teamMat, teamDark, steel, track, 1.65f, true);
                     // Missile pods either side of the turret.
-                    Part(rig.Turret, PrimitiveType.Cube, new Vector3(0.32f, 0.12f, -0.05f), new Vector3(0.12f, 0.12f, 0.3f), teamDark);
-                    Part(rig.Turret, PrimitiveType.Cube, new Vector3(-0.32f, 0.12f, -0.05f), new Vector3(0.12f, 0.12f, 0.3f), teamDark);
+                    Part(rig.Turret, PrimitiveType.Cube, new Vector3(0.32f, 0.12f, -0.05f), new Vector3(0.12f, 0.12f, 0.3f), dark);
+                    Part(rig.Turret, PrimitiveType.Cube, new Vector3(-0.32f, 0.12f, -0.05f), new Vector3(0.12f, 0.12f, 0.3f), dark);
                     Part(b, PrimitiveType.Cube, new Vector3(0, 0.42f, -0.4f), new Vector3(0.6f, 0.1f, 0.2f), steel);
                     break;
                 case "recon_drone":
                     rig.Altitude = 2.8f;
                     Part(b, PrimitiveType.Sphere, Vector3.zero, new Vector3(0.22f, 0.1f, 0.28f), teamMat);
-                    Part(b, PrimitiveType.Sphere, new Vector3(0, -0.04f, 0.1f), Vector3.one * 0.07f, Mats.Glow(new Color(0.4f, 0.9f, 1f), 2.5f));
+                    Part(b, PrimitiveType.Sphere, new Vector3(0, -0.04f, 0.1f), Vector3.one * 0.07f, Mats.Glow(PezPalette.EmissiveCyanLaserOptics, 2.5f));
                     var props = Empty(b, "props", Vector3.zero); // static discs read as spinning props at game distance
                     for (int i = 0; i < 4; i++)
                     {
@@ -433,8 +543,9 @@ namespace Pez.View
                     break;
                 case "laser_tank":
                     Tank(rig, teamMat, teamDark, steel, track, 1.2f, false);
-                    Part(rig.Turret, PrimitiveType.Sphere, new Vector3(0, 0.15f, -0.05f), Vector3.one * 0.18f, Mats.Glow(new Color(1f, 0.3f, 0.9f), 3f));
-                    foreach (Transform c in rig.Barrel) c.GetComponent<Renderer>().sharedMaterial = Mats.Glow(new Color(0.9f, 0.35f, 1f), 1.6f);
+                    // Laser, not plasma: cyan coils (magenta is reserved for plasma and fusion).
+                    Part(rig.Turret, PrimitiveType.Sphere, new Vector3(0, 0.15f, -0.05f), Vector3.one * 0.18f, Mats.Glow(PezPalette.EmissiveCyanLaserOptics, 3f));
+                    foreach (Transform c in rig.Barrel) c.GetComponent<Renderer>().sharedMaterial = Mats.Glow(PezPalette.EmissiveCyanLaserOptics, 1.6f);
                     break;
                 case "gunship":
                     rig.Altitude = 2.4f;
@@ -477,10 +588,12 @@ namespace Pez.View
             var b = rig.Body;
             Part(b, PrimitiveType.Cube, new Vector3(-0.27f, 0.11f, 0) * s, new Vector3(0.17f, 0.22f, 0.9f) * s, track);
             Part(b, PrimitiveType.Cube, new Vector3(0.27f, 0.11f, 0) * s, new Vector3(0.17f, 0.22f, 0.9f) * s, track);
-            Part(b, PrimitiveType.Cube, new Vector3(0, 0.22f, 0) * s, new Vector3(0.44f, 0.18f, 0.82f) * s, team);
-            Part(b, PrimitiveType.Cube, new Vector3(0, 0.26f, 0.38f) * s, new Vector3(0.42f, 0.1f, 0.12f) * s, teamDark, new Vector3(-25, 0, 0));
+            // Stem hull in smoke plastic, team-coloured head (turret) on top: the art pack's 15-25% team mask.
+            var hull = Mats.Lit(DarkSteel, 0.5f, 0f);
+            Part(b, PrimitiveType.Cube, new Vector3(0, 0.22f, 0) * s, new Vector3(0.44f, 0.18f, 0.82f) * s, hull);
+            Part(b, PrimitiveType.Cube, new Vector3(0, 0.26f, 0.38f) * s, new Vector3(0.42f, 0.1f, 0.12f) * s, hull, new Vector3(-25, 0, 0));
             rig.Turret = Empty(b, "turret", new Vector3(0, 0.34f, -0.04f) * s);
-            Part(rig.Turret, PrimitiveType.Cube, new Vector3(0, 0.04f, 0) * s, new Vector3(0.34f, 0.14f, 0.4f) * s, teamDark);
+            Part(rig.Turret, PrimitiveType.Cube, new Vector3(0, 0.04f, 0) * s, new Vector3(0.34f, 0.14f, 0.4f) * s, team);
             Part(rig.Turret, PrimitiveType.Cylinder, new Vector3(0.08f, 0.13f, -0.08f) * s, new Vector3(0.1f, 0.03f, 0.1f) * s, steel);
             rig.Barrel = Empty(rig.Turret, "barrel", new Vector3(0, 0.05f, 0.2f) * s);
             if (twin)

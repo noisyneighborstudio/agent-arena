@@ -11,7 +11,21 @@ namespace Pez.View
     {
         public Vector3 Focus;
         public float Distance = 12f, Yaw = 45f, Pitch = 55f;
-        public float MinDist = 4f, MaxDist = 45f;
+        // Art pack camera: ortho size 8 (close) to 40 (strategic); about 40 px per tile by default, 14 px zoomed out.
+        public float MinDist = 8f, MaxDist = 40f;
+        /// <summary>Ortho size that gives the art pack's ~40 px per tile on this screen.</summary>
+        public float DefaultDist => Mathf.Clamp(Screen.height / 80f, MinDist, MaxDist);
+
+        // Art pack lighting: the warm sun sits at the upper left of the screen (a little beyond the focus), about
+        // 57 degrees up, so shadows fall to the lower right. It is defined against the view, so it follows the yaw.
+        const float SunPitch = 57f, SunYawFromView = 112.6f;
+
+        /// <summary>Point the scene's sun for a camera looking along `yaw`.</summary>
+        public static void AimSun(float yaw)
+        {
+            var sun = RenderSettings.sun;
+            if (sun != null) sun.transform.rotation = Quaternion.Euler(SunPitch, yaw + SunYawFromView, 0f);
+        }
         public Vector2 Bounds = new Vector2(64, 64);
         public bool EdgePan = true;
         public Camera Cam { get; private set; }
@@ -64,6 +78,8 @@ namespace Pez.View
 
             Focus.x = Mathf.Clamp(Focus.x, 0, Bounds.x);
             Focus.z = Mathf.Clamp(Focus.z, -4, Bounds.y);
+            Distance = Mathf.Clamp(Distance, MinDist, MaxDist); // the API and stream viewers can set it directly
+            AimSun(Yaw);
             if (Cam.orthographic)
             {
                 var rot = Quaternion.Euler(Pitch, Yaw, 0);

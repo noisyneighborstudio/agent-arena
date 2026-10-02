@@ -73,6 +73,31 @@ namespace Pez.View
 
         void Fill(Rect r, Color c) { var old = GUI.color; GUI.color = c; GUI.DrawTexture(r, white); GUI.color = old; }
 
+        /// <summary>HUD kit panel: rgba(16,19,23,.9) with a 1 px #2A3138 border.</summary>
+        void Panel(Rect r, float alpha = 0.9f)
+        {
+            var c = Mats.Panel; c.a = alpha;
+            Fill(r, c);
+            var b = Mats.PanelBorder; b.a = alpha;
+            Fill(new Rect(r.x, r.y, r.width, 1), b);
+            Fill(new Rect(r.x, r.yMax - 1, r.width, 1), b);
+            Fill(new Rect(r.x, r.y, 1, r.height), b);
+            Fill(new Rect(r.xMax - 1, r.y, 1, r.height), b);
+        }
+
+        /// <summary>The critical-status hazard stripe: licorice and cream bands (never red, which reads as Cherry).</summary>
+        void Hazard(Rect r, float band = 3f, float phase = 0f)
+        {
+            Fill(r, Mats.Licorice);
+            for (float x = r.x - band * 2 + Mathf.Repeat(phase, band * 2); x < r.xMax; x += band * 2)
+            {
+                float x0 = Mathf.Max(x, r.x), x1 = Mathf.Min(x + band, r.xMax);
+                if (x1 > x0) Fill(new Rect(x0, r.y, x1 - x0, r.height), Mats.Cream);
+            }
+        }
+
+        const string CreamHex = "ECE4D2", AmberHex = "FFA22E"; // palette: cream plastic, caramel amber
+
         static string Hex(Color c) => ColorUtility.ToHtmlStringRGB(c);
         string TeamTag(int t) => t >= 0 ? $"<color=#{Hex(Mats.Team(t))}>{W.Teams[t].PlayerName ?? W.Teams[t].Name}</color>" : "server";
 
@@ -177,7 +202,7 @@ namespace Pez.View
         void Scoreboard()
         {
             float y = 8;
-            Fill(new Rect(8, y, 330, 24 + W.Teams.Count * 20), new Color(0, 0, 0, 0.45f));
+            Panel(new Rect(8, y, 330, 24 + W.Teams.Count * 20), 0.85f);
             GUI.Label(new Rect(16, y + 2, 320, 22), $"<b>{FormatTime(W.Time)}</b>   speed x{Runner.Game.Speed:0.##}{(Runner.Game.Paused ? "  PAUSED" : "")}   API :{Runner.Port}", label);
             y += 22;
             foreach (var t in W.Teams)
@@ -229,7 +254,7 @@ namespace Pez.View
             // Priority alarms in the feed: spectators see both sides' alarms (and how fast each commander reacts).
             foreach (var a in W.Alerts.All)
                 if (a.Priority >= Priority.High && (Team < 0 || a.Team == Team))
-                    lines.Add((a.StartTick * World.Dt, $"<color=#{(a.Priority == Priority.Critical ? "ff5544" : "ffaa33")}>!! {TeamTag(a.Team)} {AlertLog.Label(a.Kind)} ({(int)a.Pos.X},{(int)a.Pos.Y})</color>"));
+                    lines.Add((a.StartTick * World.Dt, $"<color=#{(a.Priority == Priority.Critical ? CreamHex : AmberHex)}><b>{(a.Priority == Priority.Critical ? "CRITICAL" : "HIGH")}</b> {TeamTag(a.Team)} {AlertLog.Label(a.Kind)} ({(int)a.Pos.X},{(int)a.Pos.Y})</color>"));
             var recent = lines.Where(l => W.Time - l.t < 30f).OrderBy(l => l.t).ToList();
             recent = recent.Skip(System.Math.Max(0, recent.Count - 9)).ToList();
             float y = sh - 16;
@@ -253,7 +278,7 @@ namespace Pez.View
         };
 
         string CostLine(EntityDef d, Team t) => string.Join(" ", d.Cost.Select(kv =>
-            $"<color=#{(t.Amount(kv.Key) >= kv.Value ? ItemColor[kv.Key] : "ff5f4a")}>{kv.Value} {Short(kv.Key)}</color>"));
+            $"<color=#{(t.Amount(kv.Key) >= kv.Value ? ItemColor[kv.Key] : AmberHex)}>{kv.Value} {Short(kv.Key)}</color>"));
 
         static string Short(string item) => item switch
         {
@@ -263,8 +288,8 @@ namespace Pez.View
         void Sidebar(float sw, float sh)
         {
             sideRect = new Rect(sw - SideW, 0, SideW, sh);
-            Fill(sideRect, new Color(0.07f, 0.075f, 0.08f, 0.93f));
-            Fill(new Rect(sw - SideW, 0, 2, sh), new Color(1f, 0.6f, 0.15f, 0.8f));
+            Fill(sideRect, Mats.Panel);
+            Fill(new Rect(sw - SideW, 0, 1, sh), Mats.PanelBorder);
             var t = W.Teams[Team];
             float x = sw - SideW + 10, y = MiniSize + 18;
 
@@ -281,9 +306,11 @@ namespace Pez.View
             }
             y += 6;
             float frac = t.PowerProduced == 0 ? 0 : Mathf.Clamp01(t.PowerUsed / (float)t.PowerProduced);
-            Fill(new Rect(x, y, 250, 8), new Color(0.2f, 0.2f, 0.2f));
-            Fill(new Rect(x, y, 250 * frac, 8), t.LowPower ? new Color(1f, 0.25f, 0.2f) : new Color(0.3f, 0.9f, 0.4f));
-            GUI.Label(new Rect(x, y + 7, 250, 18), $"<size=11>Power {t.PowerUsed}/{t.PowerProduced}{(t.LowPower ? "  <color=#ff5544>LOW POWER</color>" : "")}</size>", small);
+            // HUD kit power bar: cream when fine, amber when nearly maxed, hazard stripe when out.
+            Fill(new Rect(x, y, 250, 8), new Color32(42, 49, 56, 255));
+            if (t.LowPower) Hazard(new Rect(x, y, 250, 8), 4f);
+            else Fill(new Rect(x, y, 250 * frac, 8), frac >= 0.9f ? Mats.Amber : Mats.Cream);
+            GUI.Label(new Rect(x, y + 7, 250, 18), $"<size=11>Power {t.PowerUsed}/{t.PowerProduced}{(t.LowPower ? $"  <color=#{AmberHex}><b>LOW POWER</b></color>" : "")}</size>", small);
             y += 26;
 
             var input = Runner.Input;
@@ -361,7 +388,7 @@ namespace Pez.View
             float w = 300, x = Team < 0 ? sw - w - 10 : 8, y = Team < 0 ? 400 : 60 + W.Teams.Count * 20;
             float h = Mathf.Min(sh - y - 200, 30 + agentTeams.Count * 190);
             ordersRect = new Rect(x, y, w, h);
-            Fill(ordersRect, new Color(0.05f, 0.06f, 0.07f, 0.88f));
+            Panel(ordersRect, 0.88f);
             GUILayout.BeginArea(new Rect(x + 10, y + 6, w - 20, h - 12));
             GUILayout.Label("<b>COMMANDER'S ORDERS</b>  <size=11><color=#aaa>standing instructions for each LLM</color></size>", label);
             ordersScroll = GUILayout.BeginScrollView(ordersScroll);
@@ -390,7 +417,7 @@ namespace Pez.View
             if (!W.Open) return;
             var url = Runner.GatewayUrl ?? "(gateway not running)";
             var r = new Rect(sw / 2 - 300, 52, 600, 44);
-            Fill(r, new Color(0.08f, 0.07f, 0.07f, 0.85f));
+            Panel(r, 0.85f);
             GUI.Label(new Rect(r.x + 10, r.y + 3, r.width - 20, 40),
                 $"<size=11><color=#9c9488>OPEN ARENA · {W.ActivePlayers}/{W.MaxPlayers} players · map {W.Map.W}x{W.Map.H}. To bring any agent in, tell it:</color></size>\n<b>Join the Pezz arena: read {url}/play and follow it.{(string.IsNullOrEmpty(Runner.Invite) ? "" : $" Invite code: {Runner.Invite}")}</b>", small);
         }
@@ -398,7 +425,7 @@ namespace Pez.View
         void SpectatorPanel(float sw)
         {
             float x = sw - 290, y = 270;
-            Fill(new Rect(x - 8, y - 4, 290, 120), new Color(0, 0, 0, 0.45f));
+            Panel(new Rect(x - 8, y - 4, 290, 120), 0.85f);
             GUI.Label(new Rect(x, y, 280, 20), "<b>SPECTATING</b>", label);
             y += 22;
             GUI.Label(new Rect(x, y, 280, 20), $"Speed x{Runner.Game.Speed:0.##}", label);
@@ -414,7 +441,7 @@ namespace Pez.View
             var sel = Runner.View.Selected.Select(W.Get).Where(e => e != null).ToList();
             if (sel.Count == 0) return;
             var r = new Rect(sw / 2 - 260, sh - 70, 520, 60);
-            Fill(r, new Color(0, 0, 0, 0.55f));
+            Panel(r, 0.9f);
             var selIcon = sel.Count == 1 ? Icon(sel[0].Def.Key) : null;
             if (selIcon != null) { GUI.DrawTexture(new Rect(r.x + 6, r.y + 6, 64, 48), selIcon, ScaleMode.ScaleAndCrop); r.x += 70; r.width -= 70; }
             string text;
@@ -445,8 +472,10 @@ namespace Pez.View
                 var p = new Vector2(sp.x, Screen.height - sp.y) / Scale;
                 float w = e.IsStructure ? 46 : 26;
                 float f = Mathf.Clamp01(e.Hp / e.Def.MaxHp);
-                Fill(new Rect(p.x - w / 2 - 1, p.y - 1, w + 2, 6), new Color(0, 0, 0, 0.7f));
-                Fill(new Rect(p.x - w / 2, p.y, w * f, 4), f > 0.6f ? new Color(0.3f, 0.95f, 0.35f) : f > 0.3f ? new Color(1f, 0.8f, 0.2f) : new Color(1f, 0.25f, 0.2f));
+                // HUD kit: health runs cream, then amber below 50%, then hazard stripe below 25% (never team or traffic-light hues).
+                Fill(new Rect(p.x - w / 2 - 1, p.y - 1, w + 2, 6), new Color(0.06f, 0.07f, 0.09f, 0.8f));
+                if (f < 0.25f) Hazard(new Rect(p.x - w / 2, p.y, Mathf.Max(3f, w * f), 4), 2f);
+                else Fill(new Rect(p.x - w / 2, p.y, w * f, 4), f < 0.5f ? Mats.Amber : Mats.Cream);
                 if (!e.IsComplete) { Fill(new Rect(p.x - w / 2, p.y + 6, w * e.BuildProgress, 3), new Color(1f, 0.7f, 0.2f)); }
             }
         }
@@ -458,11 +487,14 @@ namespace Pez.View
             var a = input.DragStart / Scale; var b = (Vector2)UnityEngine.Input.mousePosition / Scale;
             float sh = Screen.height / Scale;
             var r = Rect.MinMaxRect(Mathf.Min(a.x, b.x), sh - Mathf.Max(a.y, b.y), Mathf.Max(a.x, b.x), sh - Mathf.Min(a.y, b.y));
-            Fill(r, new Color(0.3f, 1f, 0.4f, 0.12f));
-            Fill(new Rect(r.x, r.y, r.width, 1), new Color(0.3f, 1f, 0.4f, 0.8f));
-            Fill(new Rect(r.x, r.yMax, r.width, 1), new Color(0.3f, 1f, 0.4f, 0.8f));
-            Fill(new Rect(r.x, r.y, 1, r.height), new Color(0.3f, 1f, 0.4f, 0.8f));
-            Fill(new Rect(r.xMax, r.y, 1, r.height), new Color(0.3f, 1f, 0.4f, 0.8f));
+            // Selection is cream for every team.
+            var edge = Mats.Cream; edge.a = 0.85f;
+            var body = Mats.Cream; body.a = 0.1f;
+            Fill(r, body);
+            Fill(new Rect(r.x, r.y, r.width, 1), edge);
+            Fill(new Rect(r.x, r.yMax, r.width, 1), edge);
+            Fill(new Rect(r.x, r.y, 1, r.height), edge);
+            Fill(new Rect(r.xMax, r.y, 1, r.height), edge);
         }
 
         void Minimap(float sw, float sh)
@@ -483,12 +515,12 @@ namespace Pez.View
                     Color c = m.Ore[i] > 0 ? WorldView.OreColors[m.OreType[i]] : m.Tiles[i] switch
                     {
                         Terrain.Rock => new Color(0.3f, 0.24f, 0.22f), // licorice massifs
-                        Terrain.Water => new Color(0.1f, 0.3f, 0.45f),
+                        Terrain.Water => (Color)PezPalette.TerrainColaWater,
                         Terrain.Dirt => TerrainView.Dirt,
                         _ => TerrainView.GrassA,
                     };
                     if (vis != null && !vis[i]) c *= 0.5f;
-                    if (exp != null && !exp[i]) c = new Color(0.02f, 0.02f, 0.03f);
+                    if (exp != null && !exp[i]) c = Mats.Licorice;
                     miniPixels[i] = c;
                 }
                 foreach (var e in W.Entities)
@@ -510,7 +542,7 @@ namespace Pez.View
             }
             float size = Team >= 0 ? MiniSize : SideW - 20;
             miniRect = new Rect(sw - size - (Team >= 0 ? (SideW - size) / 2 : 10), 10, size, size);
-            Fill(new Rect(miniRect.x - 2, miniRect.y - 2, size + 4, size + 4), new Color(1f, 0.6f, 0.15f, 0.7f));
+            Fill(new Rect(miniRect.x - 2, miniRect.y - 2, size + 4, size + 4), Mats.PanelBorder);
             // Texture row 0 (south) already draws at the bottom of the rect, matching the camera marker math below.
             GUI.DrawTexture(miniRect, minimap);
             // Camera focus marker
@@ -537,7 +569,8 @@ namespace Pez.View
                 float age = (W.Tick - a.LastTick) * World.Dt;
                 if (a.Priority < Priority.High || age > 6f || (Team >= 0 && a.Team != Team)) continue;
                 float pulse = 4f + Mathf.PingPong(Time.unscaledTime * 16f, 6f);
-                var c = Team >= 0 ? (a.Priority == Priority.Critical ? new Color(1f, 0.2f, 0.15f) : new Color(1f, 0.65f, 0.1f)) : Mats.Team(a.Team);
+                // Status pings never use team hues: critical flickers cream/licorice (the hazard stripe), high is amber.
+                var c = a.Priority == Priority.Critical ? (Mathf.Repeat(Time.unscaledTime * 6f, 1f) < 0.5f ? Mats.Cream : Mats.Licorice) : Mats.Amber;
                 var ap = new Vector2(miniRect.x + a.Pos.X / m.W * size, miniRect.y + (1 - a.Pos.Y / m.H) * size);
                 c.a = 1f - age / 6f;
                 Fill(new Rect(ap.x - pulse, ap.y - pulse, pulse * 2, 2), c);

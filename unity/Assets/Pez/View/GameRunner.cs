@@ -114,21 +114,22 @@ namespace Pez.View
 
         void SetupScene()
         {
-            // Lighting: warm low sun, cool sky fill, distance haze.
+            // Lighting (art pack, render.html): warm sun #FFE6C4 from the upper left of the screen, shadows falling to
+            // the lower right, and a cool sky fill (hemisphere #BFD4FF over #5A4A36) so shaded faces go cool, not grey.
             var sun = new GameObject("Sun").AddComponent<Light>();
             sun.type = LightType.Directional;
-            sun.transform.rotation = Quaternion.Euler(48f, -35f, 0);
-            sun.color = new Color(1f, 0.93f, 0.82f);
-            sun.intensity = 1.25f;
+            sun.color = new Color32(255, 230, 196, 255);
+            sun.intensity = 1.2f;
             sun.shadows = LightShadows.Soft;
-            sun.shadowStrength = 0.85f;
+            sun.shadowStrength = 0.75f; // shadowed faces still get the sky fill
             sun.shadowBias = 0.03f;
             sun.shadowNormalBias = 0.25f;
             RenderSettings.sun = sun;
+            RtsCamera.AimSun(45f); // re-aimed every frame against the camera's yaw
             RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Trilight;
-            RenderSettings.ambientSkyColor = new Color(0.62f, 0.62f, 0.66f);
-            RenderSettings.ambientEquatorColor = new Color(0.5f, 0.47f, 0.42f);
-            RenderSettings.ambientGroundColor = new Color(0.26f, 0.22f, 0.18f);
+            RenderSettings.ambientSkyColor = new Color(0.56f, 0.62f, 0.74f);
+            RenderSettings.ambientEquatorColor = new Color(0.5f, 0.5f, 0.52f);
+            RenderSettings.ambientGroundColor = new Color32(90, 74, 54, 255);
             RenderSettings.fog = false; // no distance haze in an orthographic view
             RenderSettings.fogMode = FogMode.Linear;
             RenderSettings.fogColor = new Color(0.55f, 0.62f, 0.68f);
@@ -145,7 +146,7 @@ namespace Pez.View
             var cam = camGo.GetComponent<UnityEngine.Camera>();
             if (cam == null) cam = camGo.AddComponent<UnityEngine.Camera>();
             cam.clearFlags = CameraClearFlags.SolidColor;
-            cam.backgroundColor = PezPalette.TerrainLicoriceCliffFace;
+            cam.backgroundColor = new Color32(42, 36, 32, 255); // the art pack's map backdrop #2A2420
             cam.orthographic = true; // art pack decision 9: off-axis orthographic
             cam.fieldOfView = 38f;
             cam.nearClipPlane = 1f;
@@ -299,7 +300,7 @@ namespace Pez.View
             View.MapRebuilt = () => Camera.Bounds = new Vector2(viewWorld.Map.W, viewWorld.Map.H); // the arena grew
             var focus = HumanTeam >= 0 ? viewWorld.Teams[HumanTeam].StartPos : new Vec2(viewWorld.Map.W / 2f, viewWorld.Map.H / 2f);
             Camera.LookAt(WorldView.W(focus) + new Vector3(3, 0, 3));
-            Camera.Distance = HumanTeam >= 0 ? 9f : Mathf.Min(Camera.MaxDist, viewWorld.Map.W * 0.375f); // spectators see most of the map
+            Camera.Distance = HumanTeam >= 0 ? Camera.DefaultDist : Mathf.Min(Camera.MaxDist, viewWorld.Map.W * 0.375f); // spectators see most of the map
             CommandFeed.Clear();
             // A restart that came from the API (e.g. the LLM arena) should start playing immediately.
             if (!startingFromMenu && !firstView) InMenu = false;
