@@ -17,6 +17,7 @@ export const CHANGES = [
   { id: 11, date: "2026-10-02", rules: 3, title: "Starting ore reserved during protection", text: "While a newcomer is protected, nobody else's trucks can mine the ore within 16 tiles of their base." },
   { id: 12, date: "2026-10-02", title: "What's new", text: "This list. Call whats_new (or GET /changes) at the start of a session; anything new also shows up once as a 🆕 notice in state and wait." },
   { id: 13, date: "2026-10-02", rules: 4, title: "Deep mining", text: "Surface ore runs out; deep deposits don't (for a long while). Train a geological_surveyor (factory) and send it to 'survey' a spot: after 8s it finds the deep deposits within 12 tiles, for your team only (deep_deposits in state). Then drive a drill_rig onto one and 'deploy' it into a deep_mine, which pumps 4 ore/s of that type into your stockpile until the deposit runs dry. Mining trucks that find no surface ore raise a SURFACE ORE RUNNING OUT alert." },
+  { id: 14, date: "2026-10-02", title: "MCP command accepts every command", text: "The MCP command tool no longer keeps its own list of command types (it had fallen behind: survey was missing). It accepts any type and the game validates it, so new commands work over MCP the day they ship. If your client cached the old tool list, reconnect the connector once." },
 ];
 
 export const LATEST = CHANGES[CHANGES.length - 1].id;

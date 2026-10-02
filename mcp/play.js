@@ -201,16 +201,17 @@ const Format = z.enum(["text", "json"]).optional().describe("json: plain structu
 
 export const Command = z
   .object({
-    type: z
-      .enum(["build", "train", "move", "attack_move", "attack", "stop", "harvest", "deploy", "repair", "heal", "refuel", "set_retreat", "load", "unload", "capture", "lay_mines", "rally", "sell", "cancel", "say"])
-      .describe("Command type"),
+    // A plain string, not an enum: the game validates command types itself, so a new command works over MCP the moment
+    // it ships (an enum here drifted out of sync with the game once already). get_rules lists them all.
+    type: z.string().min(1).max(40)
+      .describe("Command type, e.g. build, train, move, attack_move, attack, stop, harvest, deploy, survey, repair, heal, refuel, set_retreat, load, unload, capture, lay_mines, rally, sell, cancel, say. get_rules has the full, current list."),
     structure: z.string().optional().describe("build: structure key, e.g. power_plant"),
     unit: z.string().optional().describe("train/cancel: unit key, e.g. light_tank"),
     count: z.number().int().min(1).max(10).optional().describe("train: how many; lay_mines: how many mines (max 8)"),
     units: z.union([z.array(z.number().int()), z.enum(["all", "idle"])]).optional().describe("unit ids, or 'all' / 'idle' for your combat units"),
     x: z.number().optional().describe("tile x"),
     y: z.number().optional().describe("tile y"),
-    target: z.number().int().optional().describe("attack/capture: enemy entity id; repair/heal: your damaged unit/structure id"),
+    target: z.number().int().optional().describe("attack/capture: enemy entity id; repair/heal: your damaged unit/structure id; refuel: a pad or depot"),
     transport: z.number().int().optional().describe("load: id of your apc or transport_chopper"),
     ore: z.enum(["iron_ore", "copper_ore", "crystal", "uranium", "any"]).optional().describe("harvest: which ore type the trucks should mine"),
     structure_id: z.number().int().optional().describe("rally/sell: your structure id"),
