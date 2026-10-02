@@ -102,6 +102,7 @@ namespace Pez.Sim
             "air_contact" => "ENEMY AIRCRAFT ON RADAR",
             "stalled" => "NO WAY TO MAKE PROGRESS",
             "surface_ore_exhausted" => "SURFACE ORE RUNNING OUT",
+            "arena_cleared" => "ARENA CLEARED: YOU WON THIS ROUND",
             "stockpile_lost" => "STOCKPILE SPILLED: LAST COMMAND CENTER LOST",
             "deep_mine_depleted" => "DEEP DEPOSIT USED UP",
             _ => "COMBAT",

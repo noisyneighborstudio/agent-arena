@@ -227,6 +227,7 @@ namespace Pez.Sim
                         if (e.Team == team) s = e.Text != null ? $"LOST your {e.Text}" : $"LOST your {e.Key} #{e.A}";
                         else if (w.Teams[team].Visible[w.Map.Idx((int)e.Pos.X, (int)e.Pos.Y)]) s = $"destroyed enemy {e.Key} #{e.A}";
                         break;
+                    case "arena_cleared": s = e.Text; break;
                     case "low_fuel": case "stranded": case "refuelled": case "retreating": case "unstalled": case "surveyed": case "depleted": case "drilled": case "drill_failed": case "survey_failed":
                         if (e.Team == team) s = e.Text; break;
                     case "defeated": case "game_over": s = e.Text; break;
@@ -381,7 +382,8 @@ namespace Pez.Sim
         /// 5: a team's last command center falling spills its stockpile as salvage; infantry slower than vehicles.
         /// 6: surveyors flag mining zones (mining_zones replaces deep_deposits), prospect (roaming surveys), drill (rig to a zone).
         /// </summary>
-        public const int RulesVersion = 6;
+        /// 7: repair trucks refuel vehicles in the field; thinner fuel reserve in a fight; arena-cleared milestone.
+        public const int RulesVersion = 7;
 
         public static JObj Rules()
         {
@@ -402,6 +404,7 @@ namespace Pez.Sim
                 "Orders: move and attack_move take \"waypoints\" (and \"loop\":true to patrol) and \"together\":true (keep the slowest unit's pace). set_retreat makes units pull back to base on their own below an HP %.",
                 "Newcomer protection also reserves the newcomer's starting ore (16 tiles around their base): nobody else's trucks can mine it until protection ends.",
                 "Add format=json to state and wait for plain structured data (numbers, ids, objects) instead of display strings; build_options says what you can build now and exactly what blocks the rest.",
+                "Field logistics: a repair truck is a mobile fuel point: vehicles low on fuel pull up to the nearest one (if it's closer than a depot), and any ground vehicle within 2 tiles of one tops up, even on the move. A unit in a firefight keeps a thinner fuel reserve and fights on, heading off when the shooting stops (it can strand if you cut it too fine). Escort your armies with a tanker.",
                 "Fuel: vehicles burn fuel while driving (parked ones burn none) and aircraft burn it the whole time they're airborne (less while hovering). Vehicles refuel next to a command center, outpost, refinery or factory, or from a repair truck; aircraft land on an airfield (drones also at a factory). On low fuel a unit heads to the nearest one by itself and then resumes its order. A vehicle that runs dry is stranded until a repair truck reaches it; an aircraft that runs dry crashes. Each unit's fuel % is in my_units; use 'refuel' to send units early.",
                 "Keep power produced >= power used or production and refining halve.",
                 "Rockets beat vehicles, rifles beat infantry, tanks are all-round. Heavy tanks splash.",

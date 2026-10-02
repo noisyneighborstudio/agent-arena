@@ -1220,6 +1220,7 @@ namespace Pez.Sim
 
         void FireAt(Entity e, Entity t)
         {
+            e.LastFiredAt = Time;
             var dir = t.Center - e.Pos;
             float want = dir.Angle;
             e.TurretFacing = RotateToward(e.TurretFacing, want, 6f * Dt);
@@ -1609,8 +1610,13 @@ namespace Pez.Sim
 
         /// <summary>Where a unit can refuel: aircraft on a landing pad (an airfield, or the factory that built a drone), vehicles at a depot.</summary>
         public static bool IsFuelPoint(Entity u, Entity s) =>
-            s.IsStructure && !s.Dead && s.Team == u.Team && s.IsComplete &&
-            (u.IsAir ? s.Def.Helipad || (u.Def.BuiltBy == Producer.Factory && s.Def.Produces == Producer.Factory) : s.Def.FuelDepot);
+            !s.Dead && s.Team == u.Team && s != u &&
+            (s.IsStructure
+                ? s.IsComplete && (u.IsAir ? s.Def.Helipad || (u.Def.BuiltBy == Producer.Factory && s.Def.Produces == Producer.Factory) : s.Def.FuelDepot)
+                : IsTanker(s) && !u.IsAir); // a repair truck refuels ground vehicles in the field
+
+        /// <summary>A repair truck that can top up vehicles where they are: escort your army with one.</summary>
+        public static bool IsTanker(Entity s) => !s.IsStructure && s.Def.RepairRate > 0 && !s.Def.Medic && !s.Stranded && !s.IsCarried && !s.Dead;
 
         public Entity NearestFuelPoint(Entity u)
         {
@@ -1686,6 +1692,9 @@ namespace Pez.Sim
             }
             float speed = MathF.Max(0.1f, e.Def.Speed), dist = Vec2.Dist(e.Pos, p.Center);
             float need = e.IsAir ? dist / speed * 1.15f + 8f : dist * 1.4f / speed + 10f; // roads wind; keep a reserve
+            // In a firefight a unit keeps a thinner reserve and fights on; it heads off once the shooting stops.
+            // Cutting it that fine can strand it: that's the commander's risk to manage (escort with a tanker).
+            if (Time - e.LastHitTime < 4f || Time - e.LastFiredAt < 4f) need = need * 0.55f;
             if (e.Fuel > need) return;
             BeginRefuel(e, p);
             Emit("low_fuel", e.Team, e.Id, p.Id, e.Pos, key: e.Def.Key,
@@ -1700,7 +1709,11 @@ namespace Pez.Sim
 
         bool NearDepot(Entity e)
         {
-            foreach (var s in Owned(e.Team)) if (s.IsStructure && s.Def.FuelDepot && s.IsComplete && s.DistFrom(e.Pos) <= 2.5f) return true;
+            foreach (var s in Owned(e.Team))
+            {
+                if (s.IsStructure && s.Def.FuelDepot && s.IsComplete && s.DistFrom(e.Pos) <= 2.5f) return true;
+                if (s != e && IsTanker(s) && Vec2.Dist(s.Pos, e.Pos) <= 2f) return true; // parked beside a tanker
+            }
             return false;
         }
 
@@ -1728,6 +1741,11 @@ namespace Pez.Sim
             if (e.IsAir)
             {
                 if (Vec2.Dist(e.Pos, p.Center) > 0.6f) { StepToward(e, p.Center); return; }
+            }
+            else if (!p.IsStructure)
+            {
+                // Meeting a tanker in the field: pull up beside it (it may be moving with the army).
+                if (Vec2.Dist(e.Pos, p.Pos) > 1.6f) { Chase(e, p); return; }
             }
             else if (p.DistFrom(e.Pos) > 2.2f)
             {
@@ -2123,6 +2141,23 @@ namespace Pez.Sim
             Emit("defeated", t.Id, text: $"{t.Name} ({t.PlayerName ?? t.Controller}) could make no further progress ({why}) and was resigned as lost");
         }
 
+        /// <summary>Open arena: someone has beaten every opponent in the room (it stays open for new challengers).</summary>
+        public string ArenaChampion;
+        bool contested;
+        void CheckArenaCleared()
+        {
+            var alive = Teams.Where(t => !t.Left && !t.Defeated).ToList();
+            if (alive.Count >= 2) { contested = true; ArenaChampion = null; return; }
+            if (!contested || alive.Count != 1 || ArenaChampion != null) return;
+            var champ = alive[0];
+            ArenaChampion = champ.Name;
+            contested = false; // a newcomer makes it a contest again, and a later clear is announced again
+            string who = $"{champ.Name} ({champ.PlayerName ?? champ.Controller})";
+            Emit("arena_cleared", champ.Id, pos: champ.StartPos, text: $"🏆 {who} has cleared the arena at {(int)(Time / 60)}:{(int)(Time % 60):00}: every opponent is defeated. The room stays open: new challengers can join and take them on.");
+            Emit("chat", -1, text: $"🏆 {who} cleared the arena: every opponent defeated. The room stays open for new challengers.");
+            Alerts.Raise(this, champ.Id, "arena_cleared", Priority.High, champ.StartPos, hit: false).Lost.Add("every opponent is defeated; new challengers may join at any time, so keep your defences up");
+        }
+
         void CheckVictory()
         {
             CheckProtection();
@@ -2139,6 +2174,7 @@ namespace Pez.Sim
                     Emit("defeated", team.Id, text: $"{team.Name} ({team.PlayerName ?? team.Controller}) has been eliminated");
                     ForgetTeam(team.Id);
                 }
+                CheckArenaCleared();
                 return;
             }
             foreach (var team in Teams)

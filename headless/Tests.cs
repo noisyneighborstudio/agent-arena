@@ -60,6 +60,8 @@ namespace Pez.Headless
             RoundedPercents();
             NoGridlock();
             LastHqSpills();
+            FieldRefuelling();
+            ArenaCleared();
             AiGoesDeep();
             Console.WriteLine(failures == 0 ? "\nAll tests passed." : $"\n{failures} test(s) FAILED.");
             return failures == 0 ? 0 : 1;
@@ -502,6 +504,46 @@ namespace Pez.Headless
             int salvage = 0; for (int y = 0; y < 3; y++) for (int x = 0; x < 3; x++) salvage += w.Map.Ore[w.Map.Idx(hq.Origin.X + x, hq.Origin.Y + y)];
             Check(salvage > 500 && w.Map.Ore[w.Map.Idx(foot.X, foot.Y)] > oreBefore, $"and lies on the footprint as salvage ore anyone can mine ({salvage} units)");
             Check(w.Alerts.Active(w, 0).Any(a => a.Kind == "salvage_available") && w.Alerts.Active(w, 1).Any(a => a.Kind == "stockpile_lost"), "everyone is told: the loser and the would-be scavengers");
+        }
+
+        static void FieldRefuelling()
+        {
+            // A tank low on fuel far from base pulls up to the repair truck escorting it instead of driving home.
+            var w = new World(2, 7, 112);
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var tank = At(w.SpawnUnit(0, "heavy_tank", hq), new Vec2(70, 70));
+            var tanker = At(w.SpawnUnit(0, "repair_truck", hq), new Vec2(76, 70));
+            tank.Fuel = 9; // under the reserve for even the 4 tiles to the tanker: it must refuel now
+            w.SetOrder(tank, Order.Move, new Vec2(90, 90));
+            Run(w, 1);
+            Check(tank.Order == Order.Refuel && tank.TargetId == tanker.Id, $"a tank low on fuel heads for the nearby repair truck, not home (order {tank.OrderName}, target #{tank.TargetId})");
+            Run(w, 20);
+            Check(tank.Fuel > tank.Def.Fuel * 0.9f && tank.Order != Order.Refuel, $"it tops up beside the tanker and carries on (fuel {tank.FuelFraction:P0}, order {tank.OrderName})");
+
+            // In a firefight a unit keeps a thinner reserve; an identical one that isn't fighting heads off.
+            var w2 = new World(2, 7, 112);
+            var hq2 = w2.Owned(0).First(e => e.Def.Key == "command_center");
+            var calm = At(w2.SpawnUnit(0, "light_tank", hq2), new Vec2(80, 80));
+            var fighting = At(w2.SpawnUnit(0, "light_tank", hq2), new Vec2(80, 82));
+            float dist = Vec2.Dist(calm.Pos, hq2.Center), need = dist * 1.4f / calm.Def.Speed + 10f;
+            calm.Fuel = fighting.Fuel = need * 0.8f; // below the normal reserve, above the fighting one
+            w2.SetOrder(calm, Order.Move, new Vec2(100, 80)); w2.SetOrder(fighting, Order.Move, new Vec2(100, 82));
+            for (int i = 0; i < 20; i++) { fighting.LastFiredAt = w2.Time; w2.Step(); }
+            Check(calm.Order == Order.Refuel && fighting.Order == Order.Move, $"a unit in a firefight fights on with a thinner reserve (calm: {calm.OrderName}, fighting: {fighting.OrderName})");
+        }
+
+        static void ArenaCleared()
+        {
+            var w = new World(2, 7, 80) { Open = true };
+            var t2 = w.AddTeam("llm", "Challenger", out _);
+            Run(w, 1);
+            foreach (var e in w.Owned(1).Concat(w.Owned(t2.Id)).ToList()) w.Remove(e);
+            Run(w, 1);
+            Check(w.ArenaChampion == w.Teams[0].Name && w.Events.Any(e => e.Type == "arena_cleared") && !w.GameOver,
+                  $"beating every opponent clears the arena (champion {w.ArenaChampion}) and the room stays open");
+            var t3 = w.AddTeam("llm", "New challenger", out var err);
+            Run(w, 1);
+            Check(t3 != null && w.ArenaChampion == null, $"a new challenger makes it a contest again ({err})");
         }
 
         static void RepairTruck()

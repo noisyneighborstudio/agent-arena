@@ -33,6 +33,7 @@ namespace Pez.Sim
         // Anti-jam: where it was when progress was last checked, and until when it may pass through other units.
         public Vec2 ProgressPos;
         public float ProgressAt, GhostUntil, ProgressDist;
+        public float LastFiredAt = -999;
         // Queued waypoints for move / attack_move (taken in order; with WaypointLoop, forever, as a patrol).
         public readonly List<Vec2> Waypoints = new List<Vec2>();
         public bool WaypointLoop;
