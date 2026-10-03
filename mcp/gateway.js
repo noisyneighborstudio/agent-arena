@@ -160,6 +160,137 @@ function delayedFrame(room) {
   return best ? { ...best.frame, delay_s: WATCH_DELAY_S } : { waiting: `Spectator feed starts in ${Math.ceil((w.frames.length ? w.frames[0].at - cutoff : WATCH_DELAY_S * 1000) / 1000)}s (it runs ${WATCH_DELAY_S}s behind the game).` };
 }
 
+// ------------------------------------------------------------------ the public spectator's live video, delayed
+// Rooms with a renderer (the Unity host) have a spectator camera: the whole map, no fog, with its own director. The
+// gateway holds one upstream connection to it per room, keeps about WATCH_FPS frames a second in a ring a little
+// longer than the delay, and serves /watch[/n]/live.mjpg from that ring at now - WATCH_DELAY_S, so the video and the
+// delayed HUD data agree. The feed starts when a spectator first asks (page polls count) and stops, with its ring
+// freed, WATCH_IDLE_MS after the last one leaves.
+const WATCH_FPS = 12;
+const WATCH_KEEP_S = WATCH_DELAY_S + 8;
+const WATCH_IDLE_MS = 120000;
+const WATCH_MAX_BYTES = Number(process.env.PEZZ_WATCH_MAX_MB || 160) * 1048576; // hard cap per room (normally ~40-60 MB)
+const WATCH_PART = (n) => Buffer.from(`--pezframe\r\nContent-Type: image/jpeg\r\nContent-Length: ${n}\r\n\r\n`, "latin1");
+const CRLF = Buffer.from("\r\n", "latin1");
+const spectate = new Map(); // room id -> { frames: [{ at, jpg }], bytes, wantedAt, ac, unsupportedUntil, lastKept, clients }
+function spectatorFeed(room, want = true) {
+  let s = spectate.get(room.id);
+  if (!s) { s = { frames: [], bytes: 0, wantedAt: 0, ac: null, unsupportedUntil: 0, lastKept: 0, clients: 0 }; spectate.set(room.id, s); }
+  if (want) s.wantedAt = Date.now();
+  if (room.frames && !s.ac && Date.now() >= s.unsupportedUntil && Date.now() - s.wantedAt <= WATCH_IDLE_MS) connectSpectator(room, s);
+  return s;
+}
+function keepFrame(s, jpg) {
+  const now = Date.now();
+  // ~12 fps is plenty for a spectator; as the ring nears its byte cap, keep fewer.
+  const gap = (1000 / WATCH_FPS) * 0.85 * Math.max(1, s.bytes / (WATCH_MAX_BYTES * 0.75));
+  if (now - s.lastKept < gap) return;
+  s.lastKept = now;
+  s.frames.push({ at: now, jpg }); s.bytes += jpg.length;
+  while (s.frames.length && (now - s.frames[0].at > WATCH_KEEP_S * 1000 || s.bytes > WATCH_MAX_BYTES)) s.bytes -= s.frames.shift().jpg.length;
+}
+async function connectSpectator(room, s) {
+  const ac = new AbortController(); s.ac = ac;
+  try {
+    const r = await fetch(`${room.frames}/spectator/stream`, { signal: ac.signal });
+    // An older game build answers this path with its HTML page: only a real multipart stream counts.
+    if (!r.ok || !r.body || !/multipart/i.test(r.headers.get("content-type") ?? "")) { s.unsupportedUntil = Date.now() + 60000; return; }
+    let buf = Buffer.alloc(0);
+    for await (const chunk of Readable.fromWeb(r.body)) {
+      buf = buf.length ? Buffer.concat([buf, chunk]) : Buffer.from(chunk);
+      for (;;) {
+        const he = buf.indexOf("\r\n\r\n");
+        if (he < 0) break;
+        const m = /content-length:\s*(\d+)/i.exec(buf.subarray(0, he).toString("latin1"));
+        if (!m) { buf = buf.subarray(he + 4); continue; }
+        const start = he + 4, len = Number(m[1]);
+        if (buf.length < start + len) break;
+        keepFrame(s, Buffer.from(buf.subarray(start, start + len))); // a copy, so the network chunk can be freed
+        buf = buf.subarray(start + len);
+      }
+      if (buf.length > 8 * 1048576) buf = Buffer.alloc(0); // garbage: resync on the next part
+      if (Date.now() - s.wantedAt > WATCH_IDLE_MS) break;
+    }
+  } catch {
+    if (!ac.signal.aborted) s.unsupportedUntil = Date.now() + 5000; // the renderer isn't up (restarting): try again soon
+  } finally {
+    ac.abort();
+    if (s.ac === ac) s.ac = null;
+  }
+  if (Date.now() - s.wantedAt > WATCH_IDLE_MS) { s.frames = []; s.bytes = 0; return; }
+  // Dropped (the game restarted, a deploy): reconnect while someone still wants it. The ring is kept, so the delayed
+  // stream plays on through the gap.
+  setTimeout(() => { const r2 = rooms.get(room.id); if (r2 && spectate.get(room.id) === s) spectatorFeed(r2, false); }, 2000);
+}
+// Idle feeds: close the upstream and free the ring.
+setInterval(() => {
+  for (const [id, s] of spectate) {
+    const room = rooms.get(id);
+    if (room && Date.now() - s.wantedAt <= WATCH_IDLE_MS) continue;
+    s.ac?.abort(); s.frames = []; s.bytes = 0;
+    if (!room) spectate.delete(id);
+  }
+}, 5000).unref();
+/** The newest buffered frame at or before `t` (binary search; the ring is in time order). */
+function frameAtOrBefore(s, t) {
+  let lo = 0, hi = s.frames.length - 1, best = null;
+  while (lo <= hi) { const mid = (lo + hi) >> 1; if (s.frames[mid].at <= t) { best = s.frames[mid]; lo = mid + 1; } else hi = mid - 1; }
+  return best;
+}
+/** What the spectator page needs to know about the video: null when the room has no renderer. */
+function watchLiveInfo(room, want = true) {
+  if (!room.frames) return null;
+  const s = spectatorFeed(room, want);
+  const cutoff = Date.now() - WATCH_DELAY_S * 1000;
+  const buffer = { frames: s.frames.length, mb: Math.round(s.bytes / 104857.6) / 10 };
+  if (s.frames.length && s.frames[0].at <= cutoff) return { available: true, delay_s: WATCH_DELAY_S, buffer };
+  if (!s.ac && !s.frames.length && Date.now() < s.unsupportedUntil) return { available: false, starts_in_s: null, note: "The spectator camera isn't running on this server yet.", buffer };
+  const startsIn = s.frames.length ? Math.ceil((s.frames[0].at - cutoff) / 1000) : WATCH_DELAY_S;
+  return { available: false, starts_in_s: startsIn, delay_s: WATCH_DELAY_S, buffer };
+}
+const watchClients = new Map(); // ip -> open delayed streams, oldest first
+const WATCH_MAX_CLIENTS = 400;
+let watchOpen = 0;
+function watchStill(res, room) {
+  const live = watchLiveInfo(room);
+  if (!live) return send(res, 404, { ok: false, error: "no live renderer in this room (map view only)" });
+  const f = live.available ? frameAtOrBefore(spectate.get(room.id), Date.now() - WATCH_DELAY_S * 1000) : null;
+  if (!f) return send(res, 503, { ok: false, error: "spectator video warming up", ...live });
+  res.writeHead(200, { "content-type": "image/jpeg", "cache-control": "no-store", "content-length": f.jpg.length });
+  res.end(f.jpg);
+}
+// The delayed stream: plain bytes (Safari won't stream a multipart body to fetch(); the page splits the frames
+// itself), newest-wins (a slow connection skips frames rather than queueing them), at most 3 per address (a new one
+// closes the oldest, so a dropped stream Cloudflare kept open can't lock anyone out).
+function watchStream(res, room, ip) {
+  const live = watchLiveInfo(room);
+  if (!live) return send(res, 404, { ok: false, error: "no live renderer in this room (map view only)" });
+  if (!live.available) return send(res, 503, { ok: false, error: "spectator video warming up", ...live });
+  const mine = watchClients.get(ip) ?? [];
+  while (mine.length >= 3) mine.shift().close();
+  if (watchOpen >= WATCH_MAX_CLIENTS) return send(res, 503, { ok: false, error: "too many spectators right now: use the map view" });
+  const s = spectatorFeed(room);
+  res.writeHead(200, { "content-type": "application/octet-stream", "x-stream-format": "multipart/x-mixed-replace; boundary=pezframe", "cache-control": "no-store, no-transform", "x-content-type-options": "nosniff", "x-accel-buffering": "no" });
+  let sentAt = 0, busy = false, lastNew = Date.now();
+  const entry = { close: () => res.destroy() };
+  mine.push(entry); watchClients.set(ip, mine); watchOpen++; s.clients++;
+  const timer = setInterval(() => {
+    s.wantedAt = Date.now();
+    spectatorFeed(room);
+    if (busy) return;
+    const f = frameAtOrBefore(s, Date.now() - WATCH_DELAY_S * 1000);
+    if (!f || f.at <= sentAt) { if (Date.now() - lastNew > 20000) res.end(); return; } // nothing new for a while: the page reconnects
+    sentAt = f.at; lastNew = Date.now();
+    if (!res.write(Buffer.concat([WATCH_PART(f.jpg.length), f.jpg, CRLF]))) { busy = true; res.once("drain", () => (busy = false)); }
+  }, 1000 / WATCH_FPS / 2);
+  res.on("close", () => {
+    clearInterval(timer); watchOpen--; s.clients--;
+    const list = watchClients.get(ip) ?? [];
+    const i = list.indexOf(entry); if (i >= 0) list.splice(i, 1);
+    if (!list.length) watchClients.delete(ip);
+  });
+}
+
 function send(res, status, body, type = "application/json") {
   const data = typeof body === "string" ? body : JSON.stringify(body, null, 1);
   res.writeHead(status, { "content-type": `${type}; charset=utf-8`, "cache-control": "no-store", "x-content-type-options": "nosniff" });
@@ -914,6 +1045,13 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, await viewData(vm[1], vm[2]));
     }
     // Public spectator view: a whole room, delayed. /watch is room 1; /watch/<n> is room n.
+    // Its live video (rooms with a renderer): /watch[/<n>]/live.mjpg, or one still at a time from live.jpg.
+    const lw = p.match(/^\/watch(?:\/(\d{1,3}))?\/live\.(mjpg|jpg)$/);
+    if (lw) {
+      const room = rooms.get(lw[1] ?? 1);
+      if (!room) return send(res, 404, { ok: false, error: "no such room (see /lobby)" });
+      return lw[2] === "mjpg" ? watchStream(res, room, ip) : watchStill(res, room);
+    }
     const wm = p.match(/^\/watch(?:\/(\d{1,3}))?(\/map|\/frame)?$/);
     if (wm) {
       const room = rooms.get(wm[1] ?? 1);
@@ -921,12 +1059,12 @@ const server = http.createServer(async (req, res) => {
       const wbase = wm[1] ? `/watch/${room.id}` : "/watch";
       if (!wm[2]) return send(res, 200, VIEWER.replaceAll("__BASE__", wbase), "text/html");
       if (wm[2] === "/map") return send(res, 200, await gameAt(room, "/api/view/map"));
-      return send(res, 200, delayedFrame(room));
+      return send(res, 200, { ...delayedFrame(room), live: watchLiveInfo(room) });
     }
     const im = p.match(/^\/icons\/([a-z_]+)\.png$/);
     if (im) {
       const f = path.join(ICONS, `${im[1]}.png`);
-      if (!fs.existsSync(f)) return send(res, 404, { ok: false });
+      if (!fs.existsSync(f)) { res.writeHead(404, { "content-type": "text/plain", "cache-control": "max-age=3600" }); return res.end("no icon"); } // cached: pages fall back once, not every poll
       res.writeHead(200, { "content-type": "image/png", "cache-control": "max-age=3600" });
       return fs.createReadStream(f).pipe(res);
     }

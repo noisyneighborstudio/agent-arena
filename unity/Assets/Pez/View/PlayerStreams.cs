@@ -16,8 +16,8 @@ namespace Pez.View
         public GameRunner Runner;
         public int Width = 1280, Height = 720; // the cap for player streams and look stills (bandwidth)
         public float SnapshotInterval = 0.15f; // a stream polled for snapshots (the look tool), not watched live
-        /// <summary>Stream frames rendered since startup (for PerfProbe).</summary>
-        public static int RenderCount;
+        /// <summary>Stream frames rendered since startup (for PerfProbe); SpectatorRenderCount counts the spectator camera's.</summary>
+        public static int RenderCount, SpectatorRenderCount;
         /// <summary>MSAA samples for the stream render target (-streammsaa N; 2 by default).</summary>
         static int StreamMsaa
         {
@@ -38,6 +38,10 @@ namespace Pez.View
         // A unit the viewer clicked: the stream rides along with it until they deselect it (or it dies or vanishes).
         readonly Dictionary<int, int> follow = new Dictionary<int, int>();
         const float StreamPitch = 55f;
+        // The public spectator camera: the whole map, no fog, aimed by its own director (FrameServer.SpectatorView).
+        readonly SpectatorDirector spectator = new SpectatorDirector();
+        float spectatorLast;
+        Material dipMat;
         /// <summary>The boards' framing, as on the main view (RtsCamera.BoardOrthoSize).</summary>
         float DefaultSize => RtsCamera.BoardOrthoSize;
         /// <summary>Where a viewer can look: anywhere on the map, corners included (the view may hang off the edge).</summary>
@@ -95,6 +99,12 @@ namespace Pez.View
                 Render(w, view, t);
                 rendered = true;
             }
+            int sv = FrameServer.SpectatorView;
+            if (FrameServer.Wanted(sv) && Time.unscaledTime - spectatorLast >= 0.9f / FrameServer.SpectatorFps && !FrameServer.Busy(sv))
+            {
+                RenderSpectator(w, view);
+                rendered = true;
+            }
             if (rendered)
             {
                 // Back to the local view (and its sun) before the main camera draws.
@@ -146,6 +156,67 @@ namespace Pez.View
             var hq = w.Entities.FirstOrDefault(e => !e.Dead && e.Team == team && e.Def.Key == "command_center")
                      ?? w.Entities.FirstOrDefault(e => !e.Dead && e.Team == team && e.IsStructure);
             return WorldView.W(hq != null ? hq.Center : t.StartPos);
+        }
+
+        /// <summary>One frame of the spectator camera: everything on the map, no fog, wherever the director points it.</summary>
+        void RenderSpectator(World w, WorldView view)
+        {
+            float dt = spectatorLast == 0 ? 0f : Time.unscaledTime - spectatorLast;
+            // Nobody watched for a while: start the shot afresh rather than sweep in from where it was left.
+            if (dt > 5f) dt = 0f;
+            spectatorLast = Time.unscaledTime;
+            spectator.Step(w, dt, Width / (float)Height, StreamPitch);
+
+            var rot = Quaternion.Euler(StreamPitch, spectator.Yaw, 0f);
+            cam.orthographic = true;
+            cam.orthographicSize = spectator.Size;
+            cam.aspect = Width / (float)Height;
+            cam.transform.rotation = rot;
+            cam.transform.position = spectator.Focus - rot * Vector3.forward * RtsCamera.BackDistance(spectator.Size);
+            // The main view's layers (its fog overlay hidden, below), never a team's fog, never the HUD's bars.
+            cam.cullingMask = ~TerrainView.TeamFogMask & ~(1 << Bars.Layer);
+            RtsCamera.FitShadows(spectator.Size);
+            cam.farClipPlane = RtsCamera.FarClip(spectator.Size);
+            view.SetPov(-1);
+            var fog = view.Terrain.MainFog;
+            bool fogWas = fog != null && fog.activeSelf;
+            if (fogWas) fog.SetActive(false); // a host with a local player has its own fog: not for spectators
+            RtsCamera.AimSun(spectator.Yaw);
+            cam.targetTexture = rt;
+            try { cam.Render(); }
+            finally { if (fogWas) fog.SetActive(true); }
+            RenderCount++; SpectatorRenderCount++;
+            cam.targetTexture = null;
+            Graphics.Blit(rt, resolved);
+            if (spectator.Dip > 0f) DipToDark(resolved, spectator.Dip);
+            FrameServer.Encode(resolved, FrameServer.SpectatorView);
+        }
+
+        /// <summary>The soft cut: darken the finished frame toward the HUD's background colour.</summary>
+        void DipToDark(RenderTexture target, float amount)
+        {
+            if (dipMat == null)
+            {
+                var shader = Shader.Find("Hidden/Internal-Colored");
+                if (shader == null) return; // no dip on this build: the cut is a plain one
+                dipMat = new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
+                dipMat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+                dipMat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+                dipMat.SetInt("_Cull", (int)UnityEngine.Rendering.CullMode.Off);
+                dipMat.SetInt("_ZWrite", 0);
+                dipMat.SetInt("_ZTest", (int)UnityEngine.Rendering.CompareFunction.Always);
+            }
+            var prev = RenderTexture.active;
+            RenderTexture.active = target;
+            GL.PushMatrix();
+            GL.LoadOrtho();
+            dipMat.SetPass(0);
+            GL.Begin(GL.QUADS);
+            GL.Color(new Color(0.06f, 0.07f, 0.08f, Mathf.SmoothStep(0f, 1f, amount)));
+            GL.Vertex3(0, 0, 0); GL.Vertex3(1, 0, 0); GL.Vertex3(1, 1, 0); GL.Vertex3(0, 1, 0);
+            GL.End();
+            GL.PopMatrix();
+            RenderTexture.active = prev;
         }
 
         void Render(World w, WorldView view, int team)

@@ -15,6 +15,7 @@
   canvas#c { cursor:grab; } canvas#c:active { cursor:grabbing; }
   #live { object-fit:contain; background:var(--bg); display:none; user-select:none; cursor:grab; }
   body.live #live { display:block; } body.live #c { visibility:hidden; }
+  body.spectator #live { cursor:default; } /* the spectator camera directs itself */
   .mono { font-family:"IBM Plex Mono",monospace; }
   .head { font-family:"Chakra Petch",sans-serif; font-weight:600; font-size:13px; letter-spacing:.14em; color:var(--muted); text-transform:uppercase; }
   .panel { background:var(--panel); border:1px solid var(--border); border-radius:12px; box-sizing:border-box; }
@@ -30,7 +31,17 @@
   #brand .rule { width:1px; height:28px; background:var(--border); }
   #clock { font-family:"IBM Plex Mono",monospace; font-size:22px; font-weight:500; }
   #where { font-size:14px; color:var(--muted); white-space:nowrap; }
-  #teams { flex-grow:1; display:flex; justify-content:center; gap:10px; overflow:hidden; min-width:0; }
+  /* Team strip: the player's own card pinned at the left, then everyone else as a ticker that loops when they don't fit
+     (static when they do; a plain scroller under prefers-reduced-motion). */
+  #teams { flex:1 1 0; display:flex; align-items:center; gap:10px; min-width:0; height:60px; }
+  #own { display:flex; align-items:center; gap:10px; flex:none; }
+  #own:empty { display:none; }
+  #tick { flex:1 1 0; min-width:0; height:60px; overflow:hidden; position:relative; }
+  #tick.moving { -webkit-mask-image:linear-gradient(90deg,transparent,#000 28px,#000 calc(100% - 28px),transparent); mask-image:linear-gradient(90deg,transparent,#000 28px,#000 calc(100% - 28px),transparent); }
+  #tick.scroll { overflow-x:auto; scrollbar-width:none; } #tick.scroll::-webkit-scrollbar { display:none; }
+  #track { display:flex; height:60px; gap:10px; width:max-content; will-change:transform; }
+  #tick.static #track { width:100%; justify-content:center; }
+  .set { display:flex; gap:10px; flex:none; }
   .card { height:60px; padding:0 16px 0 0; display:flex; align-items:center; gap:14px; overflow:hidden; flex:none; }
   .card .stripe { width:8px; align-self:stretch; }
   .card .nm { display:flex; flex-direction:column; gap:2px; }
@@ -39,16 +50,17 @@
   .card .stat svg { width:16px; height:16px; }
   .card.out { opacity:.45; } .card.out .nm b { text-decoration:line-through; }
   .card.mini { padding-right:14px; } .card.mini .nm b { font-size:14px; }
-  #vs { font-family:"Chakra Petch",sans-serif; font-weight:600; font-size:15px; color:var(--muted); align-self:center; }
-  #modes { height:60px; padding:8px; display:flex; align-items:center; gap:6px; }
-  #modes button { min-width:64px; height:44px; border:0; border-radius:8px; background:var(--btn); font-family:"IBM Plex Mono",monospace; font-size:15px; cursor:pointer; }
+  #vs { font-family:"Chakra Petch",sans-serif; font-weight:600; font-size:15px; color:var(--muted); align-self:center; flex:none; }
+  #brand, #modes { flex:none; }
+  #modes { height:60px; padding:8px; display:flex; align-items:center; gap:6px; box-sizing:border-box; }
+  #modes button { min-width:64px; height:44px; padding:0 12px; white-space:nowrap; border:0; border-radius:8px; background:var(--btn); font-family:"IBM Plex Mono",monospace; font-size:15px; cursor:pointer; }
   #modes button.on { background:var(--cream); color:#101317; font-weight:500; }
   #modes button:disabled { opacity:.35; cursor:default; }
   #modes .rule { width:1px; height:28px; background:var(--border); margin:0 6px; }
   #mode { font-size:14px; color:var(--muted); padding-right:8px; white-space:nowrap; }
 
   /* Alert banner (HUD kit: CRITICAL hazard chip, HIGH amber, INFO grey) */
-  #alert { left:50%; top:92px; transform:translateX(-50%); display:none; align-items:stretch; background:rgba(16,19,23,.92); border:1px solid var(--line); border-radius:10px; overflow:hidden; cursor:pointer; max-width:760px; }
+  #alert { left:50%; top:var(--below,92px); transform:translateX(-50%); display:none; align-items:stretch; background:rgba(16,19,23,.92); border:1px solid var(--line); border-radius:10px; overflow:hidden; cursor:pointer; max-width:760px; }
   #alert .tab { width:28px; flex:none; }
   #alert .tab.critical { background:repeating-linear-gradient(135deg,#1E1B1D 0 7px,#ECE4D2 7px 14px); }
   #alert .tab.high { background:var(--amber); } #alert .tab.medium { background:#4A525A; }
@@ -57,10 +69,22 @@
   #alert .more { color:var(--muted); font-size:13px; }
 
   /* Right column: minimap, then building now / stockpile / standing orders */
-  #right { right:16px; top:92px; width:384px; display:flex; flex-direction:column; gap:12px; }
+  #right { right:16px; top:var(--below,92px); width:384px; display:flex; flex-direction:column; align-items:flex-end; gap:12px; }
+  #right > .panel { width:100%; }
+  /* Layout boxes let clicks through to the map and video; only the panels in them take input. */
+  #top, #right, #bottom { pointer-events:none; } #top > *, #right > *, #bottom > * { pointer-events:auto; }
   #mm { padding:12px; } #mm canvas { width:360px; height:360px; display:block; cursor:pointer; }
   #side { padding:16px; display:flex; flex-direction:column; gap:14px; }
+  /* Drawers: the side panel and the feed/chat collapse to their header; the choice is remembered. */
+  .drawerhead { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .tog { width:32px; height:28px; flex:none; border:1px solid var(--line); border-radius:7px; background:var(--btn); cursor:pointer; padding:0; display:grid; place-items:center; }
+  .tog svg { width:14px; height:14px; transition:transform .15s; }
+  .panel.collapsed .tog svg { transform:rotate(-90deg); }
+  .panel.collapsed .drawerbody { display:none; }
+  .drawerbody { display:flex; flex-direction:column; gap:14px; }
+  #side.collapsed, #feed.collapsed { padding-top:10px; padding-bottom:10px; }
   .row { display:flex; align-items:center; gap:12px; }
+  .row .glyph { width:56px; height:42px; border-radius:6px; font-size:14px; }
   .row img { width:56px; height:42px; border-radius:6px; background:#101317; object-fit:cover; flex:none; }
   .bar { height:6px; border-radius:3px; background:var(--border); } .bar > div { height:6px; border-radius:3px; background:var(--cream); }
   .split { display:flex; justify-content:space-between; font-size:14px; }
@@ -71,7 +95,10 @@
   .note { font-size:13px; color:var(--muted); }
 
   /* Command feed (bottom-left) */
-  #feed { left:16px; bottom:16px; width:560px; padding:14px 16px; display:flex; flex-direction:column; gap:10px; }
+  /* Bottom: the command feed (or arena chat) and the selection card, side by side; stacked on narrow windows. */
+  #bottom { left:16px; bottom:16px; display:flex; align-items:flex-end; gap:24px; }
+  body.replaying #bottom { bottom:84px; }
+  #feed { width:560px; padding:14px 16px; display:flex; flex-direction:column; gap:10px; box-sizing:border-box; }
   #feedrows { display:grid; grid-template-columns:52px 8px 1fr auto; column-gap:10px; row-gap:10px; align-items:start; font-size:14px; line-height:1.45; max-height:260px; overflow:hidden; }
   #feedrows .t { font-family:"IBM Plex Mono",monospace; color:var(--muted); }
   #feedrows .s { width:8px; height:18px; border-radius:2px; }
@@ -80,23 +107,43 @@
   #help { font-size:13px; color:var(--muted); }
 
   /* Selection card (bottom-centre) */
-  #sel { left:600px; bottom:16px; width:520px; padding:14px; display:none; gap:16px; align-items:center; }
-  #sel img { width:128px; height:96px; border-radius:8px; background:#101317; object-fit:cover; }
+  #sel { width:520px; padding:14px; display:none; gap:16px; align-items:center; box-sizing:border-box; }
+  .glyph { display:grid; place-items:center; background:#101317; color:var(--muted); font-family:"Chakra Petch",sans-serif; font-weight:600; letter-spacing:.06em; flex:none; }
+  #sel img, #sel .glyph { width:128px; height:96px; border-radius:8px; background:#101317; object-fit:cover; flex:none; font-size:28px; }
   #sel .big { font-family:"Chakra Petch",sans-serif; font-weight:600; font-size:20px; }
   #sel .bar, #sel .bar > div { height:8px; border-radius:4px; }
 
   /* After this player's game ends */
-  #results { left:50%; top:150px; transform:translateX(-50%); display:none; text-align:center; min-width:360px; max-width:560px; padding:16px 20px; }
+  #results { left:50%; top:calc(var(--below,92px) + 58px); transform:translateX(-50%); display:none; text-align:center; min-width:360px; max-width:560px; padding:16px 20px; }
   #results .big { font-family:"Chakra Petch",sans-serif; font-size:22px; font-weight:700; margin:4px 0 8px; display:flex; gap:10px; align-items:center; justify-content:center; }
   #results .stats { color:var(--muted); }
 
-  /* Narrow windows and phones: brand, alert, minimap and results only */
-  @media (max-width: 900px) {
-    #teams, #feed, #sel, #side, #modes .rule, #where { display:none; }
-    #right { top:auto; bottom:16px; width:auto; }
-    #mm canvas { width:200px; height:200px; }
-    #alert { top:84px; max-width:92vw; }
-  }
+  /* Narrow windows (under 1100 px; fit() sets the classes and --wl, the window's width in layout px): nothing is
+     hidden. The strip keeps its own card and ticker, the minimap and panels shrink, the feed and selection card stack. */
+  body.narrow #top { left:8px; right:8px; top:8px; }
+  body.narrow #where, body.narrow #mode, body.narrow #modes .rule, body.narrow #help { display:none; }
+  body.narrow #brand { padding:0 14px; gap:12px; }
+  body.narrow #right { right:8px; width:300px; }
+  body.narrow #mm { padding:8px; width:auto; } body.narrow #mm canvas { width:216px; height:216px; }
+  body.narrow #bottom { left:8px; bottom:8px; flex-direction:column-reverse; align-items:stretch; gap:8px; width:560px; max-width:calc(var(--wl) - 16px); }
+  body.phone #bottom { width:auto; max-width:none; right:8px; }
+  body.narrow #feed, body.narrow #sel { width:auto; }
+  body.narrow #feedrows { max-height:180px; }
+  body.narrow #sel img, body.narrow #sel .glyph { width:96px; height:72px; }
+  body.narrow #alert { max-width:calc(var(--wl) - 24px); }
+  body.narrow #results { min-width:0; max-width:calc(var(--wl) - 24px); width:max-content; }
+  body.narrow #replaybar { left:8px !important; right:8px; width:auto !important; transform:none !important; }
+  /* Phones: the strip takes a second row under the clock and the mode buttons. */
+  body.phone #top { flex-wrap:wrap; height:auto; row-gap:8px; }
+  body.phone #brand { order:1; } body.phone #modes { order:2; margin-left:auto; }
+  body.phone #teams { order:3; flex:1 1 100%; }
+  body.phone #modes button { min-width:48px; padding:0 10px; font-size:14px; }
+  body.phone #own .card .nm span, body.phone #own .card .stat ~ .stat { display:none; }
+  body.phone #right { left:8px; right:8px; width:auto; }
+  body.phone #side { max-width:384px; }
+  body.phone #mm canvas { width:150px; height:150px; }
+  body.phone #rpSpeed, body.phone #rpTime { display:none; }
+  body.phone #feedrows { max-height:132px; }
 </style>
 </head>
 <body>
@@ -105,7 +152,7 @@
 
 <div class="hud" id="top">
   <div class="panel" id="brand"><span class="word">PEZ</span><span class="rule"></span><span id="clock">0:00</span><span id="where">Connecting…</span></div>
-  <div id="teams"></div>
+  <div id="teams"><div id="own"></div><div id="tick"><div id="track"><div class="set" id="setA"></div><div class="set" id="setB" aria-hidden="true"></div></div></div></div>
   <div class="panel" id="modes">
     <button id="bLive" title="Live view (L)">Live</button><button id="bMap" class="on" title="Tactical map (L)">Map</button><button id="bReplay" title="Replay the game so far">Replay</button>
     <span class="rule"></span><span id="mode">Map view</span>
@@ -115,6 +162,8 @@
 <div class="hud" id="right">
   <div class="panel" id="mm"><canvas id="mini" width="720" height="720"></canvas></div>
   <div class="panel" id="side">
+    <div class="drawerhead"><span class="head" id="sidetitle">Your base</span><button class="tog" data-drawer="side" title="Show or hide this panel" aria-expanded="true"><svg viewBox="0 0 16 16"><path d="M3 6l5 5 5-5" fill="none" stroke="#ECE4D2" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>
+    <div class="drawerbody">
     <div id="prodbox"><div class="head" style="margin-bottom:10px">Building now</div><div id="prod" style="display:flex;flex-direction:column;gap:10px"></div></div>
     <div><div class="head" style="margin-bottom:8px">Stockpile</div><div id="stock"></div></div>
     <div><div class="head" style="margin-bottom:8px">Standing orders</div><div id="orders"></div>
@@ -128,13 +177,16 @@
         <span id="orderNote" class="note"></span>
       </div>
     </div>
+    </div>
   </div>
 </div>
-<div class="hud panel" id="feed">
-  <div class="split" style="align-items:baseline"><div class="head" id="feedtitle">Command feed</div><span id="help">L live / map · F base · M whole map</span></div>
-  <div id="feedrows"></div>
+<div class="hud" id="bottom">
+  <div class="panel" id="feed">
+    <div class="drawerhead"><div class="head" id="feedtitle">Command feed</div><span id="help" style="margin-left:auto">L live / map · F base · M whole map</span><button class="tog" data-drawer="feed" title="Show or hide this panel" aria-expanded="true"><svg viewBox="0 0 16 16"><path d="M3 6l5 5 5-5" fill="none" stroke="#ECE4D2" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>
+    <div class="drawerbody"><div id="feedrows"></div></div>
+  </div>
+  <div class="panel" id="sel"></div>
 </div>
-<div class="hud panel" id="sel"></div>
 <div class="hud panel" id="results"></div>
 <div class="hud panel" id="replaybar" style="left:50%;bottom:16px;transform:translateX(-50%);display:none;align-items:center;gap:12px;padding:10px 14px;width:720px">
   <button id="rpPlay" style="width:44px;height:36px;border:0;border-radius:8px;background:var(--cream);color:#101317;font-weight:600;cursor:pointer">❚❚</button>
@@ -159,6 +211,8 @@ const ICON = {
   kills: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5" fill="none" stroke="#ECE4D2" stroke-width="1.5"/><path d="M8 1v4M8 11v4M1 8h4M11 8h4" stroke="#ECE4D2" stroke-width="1.5"/></svg>',
 };
 const SPECTATOR = !BASE.startsWith("/view/");
+document.body.classList.toggle("spectator", SPECTATOR);
+if (SPECTATOR) { document.getElementById("sidetitle").textContent = "Arena"; document.getElementById("feedtitle").textContent = "Arena chat"; }
 const cv = document.getElementById("c"), ctx = cv.getContext("2d");
 const mini = document.getElementById("mini"), mctx = mini.getContext("2d");
 let map = null, frame = null, mapVersion = -1, terrainCanvas = null, shroudCanvas = document.createElement("canvas");
@@ -167,14 +221,49 @@ const pretty = (k) => String(k).replaceAll("_", " ").replace(/^./, (c) => c.toUp
 const clock = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 const num = (n) => Number(n).toLocaleString("en-US");
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]); }
+// Unit icons. A unit with no icon of its own (a new one the art hasn't caught up with) borrows its closest relative's,
+// and failing that shows a lettered glyph; a miss is remembered, so nothing is re-requested every poll.
+const ICON_BASE = { long_range_drone: "recon_drone", reaper_drone: "recon_drone", recon_drone: "gunship", transport_chopper: "gunship", mammoth_tank: "heavy_tank", flak_track: "light_tank", apc: "light_tank",
+  minelayer: "mining_truck", commando: "rifleman", sniper: "rifleman", engineer: "medic" };
+const iconMissing = new Set();
+function iconKey(key) {
+  for (let k = key, i = 0; k && i < 3; k = ICON_BASE[k], i++) if (!iconMissing.has(k)) return k;
+  return null;
+}
+function noIcon(key, el) { iconMissing.add(key); const k = iconKey(key); if (el && k) el.src = `/icons/${k}.png`; else if (el) el.replaceWith(glyphEl(el.dataset.key || key, el.className)); }
+function glyphEl(key, cls) { const d = document.createElement("div"); d.className = `glyph ${cls ?? ""}`; d.textContent = String(key).split("_").map((w) => w[0]).join("").slice(0, 2).toUpperCase(); return d; }
+/** An <img> for a unit's icon (or its fallback); `style` sizes it. */
+function iconImg(key, style = "") {
+  const k = iconKey(key);
+  const glyph = String(key).split("_").map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+  return k ? `<img src="/icons/${k}.png" alt="" data-key="${esc(key)}" style="${style}" onerror="noIcon('${k}', this)">`
+           : `<div class="glyph" style="${style}">${esc(glyph)}</div>`;
+}
 const icons = {};
 function icon(key) {
-  if (!(key in icons)) { const im = new Image(); im.src = `/icons/${key}.png`; icons[key] = im; im.onerror = () => (icons[key] = null); }
-  return icons[key] && icons[key].complete && icons[key].naturalWidth ? icons[key] : null;
+  const k = iconKey(key);
+  if (!k) return null;
+  if (!(k in icons)) { const im = new Image(); im.src = `/icons/${k}.png`; icons[k] = im; im.onerror = () => { icons[k] = null; iconMissing.add(k); }; }
+  return icons[k] && icons[k].complete && icons[k].naturalWidth ? icons[k] : null;
 }
-// Scale the 1920x1080 layout to the window.
-function fit() { document.documentElement.style.setProperty("--k", Math.max(0.55, Math.min(1.2, Math.min(innerWidth / 1920, innerHeight / 1000))).toFixed(3)); }
-addEventListener("resize", fit); fit();
+// Scale the 1920x1080 layout to the window. Under 1100 px wide the HUD reflows instead of shrinking past legibility
+// (body.narrow; body.phone under 640): --wl is the window's width in layout px, --below the top bar's bottom edge.
+let K = 1;
+function fit() {
+  // (A phone's innerWidth grows to fit anything that overflows, so the screen's width caps it.)
+  const w = Math.min(innerWidth, screen.width || innerWidth), h = innerHeight, narrow = w < 1100, phone = w < 640;
+  K = phone ? 0.85 : narrow ? Math.max(0.78, Math.min(1, w / 1100)) : Math.max(0.62, Math.min(1.2, Math.min(w / 1920, h / 1000)));
+  const root = document.documentElement.style;
+  root.setProperty("--k", K.toFixed(3));
+  root.setProperty("--wl", `${Math.round(w / K)}px`);
+  document.body.classList.toggle("narrow", narrow);
+  document.body.classList.toggle("phone", phone);
+  const top = document.getElementById("top");
+  root.setProperty("--below", `${top.offsetTop + top.offsetHeight + (narrow ? 10 : 16)}px`);
+  for (const b of document.querySelectorAll(".tog")) applyDrawer(b.dataset.drawer); // defaults follow the width until someone chooses
+  liveLabel(); tickerLayout();
+}
+addEventListener("resize", fit);
 
 async function getJSON(u) { const r = await fetch(u, { cache: "no-store" }); if (!r.ok) throw new Error((await r.json()).error || r.status); return r.json(); }
 
@@ -204,6 +293,7 @@ function focusBase() {
   if (hq) { cam.x = hq[3]; cam.y = hq[4]; cam.scale = Math.max(cam.scale, 14); }
 }
 function lookAt(x, y) {
+  if (liveMode && SPECTATOR) { setMode(false); cam.x = x + 0.5; cam.y = y + 0.5; cam.scale = Math.max(cam.scale, 14); return; } // the spectator camera directs itself: look there on the map
   if (liveMode) fetch(`${BASE}/cam?x=${x}&y=${y}`);
   else { cam.x = x + 0.5; cam.y = y + 0.5; cam.scale = Math.max(cam.scale, 14); }
 }
@@ -213,6 +303,7 @@ async function tick() {
   try {
     const prev = frame;
     frame = await getJSON(`${BASE}/frame`);
+    if (SPECTATOR) spectatorLive(frame.live);
     showResults(frame.results, frame.rejoin);
     noteVanished(prev, frame);
     if (frame.waiting) { document.getElementById("where").textContent = frame.waiting; setTimeout(tick, 2000); return; }
@@ -265,6 +356,7 @@ async function startReplay() {
     deselect();
     document.getElementById("results").style.display = "none";
     document.getElementById("replaybar").style.display = "flex";
+    document.body.classList.add("replaying");
     document.getElementById("bReplay").classList.add("on");
     fitted = false;
   } catch (e) { document.getElementById("where").textContent = `Replay unavailable: ${e.message}`; }
@@ -272,6 +364,7 @@ async function startReplay() {
 function stopReplay() {
   replay = null; frame = null; mapVersion = -1; fitted = false;
   document.getElementById("replaybar").style.display = "none";
+  document.body.classList.remove("replaying");
   document.getElementById("bReplay").classList.remove("on");
 }
 async function replayStep() {
@@ -319,23 +412,92 @@ function hud() {
   selectionCard();
 }
 
-function teamCards(you) {
-  const el = document.getElementById("teams");
-  const cards = [];
+// The team strip. A player's own card is pinned at the left (never clipped or scrolled); everyone else follows a
+// "VS" as a ticker tape that loops seamlessly (the list drawn twice) at about 35 px/s, pausing under the pointer or a
+// finger. /watch has no own card: every team goes in the ticker. When they all fit, they sit still. Cards update in
+// place, so kills and eliminations never restart or jolt the scroll.
+const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)");
+const ticker = { off: 0, last: 0, paused: false, setW: 0, moving: false, html: new Map(), ownHtml: "" };
+function cardHtml(t, you) {
+  const mine = you && t.id === you.team;
+  const full = mine || (t.units != null && (SPECTATOR || frame.results));
   const stat = (k, v) => `<div class="stat">${ICON[k]}${v}</div>`;
-  const ordered = you ? [frame.teams.find((t) => t.id === you.team), ...frame.teams.filter((t) => t.id !== you.team)].filter(Boolean) : frame.teams;
-  ordered.forEach((t, i) => {
-    const mine = you && t.id === you.team;
-    const full = mine || (SPECTATOR && t.units != null && frame.teams.length <= 4);
-    const stats = mine
-      ? stat("power", you.power_used != null ? `${you.power_used}/${you.power_produced}` : String(you.power ?? "?"))
-        + stat("steel", num(you.steel ?? parseInt(you.stockpile?.steel ?? "0", 10) ?? 0)) + (you.units != null ? stat("units", you.units) : "")
-      : full ? stat("power", t.power) + stat("steel", num(t.steel)) + stat("units", t.units) : stat("kills", t.kills);
-    cards.push(`<div class="panel card ${full ? "" : "mini"} ${t.status !== "playing" ? "out" : ""}"><span class="stripe" style="background:${FLAVORS[t.id % 8]}"></span>` +
-      `<div class="nm"><b>${esc(t.flavor)}</b><span>${esc(t.player ?? "")}</span></div>${stats}</div>`);
-    if (mine && ordered.length > 1) cards.push(`<span id="vs">VS</span>`);
+  const stats = mine
+    ? stat("power", you.power_used != null ? `${you.power_used}/${you.power_produced}` : String(you.power ?? "?"))
+      + stat("steel", num(you.steel ?? parseInt(you.stockpile?.steel ?? "0", 10) ?? 0)) + (you.units != null ? stat("units", you.units) : "")
+    : full ? stat("power", t.power) + stat("steel", num(t.steel)) + stat("units", t.units) + (t.kills != null ? stat("kills", t.kills) : "") : stat("kills", t.kills);
+  return { cls: `panel card ${full ? "" : "mini"} ${t.status !== "playing" ? "out" : ""}`,
+    html: `<span class="stripe" style="background:${FLAVORS[t.id % 8]}"></span><div class="nm"><b>${esc(t.flavor)}</b><span>${esc(t.player ?? "")}</span></div>${stats}` };
+}
+function teamCards(you) {
+  const own = document.getElementById("own"), A = document.getElementById("setA"), B = document.getElementById("setB");
+  const mineT = you && frame.teams.find((t) => t.id === you.team);
+  // Pinned own card.
+  let ownHtml = "";
+  if (mineT) { const c = cardHtml(mineT, you); ownHtml = `<div class="${c.cls}">${c.html}</div>` + (frame.teams.length > 1 ? `<span id="vs">VS</span>` : ""); }
+  let changed = false;
+  if (ownHtml !== ticker.ownHtml) { own.innerHTML = ticker.ownHtml = ownHtml; changed = true; }
+  // The ticker's cards, keyed by team, touched only when their content changes.
+  const others = frame.teams.filter((t) => !mineT || t.id !== mineT.id);
+  const ids = others.map((t) => String(t.id));
+  if (ids.join() !== [...A.children].map((c) => c.dataset.id).join()) {
+    A.innerHTML = ids.map((id) => `<div data-id="${id}"></div>`).join(""); ticker.html.clear(); changed = true;
+  }
+  others.forEach((t, i) => {
+    const c = cardHtml(t, you), key = c.cls + c.html;
+    if (ticker.html.get(t.id) === key) return;
+    ticker.html.set(t.id, key);
+    const el = A.children[i]; el.className = c.cls; el.innerHTML = c.html; changed = true;
   });
-  el.innerHTML = cards.join("");
+  if (changed) { B.innerHTML = A.innerHTML; fit(); } // fit() re-measures the bar (a phone's wraps) and the ticker
+}
+function tickerLayout() {
+  const tick = document.getElementById("tick"), A = document.getElementById("setA"), B = document.getElementById("setB"), track = document.getElementById("track");
+  if (!tick) return;
+  const fits = A.scrollWidth <= tick.clientWidth + 1;
+  const move = !fits && !reduceMotion.matches;
+  B.style.display = move ? "" : "none";
+  tick.classList.toggle("static", fits);
+  tick.classList.toggle("moving", move);
+  tick.classList.toggle("scroll", !fits && !move);
+  ticker.moving = move;
+  ticker.setW = A.offsetWidth + 10; // one copy of the list and the gap before the next
+  if (move) ticker.off %= ticker.setW; else { ticker.off = 0; track.style.transform = ""; }
+}
+function tickerFrame(now) {
+  requestAnimationFrame(tickerFrame);
+  const dt = Math.min(0.1, (now - (ticker.last || now)) / 1000); ticker.last = now;
+  if (!ticker.moving || ticker.paused || !ticker.setW) return;
+  ticker.off = (ticker.off + dt * 35 / K) % ticker.setW; // 35 screen px a second, whatever the HUD's scale
+  document.getElementById("track").style.transform = `translate3d(${(-ticker.off).toFixed(2)}px,0,0)`;
+}
+{
+  const tick = document.getElementById("tick");
+  let resume = 0;
+  tick.addEventListener("pointerenter", (e) => { if (e.pointerType === "mouse") ticker.paused = true; });
+  tick.addEventListener("pointerleave", (e) => { if (e.pointerType === "mouse") ticker.paused = false; });
+  tick.addEventListener("touchstart", () => { ticker.paused = true; clearTimeout(resume); }, { passive: true });
+  tick.addEventListener("touchend", () => { clearTimeout(resume); resume = setTimeout(() => (ticker.paused = false), 1500); }, { passive: true });
+  reduceMotion.addEventListener?.("change", tickerLayout);
+  requestAnimationFrame(tickerFrame);
+}
+
+// Drawers: the side panel and the feed/chat fold down to their header. The choice is remembered per drawer; the
+// default is open, except on a phone.
+// (A spectator's side panel holds only a note, so it starts folded.)
+function drawerOpen(name) { let v = null; try { v = localStorage.getItem(`pezz.drawer.${name}`); } catch {} return v ? v === "open" : Math.min(innerWidth, screen.width || innerWidth) >= 640 && !(SPECTATOR && name === "side"); }
+function applyDrawer(name) {
+  const el = document.getElementById(name), open = drawerOpen(name);
+  el.classList.toggle("collapsed", !open);
+  el.querySelector(".tog").setAttribute("aria-expanded", String(open));
+}
+for (const b of document.querySelectorAll(".tog")) {
+  b.addEventListener("click", () => {
+    const name = b.dataset.drawer;
+    try { localStorage.setItem(`pezz.drawer.${name}`, drawerOpen(name) ? "closed" : "open"); } catch {}
+    applyDrawer(name);
+  });
+  applyDrawer(b.dataset.drawer);
 }
 
 function alertBanner() {
@@ -352,13 +514,15 @@ function alertBanner() {
 }
 
 function sidePanel(you) {
+  document.getElementById("sidetitle").textContent = you ? "Your base" : "Arena";
   const prod = you?.production ?? [];
   document.getElementById("prodbox").style.display = you ? "block" : "none";
   document.getElementById("prod").innerHTML = prod.length
-    ? prod.map((p) => `<div class="row"><img src="/icons/${p.type}.png" alt="" onerror="this.style.visibility='hidden'"><div style="flex-grow:1;display:flex;flex-direction:column;gap:6px">` +
+    ? prod.map((p) => `<div class="row">${iconImg(p.type, "width:56px;height:42px;border-radius:6px")}<div style="flex-grow:1;display:flex;flex-direction:column;gap:6px">` +
         `<div class="split"><span>${esc(pretty(p.type))}${p.count > 1 ? ` ×${p.count}` : ""}</span><span class="mono">${p.pct}%</span></div><div class="bar"><div style="width:${Math.min(100, p.pct)}%"></div></div></div></div>`).join("")
     : `<div class="note">${you?.production ? "Nothing in production." : "Production shows up here on the latest game build."}</div>`;
   const st = you?.stockpile ?? {};
+  document.getElementById("stock").parentElement.style.display = you ? "" : "none"; // a spectator has no stockpile
   document.getElementById("stock").innerHTML = Object.entries(st).map(([k, v]) => `<span>${k.replace("_ore", " ore")} <b>${esc(String(v).split(" ")[0])}</b></span>`).join("") || `<span>—</span>`;
   const orders = frame.standing_orders ?? you?.standing_orders;
   document.getElementById("orders").innerHTML = SPECTATOR ? `<span class="note">Each commander's human can set standing orders for their agent.</span>`
@@ -417,7 +581,7 @@ function selectionCard() {
   const stats = d ? [d.speed != null ? `${d.speed} t/s` : null, d.weapon ? esc(d.weapon) : null, d.armor].filter(Boolean).join(" · ") : "";
   const mobile = size === 0;
   el.style.display = "flex";
-  el.innerHTML = `<img src="/icons/${key}.png" alt="" onerror="this.style.visibility='hidden'"><div style="flex-grow:1;display:flex;flex-direction:column;gap:7px;min-width:0">` +
+  el.innerHTML = `${iconImg(key, "border-radius:8px")}<div style="flex-grow:1;display:flex;flex-direction:column;gap:7px;min-width:0">` +
     `<div style="display:flex;align-items:center;gap:8px"><span class="chip" style="background:${FLAVORS[team % 8]}"></span><span class="big">${esc(d?.name ?? e[10] ?? pretty(key))}</span>${e[10] ? `<span class="note" style="color:#FFA22E;font-weight:600">INVENTED</span>` : ""}<span class="note">#${selected} · ${esc(owner?.flavor ?? "")} ${esc(owner?.player ?? "")}</span></div>` +
     `<div style="display:flex;align-items:center;gap:10px"><div class="bar" style="flex-grow:1"><div style="width:${hp}%;background:${hpCol}"></div></div><span class="mono note">${d ? `${d.hp}/${d.max_hp}` : `${hp}%`}</span></div>` +
     (build >= 0 && build < 100 ? `<div class="note">Building: ${build}%</div>` : "") +
@@ -581,6 +745,11 @@ function draw() {
   if (cv.width !== innerWidth * dpr) { cv.width = innerWidth * dpr; cv.height = innerHeight * dpr; if (!fitted) fitAll(); }
   drawMini();
   ctx.fillStyle = "#2A2420"; ctx.fillRect(0, 0, cv.width, cv.height);
+  if (frame?.waiting && !replay) { // the delayed feed is still filling: say so where the map will be
+    ctx.fillStyle = "#9BA5AE"; ctx.textAlign = "center"; ctx.font = `${Math.round(15 * (devicePixelRatio || 1))}px "IBM Plex Sans", sans-serif`;
+    ctx.fillText(frame.waiting, cv.width / 2, cv.height / 2); ctx.textAlign = "start";
+    return;
+  }
   if (!map || !frame) return;
   const fol = selected && frame.entities.find((x) => x[0] === selected && x[8] === 0);
   if (fol && !drag?.moved) { cam.x += (fol[3] - cam.x) * 0.15; cam.y += (fol[4] - cam.y) * 0.15; } // ride along with the selected unit
@@ -704,19 +873,38 @@ const liveImg = document.getElementById("live"), liveCtx = liveImg.getContext("2
 let liveTotal = 0, noPush = false;
 let liveOk = false, liveMode = false, liveFails = 0, liveAbort = null, liveFps = 0, liveShown = 0;
 function setMode(live) {
+  if (live && replay) stopReplay();
   liveMode = live && liveOk;
   document.body.classList.toggle("live", liveMode);
-  document.getElementById("mode").textContent = liveMode ? `Live${liveFps ? ` · ${liveFps} fps` : ""}` : liveOk ? "Map view" : SPECTATOR ? "Spectator map" : "Map view (no live video yet)";
+  document.getElementById("mode").textContent = liveMode ? `Live${SPECTATOR && specLive?.delay_s ? ` · ${specLive.delay_s} s behind` : ""}${liveFps ? ` · ${liveFps} fps` : ""}`
+    : liveOk ? "Map view" : SPECTATOR ? (specLive?.starts_in_s != null ? `Live starts in ${specLive.starts_in_s}s` : "Spectator map") : "Map view (no live video yet)";
   document.getElementById("bLive").classList.toggle("on", liveMode);
-  document.getElementById("bMap").classList.toggle("on", !liveMode);
+  document.getElementById("bMap").classList.toggle("on", !liveMode && !replay);
   document.getElementById("bLive").disabled = !liveOk;
+  liveLabel();
   if (!liveWanted()) liveAbort?.abort(); // don't pull video nobody is looking at
 }
+// The public spectator page's video: the director camera's whole-map view, as late as the map data (the gateway
+// says when it's ready). Live is the default once it is; Map and Replay stay one click away.
+let specLive = null;
+function spectatorLive(info) {
+  specLive = info ?? null;
+  if (!liveOk) setMode(false); // refresh the countdown
+}
+function liveLabel() {
+  const b = document.getElementById("bLive");
+  if (!b) return;
+  const phone = innerWidth < 640, d = specLive?.delay_s;
+  b.textContent = !SPECTATOR ? "Live"
+    : !liveOk && specLive?.starts_in_s != null ? `Live in ${specLive.starts_in_s}s`
+    : d ? (phone ? `Live · ${d}s` : `Live · ${d} s delay`) : "Live";
+  b.title = !SPECTATOR ? "Live view (L)" : specLive === null ? "This room has no 3D renderer: map view only"
+    : `The game in 3D, ${d ?? 45} seconds behind (L)`;
+}
 setInterval(() => { liveFps = liveShown; liveShown = 0; if (liveMode) setMode(true); }, 1000);
-function liveWanted() { return !document.hidden && (liveMode || !liveOk); }
+function liveWanted() { return !document.hidden && (liveMode || !liveOk) && (!SPECTATOR || !!specLive?.available); }
 document.addEventListener("visibilitychange", () => { if (!liveWanted()) liveAbort?.abort(); });
 async function liveLoop() {
-  if (!BASE.startsWith("/view/")) return; // the public spectator page has no personal stream
   if (!liveWanted()) return setTimeout(liveLoop, 250);
   liveAbort = new AbortController();
   try {
@@ -728,6 +916,7 @@ async function liveLoop() {
       const watchdog = setTimeout(() => { if (liveTotal === shownBefore) { noPush = true; ab.abort(); } }, 4000);
       try { await readFrames(r.body.getReader()); } finally { clearTimeout(watchdog); }
     }
+    else if (SPECTATOR && r.status === 503) { liveOk = false; setMode(false); await new Promise((ok) => setTimeout(ok, 2000)); } // still filling
     else if (++liveFails > 3) return pollLoop(); // no push stream for us right now: poll stills instead
   } catch {
     if (noPush) return pollLoop();
@@ -780,7 +969,7 @@ async function showFrame(jpg) {
       const bmp = await createImageBitmap(blob);
       if (liveImg.width !== bmp.width || liveImg.height !== bmp.height) { liveImg.width = bmp.width; liveImg.height = bmp.height; }
       liveCtx.drawImage(bmp, 0, 0); bmp.close(); liveShown++; liveTotal++;
-      if (!liveOk) { liveOk = true; setMode(true); }
+      if (!liveOk) { liveOk = true; setMode(!replay); } // video is the default, unless a replay is playing
     } catch {}
   }
   decoding = false;
@@ -793,7 +982,7 @@ function camFlush() {
   camAcc = { dx: 0, dy: 0, zoom: 1, yaw: 0 }; camBusy = true;
   fetch(`${BASE}/cam?dx=${a.dx.toFixed(4)}&dy=${a.dy.toFixed(4)}&zoom=${a.zoom.toFixed(3)}&yaw=${a.yaw}`).finally(() => { camBusy = false; setTimeout(camFlush, 30); });
 }
-liveImg.addEventListener("pointerdown", (e) => { camDrag = { x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY }; e.preventDefault(); });
+liveImg.addEventListener("pointerdown", (e) => { if (SPECTATOR) return; camDrag = { x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY }; e.preventDefault(); });
 addEventListener("pointerup", async (e) => {
   const d = camDrag; camDrag = null;
   if (!d || !liveMode || Math.abs(e.clientX - d.x0) + Math.abs(e.clientY - d.y0) > 4) return;
@@ -805,8 +994,8 @@ addEventListener("pointerup", async (e) => {
   try { const p = await getJSON(`${BASE}/pick?u=${u.toFixed(4)}&v=${v.toFixed(4)}`); if (p.id) select(p.id); else deselect(); } catch {}
 });
 addEventListener("pointermove", (e) => { if (!camDrag || !liveMode) return; const r = liveImg.getBoundingClientRect(); camAcc.dx -= (e.clientX - camDrag.x) / r.width; camAcc.dy += (e.clientY - camDrag.y) / r.height; camDrag = { x: e.clientX, y: e.clientY }; camFlush(); });
-liveImg.addEventListener("wheel", (e) => { e.preventDefault(); camAcc.zoom *= e.deltaY < 0 ? 0.9 : 1.11; camFlush(); }, { passive: false });
-addEventListener("keydown", (e) => { if (!liveMode) return; const k = e.key.toLowerCase(); if (k === "q") camAcc.yaw += 15; if (k === "e") camAcc.yaw -= 15; camFlush(); });
+liveImg.addEventListener("wheel", (e) => { if (SPECTATOR) return; e.preventDefault(); camAcc.zoom *= e.deltaY < 0 ? 0.9 : 1.11; camFlush(); }, { passive: false });
+addEventListener("keydown", (e) => { if (!liveMode || SPECTATOR) return; const k = e.key.toLowerCase(); if (k === "q") camAcc.yaw += 15; if (k === "e") camAcc.yaw -= 15; camFlush(); });
 
 // Two-finger pinch zooms (the map, or the live stream's camera); one finger pans like a mouse drag.
 const touchPts = new Map(); let pinchDist = 0;
@@ -824,9 +1013,9 @@ function pinchTrack(el, onZoom) {
   el.addEventListener("pointerup", end); el.addEventListener("pointercancel", end);
 }
 pinchTrack(cv, (k) => { cam.scale = Math.max(2, Math.min(60, cam.scale * k)); });
-pinchTrack(liveImg, (k) => { camAcc.zoom /= k; camFlush(); });
+if (!SPECTATOR) pinchTrack(liveImg, (k) => { camAcc.zoom /= k; camFlush(); });
 addEventListener("keydown", (e) => { if (e.key === "l" || e.key === "L") setMode(!liveMode); });
-setMode(false); tick(); draw(); liveLoop();
+fit(); setMode(false); tick(); draw(); liveLoop();
 if (new URLSearchParams(location.search).get("replay") === "1") setTimeout(startReplay, 800); // a shareable replay link
 setTimeout(focusBase, 1500);
 </script>
