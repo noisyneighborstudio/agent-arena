@@ -324,11 +324,19 @@ namespace Pez.View
         {
             var g = Ground(pos);
             float sq = Mathf.Sqrt(size);
-            for (int i = 0; i < 4; i++)
-                Emit(S.Dust, g + Flat(Random.Range(0.25f, 0.55f) * size) + Up * Random.Range(0.7f, 1.3f), Flat(0.12f) + Up * Random.Range(-0.45f, -0.15f),
-                    Random.Range(0.22f, 0.4f) * sq, Random.Range(1.6f, 2.4f), Vary(Color32.Lerp(Cream, DustPale, 0.6f), 0.05f, 170));
-            Chunks(g + Up * 1f, 2, 0.22f, 0.8f, 1.4f, DustPale, Steel, Cream, 0f, 0.3f);
+            // Sooty grit (not cream, which vanishes against the buildings' own cream) slides off the roof edge and settles.
+            // From the eaves (just outside the walls, so it isn't lost inside the roof), down the wall to the ground.
+            var eave = Flat(1f).normalized;
+            for (int i = 0; i < 7; i++)
+            {
+                var at = g + (eave * 0.62f * size + Flat(0.25f)) + Up * Random.Range(0.7f, 1.2f);
+                Emit(S.Dust, at, eave * 0.15f + Up * Random.Range(-0.7f, -0.3f), Random.Range(0.3f, 0.5f) * sq, Random.Range(1.6f, 2.4f), Vary(Grit, 0.06f, 210));
+            }
+            Emit(S.Dust, g + eave * 0.7f * size, eave * 0.3f + Up * 0.1f, 0.8f * sq, 2.2f, Vary(Grit, 0.04f, 130)); // the puff where it lands
+            Chunks(g + eave * 0.6f * size + Up * 1f, 3, 0.26f, 0.9f, 1.6f, Grit, Steel, DustPale, 0f, 0.3f);
         }
+
+        static readonly Color32 Grit = new Color32(118, 104, 92, 255);
 
         public static void Salvaged(Vector3 pos, float size)
         {

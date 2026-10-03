@@ -152,16 +152,16 @@ namespace Pez.Sim
             {
                 string inT = ahead >= 600 ? "10 minutes" : "1 minute";
                 if (Crossed(SuddenDeathAt - ahead))
-                    Announce($"⏳ Sudden death in {inT}: ore stops regrowing. Structures start to decay 30 minutes after that, and the match ends on points 60 minutes after it. Scores now: {ScoreLine()}.");
+                    Announce($"Sudden death in {inT}: ore stops regrowing. Structures start to decay 30 minutes after that, and the match ends on points 60 minutes after it. Scores now: {ScoreLine()}.");
                 if (Crossed(DecayAt - ahead))
-                    Announce($"⏳ Structures start to decay in {inT} (0.03% of their health a second; repair trucks keep them up, and anything below 50% can be captured by an engineer). The match ends on points 30 minutes after that. Scores now: {ScoreLine()}.");
+                    Announce($"Structures start to decay in {inT} (0.03% of their health a second; repair trucks keep them up, and anything below 50% can be captured by an engineer). The match ends on points 30 minutes after that. Scores now: {ScoreLine()}.");
                 if (Crossed(MatchEndsAt - ahead))
-                    Announce($"⏳ The match ends on points in {inT}. Scores now: {ScoreLine()}. Points: {HowScored}.");
+                    Announce($"The match ends on points in {inT}. Scores now: {ScoreLine()}. Points: {HowScored}.");
             }
             if (Crossed(SuddenDeathAt))
-                Announce($"⚔️ SUDDEN DEATH: ore no longer regrows. Structures start to decay in 30 minutes; the match ends on points in 60 minutes. Scores now: {ScoreLine()}.");
+                Announce($"SUDDEN DEATH: ore no longer regrows. Structures start to decay in 30 minutes; the match ends on points in 60 minutes. Scores now: {ScoreLine()}.");
             if (Crossed(DecayAt))
-                Announce($"⚔️ DECAY: every structure now loses 0.03% of its health a second (repair trucks keep it up; below 50% an engineer can take it). The match ends on points in 30 minutes. Scores now: {ScoreLine()}.");
+                Announce($"DECAY: every structure now loses 0.03% of its health a second (repair trucks keep it up; below 50% an engineer can take it). The match ends on points in 30 minutes. Scores now: {ScoreLine()}.");
             if (Phase == MatchPhase.Decay && Tick % TickRate == 0)
                 foreach (var e in Entities.ToList())
                     if (!e.Dead && e.IsStructure && e.IsComplete && e.Team >= 0 && !IsProtected(e.Team))
@@ -177,10 +177,10 @@ namespace Pez.Sim
             GameOver = true;
             Winner = s.Count == 0 ? -1 : s.Count == 1 || s[0].Score > s[1].Score ? s[0].Team : -1;
             string board = string.Join(", ", s.Select(x => $"{x.Name} ({x.Player}) {x.Score}"));
-            string text = Winner >= 0 ? $"🏁 Time! {Teams[Winner].Name} ({Teams[Winner].PlayerName ?? Teams[Winner].Controller}) wins the match on points: {board}."
-                                      : $"🏁 Time! The match ends in a draw on points: {board}.";
+            string text = Winner >= 0 ? $"Time! {Teams[Winner].Name} ({Teams[Winner].PlayerName ?? Teams[Winner].Controller}) wins the match on points: {board}."
+                                      : $"Time! The match ends in a draw on points: {board}.";
             Emit("game_over", Winner, text: text);
-            Emit("chat", -1, text: text + (Open ? $" A new match starts in {Game.ResultsSeconds / 60:0} minutes; join again then." : ""));
+            if (Open) Emit("chat", -1, text: $"A new match starts in {Game.ResultsSeconds / 60:0} minutes, on a new map: join again then.");
         }
     }
 
@@ -220,7 +220,7 @@ namespace Pez.Sim
                 HouseAIs = c.HouseAIs, HouseResignAbove = c.HouseResignAbove, MatchHours = c.MatchHours,
             };
             Restart(cfg);
-            World.Emit("chat", -1, text: $"🆕 A new match has begun ({(cfg.MatchHours > 0 ? $"{cfg.MatchHours:0.#} h until sudden death" : "no time limit")}). Join again for a seat.");
+            World.Emit("chat", -1, text: $"A new match has begun ({(cfg.MatchHours > 0 ? $"{cfg.MatchHours:0.#} h until sudden death" : "no time limit")}). Join again for a seat.");
             Restarted?.Invoke();
         }
     }

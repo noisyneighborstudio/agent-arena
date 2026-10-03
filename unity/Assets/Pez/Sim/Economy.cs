@@ -225,7 +225,7 @@ namespace Pez.Sim
             var t = Teams[d.Team];
             t.Stats.DerricksCaptured++;
             Emit("derrick_captured", d.Team, d.Id, 0, d.Center, key: "derrick");
-            Emit("chat", -1, text: $"🛢️ {t.Name} ({t.PlayerName ?? t.Controller}) took {(old >= 0 ? $"{Teams[old].Name}'s" : "a neutral")} derrick at sector {StateView.Sector(Map, d.Center)}: +{DerrickSteel} steel/s while they hold it.");
+            Emit("chat", -1, text: $"{t.Name} ({t.PlayerName ?? t.Controller}) took {(old >= 0 ? $"{Teams[old].Name}'s" : "a neutral")} derrick at sector {StateView.Sector(Map, d.Center)}: +{DerrickSteel} steel/s while they hold it.");
         }
 
         /// <summary>A destroyed derrick leaves salvage (as any kill) and comes back neutral on its site after DerrickRespawn.</summary>

@@ -458,8 +458,9 @@ namespace Pez.View
         Transform oreParent;
         readonly System.Random oreRng = new System.Random(99);
         float nextOreScan;
-        /// <summary>A pile that appears where there was none (salvage) is drawn against this much ore as "full".</summary>
-        const int PileFull = 300;
+        /// <summary>A pile that appears where there was none (salvage) is drawn against this much ore as "full" (a light tank's
+        /// 50 iron ore shows two clusters, a heavy wreck's pile all five).</summary>
+        const int PileFull = 150;
 
         static int ClustersFor(int ore, int start) => ore <= 0 ? 0 : Mathf.Clamp(Mathf.CeilToInt(5f * ore / Mathf.Max(1, start)), 1, 5);
 
