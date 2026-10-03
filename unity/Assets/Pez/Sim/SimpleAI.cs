@@ -53,6 +53,19 @@ namespace Pez.Sim
             var have = structures.GroupBy(s => s.Def.Key).ToDictionary(g => g.Key, g => g.Count());
             int Count(string k) => have.TryGetValue(k, out var c) ? c : 0;
 
+            // Go deep when the surface ore it knows about is thin, not just when the trucks have run dry.
+            var trucks0 = mine.Where(e => e.IsHarvester).ToList();
+            int surfaceLeft = w.Tick % (World.TickRate * 10) == 0 || knownSurface < 0 ? (knownSurface = StateView.OreFields(w, t.Explored).Sum(f => f.total)) : knownSurface;
+            bool surfaceDry = surfaceLeft < 4000 ||
+                              (trucks0.Count > 0 && trucks0.Count(tr => tr.Order == Order.Idle) * 2 >= trucks0.Count) ||
+                              (t.SurfaceWarnedAt > 0 && w.Time - t.SurfaceWarnedAt < 300);
+            // Past the electronics plant it prospects anyway: deep mines are the economy's second stage.
+            bool prospect = w.HasComplete(team, "electronics_plant") && t.Amount("steel") > 400;
+            // With the surface dry and no deep mine yet, the economy comes first: no army or new buildings (except power)
+            // until a rig is on its way.
+            bool economyFirst = surfaceDry && !mine.Any(e => e.Def.Key == "deep_mine" || e.Def.Key == "drill_rig") &&
+                                !t.UnitQueues[Producer.Factory].Any(q => q.Key == "drill_rig") && w.HasComplete(team, "electronics_plant");
+
             // ---- Base building
             string next = null;
             if (t.StructureQueue.Count == 0)
@@ -60,9 +73,9 @@ namespace Pez.Sim
                 if (t.PowerProduced - t.PowerUsed < 25 && structures.Count > 1)
                     next = w.MissingPrereq(team, Defs.Get("fusion_reactor")) == null && t.Amount("plasma") > 80 && Count("fusion_reactor") == 0 ? "fusion_reactor" : "power_plant";
                 // Trucks queueing for the bays: another refinery (each bay takes one truck at a time).
-                else if (mine.Count(e => e.IsHarvester && e.Dock == DockStep.Queue) >= 2 && Count("mining_refinery") is int nr && nr >= 1 && nr < 4)
+                else if (!surfaceDry && trucks0.Count(e => e.Dock == DockStep.Queue) >= 2 && Count("mining_refinery") is int nr && nr >= 1 && nr < 4)
                     next = "mining_refinery";
-                else
+                else if (!economyFirst)
                 {
                     var need = new Dictionary<string, int>();
                     foreach (var k in BuildOrder)
@@ -140,16 +153,6 @@ namespace Pez.Sim
                 Do(w, "type", "train", "unit", "medic");
 
             // ---- Deep mining: when the surface runs dry, survey outward from the base and drill what turns up.
-            // Go deep when the surface ore it knows about is thin, not just when the trucks have run dry.
-            int surfaceLeft = w.Tick % (World.TickRate * 10) == 0 || knownSurface < 0 ? (knownSurface = StateView.OreFields(w, t.Explored).Sum(f => f.total)) : knownSurface;
-            bool surfaceDry = surfaceLeft < 4000 ||
-                              (trucks.Count > 0 && trucks.Count(tr => tr.Order == Order.Idle) * 2 >= trucks.Count) ||
-                              (t.SurfaceWarnedAt > 0 && w.Time - t.SurfaceWarnedAt < 300);
-            // Past the electronics plant it prospects anyway: deep mines are the economy's second stage.
-            bool prospect = w.HasComplete(team, "electronics_plant") && t.Amount("steel") > 400;
-            // With the surface dry and no deep mine yet, the economy comes first: no army spending until a rig is on its way.
-            bool economyFirst = surfaceDry && !mine.Any(e => e.Def.Key == "deep_mine" || e.Def.Key == "drill_rig") &&
-                                !t.UnitQueues[Producer.Factory].Any(q => q.Key == "drill_rig") && w.HasComplete(team, "electronics_plant");
             if (w.HasComplete(team, "factory") && (surfaceDry || prospect || mine.Any(e => e.Def.Key == "deep_mine")))
             {
                 var free = w.Map.Deep.Where(d => t.Surveyed.Contains(d.Id) && d.Amount > 0 && (d.MineId == 0 || w.Get(d.MineId) == null))

@@ -21,3 +21,4 @@ unity/*.slnx
 ci-work/
 .claude/*
 !.claude/agents/
+__pycache__/

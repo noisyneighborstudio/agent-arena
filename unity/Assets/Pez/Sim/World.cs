@@ -672,6 +672,11 @@ namespace Pez.Sim
                     if (!Map.TerrainPassable(tx, ty)) return $"tile ({tx},{ty}) is {Map.Tiles[i].ToString().ToLowerInvariant()}";
                     if (Map.Ore[i] > 0) return $"tile ({tx},{ty}) has ore on it";
                 }
+            // Truck bays: mining trucks back into drop-offs along a 2-tile lane, so nothing may be built on one.
+            if (BlocksLane(team, ox, oy, def) is Entity d)
+                return $"it would block the truck lane of your {d.Def.Key} #{d.Id} (trucks back into its bay; keep the 2 tiles outside it clear)";
+            if (def.DropOff && !Bay(new Int2(ox, oy), def).laneOk)
+                return $"a {def.Key} needs a clear 2-tile truck lane on one side (south preferred) for trucks to back into";
             if (!requireNear) return null;
             // Must be near an existing friendly structure: territory grows outward from your bases.
             const int reach = 6;
@@ -1398,9 +1403,10 @@ namespace Pez.Sim
                 if (refinery != was) { e.DockAt = refinery?.Id ?? 0; e.Dock = DockStep.Approach; e.Path = null; }
             }
             if (refinery == null) { e.Moving = false; return; }
-            var bay = DockPoint(refinery);
-            var head = bay + new Vec2(0, -BayLength);
-            if (!LaneClear(bay, head))
+            var (bay, head, bayFacing, laneOk) = Bay(refinery);
+            var outward = (head - bay).Normalized;
+            var across = new Vec2(-outward.Y, outward.X);
+            if (!laneOk)
             {
                 // Nowhere to back in (the lane is built over or blocked by terrain): unload beside the drop-off.
                 if (Vec2.Dist(e.Pos, bay) > 0.6f) { FollowPath(e, bay, 0.5f); return; }
@@ -1421,8 +1427,9 @@ namespace Pez.Sim
                         {
                             if (e.Dock != DockStep.Queue) e.Path = null;
                             e.Dock = DockStep.Queue;
-                            var spot = head + new Vec2(e.Id % 2 == 0 ? 1.7f : -1.7f, -1.3f);
-                            if (!Map.Passable(Int2.Of(spot).X, Int2.Of(spot).Y)) spot = head + new Vec2(0, -1.6f);
+                            var spot = head + across * (e.Id % 2 == 0 ? 1.7f : -1.7f) + outward * 1.3f;
+                            if (!Map.Passable(Int2.Of(spot).X, Int2.Of(spot).Y)) spot = head + across * (e.Id % 2 == 0 ? -1.7f : 1.7f) + outward * 1.3f;
+                            if (!Map.Passable(Int2.Of(spot).X, Int2.Of(spot).Y)) spot = head + outward * 2.5f;
                             FollowPath(e, spot, 0.4f);
                             return;
                         }
@@ -1440,9 +1447,9 @@ namespace Pez.Sim
                 case DockStep.Align:
                     // Turn on the spot to face away from the building (the bin end toward it), settling onto the lane.
                     e.Moving = false;
-                    e.Facing = RotateToward(e.Facing, BayFacing, AlignTurnRate * Dt);
+                    e.Facing = RotateToward(e.Facing, bayFacing, AlignTurnRate * Dt);
                     e.Pos = e.Pos + (head - e.Pos) * MathF.Min(1f, 4f * Dt);
-                    if (MathF.Abs(AngleDiff(e.Facing, BayFacing)) < 0.02f) { e.Facing = BayFacing; e.Dock = DockStep.Reverse; }
+                    if (MathF.Abs(AngleDiff(e.Facing, bayFacing)) < 0.02f) { e.Facing = bayFacing; e.Dock = DockStep.Reverse; }
                     return;
                 case DockStep.Reverse:
                     {
@@ -1461,10 +1468,13 @@ namespace Pez.Sim
                     return;
                 case DockStep.PullOut:
                     {
-                        // Lower the bed, then drive forward out of the bay to the head of the lane.
+                        // Lower the bed, then drive forward out of the bay and on past the head of the lane, between the
+                        // waiting trucks, so the next one has a clear lane when the bay is released.
                         e.WorkTimer += Dt;
                         if (e.WorkTimer < 0) { e.Moving = false; return; }
-                        var to = head - e.Pos;
+                        var exit = head + outward * PullOutPast;
+                        if (!Map.Passable(Int2.Of(exit).X, Int2.Of(exit).Y)) exit = head;
+                        var to = exit - e.Pos;
                         float dist = to.Length, step = MathF.Min(dist, e.Def.Speed * PullOutSpeed * Dt);
                         if (dist > 1e-4f) e.Pos = e.Pos + to / dist * step;
                         e.Moving = true;
@@ -1477,8 +1487,7 @@ namespace Pez.Sim
         // The bay: trucks line up BayLength tiles out, turn to face away, reverse in, and unload. These timings are the
         // delivery's cost in the economy (about 6 s a trip on top of the 1.5 s unload), and the one-truck-at-a-time
         // bay makes a big fleet want more than one drop-off.
-        public const float BayLength = 2.0f, AlignTurnRate = 3.2f, ReverseSpeed = 0.7f, PullOutSpeed = 1.0f, UnloadSettle = 0.3f, BedLower = 0.25f;
-        static readonly float BayFacing = -MathF.PI / 2; // facing south, out of the bay (drop-off doors face south)
+        public const float BayLength = 2.0f, AlignTurnRate = 3.2f, ReverseSpeed = 0.7f, PullOutSpeed = 1.0f, UnloadSettle = 0.3f, BedLower = 0.25f, PullOutPast = 1.6f;
 
         /// <summary>Tip 10 ore every 0.1 s into the team's stockpile (WorkTimer starts below zero for a settle first).</summary>
         void TipOre(Entity e)
@@ -1512,10 +1521,10 @@ namespace Pez.Sim
             foreach (var s in Entities)
             {
                 if (s.Dead || s.Team != e.Team || !s.IsStructure || !s.IsComplete || !s.Def.DropOff) continue;
-                var bay = DockPoint(s); var head = bay + new Vec2(0, -BayLength);
+                var (_, head, _, laneOk) = Bay(s);
                 int waiting = 0;
                 foreach (var o in Entities) if (o != e && !o.Dead && o.IsHarvester && o.DockAt == s.Id) waiting++;
-                float cost = Vec2.Dist(head, e.Pos) + 4f * waiting + (LaneClear(bay, head) ? 0 : 30f);
+                float cost = Vec2.Dist(head, e.Pos) + 4f * waiting + (laneOk ? 0 : 30f);
                 if (cost < bestCost) { best = s; bestCost = cost; }
             }
             return best;
@@ -1525,14 +1534,59 @@ namespace Pez.Sim
         bool BayTaken(Entity dropOff, Entity e) =>
             Entities.Any(o => o != e && !o.Dead && o.IsHarvester && o.DockAt == dropOff.Id && o.Dock >= DockStep.Align);
 
-        bool LaneClear(Vec2 bay, Vec2 head)
+        // A bay's sides in order of preference: south (where the doors are), then east, west, north.
+        static readonly Vec2[] BaySides = { new Vec2(0, -1), new Vec2(1, 0), new Vec2(-1, 0), new Vec2(0, 1) };
+
+        /// <summary>
+        /// A drop-off's truck bay: the point trucks back onto (just outside the footprint), the head of its lane
+        /// (BayLength further out), and the facing a docked truck has (out of the bay). South unless terrain blocks
+        /// that lane, then the first clear side. laneOk is false when no side has a clear lane (trucks unload beside it).
+        /// </summary>
+        public (Vec2 bay, Vec2 head, float facing, bool laneOk) Bay(Entity s) => Bay(s.Origin, s.Def);
+
+        public (Vec2 bay, Vec2 head, float facing, bool laneOk) Bay(Int2 origin, EntityDef def)
         {
-            for (float f = 0; f <= 1.001f; f += 0.25f)
+            (Vec2, Vec2, float, bool) Side(Vec2 n)
             {
-                var t = Int2.Of(bay + (head - bay) * f);
-                if (!Map.InBounds(t.X, t.Y) || !Map.Passable(t.X, t.Y)) return false;
+                var c = new Vec2(origin.X + def.SizeX / 2f, origin.Y + def.SizeY / 2f);
+                var bay = c + new Vec2(n.X * (def.SizeX / 2f + 0.5f), n.Y * (def.SizeY / 2f + 0.5f));
+                return (bay, bay + n * BayLength, n.Angle, true);
             }
-            return true;
+            foreach (var n in BaySides)
+            {
+                var (bay, head, f, _) = Side(n);
+                if (LaneTiles(bay, head).All(t => Map.InBounds(t.X, t.Y) && Map.Passable(t.X, t.Y))) return (bay, head, f, true);
+            }
+            var (b0, h0, f0, _) = Side(BaySides[0]);
+            return (b0, h0, f0, false);
+        }
+
+        /// <summary>The tiles a truck's body sweeps backing from the head of a lane into its bay.</summary>
+        static IEnumerable<Int2> LaneTiles(Vec2 bay, Vec2 head)
+        {
+            var along = head - bay;
+            var side = new Vec2(-along.Y, along.X).Normalized * 0.4f;
+            var seen = new HashSet<Int2>();
+            for (float f = 0; f <= 1.001f; f += 0.25f)
+                foreach (var off in new[] { -1f, 0f, 1f })
+                {
+                    var t = Int2.Of(bay + along * f + side * off);
+                    if (seen.Add(t)) yield return t;
+                }
+        }
+
+        /// <summary>Would a structure at this footprint sit on one of the team's drop-off truck lanes? Returns that drop-off.</summary>
+        Entity BlocksLane(int team, int ox, int oy, EntityDef def)
+        {
+            foreach (var s in Entities)
+            {
+                if (s.Dead || s.Team != team || !s.IsStructure || !s.Def.DropOff) continue;
+                var (bay, head, _, laneOk) = Bay(s);
+                if (!laneOk) continue;
+                foreach (var t in LaneTiles(bay, head))
+                    if (t.X >= ox && t.X < ox + def.SizeX && t.Y >= oy && t.Y < oy + def.SizeY) return s;
+            }
+            return null;
         }
 
         /// <summary>A docking truck holds its line: separation moves others out of its way, never it.</summary>

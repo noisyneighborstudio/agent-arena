@@ -123,11 +123,12 @@ for d in sorted(os.listdir(gal), reverse=True):
     try: meta = json.load(open(os.path.join(p, "meta.json")))
     except Exception: continue
     order = ["overview", "base0-wide", "base0-close", "base1-wide", "base1-close", "battle", "stream-team0"]
-    imgs = sorted([f for f in os.listdir(p) if f.endswith(".jpg")], key=lambda f: order.index(f[:-4]) if f[:-4] in order else 99)
+    imgs = sorted([f for f in os.listdir(p) if f.endswith(".jpg") or f.endswith(".mp4")], key=lambda f: (0 if f.endswith(".mp4") else 1, order.index(f[:-4]) if f[:-4] in order else 99, f))
     sets.append((d, meta, imgs))
 cards = []
 for d, meta, imgs in sets:
-    figs = "".join(f'<figure><a href="previews/{d}/{i}"><img loading=lazy src="previews/{d}/{i}"></a><figcaption>{html.escape(i[:-4])}</figcaption></figure>' for i in imgs)
+    figs = "".join((f'<figure><video controls muted loop playsinline preload=metadata src="previews/{d}/{i}"></video><figcaption>{html.escape(i[:-4])} (video)</figcaption></figure>' if i.endswith(".mp4") else
+                    f'<figure><a href="previews/{d}/{i}"><img loading=lazy src="previews/{d}/{i}"></a><figcaption>{html.escape(i[:-4])}</figcaption></figure>') for i in imgs)
     build = f' · {html.escape(meta["build"])}' if meta.get("build") else ""
     cards.append(f'<section><h2>{html.escape(meta["label"])}</h2><p class=m>{html.escape(meta["at"])}{build}</p><div class=g>{figs}</div></section>')
 open(out, "w").write(f"""<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
@@ -137,7 +138,7 @@ header{{padding:18px 22px;border-bottom:1px solid #2a2527;display:flex;gap:18px;
 h1{{margin:0;font-size:20px}} a{{color:#FFA22E}} section{{padding:16px 22px;border-bottom:1px solid #2a2527}}
 h2{{margin:0 0 2px;font-size:17px}} .m{{margin:0 0 10px;color:#9c9488;font-size:13px}}
 .g{{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:10px}}
-figure{{margin:0}} img{{width:100%;border-radius:6px;display:block;background:#000}} figcaption{{color:#9c9488;font-size:12px;margin-top:3px}}</style>
+figure{{margin:0}} video{{width:100%;border-radius:6px;display:block;background:#000}} img{{width:100%;border-radius:6px;display:block;background:#000}} figcaption{{color:#9c9488;font-size:12px;margin-top:3px}}</style>
 <header><h1>Pezz previews</h1><a href="{live}">Watch the current preview live</a><span style="color:#9c9488">newest first · refreshes every minute</span></header>
 {''.join(cards) or '<section>No previews yet.</section>'}""")
 EOF
