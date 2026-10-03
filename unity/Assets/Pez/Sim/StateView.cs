@@ -153,7 +153,7 @@ namespace Pez.Sim
             o.Set("my_mines", mines.Count == 0 ? (object)"none" : $"{mines.Count}: " + string.Join(" ", mines.Take(30).Select(m => $"({R(m.Pos.X)},{R(m.Pos.Y)})")));
             o.Set("my_units", w.Owned(team).Where(e => !e.IsStructure && !e.IsMine).Select(e =>
             {
-                var s = $"#{e.Id} {e.Def.Key} at {R(e.Pos.X)},{R(e.Pos.Y)} hp {(int)e.Hp}/{e.Def.MaxHp} {e.OrderName}";
+                var s = $"#{e.Id} {e.Def.Key} at {R(e.Pos.X)},{R(e.Pos.Y)} hp {(int)e.Hp}/{e.Def.MaxHp} {e.OrderName}" + (e.DockName != null ? $" ({e.DockName})" : "");
                 if (e.Order == Order.Attack || e.Order == Order.Repair || e.Order == Order.Capture || e.Order == Order.Board) s += $" #{e.TargetId}";
                 if (e.IsHarvester) s += $" cargo {e.Cargo}/{e.Def.HarvestCapacity}{(e.CargoType >= 0 ? " " + Defs.Ores[e.CargoType] : "")}{(e.HarvestType >= 0 ? $" (assigned {Defs.Ores[e.HarvestType]})" : "")}";
                 if (e.IsAir) s += " (air)";
@@ -389,8 +389,9 @@ namespace Pez.Sim
         /// 7: repair trucks refuel vehicles in the field; thinner fuel reserve in a fight; arena-cleared milestone.
         /// 8: games survive host restarts (saved and resumed: same seats, tokens and world).
         /// 9: agent-invented units (propose_tech, inventions, enemy_inventions_seen).
+        /// 10: mining trucks back into a drop-off's bay one at a time (queue, line up, reverse in, unload, pull out); dock status in state.
         /// </summary>
-        public const int RulesVersion = 9;
+        public const int RulesVersion = 10;
 
         public static JObj Rules()
         {
@@ -400,6 +401,7 @@ namespace Pez.Sim
             o.Set("tips", new List<string> {
                 "Typical opening: power_plant -> more mining_trucks -> mining_refinery -> barracks/factory -> electronics_plant. Raw ore pays for the first buildings; everything later needs refined materials.",
                 "Assign trucks to the ore you need with harvest + ore. Crystal and uranium sit in the contested middle.",
+                "Deliveries take time: a mining truck lines up 2 tiles south of a drop-off (command_center, mining_refinery or outpost), turns, backs into the bay and unloads, one truck per bay at a time; the others wait beside the lane (my_units shows each truck's dock status). A full cycle in the bay is about 5 s, so a big truck fleet needs more drop-offs, and keep the 2 tiles south of each drop-off clear (build over that lane and its trucks unload beside it instead, slower to reach).",
                 "Expand: build an outpost_truck at the factory, drive it to a remote ore field and deploy it. Outposts are drop-off points and let you build defenses there.",
                 "Specialists: engineers capture enemy buildings below 50% HP; snipers delete infantry from range 9; commandos C4 buildings. APCs and transport choppers carry infantry (load/unload). Mine layers plant hidden mines. Flak tracks are mobile anti-air. Mammoth tanks are super-heavy and self-repair to 50%. Recon drones are cheap flying scouts.",
                 "Repair trucks (factory) fix vehicles, aircraft and structures for steel; medics (barracks) heal infantry for free. Both auto-tend anything damaged within 6 tiles when idle, so park them behind your army.",

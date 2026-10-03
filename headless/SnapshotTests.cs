@@ -54,7 +54,7 @@ namespace Pez.Headless
         {
             [typeof(Entity)] = "Id Team Def Pos PrevPos Facing TurretFacing Hp Dead Origin BuildProgress Rally Order OrderPos GuardPos TargetId Path PathIdx Cooldown " +
                 "SpeedCap ProgressPos ProgressAt GhostUntil ProgressDist Waypoints WaypointLoop RetreatBelow Retreating RepathTimer Moving LastAttackerId LastHitTime " +
-                "LastCallForHelp Responding HomePos Cargo CargoType HarvestType HarvestTile WorkTimer DepositId Working CarrierId Passengers Fuel Landed Stranded " +
+                "LastCallForHelp Responding HomePos Cargo CargoType HarvestType HarvestTile WorkTimer Dock DockAt DepositId Working CarrierId Passengers Fuel Landed Stranded " +
                 "AtDepot FuelWarned NoAutoRefuelUntil ResumeOrder ResumePos ResumeGuard ResumeTarget ResumeWaypoints ResumeSpeedCap MineQueue LastFiredAt " +
                 "Prospecting ProspectCenter ProspectRadius SkipSites SurveyFailure SurveyFailedAt ZoneId",
             [typeof(Team)] = "Id Name Controller PlayerName StandingOrders OrdersVersion Stock Rates PowerProduced PowerUsed Detected Revealed Defeated StartPos " +
@@ -102,6 +102,7 @@ namespace Pez.Headless
             var cfg = new GameConfig { Seed = 11, MapSize = 112, Controllers = new[] { "ai", "ai", "llm", "llm" } };
             var game = new Game(cfg);
             var w = game.World;
+            w.Teams[2].ProtectedUntil = 8 * 60; // keep the agent seat's base standing through the warm-up, whatever the AIs do
             Step(game, 8 * 60);
 
             // Hand-made situations on the agent seats, covering the state a snapshot has to carry.
