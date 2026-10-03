@@ -16,7 +16,24 @@ namespace Pez.View
         readonly List<(int idx, Transform t, float baseScale)> crystals = new List<(int, Transform, float)>();
         readonly List<(int idx, GameObject go)> decor = new List<(int, GameObject)>();
         bool[] explored; // null = everything revealed (spectator)
-        float nextOreUpdate;
+        float nextOreUpdate, nextFieldCheck, nextClusters;
+
+        // Ore fields' ground stains (fix 12): each field's tiles and the ground vertices its pad tints, with what's
+        // needed to re-dress just those vertices as the stain fades (colour before the pad, pad weight, shore blend and
+        // broad variation). Stain strength 1 while the field has ore; 0.24 (a 0.08 "spent ground" scar) once it's empty.
+        class OreField
+        {
+            public int Type;
+            public int[] Tiles;
+            public readonly List<int> Verts = new List<int>();
+            public readonly List<Color> Pre = new List<Color>();
+            public readonly List<Vector4> Dress = new List<Vector4>(); // pad weight, shore blend, macro variation
+            public float K = 1f, Target = 1f;
+        }
+        readonly List<OreField> fields = new List<OreField>();
+        readonly List<(int cx, int cy, int w, int h, Mesh mesh, Color[] colors)> chunks = new List<(int, int, int, int, Mesh, Color[])>();
+        int groundVW, chunkStep, chunksX;
+        const float SpentStain = 0.08f / OrePadAlpha;
 
         // Sugar Flats: biscuit ground, licorice cliffs, cola water (art pack palette).
         public static readonly Color GrassA = PezPalette.TerrainBiscuitGround;
@@ -112,10 +129,11 @@ namespace Pez.View
             return v;
         }
 
-        /// <summary>Ore fields as soft ellipses: (weight, ore type) per ground vertex.</summary>
-        (float w, int type)[] OrePads(int vw, int vh)
+        /// <summary>Ore fields as soft ellipses: (weight, ore type, field) per ground vertex.</summary>
+        (float w, int type, int field)[] OrePads(int vw, int vh)
         {
-            var pads = new (float, int)[vw * vh];
+            var pads = new (float, int, int)[vw * vh];
+            fields.Clear();
             var seen = new bool[map.W * map.H];
             var field = new List<int>();
             var stack = new Stack<int>();
@@ -140,6 +158,8 @@ namespace Pez.View
                             seen[j] = true; stack.Push(j);
                         }
                 }
+                int fieldId = fields.Count;
+                fields.Add(new OreField { Type = type, Tiles = field.ToArray() });
                 // Fit an ellipse to the field (mean and covariance of its tile centres), padded past the clusters.
                 float mx = 0, my = 0;
                 foreach (int i in field) { mx += i % map.W + 0.5f; my += i / map.W + 0.5f; }
@@ -167,7 +187,7 @@ namespace Pez.View
                         if (d >= 1f) continue;
                         float a = 1f - Smooth(0.72f, 1f, d);
                         int k = vy * vw + vx;
-                        if (a > pads[k].Item1) pads[k] = (a, type);
+                        if (a > pads[k].Item1) pads[k] = (a, type, fieldId);
                     }
             }
             return pads;
@@ -208,18 +228,23 @@ namespace Pez.View
                     var c = Color.Lerp(Color.Lerp(TileColor(x0, y0), TileColor(x0 + 1, y0), tx), Color.Lerp(TileColor(x0, y0 + 1), TileColor(x0 + 1, y0 + 1), tx), ty);
                     int i = vy * vw + vx;
                     float wd = WaterDistance(fx, fy);
+                    // Broad variation (quality pass): a little lighter/darker and warmer/cooler every few tiles.
+                    float macro = Mathf.PerlinNoise(fx * 0.11f + 3.7f, fy * 0.11f + 1.3f) * 0.65f + Mathf.PerlinNoise(fx * 0.27f + 9.1f, fy * 0.27f + 4.4f) * 0.35f - 0.5f;
                     if (wd > 0f)
                     {
                         c *= 1f + blotch[i];
-                        if (pads[i].w > 0f) c = Color.Lerp(c, WorldView.OreColors[pads[i].type], pads[i].w * OrePadAlpha);
                         // Cola lakes get a light shore band so they read as liquid, not as holes in the ground.
-                        if (wd < ShoreWidth + 0.15f) c = Color.Lerp(c, PezPalette.TerrainShore, 1f - Smooth(ShoreWidth - 0.1f, ShoreWidth + 0.15f, wd));
+                        float shore = wd < ShoreWidth + 0.15f ? 1f - Smooth(ShoreWidth - 0.1f, ShoreWidth + 0.15f, wd) : 0f;
+                        if (pads[i].w > 0f)
+                        {
+                            var f = fields[pads[i].field];
+                            f.Verts.Add(i); f.Pre.Add(c); f.Dress.Add(new Vector4(pads[i].w, shore, macro, 0f));
+                        }
+                        c = DressGround(c, pads[i].w, pads[i].type, 1f, shore, macro);
                     }
+                    else c = DressGround(c, 0f, 0, 0f, 0f, macro);
                     // Rocks get craggy noise; open ground stays near y=0 so picking with a flat plane is accurate.
                     if (h > -0.05f) h += (Mathf.PerlinNoise(fx * 0.8f + 11, fy * 0.8f + 5) - 0.5f) * 0.05f;
-                    // Broad variation (quality pass): a little lighter/darker and warmer/cooler every few tiles.
-                    float macro = Mathf.PerlinNoise(fx * 0.11f + 3.7f, fy * 0.11f + 1.3f) * 0.65f + Mathf.PerlinNoise(fx * 0.27f + 9.1f, fy * 0.27f + 4.4f) * 0.35f - 0.5f;
-                    c.r *= 1f + macro * MacroStrength * 2f * 1.03f; c.g *= 1f + macro * MacroStrength * 2f; c.b *= 1f + macro * MacroStrength * 2f * 0.96f;
                     dunes[i] = DuneSlope(fx, fy);
                     verts[i] = new Vector3(fx, h, fy);
                     cols[i] = c.linear; // vertex colours aren't converted in linear colour space
@@ -233,13 +258,14 @@ namespace Pez.View
             groundMat.SetFloat("_GridStrength", 0.06f); // the art pack's tile grid is a faint 5-7% line, inside the 8% quiet-ground budget
             groundMat.SetFloat("_SpeckDensity", 0.16f); // sparse cream sugar grains, as in hero_offaxis
             groundMat.SetFloat("_SpeckStrength", 0.3f);
+            const int ChunkTiles = 24;
+            int step = ChunkTiles * Sub;
             // The ground in square chunks, so every camera (the main view and each player stream) draws only the part it
             // sees: an 8-player arena grows to 288 tiles a side, 1.5M triangles as one mesh. It casts no shadows (it's
             // flat; casting only cost a shadow-map pass over the whole field for every camera).
+            groundVW = vw; chunkStep = step; chunksX = (vw - 2) / step + 1;
             var root = new GameObject("Ground").transform;
             root.SetParent(transform, false);
-            const int ChunkTiles = 24;
-            int step = ChunkTiles * Sub;
             for (int cy = 0; cy < vh - 1; cy += step)
                 for (int cx = 0; cx < vw - 1; cx += step)
                 {
@@ -264,6 +290,7 @@ namespace Pez.View
                             ct[k++] = b; ct[k++] = c; ct[k++] = d;
                         }
                     var mesh = new Mesh { name = "terrain_" + cx / step + "_" + cy / step };
+                    chunks.Add((cx, cy, w, h, mesh, cc));
                     mesh.vertices = cv; mesh.normals = cn; mesh.colors = cc; mesh.triangles = ct;
                     mesh.SetUVs(1, cd); // dune slope, for Pez/Ground's sun-lit relief
                     mesh.RecalculateBounds();
@@ -280,6 +307,66 @@ namespace Pez.View
             // pack's map backdrop (#2A2420), not an off-palette olive.
             var skirt = Models.Part(transform, PrimitiveType.Plane, new Vector3(map.W / 2f, -0.6f, map.H / 2f), new Vector3(map.W / 2f, 1, map.H / 2f), Mats.Lit(new Color32(42, 36, 32, 255), 0, 0));
             skirt.name = "Skirt";
+        }
+
+        /// <summary>The ground colour after the ore pad (at stain strength k), the shore band and the broad variation.</summary>
+        static Color DressGround(Color c, float padW, int type, float k, float shore, float macro)
+        {
+            if (padW > 0f) c = Color.Lerp(c, WorldView.OreColors[type], padW * OrePadAlpha * k);
+            if (shore > 0f) c = Color.Lerp(c, PezPalette.TerrainShore, shore);
+            c.r *= 1f + macro * MacroStrength * 2f * 1.03f; c.g *= 1f + macro * MacroStrength * 2f; c.b *= 1f + macro * MacroStrength * 2f * 0.96f;
+            return c;
+        }
+
+        /// <summary>
+        /// Mined-out fields fade (fix 12): every 2 s each field's ore is totalled; an empty field's stain fades over 3 s
+        /// to a faint "spent ground" scar, and comes back if the ore regrows. Only that field's ground vertices are
+        /// rewritten, in the chunks they're in.
+        /// </summary>
+        void UpdateFields()
+        {
+            bool fading = false;
+            foreach (var f in fields)
+            {
+                if (Time.time >= nextFieldCheck)
+                {
+                    int ore = 0;
+                    foreach (int t in f.Tiles) ore += map.Ore[t];
+                    f.Target = ore > 0 ? 1f : SpentStain;
+                }
+                if (Mathf.Approximately(f.K, f.Target)) continue;
+                f.K = Mathf.MoveTowards(f.K, f.Target, 0.25f / 3f);
+                fading = true;
+                for (int n = 0; n < f.Verts.Count; n++)
+                {
+                    var d = f.Dress[n];
+                    var c = DressGround(f.Pre[n], d.x, f.Type, f.K, d.y, d.z).linear;
+                    int i = f.Verts[n], vx = i % groundVW, vy = i / groundVW;
+                    SetChunkColor(vx, vy, c);
+                }
+            }
+            if (Time.time >= nextFieldCheck) nextFieldCheck = Time.time + 2f;
+            if (fading) foreach (var ch in chunks) if (ch.mesh != null && dirty.Remove(ch.mesh)) ch.mesh.colors = ch.colors;
+        }
+
+        readonly HashSet<Mesh> dirty = new HashSet<Mesh>();
+
+        void SetChunkColor(int vx, int vy, Color c)
+        {
+            // A vertex on a chunk border is in two (or four) chunks.
+            for (int ox = 0; ox < 2; ox++)
+                for (int oy = 0; oy < 2; oy++)
+                {
+                    int cx = (vx / chunkStep - ox) * chunkStep, cy = (vy / chunkStep - oy) * chunkStep;
+                    if (cx < 0 || cy < 0) continue;
+                    int k = (cy / chunkStep) * chunksX + cx / chunkStep; // chunks are built row by row
+                    if (k >= chunks.Count) continue;
+                    var ch = chunks[k];
+                    int lx = vx - cx, ly = vy - cy;
+                    if (lx >= ch.w || ly >= ch.h) continue;
+                    ch.colors[ly * ch.w + lx] = c;
+                    dirty.Add(ch.mesh);
+                }
         }
 
         /// <summary>Smooth vertex normals of the ground grid (summed face normals, as Mesh.RecalculateNormals).</summary>
@@ -545,7 +632,10 @@ namespace Pez.View
         void Update()
         {
             if (map == null || Time.time < nextOreUpdate) return;
-            nextOreUpdate = Time.time + 0.5f;
+            nextOreUpdate = Time.time + 0.25f;
+            UpdateFields();
+            if (Time.time < nextClusters) return;
+            nextClusters = Time.time + 0.5f;
             for (int n = 0; n < oreTiles.Count; n++)
             {
                 var (idx, em, start, shown) = oreTiles[n];
