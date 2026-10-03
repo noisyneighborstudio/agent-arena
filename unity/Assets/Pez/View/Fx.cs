@@ -316,6 +316,24 @@ namespace Pez.View
             Emit(S.Ring, g + Up * 0.05f, Vector3.zero, 2f + 1.5f * size, 0.6f, Alpha(Cream, 0.45f), Random.Range(0f, 360f));
         }
 
+        /// <summary>A damaged building smokes: one dark puff rising from its roof (Smoke system, lit, leaning with the wind).</summary>
+        public static void DamageSmoke(Vector3 pos, float size) =>
+            Emit(S.Smoke, pos, new Vector3(Random.Range(-0.12f, 0.12f), Random.Range(0.8f, 1.3f), Random.Range(-0.12f, 0.12f)),
+                Random.Range(0.6f, 0.9f) * size, Random.Range(3f, 4.2f), SmokeColor(0.95f));
+
+        static readonly Color32 FirePool = new Color32(255, 140, 50, 255);
+
+        /// <summary>A burning building: a lick of flame, now and then an ember, and the fire's light flickering on the
+        /// ground around it (a light pool, no per-pixel light: it reads in every view and stream).</summary>
+        public static void DamageFire(Vector3 pos, float size, Vector3 ground)
+        {
+            Emit(S.Fire, pos + Random.insideUnitSphere * 0.08f, new Vector3(Random.Range(-0.1f, 0.1f), Random.Range(0.7f, 1.3f), Random.Range(-0.1f, 0.1f)),
+                Random.Range(0.32f, 0.5f) * size, Random.Range(0.4f, 0.65f), White);
+            if (Random.value < 0.25f)
+                Emit(S.Sparks, pos, (Random.onUnitSphere * 0.6f + Up * 1.4f) * Random.Range(1f, 2f), 0.03f, Random.Range(0.5f, 0.9f), White);
+            Emit(S.Pool, new Vector3(ground.x, 0.05f, ground.z), Vector3.zero, Random.Range(2.2f, 2.8f) * size, 0.3f, Alpha(FirePool, Random.Range(0.25f, 0.4f)));
+        }
+
         static readonly Color32 SteamCol = new Color32(236, 228, 210, 175); // cream plastic, translucent
 
         /// <summary>A wisp of steam off a power plant tower: cream, cool (no glow), rising and spreading for about 2 s.</summary>

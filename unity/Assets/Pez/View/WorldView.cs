@@ -32,6 +32,9 @@ namespace Pez.View
             // Power state on structures: emissive renderers, the smoothed glow and what was last applied, steam.
             public Renderer[] Glows;
             public float GlowK = -1f, GlowShown = -1f, RateShown = 1f, SteamAcc;
+            // Damage state on finished buildings: smoke and fire intensity (eased), emitters, and the roof they rise from.
+            public float SmokeK, FireK, SmokeAcc, FireAcc;
+            public Bounds? Roof;
         }
 
         public World World { get; private set; }
@@ -299,6 +302,38 @@ namespace Pez.View
             if (rate != v.RateShown) { v.Rig.Motion.SetRate(rate); v.RateShown = rate; }
         }
 
+        /// <summary>
+        /// Damage states on finished buildings (base-building review rec. 3): below 50% health a smoke column rises from
+        /// the roof (3 puffs/s); below 25% it thickens (7/s) and the building burns, with embers and its fire's light
+        /// flickering on the ground. Fades in over 0.5 s and out over 2 s (repairs clear it). Never on construction
+        /// sites: they're low on health by design (HP rises with build progress).
+        /// </summary>
+        void Damage(EV v)
+        {
+            var e = v.E;
+            float hp = e.Hp / Mathf.Max(1f, e.Def.MaxHp), dt = Time.deltaTime;
+            float smoke = e.IsComplete && hp < 0.5f ? 1f : 0f, fire = e.IsComplete && hp < 0.25f ? 1f : 0f;
+            v.SmokeK = Mathf.MoveTowards(v.SmokeK, smoke, dt / (smoke > v.SmokeK ? 0.5f : 2f));
+            v.FireK = Mathf.MoveTowards(v.FireK, fire, dt / (fire > v.FireK ? 0.5f : 2f));
+            if (v.SmokeK <= 0f) return;
+            if (v.Roof == null)
+            {
+                // Once, from the finished model: the roof the smoke rises from (the top fifth of its bounds).
+                var b = new Bounds(v.Rig.Root.position, Vector3.zero);
+                foreach (var r in v.Rig.Model.GetComponentsInChildren<Renderer>()) b.Encapsulate(r.bounds);
+                v.Roof = b;
+            }
+            var roof = v.Roof.Value;
+            float size = Mathf.Sqrt(Mathf.Max(1, e.Def.SizeX));
+            Vector3 At(float spread) => new Vector3(roof.center.x + Random.Range(-spread, spread) * roof.extents.x, roof.max.y * 0.85f,
+                                                    roof.center.z + Random.Range(-spread, spread) * roof.extents.z);
+            v.SmokeAcc += dt * (v.FireK > 0f ? Mathf.Lerp(3f, 7f, v.FireK) : 3f) * v.SmokeK;
+            while (v.SmokeAcc >= 1f) { v.SmokeAcc -= 1f; Fx.DamageSmoke(At(0.35f), size); }
+            if (v.FireK <= 0f) return;
+            v.FireAcc += dt * 7f * v.FireK;
+            while (v.FireAcc >= 1f) { v.FireAcc -= 1f; Fx.DamageFire(At(0.3f), size, roof.center); }
+        }
+
         /// <summary>Cream steam wisps off both towers: one every 0.8/load s each; on low power, bursts of 3 then a 1 s gap.</summary>
         void Steam(EV v, float load, bool low)
         {
@@ -368,6 +403,7 @@ namespace Pez.View
                 if (!Mathf.Approximately(v.BuiltShown, e.BuildProgress)) { rig.Emerge.SetBuildProgress(e.BuildProgress); v.BuiltShown = e.BuildProgress; }
                 rig.Motion.SetWorking(e.IsComplete && Producing(e));
                 if (e.Def.Key == "power_plant" || e.Def.Power < 0) Power(v);
+                if (e.IsComplete || v.SmokeK > 0f) Damage(v);
                 if (e.Def.Key == "deep_mine") DeepMine(v);
                 if (rig.Turret != null) Aim(v);
                 if (v.DoorTimer > 0 && (v.DoorTimer -= Time.deltaTime) <= 0) rig.Motion.SetDoorOpen(false);
