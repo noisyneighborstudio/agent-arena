@@ -45,6 +45,8 @@ namespace Pez.View
         static readonly Color32 Licorice = PezPalette.MaterialsLicorice;
         static readonly Color32 ScorchCol = new Color32(24, 19, 17, 215);
         static readonly Vector3 Up = Vector3.up;
+        /// <summary>How long a vehicle wreck smokes (s); the wreck lies 20 s.</summary>
+        public const float WreckSmoke = 12f;
 
         /// <summary>Build the particle systems now (not mid-battle) and draw each once so its shader is ready.</summary>
         public static void Prewarm()
@@ -221,7 +223,8 @@ namespace Pez.View
                     Emit(S.Sparks, pos, (Random.onUnitSphere + Up * 0.5f) * Random.Range(1f, 2.5f), 0.02f, Random.Range(0.25f, 0.5f), White);
         }
 
-        /// <summary>A vehicle blows up: blast, a secondary cook-off, its hull in pieces, and a wreck that burns a while.</summary>
+        /// <summary>A vehicle blows up: blast, a secondary cook-off, its hull in pieces, and a wreck that smokes for 12 s
+        /// (flames for the first few seconds). The wreck itself darkens and stays 20 s (PezEmerge.PlayRemove).</summary>
         public static void VehicleDestroyed(Vector3 pos, Color team)
         {
             bool ground = pos.y < 0.9f;
@@ -231,7 +234,7 @@ namespace Pez.View
             if (!ground) return;
             var g = Ground(pos);
             Scorch(g, 1.4f);
-            S.Smoulder(g + Up * 0.2f, 1f, 4.5f, 7f);
+            S.Smoulder(g + Up * 0.2f, 1f, WreckSmoke, 4f);
         }
 
         /// <summary>
