@@ -54,7 +54,7 @@ namespace Pez.Headless
         {
             [typeof(Entity)] = "Id Team Def Pos PrevPos Facing TurretFacing Hp Dead Origin BuildProgress Rally Order OrderPos GuardPos TargetId Path PathIdx Cooldown " +
                 "SpeedCap ProgressPos ProgressAt GhostUntil ProgressDist Waypoints WaypointLoop RetreatBelow Retreating RepathTimer Moving LastAttackerId LastHitTime " +
-                "LastCallForHelp Responding HomePos Cargo CargoType HarvestType HarvestTile WorkTimer Dock DockAt DepositId Working CarrierId Passengers Fuel Landed Stranded " +
+                "LastCallForHelp Responding HomePos Cargo CargoType HarvestType HarvestTile WorkTimer Burning Dock DockAt DepositId Working CarrierId Passengers Fuel Landed Stranded " +
                 "AtDepot FuelWarned NoAutoRefuelUntil ResumeOrder ResumePos ResumeGuard ResumeTarget ResumeWaypoints ResumeSpeedCap MineQueue LastFiredAt " +
                 "Prospecting ProspectCenter ProspectRadius SkipSites SurveyFailure SurveyFailedAt ZoneId",
             [typeof(Team)] = "Id Name Controller PlayerName StandingOrders OrdersVersion Stock Rates PowerProduced PowerUsed Detected Revealed Defeated StartPos " +

@@ -390,8 +390,9 @@ namespace Pez.Sim
         /// 8: games survive host restarts (saved and resumed: same seats, tokens and world).
         /// 9: agent-invented units (propose_tech, inventions, enemy_inventions_seen).
         /// 10: mining trucks back into a drop-off's bay one at a time (queue, line up, reverse in, unload, pull out); dock status in state.
+        /// 11: a building below 30% health is on fire and burns down unless repaired above 30% (building_burning alert).
         /// </summary>
-        public const int RulesVersion = 10;
+        public const int RulesVersion = 11;
 
         public static JObj Rules()
         {
@@ -400,6 +401,7 @@ namespace Pez.Sim
             o.Set("chain", Defs.All.Values.Where(d => d.Recipes.Length > 0).SelectMany(d => d.Recipes.Select(r => $"{d.Key}: {r}")).Append("fusion_reactor: burns 0.1 plasma/s for +500 power").ToList());
             o.Set("tips", new List<string> {
                 "Typical opening: power_plant -> more mining_trucks -> mining_refinery -> barracks/factory -> electronics_plant. Raw ore pays for the first buildings; everything later needs refined materials.",
+                "Fire: a finished building below 30% health is on fire and loses health on its own (faster as it weakens; about a minute to collapse). Repair it above 30% with a repair truck to put it out; a BUILDING ON FIRE alert tells you when one catches. Damaging an enemy building below 30% and keeping its repair trucks away finishes it for you.",
                 "Assign trucks to the ore you need with harvest + ore. Crystal and uranium sit in the contested middle.",
                 "Deliveries take time: a mining truck lines up 2 tiles out from a drop-off's bay (command_center, mining_refinery or outpost; the bay is on the south side unless terrain blocks it), turns, backs in and unloads, one truck per bay at a time; the others wait beside the lane (my_units shows each truck's dock status). A full cycle in the bay is about 5 s, so a big truck fleet needs more drop-offs. Nothing can be built on a truck lane.",
                 "Expand: build an outpost_truck at the factory, drive it to a remote ore field and deploy it. Outposts are drop-off points and let you build defenses there.",

@@ -105,6 +105,7 @@ namespace Pez.Sim
             "arena_cleared" => "ARENA CLEARED: YOU WON THIS ROUND",
             "stockpile_lost" => "STOCKPILE SPILLED: LAST COMMAND CENTER LOST",
             "deep_mine_depleted" => "DEEP DEPOSIT USED UP",
+            "building_burning" => "BUILDING ON FIRE",
             _ => "COMBAT",
         };
 
@@ -119,13 +120,15 @@ namespace Pez.Sim
             var victims = a.Victims.Select(w.Get).Where(e => e != null).ToList();
             if (victims.Count > 0)
                 parts.Add("yours hit: " + string.Join(", ", victims.Take(6).Select(e => $"{e.Def.Key} #{e.Id} hp {(int)e.Hp}/{e.Def.MaxHp}")) + (victims.Count > 6 ? $" +{victims.Count - 6} more" : ""));
+            if (a.Kind == "building_burning")
+                parts.Add($"it loses health until it's repaired above {(int)(World.BurnBelow * 100)}% (send a repair truck: repair command), or it burns down within about a minute");
             if (a.Lost.Count > 0) parts.Add("lost: " + string.Join(", ", a.Lost.Take(6)) + (a.Lost.Count > 6 ? $" +{a.Lost.Count - 6} more" : ""));
 
             // Enemies now visible around the alert, grouped by type.
             var foes = w.Entities.Where(e => !e.Dead && e.Team != a.Team && !e.IsStructure && w.IsVisibleTo(a.Team, e) && Vec2.Dist(e.Pos, a.Pos) <= 12f).ToList();
             if (foes.Count > 0)
                 parts.Add("enemies there: " + string.Join(", ", foes.GroupBy(e => e.Def.Key).Select(g => $"{g.Count()}x {g.Key} ({string.Join(",", g.Take(4).Select(e => "#" + e.Id))}{(g.Count() > 4 ? ",…" : "")})")));
-            else if (a.Kind != "units_lost" && a.Kind != "structure_lost") parts.Add("attackers not currently visible");
+            else if (a.Kind != "units_lost" && a.Kind != "structure_lost" && a.Kind != "building_burning") parts.Add("attackers not currently visible");
 
             // Who could respond: own combat units within 18 tiles, closest first.
             var near = w.Entities.Where(e => !e.Dead && e.Team == a.Team && !e.IsStructure && e.IsArmed && Vec2.Dist(e.Pos, a.Pos) <= 18f)

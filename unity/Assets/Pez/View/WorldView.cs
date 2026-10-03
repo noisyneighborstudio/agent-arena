@@ -418,8 +418,9 @@ namespace Pez.View
             var e = v.E;
             float hp = e.Hp / Mathf.Max(1f, e.Def.MaxHp), dt = Time.deltaTime, now = Time.time;
             float smoke = e.IsComplete && hp < 0.5f ? 1f : 0f;
-            float fire = e.IsComplete ? Mathf.Clamp01(Mathf.InverseLerp(0.32f, 0.08f, hp)) : 0f;
-            if (e.IsComplete && hp < 0.32f) fire = Mathf.Max(fire, 0.05f);
+            // Flames exactly when the sim says it's burning (World.BurnBelow), growing as it burns down.
+            float fire = e.IsComplete ? Mathf.Clamp01(Mathf.InverseLerp(World.BurnBelow, 0.06f, hp)) : 0f;
+            if (e.IsComplete && hp < World.BurnBelow) fire = Mathf.Max(fire, 0.05f);
             v.SmokeK = Mathf.MoveTowards(v.SmokeK, smoke, dt / (smoke > v.SmokeK ? 0.5f : 2f));
             v.FireK = Mathf.MoveTowards(v.FireK, fire, dt / (fire > v.FireK ? 0.8f : 2f));
             if (v.SmokeK <= 0f && v.FireK <= 0f) return;

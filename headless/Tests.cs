@@ -59,6 +59,7 @@ namespace Pez.Headless
             SurveyProgress();
             RoundedPercents();
             NoGridlock();
+            BuildingsBurn();
             LastHqSpills();
             FieldRefuelling();
             ArenaCleared();
@@ -449,6 +450,26 @@ namespace Pez.Headless
             Check(w.Errors == 0, $"no sim errors ({w.LastError})");
         }
 
+        static void BuildingsBurn()
+        {
+            Console.WriteLine("\n-- fire");
+            var w = new World(2, 7, 80);
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var plant = w.SpawnStructure(0, "power_plant", w.FindPlacement(0, "power_plant").Value, 1f);
+            var saved = w.SpawnStructure(0, "power_plant", w.FindPlacement(0, "power_plant").Value, 1f);
+            plant.Hp = saved.Hp = plant.Def.MaxHp * 0.25f;
+            Run(w, 5);
+            Check(plant.Burning && plant.Hp < plant.Def.MaxHp * 0.25f && w.Alerts.Active(w, 0).Any(a => a.Kind == "building_burning") && w.Events.Any(e => e.Type == "burning" && e.A == plant.Id),
+                  $"a building below 30% catches fire, loses health on its own and alerts its owner (hp {plant.Hp / plant.Def.MaxHp:P0})");
+            saved.Hp = saved.Def.MaxHp * 0.5f; // repaired
+            float before = saved.Hp;
+            Run(w, 3);
+            Check(!saved.Burning && saved.Hp == before && w.Events.Any(e => e.Type == "fire_out" && e.A == saved.Id), "repaired above 30%, the fire goes out and the damage stops");
+            Run(w, 80);
+            Check(plant.Dead, $"left to burn, it burns down within about a minute and a half (hp {plant.Hp:0})");
+            Check(!hq.Burning && !hq.Dead, "a healthy building never burns");
+        }
+
         static void NoGridlock()
         {
             // A truck docking at a refinery with idle tanks parked all over the dock still unloads.
@@ -543,7 +564,7 @@ namespace Pez.Headless
             hq.Hp = 1;
             Commands.Execute(w, 0, Cmd("type", "attack", "units", new[] { shooter.Id }, "target", hq.Id)); // may be out of sight; damage directly below
             var dmg = typeof(World).GetMethod("Damage", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            dmg.Invoke(w, new object[] { hq, 50f, shooter, 0 });
+            dmg.Invoke(w, new object[] { hq, 50f, shooter, 0, false });
             Check(hq.Dead && t1.Stock.Count == 0, "when a team's last command center falls its stockpile is gone");
             int salvage = 0; for (int y = 0; y < 3; y++) for (int x = 0; x < 3; x++) salvage += w.Map.Ore[w.Map.Idx(hq.Origin.X + x, hq.Origin.Y + y)];
             Check(salvage > 500 && w.Map.Ore[w.Map.Idx(foot.X, foot.Y)] > oreBefore, $"and lies on the footprint as salvage ore anyone can mine ({salvage} units)");

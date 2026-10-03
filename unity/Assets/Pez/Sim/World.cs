@@ -761,7 +761,11 @@ namespace Pez.Sim
                 {
                     if (e.IsMine) { MineTick(e); continue; }
                     if (!e.IsStructure) { CheckRetreat(e); UpdateUnit(e); if (e.Def.UsesFuel && !e.Dead) UpdateFuel(e); if (!e.Dead) CheckJam(e); }
-                    else if (e.IsArmed && e.IsComplete) UpdateTurret(e);
+                    else
+                    {
+                        if (e.IsComplete) Burn(e);
+                        if (!e.Dead && e.IsArmed && e.IsComplete) UpdateTurret(e);
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -1302,17 +1306,49 @@ namespace Pez.Sim
             }
         }
 
-        void Damage(Entity t, float amount, Entity src, int srcTeam = -1)
+        /// <summary>A finished building below this share of its health is on fire: it burns down unless repaired above it.</summary>
+        public const float BurnBelow = 0.3f;
+
+        /// <summary>
+        /// Fire: a finished building below BurnBelow loses health on its own, 0.3% of its max a second at the threshold
+        /// rising to 1.2% near the end (about a minute from catching fire to collapse). Repairing it above the threshold
+        /// puts it out. Its owner is alerted once when it catches; the kill goes to whoever set it alight.
+        /// </summary>
+        void Burn(Entity e)
+        {
+            float f = e.Hp / e.Def.MaxHp;
+            if (f >= BurnBelow || e.Hp <= 0f)
+            {
+                if (e.Burning) { e.Burning = false; Emit("fire_out", e.Team, e.Id, 0, e.Center, key: e.Def.Key, text: $"the fire at your {e.Def.Key} #{e.Id} is out"); }
+                return;
+            }
+            if (IsProtected(e.Team)) return;
+            if (!e.Burning)
+            {
+                e.Burning = true;
+                Emit("burning", e.Team, e.Id, 0, e.Center, key: e.Def.Key,
+                     text: $"your {e.Def.Key} #{e.Id} is on fire ({(int)(f * 100)}% health): repair it above {(int)(BurnBelow * 100)}% (repair truck) or it burns down within about a minute");
+                Alerts.Raise(this, e.Team, "building_burning", Priority.High, e.Center, e, hit: false);
+            }
+            float rate = e.Def.MaxHp * (0.003f + 0.009f * (1f - f / BurnBelow));
+            var setBy = e.LastAttackerId != 0 ? Get(e.LastAttackerId) : null;
+            Damage(e, rate * Dt, null, setBy != null && setBy.Team != e.Team ? setBy.Team : -1, burn: true);
+        }
+
+        void Damage(Entity t, float amount, Entity src, int srcTeam = -1, bool burn = false)
         {
             if (t.Dead) return;
             if (IsProtected(t.Team)) return; // newcomer protection
             int team = src?.Team ?? srcTeam;
             t.Hp -= amount;
             if (src != null) t.LastAttackerId = src.Id;
-            if (Time - t.LastHitTime > 10f && (t.IsStructure || t.IsHarvester))
-                Emit("under_attack", t.Team, t.Id, src?.Id ?? 0, t.Center, key: t.Def.Key);
-            t.LastHitTime = Time;
-            RaiseDamageAlert(t, src);
+            if (!burn)
+            {
+                if (Time - t.LastHitTime > 10f && (t.IsStructure || t.IsHarvester))
+                    Emit("under_attack", t.Team, t.Id, src?.Id ?? 0, t.Center, key: t.Def.Key);
+                t.LastHitTime = Time;
+                RaiseDamageAlert(t, src);
+            }
             if (src != null && !src.Dead && src.Team != t.Team && !src.IsMine)
             {
                 Teams[t.Team].Revealed[src.Id] = Time + 3f; // muzzle flash gives the shooter away
