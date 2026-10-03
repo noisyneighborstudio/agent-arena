@@ -6,20 +6,21 @@
 #   arena/preview.sh build <branch|commit> "<label>"   build that commit and launch it as the preview
 #   arena/preview.sh launch <Pezz.app> "<label>"       launch an already-built app as the preview
 #   arena/preview.sh shots ["<label>"]                 add stills from the running preview to the gallery
+#   arena/preview.sh speed 1|2|4 / pause / resume      game speed of the running preview (the stream page can't click the HUD)
 #   arena/preview.sh stop                              stop the preview (do this before measuring performance)
 #   arena/preview.sh status
 #
-# Live view:  https://<host>.ts.net:8455/   (the preview's own frame-server page: drag to pan, scroll to zoom)
+# Live view:  https://<host>.ts.net:8455/   (the game's live view with a 1x/2x/4x/pause bar: drag to pan, scroll to zoom)
 # Gallery:    https://<host>.ts.net:8452/pezz-previews.html   (served from ~/dashboards)
 # Both are tailnet-only (tailscale serve, never funnel) and have no login.
 #
-# Ports: game API 7957, frames 7958 (the live arena is 7777/7778; the render pass's test copies use 7977/7987).
+# Ports: game API 7957, frames 7958, the page 7959 (the live arena is 7777/7778; the render pass's test copies use 7977/7987).
 set -u
 SELF=${0:A}; REPO=${0:A:h:h}
 UNITY=/Applications/Unity/Hub/Editor/6000.3.25f1/Unity.app/Contents/MacOS/Unity
 HOME_DIR=$HOME/pezz-previews; SRC=$HOME_DIR/src
 GALLERY=$HOME/dashboards/previews; PAGE=$HOME/dashboards/pezz-previews.html
-PORT=7957; FRAMES=7958; TSPORT=8455
+PORT=7957; FRAMES=7958; WEB=7959; TSPORT=8455
 API=http://127.0.0.1:$PORT
 mkdir -p "$HOME_DIR" "$GALLERY"
 log() { echo "$(date '+%T') $*"; }
@@ -37,7 +38,12 @@ stop() {
 }
 
 serve() {
-  tailscale serve status 2>/dev/null | grep -q ":$TSPORT " || tailscale serve --bg --https=$TSPORT http://127.0.0.1:$FRAMES >/dev/null
+  # The page (arena/preview_web.py) is the game's live view plus a speed bar; it proxies the stream from :$FRAMES.
+  if ! curl -s -m 2 -o /dev/null http://127.0.0.1:$WEB/speed; then
+    (nohup python3 "$REPO/arena/preview_web.py" $WEB > "$HOME_DIR/web.log" 2>&1 &)
+    sleep 1
+  fi
+  tailscale serve status 2>/dev/null | grep -A1 ":$TSPORT " | grep -q "127.0.0.1:$WEB" || tailscale serve --bg --https=$TSPORT http://127.0.0.1:$WEB >/dev/null
 }
 
 launch() {
@@ -48,9 +54,9 @@ launch() {
   if [ "${app:A}" != "${keep:A}" ]; then rm -rf "$keep"; mkdir -p "${keep:h}"; cp -c -R "$app" "$keep" 2>/dev/null || cp -R "$app" "$keep"; fi
   stop
   if lsof -iTCP:$PORT -sTCP:LISTEN >/dev/null 2>&1; then echo "port $PORT is busy (not our preview); not launching"; exit 1; fi
-  # A fixed seed and map so every preview shows the same world; two house AIs at double speed so bases and fights
+  # A fixed seed and map so every preview shows the same world; two house AIs (PREVIEW_SPEED=2 for double speed) so bases and fights
   # appear within a couple of minutes.
-  open -n "$keep" --args -autostart -fresh -port $PORT -team0 ai -team1 ai -seed 4242 -mapsize 96 -speed 2
+  open -n "$keep" --args -autostart -fresh -port $PORT -team0 ai -team1 ai -seed 4242 -mapsize 96 -speed "${PREVIEW_SPEED:-1}"
   local pid=""
   for i in {1..60}; do pid=$(pgrep -n -f "${keep}/Contents/MacOS"); [ -n "$pid" ] && curl -s -m 2 "$API/api/status" >/dev/null && break; sleep 1; done
   [ -n "$pid" ] || { echo "the preview didn't start"; exit 1; }
@@ -59,7 +65,7 @@ launch() {
   serve
   log "preview running: $label (pid $pid). Live: https://$(host):$TSPORT/"
   # Stills once the match has bases and the first fights (about 3 game-minutes at 2x).
-  ( sleep 100; "$SELF" shots "$label" >> "$HOME_DIR/shots.log" 2>&1 ) &!
+  ( sleep 150; "$SELF" shots "$label" >> "$HOME_DIR/shots.log" 2>&1 ) &!
 }
 
 shots() {
@@ -161,6 +167,9 @@ case "${1:-status}" in
   launch) launch "$2" "$3" ;;
   shots) shots "${2:-}" ;;
   stop) stop ;;
+  speed) curl -s -X POST "$API/api/admin/speed" -d "{\"speed\":${2:-1}}"; echo ;;
+  pause) curl -s -X POST "$API/api/admin/speed" -d '{"paused":true}'; echo ;;
+  resume) curl -s -X POST "$API/api/admin/speed" -d '{"paused":false}'; echo ;;
   page) page ;;
   status) pid=$(cat "$HOME_DIR/pid" 2>/dev/null); if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then echo "running: $(cat "$HOME_DIR/label") (pid $pid)"; else echo "no preview running"; fi
           echo "live: https://$(host):$TSPORT/   gallery: https://$(host):8452/pezz-previews.html" ;;
