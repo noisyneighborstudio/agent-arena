@@ -38,6 +38,15 @@ namespace Pez.View
         /// </summary>
         public static float FarClip(float orthoSize) => BackDistance(orthoSize) + orthoSize * 1.6f + 20f;
 
+        static float shadowReachSet = -1f;
+        /// <summary>Fit the sun's shadow distance to a view of this ortho half-height (only touches QualitySettings on a change).</summary>
+        public static void FitShadows(float orthoSize)
+        {
+            float r = ShadowReach(orthoSize);
+            if (Mathf.Abs(r - shadowReachSet) < 0.01f) return;
+            QualitySettings.shadowDistance = shadowReachSet = r;
+        }
+
         /// <summary>Point the scene's sun for a camera looking along `yaw`.</summary>
         public static void AimSun(float yaw)
         {
@@ -117,7 +126,7 @@ namespace Pez.View
                 Cam.orthographicSize = Distance;
                 transform.position = Focus - rot * Vector3.forward * BackDistance(Distance);
                 transform.rotation = rot;
-                QualitySettings.shadowDistance = ShadowReach(Distance);
+                FitShadows(Distance);
                 Cam.farClipPlane = FarClip(Distance);
             }
             else

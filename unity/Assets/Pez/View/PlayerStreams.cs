@@ -99,7 +99,7 @@ namespace Pez.View
             {
                 // Back to the local view (and its sun) before the main camera draws.
                 RtsCamera.AimSun(Runner.Camera.Yaw);
-                QualitySettings.shadowDistance = RtsCamera.ShadowReach(Runner.Camera.Distance);
+                RtsCamera.FitShadows(Runner.Camera.Distance);
                 view.SetPov(view.PovTeam);
             }
         }
@@ -179,7 +179,7 @@ namespace Pez.View
             cam.transform.rotation = rot;
             cam.transform.position = focus - rot * Vector3.forward * RtsCamera.BackDistance(size);
             cam.cullingMask = (~(TerrainView.TeamFogMask | 1 << TerrainView.MainFogLayer) | 1 << (TerrainView.TeamFogLayerBase + team)) & ~(1 << Bars.Layer);
-            QualitySettings.shadowDistance = RtsCamera.ShadowReach(size);
+            RtsCamera.FitShadows(size);
             cam.farClipPlane = RtsCamera.FarClip(size);
             view.Terrain.UpdateTeamFog(w, team);
 

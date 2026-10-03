@@ -153,7 +153,7 @@ namespace Pez.View
             RenderSettings.fogColor = new Color(0.55f, 0.62f, 0.68f);
             RenderSettings.fogStartDistance = 55f;
             RenderSettings.fogEndDistance = 160f;
-            QualitySettings.shadowDistance = RtsCamera.ShadowReach(RtsCamera.BoardOrthoSize); // fitted to the view every frame
+            RtsCamera.FitShadows(RtsCamera.BoardOrthoSize); // refitted to each view as it renders
             QualitySettings.antiAliasing = 4;
             QualitySettings.anisotropicFiltering = AnisotropicFiltering.ForceEnable;
 
