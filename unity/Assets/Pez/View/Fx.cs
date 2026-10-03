@@ -316,6 +316,13 @@ namespace Pez.View
             Emit(S.Ring, g + Up * 0.05f, Vector3.zero, 2f + 1.5f * size, 0.6f, Alpha(Cream, 0.45f), Random.Range(0f, 360f));
         }
 
+        static readonly Color32 SteamCol = new Color32(236, 228, 210, 175); // cream plastic, translucent
+
+        /// <summary>A wisp of steam off a power plant tower: cream, cool (no glow), rising and spreading for about 2 s.</summary>
+        public static void Steam(Vector3 pos, float size) =>
+            Emit(S.Dust, pos + Random.insideUnitSphere * 0.05f, new Vector3(Random.Range(-0.1f, 0.1f), Random.Range(1.3f, 1.8f), Random.Range(-0.1f, 0.1f)),
+                size * Random.Range(0.85f, 1.15f), Random.Range(1.7f, 2.3f), SteamCol);
+
         // ---------------------------------------------------------------- lines
 
         public static void Tracer(Vector3 a, Vector3 b, Color c)

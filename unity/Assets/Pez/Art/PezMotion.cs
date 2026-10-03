@@ -72,6 +72,10 @@ namespace Pez
         public bool IsAimed(float toleranceDeg = 5f) => !turret || Mathf.Abs(Mathf.DeltaAngle(yaw, targetYaw)) <= toleranceDeg;
         public void Fire() { if (barrel && profile.recoil > 0f) recoilT = 0f; }
         public void SetWorking(bool on) => working = on;
+        /// <summary>Speed of the building's machinery (spinner, door, lift, beam): 0.5 on low power, as the sim halves
+        /// production. Turrets and recoil are left alone: low power doesn't slow defences.</summary>
+        public void SetRate(float r) => machineRate = r;
+        float machineRate = 1f;
         public void SetDoorOpen(bool open) => doorTarget = open ? 0.05f : 1f;
         public bool DoorIsOpen => doorScale <= 0.06f;
         public void SetLiftUp(bool up) => liftTarget = up ? 0f : -0.6f;
@@ -124,18 +128,18 @@ namespace Pez
                 float rate = Mathf.Max(profile.spinnerActiveRpm, profile.spinnerIdleRpm, 1f) / Mathf.Max(profile.spinupTime, 0.05f);
                 rpm = Mathf.MoveTowards(rpm, goalRpm, rate * dt);
                 Vector3 axis = profile.spinnerAxis == 'X' ? Vector3.right : profile.spinnerAxis == 'Z' ? Vector3.forward : Vector3.up;
-                spinner.Rotate(axis, rpm * 6f * dt, Space.Self);
+                spinner.Rotate(axis, rpm * 6f * dt * machineRate, Space.Self);
             }
 
             if (door)
             {
-                doorScale = Mathf.MoveTowards(doorScale, doorTarget, dt / 0.35f);
+                doorScale = Mathf.MoveTowards(doorScale, doorTarget, dt * machineRate / 0.35f);
                 door.localScale = new Vector3(1f, doorScale, 1f);
             }
 
             if (lift)
             {
-                liftOffset = Mathf.MoveTowards(liftOffset, liftTarget, dt * (0.6f / 1.2f));
+                liftOffset = Mathf.MoveTowards(liftOffset, liftTarget, dt * machineRate * (0.6f / 1.2f));
                 ApplyLift();
             }
 
@@ -164,7 +168,7 @@ namespace Pez
 
             if (beam && working)
             {
-                beamPhase += dt / 2.4f;
+                beamPhase += dt * machineRate / 2.4f;
                 beam.localRotation = beamRest * Quaternion.Euler(Mathf.Sin(beamPhase * 6.2831853f) * 18f, 0f, 0f);
             }
 

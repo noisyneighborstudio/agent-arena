@@ -29,6 +29,9 @@ namespace Pez.View
             public Bars Bars;            // world-space health and fuel bars (seen by every camera)
             public bool MainShow = true; // the local view's visibility and fade scale, restored after a stream render
             public float MainScale = 1f;
+            // Power state on structures: emissive renderers, the smoothed glow and what was last applied, steam.
+            public Renderer[] Glows;
+            public float GlowK = -1f, GlowShown = -1f, RateShown = 1f, SteamAcc;
         }
 
         public World World { get; private set; }
@@ -249,6 +252,72 @@ namespace Pez.View
             v.Rig.Motion.SetOreLevel(d.Initial > 0 ? d.Amount / d.Initial : 0);
         }
 
+        // Power plant tower tops in model space (the two M_E_Cyan cores; the pack's glTF x is mirrored on import).
+        static readonly Vector3[] Towers = { new Vector3(0.42f, 1.45f, -0.30f), new Vector3(-0.42f, 1.65f, 0.32f) };
+
+        /// <summary>
+        /// Power you can see (MOTION.md power_plant; base-building review rec. 1). From the team's PowerUsed,
+        /// PowerProduced and LowPower:
+        ///  - power plant cores glow 0.6 to 1.0 with the load (eased over 0.4 s); on low power they flicker at 4 Hz
+        ///    between 0.25 and 1 with a 0.1 s dropout every 2-3 s; dark until the plant is complete (the sim counts only
+        ///    complete plants). Steam rises from both towers, faster under load; on low power it sputters.
+        ///  - consumers (Power &lt; 0) dim their emissives to 50% and run their machinery at half speed on low power, as
+        ///    the sim halves their production.
+        /// </summary>
+        void Power(EV v)
+        {
+            var e = v.E;
+            var t = World.Teams[e.Team];
+            bool plant = e.Def.Key == "power_plant";
+            v.Glows ??= PezShade.Emissive(v.Rig.Model);
+            float dt = Time.deltaTime, now = Time.time, glow, rate = 1f;
+            if (plant)
+            {
+                float load = t.PowerProduced > 0 ? Mathf.Clamp01(t.PowerUsed / (float)t.PowerProduced) : 1f;
+                float steady = e.IsComplete ? Mathf.Lerp(0.6f, 1f, load) : 0f;
+                v.GlowK = v.GlowK < 0f ? steady : Mathf.MoveTowards(v.GlowK, steady, dt / 0.4f);
+                glow = v.GlowK;
+                if (e.IsComplete && t.LowPower)
+                {
+                    // 4 Hz flicker, and now and then the cores drop out for a tenth of a second.
+                    float ph = now * 4f + e.Id * 0.37f;
+                    glow = ph - Mathf.Floor(ph) < 0.5f ? 1f : 0.25f;
+                    float cyc = now / 2.5f + e.Id * 0.61f, inCyc = (cyc - Mathf.Floor(cyc)) * 2.5f;
+                    if (inCyc < 0.1f) glow = 0.05f;
+                }
+                if (e.IsComplete) Steam(v, load, t.LowPower);
+            }
+            else
+            {
+                float target = e.IsComplete && t.LowPower ? 0.5f : 1f;
+                v.GlowK = v.GlowK < 0f ? target : Mathf.MoveTowards(v.GlowK, target, dt / 0.4f);
+                glow = v.GlowK;
+                rate = e.IsComplete && t.LowPower ? 0.5f : 1f;
+            }
+            // The lamp body darkens with its light (a cyan core at 0.25 emission still read as lit from its albedo).
+            if (Mathf.Abs(glow - v.GlowShown) > 0.01f) { PezShade.Set(v.Glows, Mathf.Lerp(0.15f, 1f, Mathf.InverseLerp(0.25f, 1f, glow)), glow); v.GlowShown = glow; }
+            if (rate != v.RateShown) { v.Rig.Motion.SetRate(rate); v.RateShown = rate; }
+        }
+
+        /// <summary>Cream steam wisps off both towers: one every 0.8/load s each; on low power, bursts of 3 then a 1 s gap.</summary>
+        void Steam(EV v, float load, bool low)
+        {
+            float dt = Time.deltaTime;
+            if (low)
+            {
+                float cyc = Time.time / 1.6f + v.E.Id * 0.3f, inCyc = (cyc - Mathf.Floor(cyc)) * 1.6f;
+                if (inCyc >= 0.6f) return; // the gap
+                v.SteamAcc += dt * 5f;    // 3 puffs in the burst
+            }
+            else v.SteamAcc += dt * Mathf.Max(load, 0.2f) / 0.8f;
+            while (v.SteamAcc >= 1f)
+            {
+                v.SteamAcc -= 1f;
+                var m = v.Rig.Model.transform;
+                for (int i = 0; i < Towers.Length; i++) Fx.Steam(m.TransformPoint(Towers[i]), low ? 0.3f : 0.38f);
+            }
+        }
+
         /// <summary>Surveyor: thump while it stands surveying (each slam sends a ripple); moving off cancels.</summary>
         void Survey(EV v)
         {
@@ -298,6 +367,7 @@ namespace Pez.View
                 // Build stages rise out of the pad as construction progresses.
                 if (!Mathf.Approximately(v.BuiltShown, e.BuildProgress)) { rig.Emerge.SetBuildProgress(e.BuildProgress); v.BuiltShown = e.BuildProgress; }
                 rig.Motion.SetWorking(e.IsComplete && Producing(e));
+                if (e.Def.Key == "power_plant" || e.Def.Power < 0) Power(v);
                 if (e.Def.Key == "deep_mine") DeepMine(v);
                 if (rig.Turret != null) Aim(v);
                 if (v.DoorTimer > 0 && (v.DoorTimer -= Time.deltaTime) <= 0) rig.Motion.SetDoorOpen(false);
