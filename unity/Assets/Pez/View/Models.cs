@@ -121,6 +121,8 @@ namespace Pez.View
         /// Mesh.RecalculateNormals, which smooths across every corner, so boxes shade like pillows. The handoff's
         /// renders (three.js) flat-shade normal-less meshes: unweld each mesh once and recompute, so every face is flat.
         /// </summary>
+        /// Also swaps the instance's glTF materials for the tuned Pez/Model PBR ones (Look.Convert), and stores the
+        /// crease data Pez/Model draws its bevel highlight from (UV3, see EdgeData).
         public static void FlatShade(GameObject go)
         {
             foreach (var mf in go.GetComponentsInChildren<MeshFilter>(true))
@@ -130,6 +132,60 @@ namespace Pez.View
                 if (!flatMeshes.TryGetValue(src, out var flat)) flatMeshes[src] = flat = Unweld(src);
                 mf.sharedMesh = flat;
             }
+            Look.Convert(go);
+        }
+
+        /// <summary>
+        /// Per triangle corner, the bevel data Pez/Model reads from UV3: barycentric coordinates, with an edge masked out
+        /// (its opposite component held at 1) unless it's a convex crease. Coplanar edges (a quad's diagonal, a seam
+        /// between two materials on one face) and concave ones get no highlight. w = 1 marks the data as present.
+        /// </summary>
+        static Vector4[] EdgeData(Vector3[] v, List<int[]> subs)
+        {
+            // Weld by position (the source may split vertices by material or UV), then index edges.
+            var ids = new Dictionary<Vector3Int, int>();
+            int Id(Vector3 p) { var k = new Vector3Int(Mathf.RoundToInt(p.x * 2000f), Mathf.RoundToInt(p.y * 2000f), Mathf.RoundToInt(p.z * 2000f)); if (!ids.TryGetValue(k, out int i)) ids[k] = i = ids.Count; return i; }
+            var tris = new List<int>();
+            foreach (var t in subs) tris.AddRange(t);
+            int nt = tris.Count / 3;
+            var pid = new int[tris.Count];
+            for (int i = 0; i < tris.Count; i++) pid[i] = Id(v[tris[i]]);
+            var normals = new Vector3[nt];
+            for (int t = 0; t < nt; t++)
+                normals[t] = Vector3.Cross(v[tris[t * 3 + 1]] - v[tris[t * 3]], v[tris[t * 3 + 2]] - v[tris[t * 3]]).normalized;
+            var edges = new Dictionary<long, List<int>>(); // edge key -> triangles * 3 + corner opposite the edge
+            long Key(int a, int b) => a < b ? ((long)a << 32) | (uint)b : ((long)b << 32) | (uint)a;
+            for (int t = 0; t < nt; t++)
+                for (int c = 0; c < 3; c++)
+                {
+                    long k = Key(pid[t * 3 + (c + 1) % 3], pid[t * 3 + (c + 2) % 3]);
+                    if (!edges.TryGetValue(k, out var l)) edges[k] = l = new List<int>(2);
+                    l.Add(t * 3 + c);
+                }
+            var outv = new Vector4[tris.Count];
+            for (int t = 0; t < nt; t++)
+            {
+                var keep = new bool[3];
+                for (int c = 0; c < 3; c++)
+                {
+                    var l = edges[Key(pid[t * 3 + (c + 1) % 3], pid[t * 3 + (c + 2) % 3])];
+                    bool crease = l.Count == 1; // an open edge: a plate's rim
+                    foreach (int other in l)
+                    {
+                        int ot = other / 3;
+                        if (ot == t) continue;
+                        var n2 = normals[ot];
+                        if (Vector3.Dot(normals[t], n2) > 0.94f) continue; // coplanar (within ~20 degrees): no crease
+                        // Convex when the neighbour's far corner lies behind this face.
+                        var far = v[tris[other]];
+                        if (Vector3.Dot(far - v[tris[t * 3 + (c + 1) % 3]], normals[t]) < -1e-4f) crease = true;
+                    }
+                    keep[c] = crease;
+                }
+                for (int c = 0; c < 3; c++)
+                    outv[t * 3 + c] = new Vector4(keep[0] ? (c == 0 ? 1 : 0) : 1, keep[1] ? (c == 1 ? 1 : 0) : 1, keep[2] ? (c == 2 ? 1 : 0) : 1, 1);
+            }
+            return outv;
         }
 
         static Mesh Unweld(Mesh src)
@@ -143,9 +199,11 @@ namespace Pez.View
             var uvs = new List<Vector2>();
             var cols = new List<Color>();
             var subs = new List<int[]>();
+            var srcSubs = new List<int[]>();
             for (int s = 0; s < src.subMeshCount; s++)
             {
                 var tris = src.GetTriangles(s);
+                srcSubs.Add(tris);
                 var outTris = new int[tris.Length];
                 for (int i = 0; i < tris.Length; i++)
                 {
@@ -159,6 +217,7 @@ namespace Pez.View
             var m = new Mesh { name = src.name + "_flat" };
             if (verts.Count > 65000) m.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
             m.SetVertices(verts);
+            m.SetUVs(3, EdgeData(v, srcSubs)); // unwelded vertex i is source corner i (submeshes in order)
             if (hasUv) m.SetUVs(0, uvs);
             if (hasCol) m.SetColors(cols);
             m.subMeshCount = subs.Count;
@@ -197,7 +256,7 @@ namespace Pez.View
                         {
                             t.EnableKeyword("_EMISSION");
                             t.globalIlluminationFlags = MaterialGlobalIlluminationFlags.None;
-                            if (t.HasProperty("_EmissionColor")) t.SetColor("_EmissionColor", color * 1.4f);
+                            if (t.HasProperty("_EmissionColor")) t.SetColor("_EmissionColor", color * 2.4f); // HDR: feeds the bloom
                             if (t.HasProperty("emissiveFactor")) t.SetColor("emissiveFactor", color * 1.4f);
                         }
                         oreTinted[(m, oreType)] = t;

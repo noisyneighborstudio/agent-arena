@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Pez.Sim;
 using UnityEngine;
 
@@ -8,9 +9,32 @@ namespace Pez.View
     /// every player's live stream and look stills all show them. Health shows when a unit or building is hurt (and a
     /// building's progress while it's going up); fuel shows when a vehicle or aircraft is below full. An agent-invented
     /// unit also carries a small amber badge at the bar's left end, always on, so a design reads apart from its base unit.
+    /// Bars sit on their own layer, which no camera culls in: PezPost draws them after post-processing
+    /// (<see cref="DrawOverlay"/>), so tonemapping, bloom and AO never touch them.
     /// </summary>
     public class Bars
     {
+        public const int Layer = 29;
+        static readonly List<MeshRenderer> all = new List<MeshRenderer>();
+        static readonly List<MaterialPropertyBlock> blocks = new List<MaterialPropertyBlock>();
+
+        /// <summary>Queue every bar that's showing (enabled, in an active entity) into an overlay command buffer.</summary>
+        public static void DrawOverlay(UnityEngine.Rendering.CommandBuffer cb)
+        {
+            if (material == null) return;
+            int used = 0;
+            for (int i = all.Count - 1; i >= 0; i--)
+            {
+                var r = all[i];
+                if (r == null) { all[i] = all[all.Count - 1]; all.RemoveAt(all.Count - 1); continue; }
+                if (!r.enabled || !r.gameObject.activeInHierarchy) continue;
+                if (used == blocks.Count) blocks.Add(new MaterialPropertyBlock());
+                var b = blocks[used++];
+                r.GetPropertyBlock(b);
+                cb.DrawMesh(quad, r.localToWorldMatrix, material, 0, 0, b);
+            }
+        }
+
         static Mesh quad;
         static Material material;
         static readonly int FillId = Shader.PropertyToID("_Fill"), FillColorId = Shader.PropertyToID("_FillColor"),
@@ -54,7 +78,7 @@ namespace Pez.View
 
         static MeshRenderer Make(Transform root, string name, float lift)
         {
-            var go = new GameObject(name);
+            var go = new GameObject(name) { layer = Layer };
             go.transform.SetParent(root, false);
             go.transform.localPosition = new Vector3(0, lift, 0);
             go.AddComponent<MeshFilter>().sharedMesh = quad;
@@ -62,6 +86,7 @@ namespace Pez.View
             r.sharedMaterial = material;
             r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             r.receiveShadows = false;
+            all.Add(r);
             return r;
         }
 

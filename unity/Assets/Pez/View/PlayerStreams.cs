@@ -41,8 +41,10 @@ namespace Pez.View
             var main = Runner.Camera.Cam;
             cam = new GameObject("PlayerStreamCamera").AddComponent<Camera>();
             cam.CopyFrom(main);
+            cam.RemoveAllCommandBuffers(); // PezPost adds its own
             cam.enabled = false; // rendered manually
-            rt = new RenderTexture(Width, Height, 24) { antiAliasing = 2 };
+            cam.gameObject.AddComponent<PezPost>().Stream = true; // the stream tier: PezPost.StreamTier (-streamfx)
+            rt = new RenderTexture(Width, Height, 24) { antiAliasing = 4 }; // MSAA is nearly free on Apple GPUs; edges survive the JPEG
             resolved = new RenderTexture(Width, Height, 0, UnityEngine.Experimental.Rendering.GraphicsFormat.R8G8B8A8_SRGB); // the async readback can't read MSAA
         }
 
@@ -87,6 +89,7 @@ namespace Pez.View
             {
                 // Back to the local view (and its sun) before the main camera draws.
                 RtsCamera.AimSun(Runner.Camera.Yaw);
+                QualitySettings.shadowDistance = RtsCamera.ShadowReach(Runner.Camera.Distance);
                 view.SetPov(view.PovTeam);
             }
         }
@@ -104,7 +107,7 @@ namespace Pez.View
             var (focus, size, yaw) = Pose(req.Team);
             var rot = Quaternion.Euler(StreamPitch, yaw, 0f);
             cam.orthographic = true; cam.orthographicSize = size; cam.aspect = Width / (float)Height;
-            cam.transform.rotation = rot; cam.transform.position = focus - rot * Vector3.forward * 150f;
+            cam.transform.rotation = rot; cam.transform.position = focus - rot * Vector3.forward * RtsCamera.BackDistance(size);
             var ray = cam.ViewportPointToRay(new Vector3(req.U, 1f - req.V, 0f));
             if (Mathf.Abs(ray.direction.y) < 1e-4f) return "{\"ok\":true,\"id\":0}";
             var ground = ray.origin + ray.direction * (-ray.origin.y / ray.direction.y);
@@ -164,8 +167,10 @@ namespace Pez.View
             cam.orthographic = true;
             cam.orthographicSize = size;
             cam.transform.rotation = rot;
-            cam.transform.position = focus - rot * Vector3.forward * 150f;
-            cam.cullingMask = ~(TerrainView.TeamFogMask | 1 << TerrainView.MainFogLayer) | 1 << (TerrainView.TeamFogLayerBase + team);
+            cam.transform.position = focus - rot * Vector3.forward * RtsCamera.BackDistance(size);
+            cam.cullingMask = (~(TerrainView.TeamFogMask | 1 << TerrainView.MainFogLayer) | 1 << (TerrainView.TeamFogLayerBase + team)) & ~(1 << Bars.Layer);
+            QualitySettings.shadowDistance = RtsCamera.ShadowReach(size);
+            cam.farClipPlane = RtsCamera.FarClip(size);
             view.Terrain.UpdateTeamFog(w, team);
 
             view.SetPov(team);

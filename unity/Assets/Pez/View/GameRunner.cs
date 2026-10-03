@@ -142,28 +142,18 @@ namespace Pez.View
         {
             // Lighting (art pack, render.html): warm sun #FFE6C4 from the upper left of the screen, shadows falling to
             // the lower right, and a cool sky fill (hemisphere #BFD4FF over #5A4A36) so shaded faces go cool, not grey.
+            // Sun, sky fill, reflections and shadow settings: Look.SetupLighting (see docs/render/QUALITY_PASS.md).
             var sun = new GameObject("Sun").AddComponent<Light>();
             sun.type = LightType.Directional;
-            sun.color = new Color32(255, 230, 196, 255);
-            sun.intensity = 1.2f;
-            sun.shadows = LightShadows.Soft;
-            sun.shadowStrength = 0.75f; // shadowed faces still get the sky fill
-            sun.shadowBias = 0.03f;
-            sun.shadowNormalBias = 0.25f;
+            Look.SetupLighting(sun);
             RenderSettings.sun = sun;
             RtsCamera.AimSun(45f); // re-aimed every frame against the camera's yaw
-            RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Trilight;
-            RenderSettings.ambientSkyColor = new Color(0.56f, 0.62f, 0.74f);
-            RenderSettings.ambientEquatorColor = new Color(0.5f, 0.5f, 0.52f);
-            RenderSettings.ambientGroundColor = new Color32(90, 74, 54, 255);
             RenderSettings.fog = false; // no distance haze in an orthographic view
             RenderSettings.fogMode = FogMode.Linear;
             RenderSettings.fogColor = new Color(0.55f, 0.62f, 0.68f);
             RenderSettings.fogStartDistance = 55f;
             RenderSettings.fogEndDistance = 160f;
-            QualitySettings.shadowDistance = 260f; // the orthographic camera sits 150 units back
-            QualitySettings.shadowCascades = 4;
-            QualitySettings.shadowResolution = ShadowResolution.VeryHigh;
+            QualitySettings.shadowDistance = RtsCamera.ShadowReach(RtsCamera.BoardOrthoSize); // fitted to the view every frame
             QualitySettings.antiAliasing = 4;
             QualitySettings.anisotropicFiltering = AnisotropicFiltering.ForceEnable;
 
@@ -189,7 +179,9 @@ namespace Pez.View
             Hud = gameObject.AddComponent<Hud>();
             Hud.Runner = this;
             gameObject.AddComponent<FrameServer>().Port = Port + 1;
-            cam.cullingMask = ~TerrainView.TeamFogMask; // per-team fog overlays are for the player streams only
+            // Per-team fog overlays are for the player streams only; bars are drawn after post-processing (PezPost).
+            cam.cullingMask = ~TerrainView.TeamFogMask & ~(1 << Bars.Layer);
+            if (camGo.GetComponent<PezPost>() == null) camGo.AddComponent<PezPost>();
             gameObject.AddComponent<PlayerStreams>().Runner = this;
         }
 

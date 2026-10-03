@@ -266,15 +266,17 @@ namespace Pez.View
             var cliffsGo = new GameObject("Cliffs", typeof(MeshFilter), typeof(MeshRenderer));
             cliffsGo.transform.SetParent(transform, false);
             var cliffs = cliffsGo.AddComponent<PezCliffs>();
+            // Pez/Model (Look.Model): the massifs get the same crease highlight and grime as the buildings.
             cliffs.materials = new[]
             {
-                Mats.Lit(Hex("7A604C"), 0.08f, 0), Mats.Lit(Hex("8E7259"), 0.08f, 0), Mats.Lit(Hex("A58A6C"), 0.08f, 0), // crust tiers
-                Mats.Lit(Hex("2E2629"), 0.2f, 0),  // licorice face
-                Mats.Lit(Hex("4A3D3A"), 0.1f, 0),  // talus
+                Look.Model(Hex("7A604C"), 0.08f, 0, 0.30f), Look.Model(Hex("8E7259"), 0.08f, 0, 0.30f), Look.Model(Hex("A58A6C"), 0.08f, 0, 0.30f), // crust tiers
+                Look.Model(Hex("2E2629"), 0.32f, 0, 0.40f),  // licorice face
+                Look.Model(Hex("4A3D3A"), 0.12f, 0, 0.30f),  // talus
             };
             string[] boulders = { "s1", "s2", "s3", "m1", "m2", "m3", "l1", "l2", "l3" };
             cliffs.boulderPrefabs = boulders.Select(b => Resources.Load<GameObject>("PezModels/terrain/boulder_" + b)).ToArray();
             cliffs.Build(rockGrid);
+            Models.FlatShade(cliffsGo); // crease data for the massif and the boulders, and the boulders' PBR materials
             foreach (var r in cliffsGo.GetComponentsInChildren<Renderer>())
             {
                 r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;

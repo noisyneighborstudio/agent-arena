@@ -24,6 +24,20 @@ namespace Pez.View
         // 57 degrees up, so shadows fall to the lower right. It is defined against the view, so it follows the yaw.
         const float SunPitch = 57f, SunYawFromView = 112.6f;
 
+        /// <summary>
+        /// How far back along its view the orthographic camera sits for an ortho half-height: just far enough that the
+        /// tallest things (aircraft, rising smoke) stay past the near plane. Close, so the sun's shadow map (fitted from
+        /// the camera out to ShadowReach) spends its texels on what's on screen.
+        /// </summary>
+        public static float BackDistance(float orthoSize) => orthoSize + 14f;
+        /// <summary>Shadow distance for an ortho half-height: past the far edge of the visible ground, no further.</summary>
+        public static float ShadowReach(float orthoSize) => BackDistance(orthoSize) + orthoSize * 0.8f + 6f;
+        /// <summary>
+        /// Far clip for an ortho half-height: just past the farthest ground. A tight near/far keeps the (linear, for
+        /// orthographic) depth buffer precise, which the ambient occlusion and the water's shore line read.
+        /// </summary>
+        public static float FarClip(float orthoSize) => BackDistance(orthoSize) + orthoSize * 1.6f + 20f;
+
         /// <summary>Point the scene's sun for a camera looking along `yaw`.</summary>
         public static void AimSun(float yaw)
         {
@@ -101,8 +115,10 @@ namespace Pez.View
             {
                 var rot = Quaternion.Euler(Pitch, Yaw, 0);
                 Cam.orthographicSize = Distance;
-                transform.position = Focus - rot * Vector3.forward * 150f;
+                transform.position = Focus - rot * Vector3.forward * BackDistance(Distance);
                 transform.rotation = rot;
+                QualitySettings.shadowDistance = ShadowReach(Distance);
+                Cam.farClipPlane = FarClip(Distance);
             }
             else
             {
