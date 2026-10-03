@@ -18,6 +18,16 @@ namespace Pez.View
         public float SnapshotInterval = 0.15f; // a stream polled for snapshots (the look tool), not watched live
         /// <summary>Stream frames rendered since startup (for PerfProbe).</summary>
         public static int RenderCount;
+        /// <summary>MSAA samples for the stream render target (-streammsaa N; 2 by default).</summary>
+        static int StreamMsaa
+        {
+            get
+            {
+                var args = System.Environment.GetCommandLineArgs();
+                int i = System.Array.IndexOf(args, "-streammsaa");
+                return i >= 0 && i + 1 < args.Length && int.TryParse(args[i + 1], out var n) && (n == 1 || n == 2 || n == 4 || n == 8) ? n : 2;
+            }
+        }
         Camera cam;
         RenderTexture rt, resolved;
         readonly Dictionary<int, (Vector3 focus, float last, int seat)> state = new Dictionary<int, (Vector3, float, int)>();
@@ -44,7 +54,7 @@ namespace Pez.View
             cam.RemoveAllCommandBuffers(); // PezPost adds its own
             cam.enabled = false; // rendered manually
             cam.gameObject.AddComponent<PezPost>().Stream = true; // the stream tier: PezPost.StreamTier (-streamfx)
-            rt = new RenderTexture(Width, Height, 24) { antiAliasing = 4 }; // MSAA is nearly free on Apple GPUs; edges survive the JPEG
+            rt = new RenderTexture(Width, Height, 24) { antiAliasing = StreamMsaa };
             resolved = new RenderTexture(Width, Height, 0, UnityEngine.Experimental.Rendering.GraphicsFormat.R8G8B8A8_SRGB); // the async readback can't read MSAA
         }
 

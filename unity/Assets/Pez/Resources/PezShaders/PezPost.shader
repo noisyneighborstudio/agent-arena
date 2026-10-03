@@ -40,24 +40,25 @@ Shader "Hidden/Pez/Post"
     #endif
     }
     // Snapped to a depth texel's centre: depth isn't filtered, and a lookup that lands on a texel boundary picks one
-    // neighbour or the other by rounding, which (with positions taken at the unsnapped point) bends flat ground.
+    // neighbour or the other by rounding, which (with positions taken at the unsnapped point) bends flat ground into
+    // bands. The quarter-texel bias keeps half-resolution pixel centres (exactly on a boundary) off the tie.
+    float2 Snap(float2 uv) { float2 sz = _CameraDepthTexture_TexelSize.zw; return (floor(uv * sz - 0.25) + 0.5) / sz; }
     float3 ViewPos(float2 uv)
     {
-        float2 sz = _CameraDepthTexture_TexelSize.zw;
-        uv = (floor(uv * sz) + 0.5) / sz;
+        uv = Snap(uv);
         return float3((uv * 2 - 1) * _PezOrtho.xy, OrthoDepth(RawDepth(uv)));
     }
     float Ign(float2 px) { return frac(52.9829189 * frac(dot(px, float2(0.06711056, 0.00583715)))); } // interleaved gradient noise
 
-    // ---- ambient occlusion (full resolution, see PezPost.cs)
+    // ---- ambient occlusion (half resolution)
     float4 fragAO(v2f i) : SV_Target
     {
-        float raw = RawDepth(i.uv);
-        if (IsFar(raw)) return 1;
-        float3 P = ViewPos(i.uv);
+        float2 uv0 = Snap(i.uv);
+        if (IsFar(RawDepth(uv0))) return 1;
+        float3 P = ViewPos(uv0);
         float2 tx = _CameraDepthTexture_TexelSize.xy;
-        float3 pr = ViewPos(i.uv + float2(tx.x, 0)), pl = ViewPos(i.uv - float2(tx.x, 0));
-        float3 pu = ViewPos(i.uv + float2(0, tx.y)), pd = ViewPos(i.uv - float2(0, tx.y));
+        float3 pr = ViewPos(uv0 + float2(tx.x, 0)), pl = ViewPos(uv0 - float2(tx.x, 0));
+        float3 pu = ViewPos(uv0 + float2(0, tx.y)), pd = ViewPos(uv0 - float2(0, tx.y));
         // The flatter neighbour on each axis, so silhouettes don't bend the normal.
         float3 dx = abs(pr.z - P.z) < abs(P.z - pl.z) ? pr - P : P - pl;
         float3 dy = abs(pu.z - P.z) < abs(P.z - pd.z) ? pu - P : P - pd;
@@ -77,7 +78,7 @@ Shader "Hidden/Pez/Post"
         {
             float a = rot + k * 2.3999632; // golden angle spiral
             float r = sqrt((k + 0.5) / Count) * R;
-            float2 suv = i.uv + float2(cos(a), sin(a)) * r * toUv;
+            float2 suv = uv0 + float2(cos(a), sin(a)) * r * toUv;
             float3 v = ViewPos(suv) - P;
             float vv = dot(v, v);
             float occ = max(0, dot(v, N) - _PezAO.w) / (vv + 0.02);
@@ -90,13 +91,13 @@ Shader "Hidden/Pez/Post"
     // Depth-aware blur, run once across and once down.
     float4 fragBlur(v2f i) : SV_Target
     {
-        float zc = OrthoDepth(RawDepth(i.uv));
+        float zc = OrthoDepth(RawDepth(Snap(i.uv)));
         float s = 0, w = 0;
         [unroll]
         for (int k = -3; k <= 3; k++)
         {
             float2 uv = i.uv + _PezBlurDir.xy * k;
-            float z = OrthoDepth(RawDepth(uv));
+            float z = OrthoDepth(RawDepth(Snap(uv)));
             float wk = exp(-k * k * 0.18) * exp(-abs(z - zc) * 6.0);
             s += tex2Dlod(_MainTex, float4(uv, 0, 0)).r * wk; w += wk;
         }

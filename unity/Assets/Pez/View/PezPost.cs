@@ -31,6 +31,8 @@ namespace Pez.View
         public static float Exposure = 1.06f, Contrast = 1.04f, Saturation = 1.0f, Vignette = 0.12f, Toe = 0.012f;
         /// <summary>Debug view (LookTune): 0 normal, 1 the AO buffer, 2 the bloom buffer.</summary>
         public static float Debug = 0f, AOBlur = 1f;
+        /// <summary>Per-effect switches (LookTune), for measuring what each costs: 1 on, 0 off.</summary>
+        public static float AOOn = 1f, BloomOn = 1f, AOHalfRes = 1f;
         public static Color ShadowTint = new Color(0.965f, 0.985f, 1.04f), HighTint = new Color(1.015f, 1.0f, 0.985f);
 
         Camera cam;
@@ -91,7 +93,7 @@ namespace Pez.View
             mat.SetVector(OrthoId, new Vector4(halfH * cam.aspect, halfH, cam.nearClipPlane, cam.farClipPlane));
 
             // Ambient occlusion: only meaningful for an orthographic camera (positions come from linear ortho depth).
-            bool ao = cam.orthographic;
+            bool ao = cam.orthographic && AOOn > 0.5f;
             RenderTexture aoTex = null;
             if (ao)
             {
@@ -100,11 +102,11 @@ namespace Pez.View
                 float radius = Mathf.Max(AORadius, 2.5f / pxPerUnit);
                 mat.SetVector(AOParamId, new Vector4(radius, AOIntensity, AOPower, AOBias));
                 if (level == Tier.Light) mat.EnableKeyword("PEZ_AO_LOW"); else mat.DisableKeyword("PEZ_AO_LOW");
-                // Full resolution: depth can't be filtered, and half-resolution lookups land exactly on depth texel
-                // boundaries, where rounding picks either neighbour and flat ground breaks into bands.
-                const int div = 1;
-                aoTex = RenderTexture.GetTemporary(w, h, 0, RenderTextureFormat.R8, RenderTextureReadWrite.Linear);
-                var tmp = RenderTexture.GetTemporary(w, h, 0, RenderTextureFormat.R8, RenderTextureReadWrite.Linear);
+                // Half resolution (the shader snaps its depth lookups to texel centres, see ViewPos), blurred with
+                // depth-aware weights, upsampled bilinearly in the final pass.
+                int div = AOHalfRes > 0.5f ? 2 : 1;
+                aoTex = RenderTexture.GetTemporary(w / div, h / div, 0, RenderTextureFormat.R8, RenderTextureReadWrite.Linear);
+                var tmp = RenderTexture.GetTemporary(w / div, h / div, 0, RenderTextureFormat.R8, RenderTextureReadWrite.Linear);
                 aoTex.filterMode = tmp.filterMode = FilterMode.Bilinear;
                 Graphics.Blit(src, aoTex, mat, PassAO);
                 if (AOBlur > 0.5f)
@@ -121,22 +123,25 @@ namespace Pez.View
             mat.SetFloat(UseAOId, ao ? 1 : 0);
 
             // Bloom: threshold at half resolution, then a mip chain down and back up.
-            int mips = level == Tier.Full ? 6 : 4;
+            int mips = level == Tier.Full ? 6 : 3;
             var fmt = src.format == RenderTextureFormat.ARGBHalf || src.format == RenderTextureFormat.ARGBFloat || src.format == RenderTextureFormat.RGB111110Float
                 ? RenderTextureFormat.RGB111110Float : RenderTextureFormat.ARGB32;
             if (!SystemInfo.SupportsRenderTextureFormat(fmt)) fmt = RenderTextureFormat.ARGBHalf;
-            mat.SetVector(BloomParamId, new Vector4(BloomThreshold, BloomKnee, BloomClamp, BloomIntensity));
+            mat.SetVector(BloomParamId, new Vector4(BloomThreshold, BloomKnee, BloomClamp, BloomOn > 0.5f ? BloomIntensity : 0f));
             var chain = new RenderTexture[mips];
             int mw = w / 2, mh = h / 2, n = 0;
-            for (; n < mips && mw >= 4 && mh >= 4; n++, mw /= 2, mh /= 2)
+            if (BloomOn > 0.5f)
             {
-                chain[n] = RenderTexture.GetTemporary(mw, mh, 0, fmt, RenderTextureReadWrite.Linear);
-                chain[n].filterMode = FilterMode.Bilinear;
+                for (; n < mips && mw >= 4 && mh >= 4; n++, mw /= 2, mh /= 2)
+                {
+                    chain[n] = RenderTexture.GetTemporary(mw, mh, 0, fmt, RenderTextureReadWrite.Linear);
+                    chain[n].filterMode = FilterMode.Bilinear;
+                }
+                Graphics.Blit(src, chain[0], mat, PassPrefilter);
+                for (int i = 1; i < n; i++) Graphics.Blit(chain[i - 1], chain[i], mat, PassDown);
+                for (int i = n - 1; i > 0; i--) Graphics.Blit(chain[i], chain[i - 1], mat, PassUp);
             }
-            Graphics.Blit(src, chain[0], mat, PassPrefilter);
-            for (int i = 1; i < n; i++) Graphics.Blit(chain[i - 1], chain[i], mat, PassDown);
-            for (int i = n - 1; i > 0; i--) Graphics.Blit(chain[i], chain[i - 1], mat, PassUp);
-            mat.SetTexture(BloomTexId, chain[0]);
+            mat.SetTexture(BloomTexId, n > 0 ? (Texture)chain[0] : Texture2D.blackTexture);
 
             mat.SetVector(GradeId, new Vector4(Exposure, Contrast, Saturation, Vignette));
             mat.SetColor(ShadowTintId, ShadowTint);

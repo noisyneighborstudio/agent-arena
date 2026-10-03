@@ -209,22 +209,8 @@ namespace Pez.View
                     verts[i] = new Vector3(fx, h, fy);
                     cols[i] = c.linear; // vertex colours aren't converted in linear colour space
                 }
-            var tris = new int[(vw - 1) * (vh - 1) * 6];
-            int k = 0;
-            for (int y = 0; y < vh - 1; y++)
-                for (int x = 0; x < vw - 1; x++)
-                {
-                    int a = y * vw + x, b = a + 1, c = a + vw, d = c + 1;
-                    tris[k++] = a; tris[k++] = c; tris[k++] = b;
-                    tris[k++] = b; tris[k++] = c; tris[k++] = d;
-                }
-            var mesh = new Mesh { indexFormat = UnityEngine.Rendering.IndexFormat.UInt32, name = "terrain" };
-            mesh.vertices = verts; mesh.colors = cols; mesh.triangles = tris;
-            mesh.RecalculateNormals();
-            var go = new GameObject("Ground");
-            go.transform.SetParent(transform, false);
-            go.AddComponent<MeshFilter>().sharedMesh = mesh;
-            var r = go.AddComponent<MeshRenderer>();
+            // Normals over the whole field first, so chunk borders shade seamlessly.
+            var normals = GroundNormals(verts, vw, vh);
             // Pez/Ground (Resources/PezShaders): cream speckles and the faint diamond grid over the dressed vertex colours.
             var groundShader = Resources.Load<Shader>("PezShaders/PezGround");
             var groundMat = groundShader != null ? new Material(groundShader) : new Material(Mats.Terrain());
@@ -232,13 +218,68 @@ namespace Pez.View
             groundMat.SetFloat("_GridStrength", 0.06f); // the art pack's tile grid is a faint 5-7% line, inside the 8% quiet-ground budget
             groundMat.SetFloat("_SpeckDensity", 0.16f); // sparse cream sugar grains, as in hero_offaxis
             groundMat.SetFloat("_SpeckStrength", 0.3f);
-            r.sharedMaterial = groundMat;
-            r.receiveShadows = true;
+            // The ground in square chunks, so every camera (the main view and each player stream) draws only the part it
+            // sees: an 8-player arena grows to 288 tiles a side, 1.5M triangles as one mesh. It casts no shadows (it's
+            // flat; casting only cost a shadow-map pass over the whole field for every camera).
+            var root = new GameObject("Ground").transform;
+            root.SetParent(transform, false);
+            const int ChunkTiles = 24;
+            int step = ChunkTiles * Sub;
+            for (int cy = 0; cy < vh - 1; cy += step)
+                for (int cx = 0; cx < vw - 1; cx += step)
+                {
+                    int w = Mathf.Min(step, vw - 1 - cx) + 1, h = Mathf.Min(step, vh - 1 - cy) + 1;
+                    var cv = new Vector3[w * h];
+                    var cn = new Vector3[w * h];
+                    var cc = new Color[w * h];
+                    for (int y = 0; y < h; y++)
+                        for (int x = 0; x < w; x++)
+                        {
+                            int src = (cy + y) * vw + cx + x, dst = y * w + x;
+                            cv[dst] = verts[src]; cn[dst] = normals[src]; cc[dst] = cols[src];
+                        }
+                    var ct = new int[(w - 1) * (h - 1) * 6];
+                    int k = 0;
+                    for (int y = 0; y < h - 1; y++)
+                        for (int x = 0; x < w - 1; x++)
+                        {
+                            int a = y * w + x, b = a + 1, c = a + w, d = c + 1;
+                            ct[k++] = a; ct[k++] = c; ct[k++] = b;
+                            ct[k++] = b; ct[k++] = c; ct[k++] = d;
+                        }
+                    var mesh = new Mesh { name = "terrain_" + cx / step + "_" + cy / step };
+                    mesh.vertices = cv; mesh.normals = cn; mesh.colors = cc; mesh.triangles = ct;
+                    mesh.RecalculateBounds();
+                    var go = new GameObject(mesh.name);
+                    go.transform.SetParent(root, false);
+                    go.AddComponent<MeshFilter>().sharedMesh = mesh;
+                    var r = go.AddComponent<MeshRenderer>();
+                    r.sharedMaterial = groundMat;
+                    r.receiveShadows = true;
+                    r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                }
 
             // Skirt: a big dark plane under the map so the edges don't float in the void. Warm licorice like the art
             // pack's map backdrop (#2A2420), not an off-palette olive.
             var skirt = Models.Part(transform, PrimitiveType.Plane, new Vector3(map.W / 2f, -0.6f, map.H / 2f), new Vector3(map.W / 2f, 1, map.H / 2f), Mats.Lit(new Color32(42, 36, 32, 255), 0, 0));
             skirt.name = "Skirt";
+        }
+
+        /// <summary>Smooth vertex normals of the ground grid (summed face normals, as Mesh.RecalculateNormals).</summary>
+        static Vector3[] GroundNormals(Vector3[] v, int vw, int vh)
+        {
+            var n = new Vector3[v.Length];
+            for (int y = 0; y < vh - 1; y++)
+                for (int x = 0; x < vw - 1; x++)
+                {
+                    int a = y * vw + x, b = a + 1, c = a + vw, d = c + 1;
+                    var f1 = Vector3.Cross(v[c] - v[a], v[b] - v[a]).normalized;
+                    var f2 = Vector3.Cross(v[c] - v[b], v[d] - v[b]).normalized;
+                    n[a] += f1; n[c] += f1; n[b] += f1;
+                    n[b] += f2; n[c] += f2; n[d] += f2;
+                }
+            for (int i = 0; i < n.Length; i++) n[i] = n[i].normalized;
+            return n;
         }
 
         void BuildWater()

@@ -113,13 +113,13 @@ namespace Pez.View
             ground.position = Vector3.zero;
 
             // Flash: a white-hot core that collapses within a tenth of a second (additive).
-            Flash = Make("flash", Mat("PezFxGlow", 3030, ("_Shape", 0), ("_Opacity", 0), ("_Boost", 1.8f)), 400, 0f, 0f, glowStreams);
+            Flash = Make("flash", Mat("PezFxGlow", 3030, ("_Shape", 0), ("_Opacity", 0), ("_Boost", 1.5f)), 400, 0f, 0f, glowStreams);
             SizeOverLife(Flash, new Keyframe(0, 1f), new Keyframe(1, 0.35f));
             ColorOverLife(Flash, Grad(new[] { (0f, Color.white), (1f, new Color(1f, 0.75f, 0.4f)) }, new[] { (0f, 1f), (1f, 0f) }));
 
             // Fireball: hot gas pushed out by the blast, stopped by drag, lifted by buoyancy, cooling through
             // white, yellow, orange and red to dark soot. Partly occluding, so the dark end really darkens.
-            Fire = Make("fire", Mat("PezFxGlow", 3010, ("_Shape", 3), ("_Opacity", 0.72f), ("_Boost", 1.3f), ("_Noise", 0.55f)), 4000, -0.32f, 4.5f, glowStreams);
+            Fire = Make("fire", Mat("PezFxGlow", 3010, ("_Shape", 3), ("_Opacity", 0.8f), ("_Boost", 0.92f), ("_Noise", 0.55f)), 4000, -0.32f, 4.5f, glowStreams);
             Fire.GetComponent<ParticleSystemRenderer>().sortMode = ParticleSystemSortMode.YoungestInFront;
             SizeOverLife(Fire, new Keyframe(0, 0.55f), new Keyframe(0.25f, 1f), new Keyframe(1, 1.3f));
             ColorOverLife(Fire, Grad(new[]
