@@ -34,10 +34,13 @@ namespace Pez.View
             public float MainScale = 1f;
             // Power state on structures: emissive renderers, the smoothed glow and what was last applied, steam.
             public Renderer[] Glows;
-            public float GlowK = -1f, GlowShown = -1f, RateShown = 1f, SteamAcc;
+            public float GlowK = -1f, GlowShown = -1f, RateShown = 1f;
+            public float[] SteamNext;    // per tower: when it next puffs (each tower on its own irregular rhythm)
             public bool GlowHidden;      // the neutral "last seen" glow is applied (a stream render of fogged enemy state)
             // Damage state on finished buildings: smoke and fire intensity (eased), emitters, and the roof they rise from.
-            public float SmokeK, FireK, SmokeAcc, FireAcc;
+            public float SmokeK, FireK;
+            public Vector3[] FireSpots;  // where a burning building's flames rise from (fixed per building)
+            public BuildingFire Fire = new BuildingFire();
             public Bounds? Roof;
             // Drop-offs: the dock lamps and chute, and what the bay's truck reported this frame or last.
             public DockView Dock;
@@ -393,7 +396,7 @@ namespace Pez.View
             if (head == null || head.IsComplete || !Views.TryGetValue(head.Id, out var hv)) return;
             if ((v.BeamT -= Time.deltaTime) > 0f) return;
             v.BeamT = 0.25f;
-            if (team.LowPower && ((int)(Time.time * 8f) & 1) == 1) return; // stutters at 4 Hz on low power
+            if (team.LowPower && ((int)(Time.time * 8f + v.E.Id * 0.37f) & 1) == 1) return; // stutters at 4 Hz on low power
             float top = 0.15f + Mathf.Max(0.05f, head.BuildProgress) * Mathf.Max(head.Def.SizeX, head.Def.SizeY) * 0.55f;
             var to = hv.Rig.Root.position + new Vector3(Random.Range(-0.1f, 0.1f), top, Random.Range(-0.1f, 0.1f));
             Fx.Beam(m.CraneHook, to, BeamCream, 0.04f, lamp: false);
@@ -401,61 +404,67 @@ namespace Pez.View
         }
 
         /// <summary>
-        /// Damage states on finished buildings (base-building review rec. 3): below 50% health a smoke column rises from
-        /// the roof (3 puffs/s); below 25% it thickens (7/s) and the building burns, with embers and its fire's light
-        /// flickering on the ground. Fades in over 0.5 s and out over 2 s (repairs clear it). Never on construction
-        /// sites: they're low on health by design (HP rises with build progress).
+        /// Damage states on finished buildings, from the building's health (never on construction sites, which are low on
+        /// health by design). Three stages that blend into each other:
+        ///  - smouldering (below 50%): thin grey wisps off the roof, a dull orange glow on it, the odd ember lifting off;
+        ///  - standing fire (from about 32%): tongues of flame from one, then two fixed spots on the roof, darker smoke, a
+        ///    steady flickering light on the ground and a stream of embers;
+        ///  - raging (below about 12%): three spots, taller and denser flames, a thick black column, embers streaming
+        ///    downwind.
+        /// Fades in over 0.5 s and out over 2 s (repairs put it out). Everything drifts with FxSystems.Wind.
         /// </summary>
         void Damage(EV v)
         {
             var e = v.E;
-            float hp = e.Hp / Mathf.Max(1f, e.Def.MaxHp), dt = Time.deltaTime;
-            float smoke = e.IsComplete && hp < 0.5f ? 1f : 0f, fire = e.IsComplete && hp < 0.25f ? 1f : 0f;
+            float hp = e.Hp / Mathf.Max(1f, e.Def.MaxHp), dt = Time.deltaTime, now = Time.time;
+            float smoke = e.IsComplete && hp < 0.5f ? 1f : 0f;
+            float fire = e.IsComplete ? Mathf.Clamp01(Mathf.InverseLerp(0.32f, 0.08f, hp)) : 0f;
+            if (e.IsComplete && hp < 0.32f) fire = Mathf.Max(fire, 0.05f);
             v.SmokeK = Mathf.MoveTowards(v.SmokeK, smoke, dt / (smoke > v.SmokeK ? 0.5f : 2f));
-            v.FireK = Mathf.MoveTowards(v.FireK, fire, dt / (fire > v.FireK ? 0.5f : 2f));
-            if (v.SmokeK <= 0f) return;
+            v.FireK = Mathf.MoveTowards(v.FireK, fire, dt / (fire > v.FireK ? 0.8f : 2f));
+            if (v.SmokeK <= 0f && v.FireK <= 0f) return;
             if (v.Roof == null)
             {
-                // Once, from the finished model: the roof the smoke rises from (the top fifth of its bounds).
+                // Once, from the finished model: the roof (bounds), and three fire spots on it, fixed for this building.
                 var b = new Bounds(v.Rig.Root.position, Vector3.zero);
                 foreach (var r in v.Rig.Model.GetComponentsInChildren<Renderer>()) b.Encapsulate(r.bounds);
                 v.Roof = b;
+                var rnd = new System.Random(e.Id * 7919 + 17);
+                float R(float a, float c) => a + (float)rnd.NextDouble() * (c - a);
+                v.FireSpots = new Vector3[3];
+                for (int i = 0; i < 3; i++)
+                    v.FireSpots[i] = new Vector3(b.center.x + R(-0.55f, 0.55f) * b.extents.x, b.max.y * R(0.78f, 0.92f), b.center.z + R(-0.55f, 0.55f) * b.extents.z);
             }
-            var roof = v.Roof.Value;
             float size = Mathf.Sqrt(Mathf.Max(1, e.Def.SizeX));
-            Vector3 At(float spread) => new Vector3(roof.center.x + Random.Range(-spread, spread) * roof.extents.x, roof.max.y * 0.85f,
-                                                    roof.center.z + Random.Range(-spread, spread) * roof.extents.z);
-            v.SmokeAcc += dt * (v.FireK > 0f ? Mathf.Lerp(3f, 7f, v.FireK) : 3f) * v.SmokeK;
             Fx.Audience = AudienceFor(e);
-            while (v.SmokeAcc >= 1f) { v.SmokeAcc -= 1f; Fx.DamageSmoke(At(0.35f), size); }
-            if (v.FireK > 0f)
-            {
-                v.FireAcc += dt * 7f * v.FireK;
-                while (v.FireAcc >= 1f) { v.FireAcc -= 1f; Fx.DamageFire(At(0.3f), size, roof.center); }
-            }
+            v.Fire.Tick(v.FireSpots, v.Roof.Value.center, size, v.SmokeK, v.FireK, e.Id);
             Fx.Audience = null;
         }
 
-        /// <summary>Cream steam wisps off both towers: one every 0.8/load s each; on low power, bursts of 3 then a 1 s gap.</summary>
+        /// <summary>
+        /// Cream steam wisps off each tower, every tower on its own irregular rhythm (about one every 0.8/load s, each gap
+        /// jittered), so no two towers, here or on other plants, puff in step. On low power the towers sputter: quick
+        /// clusters of puffs with uneven pauses.
+        /// </summary>
         void Steam(EV v, float load, bool low)
         {
-            float dt = Time.deltaTime;
-            if (low)
+            float now = Time.time;
+            if (v.SteamNext == null)
             {
-                float cyc = Time.time / 1.6f + v.E.Id * 0.3f, inCyc = (cyc - Mathf.Floor(cyc)) * 1.6f;
-                if (inCyc >= 0.6f) return; // the gap
-                v.SteamAcc += dt * 5f;    // 3 puffs in the burst
+                v.SteamNext = new float[Towers.Length];
+                for (int i = 0; i < Towers.Length; i++) v.SteamNext[i] = now + Random.Range(0f, 1.5f);
             }
-            else v.SteamAcc += dt * Mathf.Max(load, 0.2f) / 0.8f;
-            if (v.SteamAcc < 1f) return;
-            Fx.Audience = AudienceFor(v.E);
-            while (v.SteamAcc >= 1f)
+            bool emitted = false;
+            for (int i = 0; i < Towers.Length; i++)
             {
-                v.SteamAcc -= 1f;
-                var m = v.Rig.Model.transform;
-                for (int i = 0; i < Towers.Length; i++) Fx.Steam(m.TransformPoint(Towers[i]), low ? 0.3f : 0.38f);
+                if (now < v.SteamNext[i]) continue;
+                if (!emitted) { Fx.Audience = AudienceFor(v.E); emitted = true; }
+                Fx.Steam(v.Rig.Model.transform.TransformPoint(Towers[i]), low ? 0.3f : 0.38f);
+                float gap = low ? (Random.value < 0.3f ? Random.Range(0.7f, 1.5f) : Random.Range(0.12f, 0.3f))
+                                : 0.8f / Mathf.Max(load, 0.2f) * Random.Range(0.6f, 1.4f);
+                v.SteamNext[i] = Mathf.Max(v.SteamNext[i] + gap, now + 0.05f);
             }
-            Fx.Audience = null;
+            if (emitted) Fx.Audience = null;
         }
 
         /// <summary>Surveyor: thump while it stands surveying (each slam sends a ripple); moving off cancels.</summary>
@@ -535,18 +544,18 @@ namespace Pez.View
                 rig.Body.localScale = new Vector3(1, Mathf.Lerp(0.08f, 1f, p), 1);
                 if (rig.Turret != null && (e.Def.Key == "optics_lab" || e.Def.Key == "fusion_reactor"))
                 {
-                    rig.Turret.localRotation = Quaternion.Euler(0, Time.time * (e.Working ? 90f : 8f), 0);
+                    rig.Turret.localRotation = Quaternion.Euler(0, Time.time * (e.Working ? 90f : 8f) + e.Id * 47f, 0);
                     float pulse = e.Working ? 1f + Mathf.Sin(Time.time * 4f + e.Id) * 0.08f : 0.8f;
                     rig.Turret.localScale = Vector3.one * pulse;
                 }
                 else if (rig.Turret != null && e.Def.Key == "radar_dome")
-                    rig.Turret.localRotation = Quaternion.Euler(0, e.IsComplete ? Time.time * 50f : 0, 0);
+                    rig.Turret.localRotation = Quaternion.Euler(0, e.IsComplete ? Time.time * 50f + e.Id * 47f : 0, 0);
                 else if (rig.Turret != null && e.Def.Key == "deep_mine")
-                    rig.Turret.localRotation = Quaternion.Euler(e.Working ? Time.time * 140f : 0, 0, 0); // the sheave turns while it pumps
+                    rig.Turret.localRotation = Quaternion.Euler(e.Working ? Time.time * 140f + e.Id * 47f : 0, 0, 0); // the sheave turns while it pumps
                 else if (rig.Turret != null && e.Def.Key == "construction_yard")
                 {
                     bool building = World.Teams[e.Team].StructureQueue.Count > 0;
-                    rig.Turret.localRotation = Quaternion.Euler(0, building ? Time.time * 40f : 200f, 0);
+                    rig.Turret.localRotation = Quaternion.Euler(0, building ? Time.time * 40f + e.Id * 47f : 200f, 0);
                 }
                 else if (rig.Turret != null) rig.Turret.rotation = Quaternion.Euler(0, Yaw(e.TurretFacing), 0);
             }
@@ -671,7 +680,7 @@ namespace Pez.View
             if (def == null) return;
             float rate = t.LowPower ? 0.5f : 1f;
             float T = (def.BuildTime - q[0].Progress) / rate;
-            if (T < 1.5f) v.Blink = (Time.time * 4f) % 2f < 1f ? 1.6f : 0.15f;
+            if (T < 1.5f) v.Blink = (Time.time * 4f + e.Id * 0.731f) % 2f < 1f ? 1.6f : 0.15f; // each factory blinks on its own phase
             if (T > 0.8f) v.Vents = 0;
             else if (v.Vents < 3 && T < 0.8f - v.Vents * 0.2f)
             {

@@ -328,23 +328,35 @@ namespace Pez.View
             Emit(S.Ring, g + Up * 0.05f, Vector3.zero, 2f + 1.5f * size, 0.6f, Alpha(Cream, 0.45f), Random.Range(0f, 360f));
         }
 
-        /// <summary>A damaged building smokes: one dark puff rising from its roof (Smoke system, lit, leaning with the wind).</summary>
-        public static void DamageSmoke(Vector3 pos, float size) =>
-            Emit(S.Smoke, pos, new Vector3(Random.Range(-0.12f, 0.12f), Random.Range(0.8f, 1.3f), Random.Range(-0.12f, 0.12f)),
-                Random.Range(0.6f, 0.9f) * size, Random.Range(3f, 4.2f), SmokeColor(0.95f));
+        static readonly Color32 SmoulderGrey = new Color32(128, 120, 110, 255);
+        static readonly Color32 BurnBlack = new Color32(30, 26, 24, 255);
+
+        /// <summary>
+        /// A damaged building smokes: one puff rising from its roof (Smoke system, lit, drifting downwind). `dark` 0 is a
+        /// smouldering building's thin grey wisp, 1 a raging fire's thick black smoke.
+        /// </summary>
+        public static void DamageSmoke(Vector3 pos, float size, float dark = 0.5f) =>
+            Emit(S.Smoke, pos + new Vector3(Random.Range(-0.08f, 0.08f), 0f, Random.Range(-0.08f, 0.08f)) * size,
+                new Vector3(Random.Range(-0.06f, 0.06f), Random.Range(0.8f, 1.2f) + dark * 0.5f, Random.Range(-0.06f, 0.06f)),
+                Random.Range(0.3f, 0.48f) * size * (0.8f + 0.5f * dark), Random.Range(3.2f, 4.6f),
+                Vary(Color32.Lerp(SmoulderGrey, BurnBlack, dark), 0.08f, (byte)(Mathf.Lerp(0.6f, 0.9f, dark) * 255f)));
+
+        /// <summary>One tongue of flame from a fire spot: rises, tapers and reddens in about half a second.</summary>
+        public static void Flame(Vector3 pos, float size) =>
+            Emit(S.Flame, pos + new Vector3(Random.Range(-0.1f, 0.1f), 0f, Random.Range(-0.1f, 0.1f)) * size,
+                new Vector3(Random.Range(-0.08f, 0.08f), Random.Range(0.7f, 1.2f), Random.Range(-0.08f, 0.08f)) * Mathf.Sqrt(size),
+                Random.Range(0.8f, 1.2f) * size, Random.Range(0.45f, 0.75f), White);
+
+        /// <summary>An ember lifting off a burning or smouldering roof and riding the wind.</summary>
+        public static void Ember(Vector3 pos) =>
+            Emit(S.Sparks, pos, FxSystems.Wind * 1.5f + new Vector3(Random.Range(-0.2f, 0.2f), Random.Range(1.6f, 2.6f), Random.Range(-0.2f, 0.2f)),
+                0.025f, Random.Range(0.8f, 1.4f), White);
+
+        /// <summary>The steady, flickering glow a fire (or a smoulder) casts on the roof and ground around it.</summary>
+        public static void FireGlow(Vector3 pos, float size, float alpha) =>
+            Emit(S.Pool, pos, Vector3.zero, size, 0.35f, Alpha(FirePool, alpha));
 
         static readonly Color32 FirePool = new Color32(255, 140, 50, 255);
-
-        /// <summary>A burning building: a lick of flame, now and then an ember, and the fire's light flickering on the
-        /// ground around it (a light pool, no per-pixel light: it reads in every view and stream).</summary>
-        public static void DamageFire(Vector3 pos, float size, Vector3 ground)
-        {
-            Emit(S.Fire, pos + Random.insideUnitSphere * 0.08f, new Vector3(Random.Range(-0.1f, 0.1f), Random.Range(0.7f, 1.3f), Random.Range(-0.1f, 0.1f)),
-                Random.Range(0.32f, 0.5f) * size, Random.Range(0.4f, 0.65f), White);
-            if (Random.value < 0.25f)
-                Emit(S.Sparks, pos, (Random.onUnitSphere * 0.6f + Up * 1.4f) * Random.Range(1f, 2f), 0.03f, Random.Range(0.5f, 0.9f), White);
-            Emit(S.Pool, new Vector3(ground.x, 0.05f, ground.z), Vector3.zero, Random.Range(2.2f, 2.8f) * size, 0.3f, Alpha(FirePool, Random.Range(0.25f, 0.4f)));
-        }
 
         /// <summary>A heavy gun's blast on the ground around the firer: a dust ring, and for artillery dust kicked outward.</summary>
         public static void GroundRing(Vector3 at, float size, float alpha, int puffs)
@@ -447,6 +459,50 @@ namespace Pez.View
             var f = go.AddComponent<FxLife>();
             f.Life = 0.22f; f.Mat = mat; f.Color = c;
             if (lamp) S.Lamp(b + Up * 0.3f, lampColor, 3f, 3f, 0.25f);
+        }
+    }
+
+    /// <summary>
+    /// A burning building's fire, frame by frame (WorldView.Damage, and FxDemo's "fires" bench): smoke, embers, the
+    /// flickering glow and the flames from its fixed spots, by smoulder (`smokeK`, 0..1) and fire (`fireK`, 0..1):
+    /// smouldering is smoke with no fire; standing fire is one or two flame spots; raging is three.
+    /// </summary>
+    public class BuildingFire
+    {
+        float smokeAcc, emberAcc, glowAcc;
+        readonly float[] flameAcc = new float[3];
+
+        public void Tick(Vector3[] spots, Vector3 center, float size, float smokeK, float k, int seed)
+        {
+            float dt = Time.deltaTime, now = Time.time;
+            int active = k > 0.45f ? 3 : 1;
+            // Smoke: thin grey wisps when smouldering, a thick black column when raging.
+            smokeAcc += dt * Mathf.Lerp(smokeK * 4f, 14f, k);
+            while (smokeAcc >= 1f) { smokeAcc -= 1f; Fx.DamageSmoke(spots[Random.Range(0, active)] + Vector3.up * 0.1f, size, k); }
+            // Embers: the odd one off a smoulder, a stream off a big fire.
+            emberAcc += dt * (0.4f * smokeK + 6f * k);
+            while (emberAcc >= 1f) { emberAcc -= 1f; Fx.Ember(spots[Random.Range(0, active)]); }
+            // The glow on the roof (and, once it's burning, the light on the ground), flickering steadily.
+            glowAcc += dt;
+            if (glowAcc >= 0.12f)
+            {
+                glowAcc = 0f;
+                float flick = 0.7f + 0.3f * Mathf.PerlinNoise(now * 3f, seed * 0.1f);
+                Fx.FireGlow(spots[0] + Vector3.up * 0.02f, (0.45f + 0.35f * k) * size, (0.2f * smokeK + 0.25f * k) * flick);
+                // Under each burning spot, a hot bed the flames rise from.
+                for (int i = 1; i < (k <= 0f ? 1 : 1 + (k > 0.45f ? 1 : 0) + (k > 0.8f ? 1 : 0)); i++)
+                    Fx.FireGlow(spots[i] + Vector3.up * 0.02f, (0.45f + 0.35f * k) * size, (0.2f + 0.25f * k) * flick);
+                if (k > 0.05f) Fx.FireGlow(new Vector3(center.x, 0.05f, center.z), (2.2f + 1.2f * k) * size, 0.35f * k * flick);
+            }
+            // Flames: one spot at first, then two, then three; each licks at its own rate.
+            if (k <= 0f) return;
+            int n = 1 + (k > 0.45f ? 1 : 0) + (k > 0.8f ? 1 : 0);
+            float rate = Mathf.Lerp(18f, 40f, k), fsize = Mathf.Lerp(0.34f, 0.6f, k) * size;
+            for (int i = 0; i < n; i++)
+            {
+                flameAcc[i] += dt * rate * (0.8f + 0.4f * Mathf.PerlinNoise(now * 2f + i * 3.1f, seed));
+                while (flameAcc[i] >= 1f) { flameAcc[i] -= 1f; Fx.Flame(spots[i], fsize); }
+            }
         }
     }
 }

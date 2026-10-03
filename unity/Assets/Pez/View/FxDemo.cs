@@ -27,6 +27,7 @@ namespace Pez.View
                     var d = new GameObject("FxDemo").AddComponent<FxDemo>();
                     d.storm = i + 1 < args.Length && args[i + 1] == "storm";
                     d.wrecks = i + 1 < args.Length && args[i + 1] == "wrecks";
+                    d.fires = i + 1 < args.Length && args[i + 1] == "fires";
                     DontDestroyOnLoad(d.gameObject);
                 }
         }
@@ -39,12 +40,51 @@ namespace Pez.View
             return new Plane(Vector3.up, Vector3.zero).Raycast(ray, out float t) ? ray.GetPoint(t) : Vector3.zero;
         }
 
+        // "-fxdemo fires": three stand-in buildings at the view centre, smouldering, burning and raging (BuildingFire).
+        bool fires;
+        Vector3[][] fireSpots;
+        BuildingFire[] fireStates;
+        Vector3[] fireCentres;
+        GameObject[] fireBoxes;
+
+        void Fires(Vector3 c)
+        {
+            // Follow the camera: if the view moved away, rebuild the bench at the new view centre.
+            if (fireSpots != null && (fireCentres[1] - c).magnitude > 6f)
+            {
+                foreach (var b in fireBoxes) Destroy(b);
+                fireSpots = null;
+            }
+            if (fireSpots == null)
+            {
+                fireBoxes = new GameObject[3];
+                fireSpots = new Vector3[3][]; fireStates = new BuildingFire[3]; fireCentres = new Vector3[3];
+                for (int b = 0; b < 3; b++)
+                {
+                    var centre = c + new Vector3((b - 1) * 3.2f, 0f, 0f);
+                    var box = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                    Destroy(box.GetComponent<Collider>());
+                    box.transform.position = centre + Vector3.up * 0.45f;
+                    box.transform.localScale = new Vector3(1.8f, 0.9f, 1.8f);
+                    box.GetComponent<Renderer>().sharedMaterial = Mats.Lit(new Color(0.85f, 0.82f, 0.76f));
+                    fireBoxes[b] = box;
+                    fireCentres[b] = centre;
+                    fireSpots[b] = new[] { centre + new Vector3(-0.4f, 0.92f, 0.3f), centre + new Vector3(0.45f, 0.92f, -0.2f), centre + new Vector3(0.05f, 0.92f, 0.5f) };
+                    fireStates[b] = new BuildingFire();
+                }
+            }
+            float[] k = { 0f, 0.35f, 1f };
+            for (int b = 0; b < 3; b++) fireStates[b].Tick(fireSpots[b], fireCentres[b], 1.4f, 1f, k[b], b + 1);
+        }
+
         void Update()
         {
+            if (fires) { Fires(Focus()); return; }
             if (Time.time < next) return;
             var c = Focus();
             var team = teams[step & 1];
             if (wrecks) { Wrecks(c); return; }
+            if (fires) { Fires(c); return; }
             if (storm)
             {
                 next = Time.time + 0.1f;
