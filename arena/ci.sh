@@ -16,6 +16,7 @@ set -u
 REPO=${0:A:h:h}
 CI="$REPO/ci-work"; WT="$CI/worktree"; LIVE="$CI/live"  # build-and-test checkout; deployed checkout (the gateway runs here)
 UNITY=/Applications/Unity/Hub/Editor/6000.3.25f1/Unity.app/Contents/MacOS/Unity
+# A fresh room 1's settings (POST /api/admin/restart): ore_scale, open, map_size, match_hours (the match clock; default 4).
 FRESH_JSON=${PEZZ_FRESH_JSON:-'{"ore_scale":0.3,"open":true}'}
 mkdir -p "$CI"
 log() { echo "$(date '+%F %T') $*"; }

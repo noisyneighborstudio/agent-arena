@@ -62,7 +62,7 @@ namespace Pez.Sim
             .Set("controllers", (c.Controllers ?? new string[0]).Cast<object>().ToList())
             .Set("orders", (c.Orders ?? new string[0]).Select(o => (object)(o ?? "")).ToList())
             .Set("open", c.Open).Set("max_players", c.MaxPlayers).Set("max_map_size", c.MaxMapSize)
-            .Set("ore_scale", SnapIO.X(c.OreScale)).Set("house_ais", c.HouseAIs).Set("house_resign_above", c.HouseResignAbove);
+            .Set("ore_scale", SnapIO.X(c.OreScale)).Set("house_ais", c.HouseAIs).Set("house_resign_above", c.HouseResignAbove).Set("match_hours", SnapIO.X(c.MatchHours));
 
         internal static GameConfig ReadConfig(D d)
         {
@@ -72,7 +72,7 @@ namespace Pez.Sim
             if (d.Has("controllers", out _)) c.Controllers = d.Arr("controllers").Select(x => x?.ToString() ?? "llm").ToArray();
             if (d.Has("orders", out _)) c.Orders = d.Arr("orders").Select(x => x?.ToString() ?? "").ToArray();
             d.Load("open", ref c.Open); d.Load("max_players", ref c.MaxPlayers); d.Load("max_map_size", ref c.MaxMapSize);
-            d.Load("ore_scale", ref c.OreScale); d.Load("house_ais", ref c.HouseAIs); d.Load("house_resign_above", ref c.HouseResignAbove);
+            d.Load("ore_scale", ref c.OreScale); d.Load("house_ais", ref c.HouseAIs); d.Load("house_resign_above", ref c.HouseResignAbove); d.Load("match_hours", ref c.MatchHours);
             return c;
         }
 
@@ -340,7 +340,7 @@ namespace Pez.Sim
         public string LastSaved;
 
         internal JObj SaveState() => new JObj()
-            .Set("speed", SnapIO.X(Speed)).Put("paused", Paused).Set("accumulator", SnapIO.X(accumulator)).Set("next_house_check", SnapIO.X(nextHouseCheck))
+            .Set("speed", SnapIO.X(Speed)).Put("paused", Paused).Set("accumulator", SnapIO.X(accumulator)).Set("next_house_check", SnapIO.X(nextHouseCheck)).Put("restart_in", restartIn, -1f)
             .Set("ais", ais.Select(a => (object)a.SaveState()).ToList());
 
         /// <summary>Replaces the running game with a snapshot (from Snapshot.Parse). Like Restart, views notice the new World.</summary>
@@ -354,6 +354,8 @@ namespace Pez.Sim
             Paused = false; g.Load("paused", ref Paused);
             accumulator = 0; g.Load("accumulator", ref accumulator);
             nextHouseCheck = 0; g.Load("next_house_check", ref nextHouseCheck);
+            restartIn = -1; g.Load("restart_in", ref restartIn);
+            world.NextMatchIn = restartIn;
             ais.Clear();
             if (g.Has("ais", out _))
                 foreach (var a in g.Objs("ais")) { var ai = SimpleAI.LoadState(a); if (ai != null && ai.Team < world.Teams.Count) ais.Add(ai); }
@@ -362,6 +364,10 @@ namespace Pez.Sim
                 foreach (var t in world.Teams.Where(t => t.Controller == "ai" && !t.Left && !t.Defeated)) ais.Add(new SimpleAI(t.Id, passive: cfg.Open));
             ResumedFrom = root.Str("saved_at");
             if (world.Map.BaseMissing) world.Map.RebuildBase(cfg.Seed, cfg.MapSize, cfg.OreScale);
+            // From before the match clock: it starts now. Sudden death comes at the configured hour, or (a game already
+            // past it, or nearly) half an hour from now, so the players get their warnings and time to act on them.
+            if (!root.Obj("world").ContainsKey("sudden_death_at") && cfg.MatchHours > 0 && !cfg.KitchenSink)
+                world.SuddenDeathAt = MathF.Max(cfg.MatchHours * 3600f, world.Time + World.LateClockGrace);
             World = world;
         }
     }
@@ -480,7 +486,7 @@ namespace Pez.Sim
                 .Put("open", Open).Set("max_players", MaxPlayers).Set("max_map_size", MaxMapSize).Set("grow_step", GrowStep)
                 .Set("safe_join_distance", SnapIO.X(SafeJoinDistance)).Set("protection_seconds", SnapIO.X(ProtectionSeconds)).Set("stall_grace", SnapIO.X(StallGrace))
                 .Set("next_id", nextId).Set("next_seq", nextSeq).Set("seat_counter", seatCounter).Set("rng", rng.State.ToString("x16"))
-                .Put("errors", Errors).Put("last_error", LastError).Put("arena_champion", ArenaChampion).Put("contested", contested).Put("regrown", Regrown)
+                .Put("errors", Errors).Put("last_error", LastError).Put("arena_champion", ArenaChampion).Put("contested", contested).Put("regrown", Regrown).Set("sudden_death_at", SnapIO.X(SuddenDeathAt))
                 .Set("event_counts", EventCounts.Aggregate(new JObj(), (j, kv) => j.Set(kv.Key, kv.Value)))
                 .Set("rate_snapshot", rateSnapshot.Select(kv => (object)new JObj().Set("team", kv.Key).Set("stock", SnapIO.Floats(kv.Value))).ToList())
                 .Set("air_warned", airWarned.Select(kv => (object)new List<object> { kv.Key.team, kv.Key.id, SnapIO.X(kv.Value) }).ToList())
@@ -514,7 +520,7 @@ namespace Pez.Sim
             d.Load("open", ref w.Open); d.Load("max_players", ref w.MaxPlayers); d.Load("max_map_size", ref w.MaxMapSize); d.Load("grow_step", ref w.GrowStep);
             d.Load("safe_join_distance", ref w.SafeJoinDistance); d.Load("protection_seconds", ref w.ProtectionSeconds); d.Load("stall_grace", ref w.StallGrace);
             d.Load("errors", ref w.Errors); d.Load("last_error", ref w.LastError);
-            d.Load("arena_champion", ref w.ArenaChampion); d.Load("contested", ref w.contested); d.Load("regrown", ref w.Regrown);
+            d.Load("arena_champion", ref w.ArenaChampion); d.Load("contested", ref w.contested); d.Load("regrown", ref w.Regrown); d.Load("sudden_death_at", ref w.SuddenDeathAt);
 
             foreach (var id in d.Objs("inventions")) { var inv = Snapshot.ReadInvention(id); if (inv != null) w.Inventions[inv.Key] = inv; }
 

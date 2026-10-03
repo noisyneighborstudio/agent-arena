@@ -304,7 +304,7 @@ async function tick() {
     const prev = frame;
     frame = await getJSON(`${BASE}/frame`);
     if (SPECTATOR) spectatorLive(frame.live);
-    showResults(frame.results, frame.rejoin);
+    showResults(frame.results, frame.rejoin, frame.match);
     noteVanished(prev, frame);
     if (frame.waiting) { document.getElementById("where").textContent = frame.waiting; setTimeout(tick, 2000); return; }
     if (!map || frame.version !== mapVersion || (frame.ore_version ?? -1) !== oreVersion) await loadMap();
@@ -404,7 +404,7 @@ function hud() {
   const you = frame.you;
   const playing = frame.teams.filter((t) => t.status === "playing").length;
   document.getElementById("clock").textContent = clock(frame.time_s);
-  document.getElementById("where").textContent = `${SPECTATOR || frame.results ? `Spectating${frame.delay_s ? ` · ${frame.delay_s}s delay` : ""}` : `${you?.flavor ?? ""}`} · ${playing} playing${map ? ` · ${map.w}×${map.h}` : ""}`;
+  document.getElementById("where").textContent = `${SPECTATOR || frame.results ? `Spectating${frame.delay_s ? ` · ${frame.delay_s}s delay` : ""}` : `${you?.flavor ?? ""}`} · ${playing} playing${map ? ` · ${map.w}×${map.h}` : ""}${matchClock(frame.match)}`;
   teamCards(you);
   alertBanner();
   sidePanel(you);
@@ -600,16 +600,37 @@ function select(id) {
 function deselect() { if (!selected) return; selected = 0; details = null; if (!SPECTATOR) fetch(`${BASE}/cam?follow=0`).catch(() => {}); }
 addEventListener("keydown", (e) => { if (e.key === "Escape") deselect(); });
 
+// The match clock in the top bar: what's next and when (sudden death, decay, the end on points).
+const hms = (s) => s >= 3600 ? `${Math.floor(s / 3600)}:${String(Math.floor(s % 3600 / 60)).padStart(2, "0")}:${String(Math.floor(s % 60)).padStart(2, "0")}` : clock(s);
+function matchClock(m) {
+  if (!m || !m.next_phase) return m?.phase === "ended" ? " · match over" : "";
+  const what = { sudden_death: "sudden death", decay: "decay", ended: "match ends" }[m.next_phase] ?? m.next_phase;
+  return ` · ${m.phase === "normal" ? "" : `${m.phase.replace("_", " ").toUpperCase()} · `}${what} in ${hms(m.next_phase_in_s)}`;
+}
+
+// The match ended on points: the winner, the scoreboard with what each point came from, and when the next match starts.
+function matchCard(m) {
+  const win = m.scores.find((s) => s.name === m.winner);
+  const rows = m.scores.map((s) => `<tr><td><span class="chip" style="background:${FLAVORS[s.team % 8]};width:10px;height:10px;display:inline-block"></span> ${esc(s.name)} · ${esc(s.player ?? "")}</td>` +
+    `<td class="mono">${s.points.territory.toFixed(0)}</td><td class="mono">${s.points.economy.toFixed(0)}</td><td class="mono">${s.points.kills.toFixed(0)}</td><td class="mono"><b>${s.score}</b></td></tr>`).join("");
+  return `<div class="head">Match over: time</div><div class="big">${win ? `<span class="chip" style="background:${FLAVORS[win.team % 8]};width:14px;height:14px"></span>${esc(win.name)} · ${esc(win.player ?? "")} wins on points` : "A draw on points"}</div>` +
+    `<table class="stats" style="margin:0 auto;border-spacing:10px 2px;text-align:right"><tr><th style="text-align:left">Team</th><th>Territory</th><th>Economy</th><th>Kills</th><th>Score</th></tr>${rows}</table>` +
+    `<div class="stats" style="margin-top:8px">Each column is a share of what all players still in held between them (100 each).${m.new_match_in_s != null ? ` A new match starts in ${clock(m.new_match_in_s)}: join again for a seat.` : ""}</div>`;
+}
+
 // After this player's game ends, the page keeps going as a delayed spectator view, with how it went.
-function showResults(r, rejoin) {
+function showResults(r, rejoin, m) {
   const el = document.getElementById("results");
-  if (!r) { el.style.display = "none"; return; }
+  const over = m && m.phase === "ended" && m.scores;
+  if (!r && !over) { el.style.display = "none"; return; }
+  if (!r) { el.style.display = "block"; el.innerHTML = matchCard(m); return; }
   if (liveMode) setMode(false);
   const outcome = { eliminated: "Eliminated", resigned: "Resigned (no way left to make progress)", left: "Left the arena", ended: "Game over for this seat" }[r.outcome] ?? r.outcome;
   el.style.display = "block";
   el.innerHTML = `<div class="head">Your game</div><div class="big">${r.flavor ? `<span class="chip" style="background:${FLAVORS[(r.team ?? 0) % 8]};width:14px;height:14px"></span>${esc(r.flavor)} · ${esc(r.player ?? "")} · ` : ""}${esc(outcome)}</div>` +
     (r.flavor ? `<div class="stats mono">${r.kills} kills · played ${clock(r.played_s)} · last seen ${clock(r.last_seen_s)}</div>` : `<div class="stats">${esc(r.note ?? "")}</div>`) +
     `<div class="stats" style="margin-top:8px">Now spectating the whole room${frame?.delay_s ? `, ${frame.delay_s}s behind` : ""}. ${esc(rejoin ?? "")}</div>` +
+    (over ? `<div style="margin-top:12px">${matchCard(m)}</div>` : "") +
     `<div style="margin-top:10px"><button onclick="startReplay()" style="height:36px;border:0;border-radius:8px;background:var(--cream);color:#101317;font-weight:600;padding:0 14px;cursor:pointer">Watch the replay</button></div>`;
 }
 

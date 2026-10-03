@@ -88,6 +88,51 @@ namespace Pez.Sim
             return fail != null ? $"{what}; {fail}" : what;
         }
 
+        static int Secs(float s) => (int)MathF.Ceiling(MathF.Max(0, s));
+        static string Hms(float s) { int n = Secs(s); return n >= 3600 ? $"{n / 3600}h{n % 3600 / 60:00}m" : $"{n / 60}:{n % 60:00}"; }
+
+        /// <summary>
+        /// The match clock as data: phase (normal, sudden_death, decay, ended; unlimited = no clock), seconds until the
+        /// match ends and until the next stage, the scoreboard with each component, and after the end the winner and
+        /// when the next match starts (open arenas).
+        /// </summary>
+        public static JObj MatchJson(World w)
+        {
+            var o = new JObj().Set("phase", World.PhaseName(w.Phase));
+            if (w.SuddenDeathAt <= 0) return o.Set("note", "no time limit");
+            o.Set("ends_in_s", Secs(w.MatchEndsAt - w.Time)).Set("sudden_death_at_s", Secs(w.SuddenDeathAt)).Set("decay_at_s", Secs(w.DecayAt)).Set("ends_at_s", Secs(w.MatchEndsAt));
+            var next = w.NextStage();
+            if (next.HasValue) o.Set("next_phase", next.Value.phase).Set("next_phase_in_s", Secs(next.Value.at - w.Time));
+            o.Set("scores", w.Scores().Select(s => (object)new JObj().Set("team", s.Team).Set("name", s.Name).Set("player", s.Player).Set("score", s.Score)
+                .Set("territory_tiles", s.Territory).Set("ore_mined", s.OreMined).Set("kill_value", s.KillValue)
+                .Set("points", new JObj().Set("territory", (float)Math.Round(s.TerritoryPoints, 1)).Set("economy", (float)Math.Round(s.EconomyPoints, 1)).Set("kills", (float)Math.Round(s.KillPoints, 1)))).ToList());
+            o.Set("how_scored", World.HowScored);
+            if (w.Phase == MatchPhase.Ended)
+            {
+                o.Set("winner", w.Winner >= 0 ? w.Teams[w.Winner].Name : null).Set("result", w.Winner >= 0 ? "won on points" : "draw on points");
+                if (w.NextMatchIn >= 0) o.Set("new_match_in_s", Secs(w.NextMatchIn));
+            }
+            return o;
+        }
+
+        /// <summary>The match clock in a sentence, for the text state and the join reply.</summary>
+        public static string MatchText(World w)
+        {
+            if (w.SuddenDeathAt <= 0) return "no time limit";
+            string scores = string.Join(", ", w.Scores().Select(s => $"{s.Name} {s.Score}"));
+            switch (w.Phase)
+            {
+                case MatchPhase.Normal:
+                    return $"normal play. Sudden death in {Hms(w.SuddenDeathAt - w.Time)} (ore stops regrowing), structures decay from 30 min after that, and the match ends on points 1 h after sudden death (in {Hms(w.MatchEndsAt - w.Time)}). Scores now: {scores}";
+                case MatchPhase.SuddenDeath:
+                    return $"SUDDEN DEATH: ore no longer regrows. Structures start to decay in {Hms(w.DecayAt - w.Time)}; the match ends on points in {Hms(w.MatchEndsAt - w.Time)}. Scores now: {scores}";
+                case MatchPhase.Decay:
+                    return $"DECAY: every structure loses 0.03% of its health a second (repair it; below 50% an engineer can take it). The match ends on points in {Hms(w.MatchEndsAt - w.Time)}. Scores now: {scores}";
+                default:
+                    return $"the match is over: {(w.Winner >= 0 ? $"{w.Teams[w.Winner].Name} won on points" : "a draw on points")} ({scores})" + (w.NextMatchIn >= 0 ? $". A new match starts in {Hms(w.NextMatchIn)}: join again then" : "");
+            }
+        }
+
         public static JObj TeamState(World w, int team, long sinceSeq = 0)
         {
             var t = w.Teams[team];
@@ -104,7 +149,8 @@ namespace Pez.Sim
                     .Set("power", $"{t.PowerProduced} produced / {t.PowerUsed} used" + (t.LowPower ? " (LOW POWER: production at half speed, build a power_plant)" : ""))
                     .Set("start", $"{R(t.StartPos.X)},{R(t.StartPos.Y)}")
                     .Set("protection", w.IsProtected(team) ? $"newcomer protection for {(int)(t.ProtectedUntil - w.Time)}s more: you can't be attacked, and you can't attack" : "none"))
-                .Set("map", $"{w.Map.W}x{w.Map.H} tiles; x grows east, y grows north. Spectators see sectors A-H (west to east) by 1-8 (north to south), {w.Map.W / 8} tiles each; mention them in say messages if you like");
+                .Set("map", $"{w.Map.W}x{w.Map.H} tiles; x grows east, y grows north. Spectators see sectors A-H (west to east) by 1-8 (north to south), {w.Map.W / 8} tiles each; mention them in say messages if you like")
+                .Set("match", MatchText(w));
 
             // Alerts go near the top: they're what a commander should look at first.
             var active = w.Alerts.Active(w, team).ToList();
@@ -401,8 +447,9 @@ namespace Pez.Sim
         /// 14: salvage from kills (a quarter of what an enemy destroys is left as ore; SALVAGE ON THE FIELD alert).
         /// 15: mined surface fields slowly regrow, fastest in the middle of the map.
         /// 16: construction_truck (factory): deploys into a command center; a team with one isn't out.
+        /// 17: the match clock: sudden death at hour 4 (regrowth stops), decay 30 min later, the match ends on points at hour 5.
         /// </summary>
-        public const int RulesVersion = 16;
+        public const int RulesVersion = 17;
 
         public static JObj Rules()
         {
@@ -419,8 +466,9 @@ namespace Pez.Sim
                 "Specialists: engineers capture enemy buildings below 50% HP; snipers delete infantry from range 9; commandos C4 buildings. APCs and transport choppers carry infantry (load/unload). Mine layers plant hidden mines. Flak tracks are mobile anti-air. Mammoth tanks are super-heavy and self-repair to 50%. Recon drones are cheap flying scouts.",
                 "Repair trucks (factory) fix vehicles, aircraft and structures for steel; medics (barracks) heal infantry for free. Both auto-tend anything damaged within 6 tiles when idle, so park them behind your army.",
                 "Aircraft ignore terrain. Only rockets, lasers, SAMs, gunships (and weakly, rifles/mg) can hit them. Stealth bombers are invisible except within 3 tiles of your units or inside your radar dome range.",
-                "Regrowth: mined surface fields slowly grow back toward what they started with: from ore a field still has (spreading to its neighbouring tiles), or from its root (the richest tile) once it's mined to nothing. Fastest in the middle of the map (a mined-bare map earns back a few ore/s, most of it in the middle), barely at all in the corners. Nothing regrows under a structure or on a tile a truck is working. Deep mines (4 ore/s each) remain the bigger income: regrowth is the long tail that makes holding the middle pay.",
+                "Regrowth: mined surface fields slowly grow back toward what they started with: from ore a field still has (spreading to its neighbouring tiles), or from its root (the richest tile) once it's mined to nothing. Fastest in the middle of the map (a mined-bare map earns back a few ore/s, most of it in the middle), barely at all in the corners. Nothing regrows under a structure or on a tile a truck is working, and it stops at sudden death (the match clock). Deep mines (4 ore/s each) remain the bigger income: regrowth is the long tail that makes holding the middle pay.",
                 "Salvage: anything an enemy destroys (with a unit, turret, mine, or a fire it set) leaves about a quarter of its cost as ore on and around the spot (infantry a tenth; a mining truck also spills its load; circuits, lenses and plasma count double, as their raw ore). Anyone's mining trucks can collect it, so the side that holds the ground after a fight profits. Selling, crashes, resignations and your own losses to nobody leave nothing. A SALVAGE ON THE FIELD alert (one per area, with the running total) tells both sides where it lies; stats show kill_value (what you destroyed) and salvage_left.",
+                "Match clock: a match lasts hours, not forever. At sudden death (hour 4 of game time by default; 'match' in state says when) ore stops regrowing. 30 minutes later every structure starts to decay (0.03% of its health a second: repair trucks keep it up, and anything below 50% can be captured by an engineer). 60 minutes after sudden death the match ends on points: each team's share of the territory held (tiles within 6 of its finished structures), of the ore mined and of the value destroyed, 100 points each; the most points wins. Each stage is announced 10 minutes and 1 minute ahead (arena chat and a MATCH CLOCK alert). In an open arena the results stay up for 3 minutes, then a new match starts on a new map: join again for a seat.",
                 "Construction truck (factory, 1500 steel + 200 circuits): drive it anywhere and 'deploy' it into a new command_center where it stands (open ground, no ore, a clear truck lane, as for an outpost). It's insurance: a team that still has one isn't knocked out when its last structure falls, and can rebuild somewhere safe (with an empty stockpile, since the last command center's spills). Or deploy it to expand: every command center builds, trains trucks, takes ore and trickles 1 iron_ore/s.",
                 "Protect your command center: when a team's LAST command center is destroyed, its entire stockpile spills out as salvage ore on the footprint, and anyone's trucks can mine it (first come, first served). The team plays on with whatever else it has.",
                 "Infantry walk (0.8-1.05 tiles/s); every vehicle is faster. Use APCs, transport choppers or together:true to keep mixed groups together.",

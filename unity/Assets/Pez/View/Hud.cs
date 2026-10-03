@@ -421,6 +421,17 @@ namespace Pez.View
         }
 
         static string FormatTime(float s) => $"{(int)s / 60:00}:{(int)s % 60:00}";
+        static string FormatLong(float s) { int n = Mathf.CeilToInt(Mathf.Max(0, s)); return n >= 3600 ? $"{n / 3600}:{n % 3600 / 60:00}:{n % 60:00}" : $"{n / 60}:{n % 60:00}"; }
+
+        /// <summary>The match clock for the top bar: the stage now (past normal play) and what comes next.</summary>
+        string MatchClock()
+        {
+            var next = W.NextStage();
+            if (next == null) return W.Phase == MatchPhase.Ended ? " · match over" : "";
+            string what = next.Value.phase switch { "sudden_death" => "sudden death", "decay" => "decay", _ => "match ends" };
+            string now = W.Phase == MatchPhase.SuddenDeath ? " · SUDDEN DEATH" : W.Phase == MatchPhase.Decay ? " · DECAY" : "";
+            return $"{now} · {what} in {FormatLong(next.Value.at - W.Time)}";
+        }
         static string Num(int n) => n.ToString("N0", System.Globalization.CultureInfo.InvariantCulture);
         string Flavor(int t) => t >= 0 && t < W.Teams.Count ? W.Teams[t].Name : "Server";
         string Player(int t) => t >= 0 && t < W.Teams.Count ? (W.Teams[t].PlayerName ?? ControllerName(W.Teams[t].Controller)) : "Arena";
@@ -435,7 +446,7 @@ namespace Pez.View
             const float y = 16, h = 60;
             // Brand: PEZ | clock, map and players.
             string clock = FormatTime(W.Time);
-            string where = $"{MapName} · {W.ActivePlayers} player{(W.ActivePlayers == 1 ? "" : "s")} · {W.Map.W}×{W.Map.H}";
+            string where = $"{MapName} · {W.ActivePlayers} player{(W.ActivePlayers == 1 ? "" : "s")} · {W.Map.W}×{W.Map.H}{MatchClock()}";
             float wPez = Spaced(0, 0, 0, "PEZ", fHeadBold, 24, Ink, 0.04f, false);
             float bw = 20 + wPez + 16 + 1 + 16 + TextW(clock, fMonoMed, 22) + 16 + TextW(where, fSans, 14) + 20;
             var brand = new Rect(Edge, y, bw, h);
@@ -1404,6 +1415,12 @@ namespace Pez.View
         {
             string msg = W.Winner >= 0 ? $"{W.Teams[W.Winner].Name.ToUpperInvariant()} WINS" : "DRAW";
             string who = W.Winner >= 0 ? Player(W.Winner) : "Nobody left standing";
+            if (W.MatchOver)
+            {
+                // Time ran out: won on points. The scoreboard, and (open arena) when the next match starts.
+                who = (W.Winner >= 0 ? $"{Player(W.Winner)} · on points: " : "On points: ") + string.Join(" · ", W.Scores().Select(s => $"{s.Name} {s.Score}"));
+                if (Runner.Game.RestartIn >= 0) who += $" · new match in {FormatLong(Runner.Game.RestartIn)}";
+            }
             float tw = Spaced(0, 0, 0, msg, fHeadBold, 44, Ink, 0.04f, false);
             float w = Mathf.Max(520, tw + 120), h = 210;
             var r = new Rect(SW / 2 - w / 2, SH / 2 - h / 2, w, h);

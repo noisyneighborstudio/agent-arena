@@ -27,6 +27,7 @@ namespace Pez.View
             public float StartSquat, Deploy;
             public bool Rammed;
             public int OreTint = -1;     // deep mine: the ore its tube is tinted to; mining truck: the ore its load shows
+            public float DustNext;       // decaying structure: when its next grit falls
             public int Born;             // frame the view was made (deploys pair a unit with the structure it became)
             public float BoardT;         // boarding: 0..1 while the passenger shrinks into its carrier
             public Bars Bars;            // world-space health and fuel bars (seen by every camera)
@@ -546,6 +547,12 @@ namespace Pez.View
                 if (e.IsComplete || v.SmokeK > 0f) Damage(v);
                 Construction(v);
                 if (e.Def.Key == "deep_mine") DeepMine(v);
+                if (World.Decaying(e) && Time.time >= v.DustNext)
+                {
+                    // The match's decay stage: grit crumbles off the roof every few seconds.
+                    Fx.DecayDust(rig.Root.position, Mathf.Max(e.Def.SizeX, e.Def.SizeY));
+                    v.DustNext = Time.time + Random.Range(2.5f, 5f);
+                }
                 if (rig.Turret != null) Aim(v);
                 if (v.DoorTimer > 0 && (v.DoorTimer -= Time.deltaTime) <= 0) rig.Motion.SetDoorOpen(false);
                 if (v.Dock != null)

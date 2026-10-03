@@ -12,7 +12,7 @@ namespace Pez.Headless
     /// pez-headless [--port 7777] [--controllers llm,ai] [--seed N] [--map-size 80] [--speed 1] [--selftest]
     ///              [--open [--max-players 8] [--max-map-size 320] [--house-ais 1] [--house-resign-above 5]]
     ///              open arena: outside agents join through the gateway; scripted "house" seats are passive and make room
-    ///              [--resume | --fresh] [--snapshot ~/.config/pezz/rooms/game-PORT.json] [--save-interval 30]
+    ///              [--resume | --fresh] [--snapshot ~/.config/pezz/rooms/game-PORT.json] [--save-interval 30] [--match-hours 4]
     ///              the game is saved every 30 game-seconds, soon after a join, on POST /api/admin/save and on SIGTERM/SIGINT;
     ///              --resume restores the saved game at startup (an --open arena does by default; --fresh starts over)
     /// Runs the game with no graphics. LLMs connect over the HTTP API (usually via the MCP server).
@@ -35,6 +35,7 @@ namespace Pez.Headless
                 HouseResignAbove = int.Parse(Arg("--house-resign-above", "5")),
                 Speed = float.Parse(Arg("--speed", "1"), System.Globalization.CultureInfo.InvariantCulture),
                 Controllers = Arg("--controllers", "llm,ai").Split(','),
+                MatchHours = float.Parse(Arg("--match-hours", "4"), System.Globalization.CultureInfo.InvariantCulture),
             };
             World.Profile = args.Contains("--profile");
             World.RegrowthDisabled = args.Contains("--no-regrowth"); // balance baselines
@@ -56,6 +57,7 @@ namespace Pez.Headless
             };
             bool resumed = saver.TryResume(game, api, args.Contains("--resume"), cfg.Open, args.Contains("--fresh"));
             api.OnRestart = () => saver.Forget(game);
+            game.Restarted = () => saver.Forget(game); // the next match, after one ends on points (open arenas)
             api.OnSave = () => saver.Save(game, api, "requested");
             api.Start();
             Console.WriteLine(resumed

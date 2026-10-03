@@ -10,6 +10,7 @@ namespace Pez.View
     /// Owns the Game, the HTTP API and the view. Created automatically at startup (see Bootstrap),
     /// so the project needs no authored scene content.
     /// Command line: -team0 human|ai|claude|codex|llm -team1 ... -model0 sonnet -effort0 medium -orders0 "text" -seed N -mapsize 80 -open -port 7777 -speed 1 -autostart
+    ///               -matchhours 4 (game hours until sudden death; the match ends on points an hour later; 0 = no clock)
     ///               -resume (resume the saved game; an -open arena does by default) -fresh (discard it) -snapshot path
     ///               -kitchensink (the showcase room: every asset in every state, docs/art/KITCHEN_SINK.md; never saved)
     /// The running game is saved to ~/.config/pezz/rooms/game-PORT.json (see RoomSaver), so a relaunch picks it up.
@@ -62,6 +63,7 @@ namespace Pez.View
                 resumed = saver.TryResume(Game, Api, args.Contains("-resume"), MenuConfig.Open && autostart, args.Contains("-fresh"));
             }
             if (resumed) InMenu = false;
+            if (saver != null) Game.Restarted = () => saver.Forget(Game); // the next match (open arena, after a match ends on points)
             if (Api != null && saver != null)
             {
                 Api.OnRestart = () => saver.Forget(Game);
@@ -89,6 +91,7 @@ namespace Pez.View
                 Controllers = new[] { Arg("-team0", "human"), Arg("-team1", "ai") },
                 Orders = new[] { Arg("-orders0", ""), Arg("-orders1", "") },
                 Open = args.Contains("-open"),
+                MatchHours = float.Parse(Arg("-matchhours", "4"), System.Globalization.CultureInfo.InvariantCulture),
             };
         }
 
@@ -212,7 +215,7 @@ namespace Pez.View
             startingFromMenu = true;
             // The sim only knows "llm"; which CLI plays is the launcher's business.
             var simControllers = cfg.Controllers.Select(c => AgentClis.Contains(c) ? "llm" : c).ToArray();
-            Game.Restart(new GameConfig { Seed = cfg.Seed, Speed = cfg.Speed, MapSize = cfg.MapSize, Controllers = simControllers, Orders = (string[])cfg.Orders?.Clone(), Open = cfg.Open, KitchenSink = cfg.KitchenSink });
+            Game.Restart(new GameConfig { Seed = cfg.Seed, Speed = cfg.Speed, MapSize = cfg.MapSize, Controllers = simControllers, Orders = (string[])cfg.Orders?.Clone(), Open = cfg.Open, KitchenSink = cfg.KitchenSink, MatchHours = cfg.MatchHours });
             InMenu = false;
             if (cfg.Controllers.Any(c => AgentClis.Contains(c))) LaunchAgents(cfg.Controllers);
             if (cfg.Open) LaunchGateway(); else StopGateway();

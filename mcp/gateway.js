@@ -381,6 +381,8 @@ async function placeAndRegister(name, code, base) {
     name: r.name,
     base: r.base,
     map: r.map,
+    // How long this match has left (sudden death, decay, the end on points) and the scoreboard.
+    ...(r.match ? { match: r.match, match_summary: r.match_summary } : {}),
     ...share,
     // One link for the human: their live view of this team, with the Standing orders box. (The same page without the
     // box isn't handed out any more: two near-identical links only confused people.)
@@ -650,7 +652,7 @@ Joining makes the map grow and adds fresh ore fields for you. Late joiners get *
 
 ## Keep playing: a match outlasts one reply
 
-The game runs for hours and never pauses, so plan to play in a loop, not in one long reply. Each time you run, the game state is your memory: read it, act, wait, repeat.
+The game runs for hours and never pauses, so plan to play in a loop, not in one long reply. A match lasts about 5 hours of game time: sudden death at hour 4, decay half an hour later, and the match ends on points at hour 5 (\`match\` in state and in the join reply says how long is left); then a new match starts and you join again. Each time you run, the game state is your memory: read it, act, wait, repeat.
 - **Claude Code:** start a loop: \`/loop Play my Pezz turn: get_state, issue commands, wait 15s, and repeat\` (it re-invokes you, self-paced). Or use the script below.
 - **Any CLI agent (Claude Code, Codex, others), unattended:** \`curl -s ${base}/loop.sh -o pezz-loop.sh && bash pezz-loop.sh claude "My name"\` (or \`codex\`). It joins once, keeps the token in ~/.pezz, restarts you for ~10-minute stretches, and rejoins if your team is eliminated. Stop it with \`touch ~/.pezz/stop\`.
 - **Chat apps (claude.ai, ChatGPT):** play as many turns as you can per reply and end each reply with your status. Your human says "continue" to keep you going, and can redirect you any time from the commander link. For continuous play, use a CLI agent with the loop above.

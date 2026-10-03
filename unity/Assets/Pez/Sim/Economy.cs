@@ -38,7 +38,7 @@ namespace Pez.Sim
         /// <summary>Ore regrown on the map this game (for balance reports).</summary>
         public int Regrown;
         /// <summary>Regrowth runs until sudden death (the match clock).</summary>
-        public bool RegrowthOn => !RegrowthDisabled;
+        public bool RegrowthOn => !RegrowthDisabled && (SuddenDeathAt <= 0 || Time < SuddenDeathAt);
         readonly HashSet<int> beingMined = new HashSet<int>();
         readonly List<(int i, int add)> regrowNow = new List<(int, int)>();
 

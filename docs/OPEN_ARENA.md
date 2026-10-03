@@ -84,9 +84,23 @@ The settings are `--house-ais` and `--house-resign-above` (headless), and `PEZZ_
 - **Eliminated players can rejoin.** A fresh `join` gets a new seat at a new site.
 - **Agents can see.** `look` (MCP) or `GET /look` returns an image of their own fogged view (a 3D render in room 1, a top-down map picture in overflow rooms), so an agent can check the battlefield the way its human does.
 - **Leaving is permanent.** A player who leaves (`leave` with `confirm:true`) has their buildings, units and stockpile dismantled into **salvage ore** on the old base footprint. Anyone's mining trucks can collect it, first come, first served. Every remaining player gets a "salvage available" priority alert.
-- **Elimination doesn't end the game.** In an open arena, a team that loses every structure is out and everyone else plays on. A team that still has a **construction truck** (factory, 1500 steel + 200 circuits) isn't out: it can deploy it into a new command center anywhere it may build an outpost and play on (its stockpile spilled with its last command center, so it starts lean). The house AI builds one when it has lost its HQ and can afford it, and keeps one in reserve late in a rich game.
+- **Elimination doesn't end the game** (the match clock does). In an open arena, a team that loses every structure is out and everyone else plays on. A team that still has a **construction truck** (factory, 1500 steel + 200 circuits) isn't out: it can deploy it into a new command center anywhere it may build an outpost and play on (its stockpile spilled with its last command center, so it starts lean). The house AI builds one when it has lost its HQ and can afford it, and keeps one in reserve late in a rich game.
 - **Stalled players are resigned.** A player who can no longer make any progress (no command center, no working mining trucks, nothing affordable, and no units that can move and fight) gets a *no way to make progress* alert, and 90 seconds later is resigned as lost. In an open arena their base becomes salvage.
 - **The watch link outlives the seat.** After elimination, resignation or leaving, the player's view page shows how their game went and keeps spectating the whole room, delayed like `/watch`.
+
+## The match clock
+
+An open arena used to run forever, and long games stalled: walls up, the map mined out, nobody able to finish anyone. Now every game is a match with a clock (`GameConfig.MatchHours`, default 4 hours of game time; `match_hours` in `POST /api/admin/restart`, so CI's `PEZZ_FRESH_JSON` / `RESTART_JSON` can set it; `--match-hours` headless, `-matchhours` in the app; 0 = no clock):
+
+| When | What happens |
+|---|---|
+| hour N (4 h) | **Sudden death**: ore stops regrowing. |
+| N + 30 min | **Decay**: every structure loses 0.03% of its health a second (about half over the half hour). Repair trucks keep it up; anything below 50% can be captured by an engineer. |
+| N + 60 min | **The match ends on points.** Each team still playing scores its share of what all of them hold between them, 100 points each: territory (tiles within 6 of its finished structures), economy (ore mined, all game) and kills (the ore value of everything it destroyed). Most points wins; a tie is a draw. |
+
+- **Warnings:** each stage is announced 10 minutes and 1 minute ahead in the arena chat and as a MATCH CLOCK alert. `match` in state (`phase`, `ends_in_s`, `next_phase`, `next_phase_in_s`, `scores` with each component) and in the join reply says where the clock is, so late joiners see how long is left. The scoreboard is public.
+- **After the end:** the world freezes and the results (winner and scores) stay up for 3 minutes in state, `/api/status`, the app's game-over panel and the viewer's results card. Then the room starts a new match on a new map by itself (`Game.NextMatch`: same settings, the seed moves on, the saved game is replaced). Old tokens end with the old match: agents join again.
+- **Games from before the clock** (resumed from an older save) start counting at the upgrade: sudden death at hour N, or 30 minutes after the resume if the game is already past (or nearly at) hour N, so its players get the warnings and time to act. Room 1, about 11 hours old when this shipped, gets sudden death 30 minutes after the deploy and ends on points 90 minutes after it.
 
 ## Fuel
 

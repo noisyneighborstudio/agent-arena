@@ -232,7 +232,7 @@ namespace Pez.Api
                 case "":
                 case "/api":
                     contentType = "text/plain";
-                    return "Pezz RTS control API\n\nGET  /api/rules\nGET  /api/state?team=N[&since=SEQ]\nGET  /api/map?team=N\nGET  /api/alerts?team=N[&since=SEQ&min=medium|high|critical]\nGET  /api/wait?team=N&seconds=S[&since=ALERT_SEQ&events_since=SEQ&min=high|critical|none]  (returns early on a new priority alert)\nPOST /api/command?team=N   body: {\"commands\":[...]} | [...] | {...}\nPOST /api/join?team=N      body: {\"name\":\"Claude\"}\nGET  /api/status\nPOST /api/admin/restart    body: {\"seed\":1,\"map_size\":112,\"controllers\":[\"llm\",\"llm\"],\"speed\":1}\nPOST /api/admin/speed      body: {\"speed\":0.5}\nPOST /api/admin/save       (saves the game now; a restarted host resumes it)\nGET  /api/admin/inventions (every agent-invented unit in this game, with its record)\nPOST /api/admin/orders?team=N  body: {\"text\":\"standing orders for that team's commander\"}\n\n" + Commands.Help;
+                    return "Pezz RTS control API\n\nGET  /api/rules\nGET  /api/state?team=N[&since=SEQ]\nGET  /api/map?team=N\nGET  /api/alerts?team=N[&since=SEQ&min=medium|high|critical]\nGET  /api/wait?team=N&seconds=S[&since=ALERT_SEQ&events_since=SEQ&min=high|critical|none]  (returns early on a new priority alert)\nPOST /api/command?team=N   body: {\"commands\":[...]} | [...] | {...}\nPOST /api/join?team=N      body: {\"name\":\"Claude\"}\nGET  /api/status\nPOST /api/admin/restart    body: {\"seed\":1,\"map_size\":112,\"controllers\":[\"llm\",\"llm\"],\"speed\":1,\"match_hours\":4}\nPOST /api/admin/speed      body: {\"speed\":0.5}\nPOST /api/admin/save       (saves the game now; a restarted host resumes it)\nGET  /api/admin/inventions (every agent-invented unit in this game, with its record)\nPOST /api/admin/orders?team=N  body: {\"text\":\"standing orders for that team's commander\"}\n\n" + Commands.Help;
                 case "/api/rules":
                     return Json.Write(StateView.Rules());
                 case "/api/state":
@@ -295,7 +295,9 @@ namespace Pez.Api
                         return Json.Write(new JObj().Set("ok", true).Set("token", token).Set("view_token", view)
                             .Set("team", team.Id).Set("flavor", team.Name).Set("name", name)
                             .Set("base", $"{(int)team.StartPos.X},{(int)team.StartPos.Y} sector {StateView.Sector(w.Map, team.StartPos)}")
-                            .Set("map", $"{w.Map.W}x{w.Map.H}"));
+                            .Set("map", $"{w.Map.W}x{w.Map.H}")
+                            // Late joiners: how long this match has left, and what comes next.
+                            .Set("match", StateView.MatchJson(w)).Set("match_summary", StateView.MatchText(w)));
                     }
                 case "/api/leave":
                     {
@@ -310,6 +312,7 @@ namespace Pez.Api
                         .Set("open", w.Open).Set("rules_version", StateView.RulesVersion).Set("map", $"{w.Map.W}x{w.Map.H}").Set("max_map", w.MaxMapSize)
                         .Set("players", w.ActivePlayers).Set("max_players", w.MaxPlayers).Set("time_s", (float)Math.Round(w.Time, 1))
                         .Set("champion", w.ArenaChampion) // set while one team has cleared the arena (null otherwise)
+                        .Set("match", StateView.MatchJson(w))
                         .Set("teams", w.Teams.Select(t => new JObj().Set("flavor", t.Name).Set("player", t.PlayerName ?? t.Controller)
                             .Set("status", t.Resigned ? "resigned" : t.Left ? "left" : t.Defeated ? "eliminated" : "playing").Set("house", t.House)
                             .Set("structures", w.Owned(t.Id).Count(e => e.IsStructure)).Set("kills", t.Stats.Kills)
@@ -390,6 +393,7 @@ namespace Pez.Api
                             MaxPlayers = game.Config.MaxPlayers, MaxMapSize = game.Config.MaxMapSize,
                             HouseAIs = game.Config.HouseAIs, HouseResignAbove = game.Config.HouseResignAbove,
                             KitchenSink = game.Config.KitchenSink, // the showcase room restarts as the showcase
+                            MatchHours = d?.Num("match_hours", game.Config.MatchHours) ?? game.Config.MatchHours,
                         };
                         if (d != null && d.TryGetValue("controllers", out var cs) && cs is List<object> cl2) cfg.Controllers = cl2.Select(x => x.ToString()).ToArray();
                         else cfg.Controllers = game.Config.Controllers;
@@ -582,6 +586,7 @@ namespace Pez.Api
                 .Set("chat", w.Events.Where(e => e.Type == "chat").Reverse().Take(8).Reverse()
                     .Select(e => $"{(e.Team >= 0 ? w.Teams[e.Team].Name : "arena")}: {e.Text}").ToList());
             if (shroud != null) o.Set("shroud", shroud);
+            o.Set("match", StateView.MatchJson(w)); // the clock, the scoreboard, and after the end the results
             // Deep deposits: a player sees the ones their surveyors found; spectators see all. [x, y, type, % left]
             o.Set("deposits", w.Map.Deep.Where(d => team < 0 || w.Teams[team].Surveyed.Contains(d.Id))
                 .Select(d => (object)new List<object> { Math.Round(d.Pos.X, 1), Math.Round(d.Pos.Y, 1), d.Type, d.Initial > 0 ? (int)(100 * d.Amount / d.Initial) : 0 }).ToList());
@@ -612,6 +617,7 @@ namespace Pez.Api
                 .Set("tick", w.Tick).Set("time_s", (float)Math.Round(w.Time, 1))
                 .Set("speed", game.Speed).Set("paused", game.Paused).Set("map_size", w.Map.W)
                 .Set("game_over", w.GameOver).Set("winner", w.Winner)
+                .Set("match", StateView.MatchJson(w))
                 .Set("resumed_from", game.ResumedFrom).Set("last_saved", game.LastSaved)
                 .Set("sim_errors", w.Errors).Set("last_sim_error", w.LastError).Set("render_fps", MathF.Round(game.RenderFps, 1))
                 .Set("teams", w.Teams.Select(t => new JObj()

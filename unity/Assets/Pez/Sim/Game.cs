@@ -24,6 +24,8 @@ namespace Pez.Sim
         public int HouseResignAbove = 5;
         /// <summary>The kitchen sink: a showcase room holding every asset in every state (KitchenSink.cs), not a game.</summary>
         public bool KitchenSink;
+        /// <summary>Game hours until sudden death (the match clock, Match.cs); the match ends on points an hour after. 0 = no clock.</summary>
+        public float MatchHours = 4f;
     }
 
     /// <summary>Owns a World plus who controls each team, and advances it in real time.</summary>
@@ -59,8 +61,10 @@ namespace Pez.Sim
                 }
                 if (cfg.Orders != null && i < cfg.Orders.Length && !string.IsNullOrWhiteSpace(cfg.Orders[i])) World.SetOrders(i, cfg.Orders[i]);
             }
+            if (!cfg.KitchenSink && cfg.MatchHours > 0) World.SuddenDeathAt = cfg.MatchHours * 3600f;
             accumulator = 0;
             nextHouseCheck = 0;
+            restartIn = -1;
         }
 
         /// <summary>
@@ -97,7 +101,8 @@ namespace Pez.Sim
         /// <summary>Advance by real elapsed seconds. Returns ticks stepped.</summary>
         public int Advance(float realDt)
         {
-            if (Paused || World.GameOver) return 0;
+            if (Paused) return 0;
+            if (World.GameOver) { ResultsCountdown(realDt); return 0; }
             accumulator += realDt * Speed;
             int steps = 0;
             // Generous catch-up so a throttled frame rate (window hidden, App Nap) doesn't slow the game clock.

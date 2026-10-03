@@ -88,6 +88,8 @@ namespace Pez.Sim
         }
 
         public readonly List<District> Districts = new List<District>();
+        /// <summary>Structures shown decaying, as in the match clock's last half hour (World.Decaying).</summary>
+        public readonly HashSet<int> Decaying = new HashSet<int>();
 
         /// <summary>What the states on show mean, for the viewer's legend.</summary>
         public static readonly (string term, string meaning)[] Legend =
@@ -845,7 +847,7 @@ namespace Pez.Sim
 
         void Endgame()
         {
-            Begin("endgame", "Endgame", "The long-game rules: the construction truck rebuilding a base.", 94, 62, 56, 14);
+            Begin("endgame", "Endgame", "The long-game rules: the construction truck rebuilding a base, and a building decaying in the match's last half hour.", 94, 62, 56, 14);
             // The construction truck rolls a few tiles, stops and deploys into a command center; 14 s later the command
             // center is cleared and a new truck rolls up.
             var from = P(3, 4); var to = P(9, 4.5f);
@@ -862,6 +864,13 @@ namespace Pez.Sim
                 else if (truck != null && !truck.Dead && truck.Order == Order.Idle && w.Deploy(truck) != null) { w.Remove(truck); truck = null; again = T + 2f; }
             });
             Item("Construction truck deploying", "drives up, stops and deploys into a command center (the truck sinks as the base rises); loops", 7, 4.5f, 9);
+
+            // Decay (the match clock's last half hour): a barracks crumbling, grit falling off it, its health running down
+            // from full to 45% over a minute (smoke starts below 50%) and back.
+            var decaying = Bldg(Red, "barracks", 18, 4);
+            Decaying.Add(decaying.Id);
+            holds.Add(() => decaying.Hp = decaying.Def.MaxHp * (1f - 0.55f * (T % 60f) / 60f));
+            Item("Decaying building", "the match's last half hour: grit crumbles off the roof, its health runs down (repair trucks keep it up); loops every 60 s", 18, 4);
         }
 
         static string Pretty(string key) => key.Contains(':') ? key : char.ToUpperInvariant(key[0]) + key.Substring(1).Replace('_', ' ');

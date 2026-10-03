@@ -21,6 +21,91 @@ namespace Pez.Headless
             SalvageFromKills();
             OreRegrowth();
             ConstructionTruck();
+            MatchClock();
+        }
+
+        static Dictionary<string, object> D(JObj o) => (Dictionary<string, object>)Json.Parse(Json.Write(o));
+
+        static void MatchClock()
+        {
+            // A short match: sudden death at 15 minutes, decay at 45, the end at 75.
+            var g = new Game(new GameConfig { Seed = 3, MapSize = 80, Open = true, MatchHours = 0.25f, Controllers = new[] { "llm", "llm" } });
+            var w = g.World;
+            Check(w.SuddenDeathAt == 900 && w.Phase == MatchPhase.Normal && D(StateView.MatchJson(w)).Str("phase") == "normal" && (int)D(StateView.MatchJson(w)).Num("ends_in_s") == 4500,
+                  $"a new game has a match clock: sudden death at hour N (here 0.25 h), the end an hour later ({StateView.MatchText(w)})");
+            var t0 = w.Teams[0];
+            t0.Stats.KillValue = 500; t0.Stats.OreMined = 900; w.Teams[1].Stats.OreMined = 100;
+            Step(g, 301);
+            int warned = w.Events.Count(e => e.Type == "chat" && e.Text.Contains("Sudden death in 10 minutes"));
+            bool alerted = w.Alerts.Active(w, 1).Any(a => a.Kind == "match_clock" && a.Priority == Priority.High);
+            Step(g, 540);
+            warned += w.Events.Count(e => e.Type == "chat" && e.Text.Contains("Sudden death in 1 minute"));
+            Check(warned == 2 && alerted, $"sudden death is announced 10 minutes and 1 minute ahead, in the chat and as a MATCH CLOCK alert ({warned} warnings)");
+            Step(g, 60);
+            int regrownBefore = w.Regrown;
+            for (int i = 0; i < w.Map.Ore.Length; i++) if (w.Map.OreBase[i] > 0) w.Map.Ore[i] = 0;
+            Step(g, 60);
+            Check(w.Phase == MatchPhase.SuddenDeath && w.Regrown == regrownBefore && w.Events.Any(e => e.Type == "chat" && e.Text.Contains("SUDDEN DEATH")),
+                  $"at sudden death ore stops regrowing ({w.Regrown - regrownBefore} regrown after it)");
+            var hq = w.Owned(1).First(e => e.Def.Key == "command_center");
+            Step(g, 1800);
+            float hp = hq.Hp;
+            Step(g, 600);
+            Check(w.Phase == MatchPhase.Decay && hq.Hp < hp - hq.Def.MaxHp * 0.17f && hq.Hp > hp - hq.Def.MaxHp * 0.19f && w.Events.Any(e => e.Text != null && e.Text.Contains("DECAY")),
+                  $"30 minutes on, structures decay: 0.03% of max health a second ({hp:0} -> {hq.Hp:0} in 10 minutes)");
+            var state = D(StateData.Team(w, 0));
+            Check(state.Obj("match")?.Str("phase") == "decay" && state.Obj("match").Num("next_phase_in_s") > 0, "state shows the phase and how long until the next one");
+            Step(g, 1200);
+            Check(w.GameOver && w.MatchOver && w.Winner == 0 && w.Events.Any(e => e.Type == "game_over" && e.Text.Contains("wins the match on points")),
+                  $"an hour after sudden death the match ends with a score victory ({w.Events.LastOrDefault(e => e.Type == "game_over")?.Text})");
+            var m = D(StateView.MatchJson(w));
+            var scores = (List<object>)m["scores"];
+            Check(m.Str("phase") == "ended" && m.Str("winner") == t0.Name && scores.Count == 2 && m["how_scored"] != null && m.Num("new_match_in_s") > 100,
+                  $"the results stay in state: winner, scores with their components, and when the next match starts ({StateView.MatchText(w)})");
+            var r = Commands.Execute(w, 0, Cmd("type", "say", "text", "gg"));
+            Check(!Ok(r), "nobody can act once the match is over");
+            // The results stay up for 3 minutes (saved with the game), then a new match starts by itself.
+            Step(g, 60);
+            var mid = Resume(Snap(g));
+            Check(mid.World.MatchOver && Math.Abs(mid.RestartIn - g.RestartIn) < 0.01f, $"the results countdown survives a restart ({mid.RestartIn:0}s left)");
+            var oldWorld = w;
+            int seed = g.Config.Seed;
+            bool restarted = false;
+            g.Restarted = () => restarted = true;
+            Step(g, 125);
+            Check(restarted && g.World != oldWorld && !g.World.GameOver && g.Config.Seed != seed && g.World.SuddenDeathAt == 900 && g.World.Phase == MatchPhase.Normal &&
+                  g.World.Events.Any(e => e.Type == "chat" && e.Text.Contains("new match")),
+                  "three minutes after the results, the open arena starts a fresh match on a new map, without anyone stepping in");
+
+            // A closed match ends on points too, and simply stays over.
+            var c = new Game(new GameConfig { Seed = 4, MapSize = 64, MatchHours = 0.05f, Controllers = new[] { "llm", "llm" } });
+            Step(c, 3 * 60 + 3605);
+            Step(c, 300);
+            Check(c.World.GameOver && c.World.MatchOver && c.RestartIn < 0, "a closed match ends on points and stays over (no automatic next match)");
+
+            // A game that's already past hour N when the clock arrives (room 1 after 8 hours): sudden death 30 minutes from
+            // the upgrade, not instantly, with the warnings.
+            var live = new Game(new GameConfig { Seed = 6, MapSize = 80, Open = true, Controllers = new[] { "llm", "llm" } });
+            Step(live, 5);
+            var root = (Dictionary<string, object>)Json.Parse(Snap(live));
+            var wd = (Dictionary<string, object>)root["world"];
+            wd.Remove("sudden_death_at");
+            wd["tick"] = 8.0 * 3600 * World.TickRate;
+            ((Dictionary<string, object>)root["config"]).Remove("match_hours");
+            var up = Resume(Json.Write(root));
+            var uw = up.World;
+            Check(Math.Abs(uw.SuddenDeathAt - (uw.Time + 1800)) < 0.01f && uw.Phase == MatchPhase.Normal && up.Config.MatchHours == 4,
+                  $"a game resumed past hour N from before the clock gets sudden death 30 minutes later, not at once ({StateView.MatchText(uw)})");
+            Step(up, 1201);
+            bool early = uw.Events.Any(e => e.Type == "chat" && e.Text.Contains("Sudden death in 10 minutes"));
+            Step(up, 600);
+            Check(early && uw.Phase == MatchPhase.SuddenDeath && !uw.GameOver, "and its players get the 10-minute warning before it begins");
+            var fresh = new Game(new GameConfig { Seed = 6, MapSize = 80, Open = true, Controllers = new[] { "llm", "llm" } });
+            Step(fresh, 5);
+            var root2 = (Dictionary<string, object>)Json.Parse(Snap(fresh));
+            ((Dictionary<string, object>)root2["world"]).Remove("sudden_death_at");
+            var early2 = Resume(Json.Write(root2));
+            Check(early2.World.SuddenDeathAt == 4 * 3600, "a young game from before the clock gets the usual hour N");
         }
 
         static void ConstructionTruck()

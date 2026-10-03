@@ -316,6 +316,20 @@ namespace Pez.View
         }
 
         /// <summary>A structure is dismantled into salvage: cream sugar dust settling, a few panels falling off.</summary>
+        /// <summary>
+        /// Decay (the match clock's last half hour): a few flakes of grit crumble off a structure's roof and fall to its foot,
+        /// with a chip or two. Small and quiet: a base slowly coming apart, not an explosion.
+        /// </summary>
+        public static void DecayDust(Vector3 pos, float size)
+        {
+            var g = Ground(pos);
+            float sq = Mathf.Sqrt(size);
+            for (int i = 0; i < 4; i++)
+                Emit(S.Dust, g + Flat(Random.Range(0.25f, 0.55f) * size) + Up * Random.Range(0.7f, 1.3f), Flat(0.12f) + Up * Random.Range(-0.45f, -0.15f),
+                    Random.Range(0.22f, 0.4f) * sq, Random.Range(1.6f, 2.4f), Vary(Color32.Lerp(Cream, DustPale, 0.6f), 0.05f, 170));
+            Chunks(g + Up * 1f, 2, 0.22f, 0.8f, 1.4f, DustPale, Steel, Cream, 0f, 0.3f);
+        }
+
         public static void Salvaged(Vector3 pos, float size)
         {
             var g = Ground(pos);

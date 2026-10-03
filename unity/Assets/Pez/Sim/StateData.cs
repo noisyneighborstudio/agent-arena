@@ -31,7 +31,8 @@ namespace Pez.Sim
                     .Set("stockpile", Stock(t))
                     .Set("reserves", t.Reserve.Aggregate(new JObj(), (j, kv) => j.Set(kv.Key, kv.Value)))
                     .Set("power", new JObj().Set("produced", t.PowerProduced).Set("used", t.PowerUsed).Set("low", t.LowPower)))
-                .Set("map", new JObj().Set("w", w.Map.W).Set("h", w.Map.H).Set("sector_tiles", w.Map.W / 8));
+                .Set("map", new JObj().Set("w", w.Map.W).Set("h", w.Map.H).Set("sector_tiles", w.Map.W / 8))
+                .Set("match", StateView.MatchJson(w));
 
             o.Set("alerts", w.Alerts.Active(w, team).Select(a => (object)Alert(w, a)).ToList());
             o.Set("last_alert_seq", w.Alerts.LastSeq);
