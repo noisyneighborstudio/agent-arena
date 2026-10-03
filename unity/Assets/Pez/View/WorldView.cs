@@ -44,6 +44,11 @@ namespace Pez.View
             public float PrevBuild = -1f, BeamT;
             // The dump: the last bay step seen, the laden squat (eased), and the pour's dust cadence.
             public DockStep PrevDock;
+            // Roll-out anticipation: the lamps' blink factor, the vent puffs already given, the dark bay behind the door.
+            public float Blink = 1f;
+            public int Vents;
+            public Transform Bay, Door;
+            public float DoorHeight;
             public float Squat, PourDust;
         }
 
@@ -308,6 +313,7 @@ namespace Pez.View
                 rate = e.IsComplete && t.LowPower ? 0.5f : 1f;
             }
             // The lamp body darkens with its light (a cyan core at 0.25 emission still read as lit from its albedo).
+            glow *= v.Blink;
             if (Mathf.Abs(glow - v.GlowShown) > 0.01f) { PezShade.Set(v.Glows, Mathf.Lerp(0.15f, 1f, Mathf.InverseLerp(0.25f, 1f, glow)), glow); v.GlowShown = glow; }
             if (rate != v.RateShown) { v.Rig.Motion.SetRate(rate); v.RateShown = rate; }
         }
@@ -464,6 +470,7 @@ namespace Pez.View
                 // Build stages rise out of the pad as construction progresses.
                 if (!Mathf.Approximately(v.BuiltShown, e.BuildProgress)) { rig.Emerge.SetBuildProgress(e.BuildProgress); v.BuiltShown = e.BuildProgress; }
                 rig.Motion.SetWorking(e.IsComplete && Producing(e));
+                if (e.IsComplete && e.Def.Produces != Producer.None && e.Def.Key != "command_center" && e.Def.Key != "airfield") RollOut(v);
                 if (e.Def.Key == "power_plant" || e.Def.Power < 0) Power(v);
                 if (e.IsComplete || v.SmokeK > 0f) Damage(v);
                 Construction(v);
@@ -515,7 +522,7 @@ namespace Pez.View
                 {
                     // New units roll out of their producer's door (or rise off the airfield lift) instead of popping in.
                     v.SpawnT = Mathf.Min(1f, v.SpawnT + Time.deltaTime / 0.9f);
-                    float k = 1f - Mathf.Pow(1f - v.SpawnT, 3f);
+                    float k = Mathf.SmoothStep(0f, 1f, v.SpawnT); // from rest: it eases out of the bay, no pop
                     rig.Root.position = Vector3.Lerp(v.SpawnFrom.Value, rig.Root.position, k);
                     if (v.SpawnT >= 1f) v.SpawnFrom = null;
                 }
@@ -580,6 +587,93 @@ namespace Pez.View
             }
             bool sel = Selected.Contains(e.Id) && !e.IsStructure; // structures get the HUD's corner brackets instead
             if (v.Ring.gameObject.activeSelf != sel) v.Ring.gameObject.SetActive(sel);
+        }
+
+        /// <summary>
+        /// A vehicle (or soldier) rolls out with anticipation (production review 4a; fix 9). From the queue the view knows
+        /// the seconds left to `trained`: T = (BuildTime - Progress) / rate (half on low power). On the team's first producer:
+        ///  - T &lt; 1.5 s: its amber lamps blink at 2 Hz;
+        ///  - T &lt; 0.8 s: three steam puffs vent from the roof, 0.2 s apart;
+        ///  - the door starts up so it's fully open 0.1 s before the unit appears (earlier on low power, when the door
+        ///    itself runs at half speed), and closes 1.4 s after;
+        ///  - the unit then eases out of a dark bay: it starts 0.6 inside the door and leaves from rest (smoothstep, 0.9 s).
+        /// The bay is a dark panel that fills exactly the opening the rolling door uncovers (the pack's factory has a
+        /// wall right behind its door). Cancelling a queue just stops the lamps; the door closes on its timer.
+        /// </summary>
+        void RollOut(EV v)
+        {
+            var e = v.E;
+            var t = World.Teams[e.Team];
+            var rig = v.Rig;
+            if (v.Door == null)
+            {
+                v.Door = PezMotion.FindDeep(rig.Model.transform, "door");
+                if (v.Door != null) { v.Bay = DarkBay(v.Door); v.DoorHeight = DoorH(v.Door); }
+            }
+            if (v.Bay != null)
+            {
+                // The opening the door uncovers as it rolls up (it scales down toward its top edge).
+                float open = 1f - v.Door.localScale.y;
+                bool show = open > 0.02f;
+                if (v.Bay.gameObject.activeSelf != show) v.Bay.gameObject.SetActive(show);
+                if (show) { var sc = v.Bay.localScale; sc.y = v.DoorHeight * open; v.Bay.localScale = sc; var lp = v.Bay.localPosition; lp.y = v.Door.localPosition.y - v.DoorHeight + sc.y * 0.5f; v.Bay.localPosition = lp; }
+            }
+            v.Blink = 1f;
+            if (!t.UnitQueues.TryGetValue(e.Def.Produces, out var q) || q.Count == 0) { v.Vents = 0; return; }
+            if (!IsFirstProducer(e)) return;
+            var def = Defs.Get(q[0].Key);
+            if (def == null) return;
+            float rate = t.LowPower ? 0.5f : 1f;
+            float T = (def.BuildTime - q[0].Progress) / rate;
+            if (T < 1.5f) v.Blink = (Time.time * 4f) % 2f < 1f ? 1.6f : 0.15f;
+            if (T > 0.8f) v.Vents = 0;
+            else if (v.Vents < 3 && T < 0.8f - v.Vents * 0.2f)
+            {
+                v.Vents++;
+                var top = rig.Model.transform.TransformPoint(new Vector3(0f, RoofTop(v), 0.4f));
+                Fx.Steam(top, 0.4f);
+            }
+            float lead = 0.1f + 0.35f / rate;
+            if (T < lead && v.Door != null) { rig.Motion.SetDoorOpen(true); v.DoorTimer = Mathf.Max(v.DoorTimer, T + 1.4f); }
+        }
+
+        static float DoorH(Transform door)
+        {
+            var mf = door.GetComponentInChildren<MeshFilter>();
+            return mf != null ? mf.sharedMesh.bounds.size.y : 0.8f;
+        }
+
+        float RoofTop(EV v)
+        {
+            if (v.Roof == null)
+            {
+                var b = new Bounds(v.Rig.Root.position, Vector3.zero);
+                foreach (var r in v.Rig.Model.GetComponentsInChildren<Renderer>()) b.Encapsulate(r.bounds);
+                v.Roof = b;
+            }
+            return v.Roof.Value.max.y - v.Rig.Root.position.y;
+        }
+
+        static Material bayMat;
+
+        /// <summary>A dark panel just in front of the door plane, sized each frame to the opening the door uncovers.</summary>
+        static Transform DarkBay(Transform door)
+        {
+            bayMat ??= Look.Model(new Color(0.035f, 0.032f, 0.034f), 0.05f, 0f, 0f, 0f);
+            var mf = door.GetComponentInChildren<MeshFilter>();
+            var b = mf != null ? mf.sharedMesh.bounds : new Bounds(new Vector3(0, -0.4f, 0), new Vector3(1.4f, 0.8f, 0.06f));
+            var t = Models.Part(door.parent, PrimitiveType.Cube, door.localPosition + new Vector3(0f, 0f, b.min.z - 0.012f), new Vector3(b.size.x * 0.97f, 0.01f, 0.01f), bayMat);
+            t.name = "dark_bay";
+            t.GetComponent<Renderer>().shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            t.gameObject.SetActive(false);
+            return t;
+        }
+
+        bool IsFirstProducer(Entity e)
+        {
+            foreach (var o in World.Entities)
+                if (!o.Dead && o.Team == e.Team && o.IsStructure && o.IsComplete && o.Def.Produces == e.Def.Produces) return o == e;
+            return false;
         }
 
         /// <summary>
@@ -742,13 +836,17 @@ namespace Pez.View
                         if (Views.TryGetValue(ev.A, out var tv2))
                         {
                             var def2 = Defs.Get(ev.Key);
-                            var producer = OpenDoorNear(ev.Team, ev.Pos, 3f, 1.6f);
+                            var producer = OpenDoorNear(ev.Team, ev.Pos, 3f, 1.4f);
                             if (producer != null)
                             {
                                 if (def2.IsAir && producer.E.Def.Key == "airfield") { producer.Rig.Motion.SnapLiftDown(); producer.Rig.Motion.SetLiftUp(true); }
                                 // Start at the door (south face) and roll out to where the sim placed it.
                                 var c = producer.E.Center;
-                                tv2.SpawnFrom = def2.IsAir ? W(c, 0.2f) : W(new Vec2(c.X, producer.E.Origin.Y + 0.3f));
+                                // From 0.6 inside the door (hidden in the dark bay) when the model has one.
+                                var door = producer.Rig.HasModel ? PezMotion.FindDeep(producer.Rig.Model.transform, "door") : null;
+                                tv2.SpawnFrom = def2.IsAir ? W(c, 0.2f)
+                                              : door != null ? new Vector3(door.position.x, 0f, door.position.z + 0.6f)
+                                              : W(new Vec2(c.X, producer.E.Origin.Y + 0.3f));
                                 tv2.SpawnT = 0;
                             }
                         }
