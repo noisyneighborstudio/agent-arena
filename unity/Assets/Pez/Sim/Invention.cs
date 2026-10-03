@@ -74,7 +74,7 @@ namespace Pez.Sim
         public static float Se(Dictionary<string, int> cost) => cost.Sum(kv => (Value.TryGetValue(kv.Key, out var v) ? v : 1f) * kv.Value);
 
         // ---- Fitted from the 15 armed mobile units: cost_se = A * HP^HpExp * eDPS^DpsExp * e^(RangeK*range) * e^(SpeedK*speed) * flags.
-        public const float A = 0.215f, HpExp = 0.47f, DpsExp = 1.09f, RangeK = 0.137f, SpeedK = 0.218f;
+        public const float A = 0.326f, HpExp = 0.42f, DpsExp = 1.09f, RangeK = 0.126f, SpeedK = 0.184f;
         // Not fitted (too little spread in the data): small set prices.
         public const float SightK = 0.04f, FuelExp = 0.10f;
         /// <summary>Downgrades refund this share of what the same upgrade would cost (in log space).</summary>
@@ -268,11 +268,7 @@ namespace Pez.Sim
             if (q.Errors.Count > 0 && (hp <= 0 || cd <= 0 || dmg <= 0 || speed <= 0 || fuel < 0)) return q; // nothing sensible to price
 
             // Build the weapon and the def.
-            var weapon = new WeaponDef
-            {
-                Name = bw.Name, Damage = dmg, Range = range, Cooldown = cd, ProjectileSpeed = bw.ProjectileSpeed, SplashRadius = bw.SplashRadius,
-                HitsGround = bw.HitsGround, HitsAir = bw.HitsAir, VsInfantry = bw.VsInfantry, VsVehicle = bw.VsVehicle, VsStructure = bw.VsStructure, VsAir = bw.VsAir,
-            };
+            var weapon = MakeWeapon(bw, dmg, range, cd);
             var cw = chassis.Weapon;
 
             // Physical plausibility.
@@ -315,19 +311,9 @@ namespace Pez.Sim
             q.Efficiency = RelativeValue(rHp, rDps, dRange, dSpeed) / MathF.Pow(q.CostSe / q.ChassisSe, 2);
             if (q.Efficiency > 1.02f) q.Errors.Add($"cost-efficiency {F(q.Efficiency)}x {chassis.Key}'s exceeds 1.02x (internal pricing check)");
 
-            var def = chassis.Clone();
-            def.Key = q.Key ?? $"t{team}:unnamed";
-            def.Name = q.Name ?? "Unnamed";
-            def.Chassis = chassis.Key;
-            def.OwnerTeam = team;
-            def.Weapon = weapon;
-            def.MaxHp = (int)MathF.Round(hp);
-            def.Speed = speed;
-            def.Sight = sight;
-            if (chassis.UsesFuel) def.Fuel = fuel;
+            var def = MakeDef(chassis, donor, team, q.Key ?? $"t{team}:unnamed", q.Name ?? "Unnamed", weapon, hp, speed, sight, fuel);
             def.Cost = cost;
             def.BuildTime = MathF.Ceiling(chassis.BuildTime * MathF.Max(0.8f, MathF.Pow(q.PriceFactor, 0.6f)) * 2f - 1e-3f) / 2f; // half seconds, rounded up
-            def.Requires = chassis.Requires.Concat(donor.Requires).Distinct().ToArray();
             def.Description = $"{t.Name}'s invention: a {chassis.Name}" + (donor != chassis ? $" carrying a {donor.Name}'s {bw.Name}" : "") + ". " + Spec(def);
             q.Def = def;
 
@@ -336,6 +322,33 @@ namespace Pez.Sim
             q.ResearchTime = MathF.Round(20 + 60 * q.Novelty);
             if (!w.HasComplete(team, ResearchLab)) q.Errors.Add($"research needs a completed {ResearchLab}");
             return q;
+        }
+
+        /// <summary>The donor's weapon with tuned damage, range and cooldown; everything else (projectile, splash, armour multipliers) stays the donor's.</summary>
+        public static WeaponDef MakeWeapon(WeaponDef bw, float dmg, float range, float cd) => new WeaponDef
+        {
+            Name = bw.Name, Damage = dmg, Range = range, Cooldown = cd, ProjectileSpeed = bw.ProjectileSpeed, SplashRadius = bw.SplashRadius,
+            HitsGround = bw.HitsGround, HitsAir = bw.HitsAir, VsInfantry = bw.VsInfantry, VsVehicle = bw.VsVehicle, VsStructure = bw.VsStructure, VsAir = bw.VsAir,
+        };
+
+        /// <summary>
+        /// An invented def: its chassis with the tuned stats and weapon. Evaluate and saved games (Snapshot.ReadInvention) both build
+        /// it here; the caller sets the price (Cost, BuildTime) and Description.
+        /// </summary>
+        public static EntityDef MakeDef(EntityDef chassis, EntityDef donor, int team, string key, string name, WeaponDef weapon, float hp, float speed, float sight, float fuel)
+        {
+            var def = chassis.Clone();
+            def.Key = key;
+            def.Name = name;
+            def.Chassis = chassis.Key;
+            def.OwnerTeam = team;
+            def.Weapon = weapon;
+            def.MaxHp = (int)MathF.Round(hp);
+            def.Speed = speed;
+            def.Sight = sight;
+            if (chassis.UsesFuel) def.Fuel = fuel;
+            def.Requires = chassis.Requires.Concat(donor.Requires).Distinct().ToArray();
+            return def;
         }
 
         /// <summary>One line of stats, generated (never agent text).</summary>

@@ -61,8 +61,9 @@ namespace Pez.Headless
                 "Visible Explored Left Resigned StalledSince House Seat ProtectedUntil StructureQueue UnitQueues KnownEnemyStructures Surveyed SurveySites Zones " +
                 "SurfaceWarnedAt Stats",
             [typeof(World)] = "Map Paths MapVersion Open MaxPlayers MaxMapSize GrowStep SafeJoinDistance ProtectionSeconds Teams ById Entities Projectiles Events " +
-                "EventCounts Alerts Tick GameOver Winner Errors LastError nextId nextSeq seatCounter rng rateSnapshot airWarned StallGrace ArenaChampion contested " +
+                "EventCounts Alerts Tick GameOver Winner Errors LastError nextId nextSeq seatCounter rng rateSnapshot airWarned StallGrace ArenaChampion contested Inventions " +
                 "| ErrorLog loggedErrors cells cellsW cellsH nearTarget nearHelp nearMine nearSep nearVis",
+            [typeof(Invention)] = "Key Name Chassis WeaponFrom Summary Team Def ResearchCost ResearchTime Progress Novelty PriceFactor",
             [typeof(Map)] = "W H Tiles Ore OreType Occupant Spawns Deep OreScale nextDepositId | writable",
             [typeof(SimpleAI)] = "team Passive nextThink waveSize outpostTargets nextProspect prospectRadius knownSurface",
             [typeof(Game)] = "World Config Speed Paused ais accumulator nextHouseCheck ResumedFrom LastSaved | RenderFps",
@@ -134,6 +135,13 @@ namespace Pez.Headless
             t2.Zones[dep.Id] = new ZoneFlag { ZoneId = dep.Id, FlaggedBy = 12345, FlaggedAt = w.Time - 3.5f };
             var surveyor = w.SpawnUnit(2, "geological_surveyor", factory);
             var r5 = Commands.Execute(w, 2, Cmd("type", "prospect", "units", new[] { surveyor.Id }, "radius", 30));
+            // Agent inventions: one researched (with a unit in the field and one queued), one still in research.
+            w.SpawnStructure(2, "electronics_plant", w.FindPlacement(2, "electronics_plant").Value, 1f);
+            var r6 = Commands.Execute(w, 2, Cmd("type", "propose_tech", "name", "Lancer", "base", "light_tank", "weapon_from", "rocket_soldier", "hp", 360));
+            if (w.Inventions.TryGetValue("t2:lancer", out var lancerInv)) lancerInv.Progress = lancerInv.ResearchTime;
+            var lancer = w.SpawnUnit(2, "t2:lancer", factory);
+            var r7 = Commands.Execute(w, 2, Cmd("type", "train", "unit", "t2:lancer"));
+            var r8 = Commands.Execute(w, 2, Cmd("type", "propose_tech", "name", "Rampart", "base", "light_tank", "hp", 480, "speed", 2.1f));
             w.SetOrders(2, "Hold the ridge; expand east.");
             w.Teams[3].ProtectedUntil = w.Time + 200;
             var enemy = w.Owned(0).First(e => !e.IsStructure);
@@ -141,6 +149,8 @@ namespace Pez.Headless
             w.Emit("chat", 2, text: "Holding \"the ridge\" — ünïcode ok");
             Step(game, 3);
             Check(Ok(r1) && Ok(r2) && Ok(r3) && Ok(r4) && Ok(r5), $"set up a mid-game scene ({r1["result"] ?? r1["error"]}; {r2["result"]}; {r3["result"]}; {r4["result"]}; {r5["result"] ?? r5["error"]})");
+            Check(Ok(r6) && Ok(r7) && Ok(r8) && w.Inventions.Count == 2 && !w.Inventions["t2:rampart"].Done && w.Inventions["t2:rampart"].Progress > 0,
+                  $"two inventions in play ({r6["result"] ?? r6["error"]}; {r7["result"] ?? r7["error"]}; {r8["result"] ?? r8["error"]})");
 
             var sw = System.Diagnostics.Stopwatch.StartNew();
             var json = Snap(game);
@@ -176,6 +186,16 @@ namespace Pez.Headless
             var sv2 = b.Get(surveyor.Id);
             Check(tb.Zones.TryGetValue(dep.Id, out var zf) && zf.FlaggedBy == 12345 && zf.FlaggedAt == t2.Zones[dep.Id].FlaggedAt && sv2 != null && sv2.Prospecting == surveyor.Prospecting &&
                   sv2.ProspectRadius == surveyor.ProspectRadius && surveyor.Prospecting, $"mining zone flags and a prospecting surveyor survive ({sv2?.OrderName})");
+            var lancerDef = b.Def("t2:lancer");
+            Check(lancerDef != null && lancerDef.OwnerTeam == 2 && lancerDef.Chassis == "light_tank" && lancerDef.MaxHp == 360 && lancerDef.Weapon.HitsAir &&
+                  lancerDef.Weapon.Damage == w.Def("t2:lancer").Weapon.Damage && lancerDef.CostText == w.Def("t2:lancer").CostText && lancerDef.BuildTime == w.Def("t2:lancer").BuildTime &&
+                  b.Get(lancer.Id)?.Def == lancerDef && tb.UnitQueues[Producer.Factory].Any(q => q.Key == "t2:lancer") && b.MissingPrereq(2, lancerDef) == null,
+                  $"a researched invention keeps its stats and price, its unit in the field and its place in the queue ({lancerDef?.CostText}, {lancerDef?.BuildTime}s)");
+            var rampart = b.Inventions.TryGetValue("t2:rampart", out var rp) ? rp : null;
+            Check(rampart != null && rampart.Progress == w.Inventions["t2:rampart"].Progress && !rampart.Done && b.MissingPrereq(2, rampart.Def).Contains("researched") &&
+                  b.MissingPrereq(3, lancerDef).Contains("only they can build it"),
+                  $"research in progress resumes where it was ({rampart?.Pct}%), and inventions stay their team's own");
+            Check(Defs.Get("t2:lancer") == lancerDef, "key-only lookups (the view, the API) see the resumed game's inventions");
             Check(b.Alerts.Active(b, 2).Any(a => a.Kind == "base_under_attack" && a.Priority == Priority.Critical) && b.Alerts.LastSeq == w.Alerts.LastSeq, "active alerts survive");
             Check(b.IsProtected(3) && b.Teams[3].ProtectedUntil == w.Teams[3].ProtectedUntil, "newcomer protection survives");
             Check(b.Events.Any(e => e.Type == "chat" && e.Text.Contains("ünïcode")) && b.Events[b.Events.Count - 1].Seq == w.Events[w.Events.Count - 1].Seq, "recent events (with their sequence numbers) survive");

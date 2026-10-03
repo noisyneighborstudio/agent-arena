@@ -184,7 +184,7 @@ namespace Pez.Headless
             Exploit("a fourth invention", Quote(cw, 0, "name", "Mk4", "base", "light_tank", "hp", 430), "3/3 inventions");
 
             var rules = StateView.Rules();
-            Check(StateView.RulesVersion == 5 && rules.Contains("inventions") && Json.Write(rules["commands"]).Contains("propose_tech"), "get_rules documents propose_tech and its limits (rules_version 5)");
+            Check(StateView.RulesVersion >= 9 && rules.Contains("inventions") && Json.Write(rules["commands"]).Contains("propose_tech"), "get_rules documents propose_tech and its limits (rules_version 9)");
         }
     }
 }

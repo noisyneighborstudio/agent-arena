@@ -27,8 +27,8 @@ namespace Pez.Sim
     public static class Snapshot
     {
         public const string Format = "pezz-snapshot";
-        /// <summary>1: first version. 2: mining zones, prospecting surveyors, drill rigs' zones, arena champion.</summary>
-        public const int Schema = 2;
+        /// <summary>1: first version. 2: mining zones, prospecting surveyors, drill rigs' zones, arena champion. 3: agent inventions.</summary>
+        public const int Schema = 3;
         public const int MinReader = 1;
         /// <summary>Events kept: the last two minutes, plus recent chat, at most MaxEvents. Alerts: the last minute.</summary>
         const int MaxEvents = 1500;
@@ -236,10 +236,55 @@ namespace Pez.Sim
 
         // ------------------------------------------------------------------ projectiles, events
 
-        internal static JObj WriteProjectile(Projectile p) => new JObj()
+        internal static JObj WriteProjectile(World w, Projectile p) => new JObj()
             .Set("id", p.Id).Set("team", p.Team).Put("source", p.SourceId).Put("target", p.TargetId)
             .Set("pos", SnapIO.V(p.Pos)).Set("prev_pos", SnapIO.V(p.PrevPos)).Set("target_pos", SnapIO.V(p.TargetPos))
-            .Set("weapon_of", Defs.All.Values.FirstOrDefault(d => d.Weapon == p.Weapon)?.Key);
+            .Set("weapon_of", (Defs.All.Values.FirstOrDefault(d => d.Weapon == p.Weapon) ?? w.Inventions.Values.FirstOrDefault(i => i.Def.Weapon == p.Weapon)?.Def)?.Key);
+
+        // ------------------------------------------------------------------ inventions
+
+        /// <summary>
+        /// An agent-invented unit (Invention.cs). Saved as the stats and price it was researched with, not re-evaluated on
+        /// load: the team paid for this design, so a pricing change in a newer build doesn't alter it mid-game.
+        /// </summary>
+        internal static JObj WriteInvention(Invention i)
+        {
+            var d = i.Def;
+            return new JObj()
+                .Set("key", i.Key).Set("name", i.Name).Set("team", i.Team).Set("chassis", i.Chassis).Put("weapon_from", i.WeaponFrom)
+                .Set("hp", d.MaxHp).Set("speed", SnapIO.X(d.Speed)).Set("sight", SnapIO.X(d.Sight)).Put("fuel", d.Fuel)
+                .Set("damage", SnapIO.X(d.Weapon.Damage)).Set("range", SnapIO.X(d.Weapon.Range)).Set("cooldown", SnapIO.X(d.Weapon.Cooldown))
+                .Set("cost", SnapIO.Ints(d.Cost)).Set("build_time", SnapIO.X(d.BuildTime)).Set("description", d.Description)
+                .Set("research_cost", SnapIO.Ints(i.ResearchCost)).Set("research_time", SnapIO.X(i.ResearchTime)).Put("progress", i.Progress)
+                .Set("novelty", SnapIO.X(i.Novelty)).Set("price_factor", SnapIO.X(i.PriceFactor)).Set("summary", i.Summary);
+        }
+
+        /// <summary>Null if this build no longer has the unit it was based on (its units are then dropped like any unknown type).</summary>
+        internal static Invention ReadInvention(D d)
+        {
+            Defs.All.TryGetValue(d.Str("chassis") ?? "", out var chassis);
+            var donorKey = d.Str("weapon_from");
+            var donor = donorKey == null ? chassis : Defs.All.TryGetValue(donorKey, out var dn) ? dn : null;
+            var key = d.Str("key");
+            if (!Tech.IsChassis(chassis) || !Tech.IsChassis(donor) || key == null) return null;
+            float hp = chassis.MaxHp, speed = chassis.Speed, sight = chassis.Sight, fuel = chassis.Fuel;
+            float dmg = donor.Weapon.Damage, range = donor.Weapon.Range, cd = donor.Weapon.Cooldown;
+            d.Load("hp", ref hp); d.Load("speed", ref speed); d.Load("sight", ref sight); d.Load("fuel", ref fuel);
+            d.Load("damage", ref dmg); d.Load("range", ref range); d.Load("cooldown", ref cd);
+            var i = new Invention { Key = key, Name = d.Str("name") ?? key, Chassis = chassis.Key, WeaponFrom = donorKey, ResearchCost = new Dictionary<string, int>() };
+            d.Load("team", ref i.Team);
+            var def = Tech.MakeDef(chassis, donor, i.Team, key, i.Name, Tech.MakeWeapon(donor.Weapon, dmg, range, cd), hp, speed, sight, fuel);
+            def.Cost = new Dictionary<string, int>(chassis.Cost);
+            SnapIO.LoadInts(d.Obj("cost"), def.Cost);
+            d.Load("build_time", ref def.BuildTime);
+            d.Load("description", ref def.Description);
+            i.Def = def;
+            SnapIO.LoadInts(d.Obj("research_cost"), i.ResearchCost);
+            d.Load("research_time", ref i.ResearchTime); d.Load("progress", ref i.Progress);
+            d.Load("novelty", ref i.Novelty); d.Load("price_factor", ref i.PriceFactor);
+            i.Summary = d.Str("summary") ?? Tech.Spec(def);
+            return i;
+        }
 
         internal static Projectile ReadProjectile(D d)
         {
@@ -419,9 +464,10 @@ namespace Pez.Sim
                 .Set("rate_snapshot", rateSnapshot.Select(kv => (object)new JObj().Set("team", kv.Key).Set("stock", SnapIO.Floats(kv.Value))).ToList())
                 .Set("air_warned", airWarned.Select(kv => (object)new List<object> { kv.Key.team, kv.Key.id, SnapIO.X(kv.Value) }).ToList())
                 .Set("map", Map.SaveState())
+                .Set("inventions", Inventions.Values.Select(i => (object)Snapshot.WriteInvention(i)).ToList())
                 .Set("teams", Teams.Select(t => (object)Snapshot.WriteTeam(t)).ToList())
                 .Set("entities", Entities.Select(e => (object)Snapshot.WriteEntity(e)).ToList())
-                .Set("projectiles", Projectiles.Select(p => (object)Snapshot.WriteProjectile(p)).ToList())
+                .Set("projectiles", Projectiles.Select(p => (object)Snapshot.WriteProjectile(this, p)).ToList())
                 .Set("alerts", Alerts.SaveState(this))
                 .Set("events", Snapshot.WriteEvents(this));
             return o;
@@ -431,11 +477,25 @@ namespace Pez.Sim
         {
             if (d == null) throw new FormatException("snapshot has no world");
             var w = new World(Map.LoadState(d.Obj("map")));
+            // Production queues, entities and projectiles below resolve unit keys with Defs.Get, which sees the current
+            // world's inventions: make this world current while it loads, and hand the hook back if the load fails.
+            var previous = Defs.Invented;
+            w.MakeCurrent();
+            try { w.LoadInto(d); }
+            catch { Defs.Invented = previous; throw; }
+            return w;
+        }
+
+        void LoadInto(D d)
+        {
+            var w = this;
             d.Load("tick", ref w.Tick); d.Load("game_over", ref w.GameOver); d.Load("winner", ref w.Winner); d.Load("map_version", ref w.MapVersion);
             d.Load("open", ref w.Open); d.Load("max_players", ref w.MaxPlayers); d.Load("max_map_size", ref w.MaxMapSize); d.Load("grow_step", ref w.GrowStep);
             d.Load("safe_join_distance", ref w.SafeJoinDistance); d.Load("protection_seconds", ref w.ProtectionSeconds); d.Load("stall_grace", ref w.StallGrace);
             d.Load("errors", ref w.Errors); d.Load("last_error", ref w.LastError);
             d.Load("arena_champion", ref w.ArenaChampion); d.Load("contested", ref w.contested);
+
+            foreach (var id in d.Objs("inventions")) { var inv = Snapshot.ReadInvention(id); if (inv != null) w.Inventions[inv.Key] = inv; }
 
             bool rebuildPower = false, rebuildVision = false;
             int i = 0;
@@ -447,6 +507,7 @@ namespace Pez.Sim
                 w.Teams.Add(t);
             }
             if (w.Teams.Count == 0) throw new FormatException("snapshot has no teams");
+            foreach (var k in w.Inventions.Where(kv => kv.Value.Team < 0 || kv.Value.Team >= w.Teams.Count).Select(kv => kv.Key).ToList()) w.Inventions.Remove(k);
             int dropped = 0;
             foreach (var ed in d.Objs("entities"))
             {
@@ -481,7 +542,6 @@ namespace Pez.Sim
 
             if (rebuildPower) w.UpdatePower();
             if (rebuildVision) w.UpdateVisibility();
-            return w;
         }
     }
 
@@ -552,6 +612,15 @@ namespace Pez.Sim
             var o = new JObj();
             foreach (var kv in d) o.Set(kv.Key, X(kv.Value));
             return o;
+        }
+
+        public static JObj Ints(Dictionary<string, int> d) => d.Aggregate(new JObj(), (j, kv) => j.Set(kv.Key, kv.Value));
+
+        public static void LoadInts(D d, Dictionary<string, int> into)
+        {
+            if (d == null) return;
+            into.Clear();
+            foreach (var kv in d) if (kv.Value is double x) into[kv.Key] = (int)x;
         }
 
         public static void LoadFloats(D d, Dictionary<string, float> into)

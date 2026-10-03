@@ -44,8 +44,8 @@ A real dry-run reply, copied from the test output:
 {"ok":true,"quote":{"valid":true,"key":"t0:lancer","name":"Lancer","base":"light_tank","weapon_from":"rocket_soldier",
  "spec":"hp 360, speed 2.6, sight 7, fuel 200s; rocket 60 dmg every 2.2s, range 6, hits air",
  "unit_cost":"330 steel, 70 copper","build_time_s":11,
- "price":{"cost_se":435,"base_cost_se":260,"factor":1.64,"curve":1.48,"lanchester_floor":1.21,"novelty":1.12,
-          "efficiency_vs_base":0.53,"mass_ratio":1.03},
+ "price":{"cost_se":435,"base_cost_se":260,"factor":1.63,"curve":1.46,"lanchester_floor":1.2,"novelty":1.12,
+          "efficiency_vs_base":0.51,"mass_ratio":1.03},
  "research_cost":"270 steel, 165 circuits","research_time_s":87},
  "result":"valid. Send the same proposal without dry_run to research it for 270 steel, 165 circuits (87s)"}
 ```
@@ -74,17 +74,17 @@ Prices need one currency. An ore's value is roughly the square root of its scarc
 `docs/spikes/fit_tech_costs.py` parses `Defs.cs` and fits a log-linear model by least squares over the 15 armed mobile units:
 
 ```
-cost_se = 0.215 · HP^0.47 · eDPS^1.09 · e^(0.137·range) · e^(0.218·speed) · flags
+cost_se = 0.326 · HP^0.42 · eDPS^1.09 · e^(0.126·range) · e^(0.184·speed) · flags
 eDPS    = damage / cooldown · (0.8 · (0.35·vsInf + 0.40·vsVeh + 0.25·vsStruct) + 0.2·vsAir) · (1 + 0.4·splash)
 flags   = air ×1.5, stealth ×1.6, ×(1 + 0.06·capacity), self-repair ×1.3   (set, not fitted: too few examples)
 ```
 
-The rms log error is 0.24, so the curve prices a typical unit within about ±27%. Actual cost over fitted cost per unit: rifleman 0.87, rocket_soldier 0.74, laser_trooper 0.78, scout_buggy 0.83, light_tank 0.97, heavy_tank 0.95, artillery 1.08, laser_tank 1.11, sniper 1.59, commando 1.11, apc 1.23, flak_track 0.56, mammoth_tank 0.89, gunship 1.17, stealth_bomber 1.03. The sniper and the flak track sit furthest off the curve because they're specialists.
+The rms log error is 0.24, so the curve prices a typical unit within about ±27%. Actual cost over fitted cost per unit: rifleman 0.90, rocket_soldier 0.76, laser_trooper 0.83, scout_buggy 0.87, light_tank 1.00, heavy_tank 0.99, artillery 1.12, laser_tank 1.17, sniper 1.67, commando 1.17, apc 1.30, flak_track 0.60, mammoth_tank 0.95, gunship 1.24, stealth_bomber 1.08. (Refitted after main slowed infantry; the first fit had 0.215 · HP^0.47 · e^(0.137·range) · e^(0.218·speed).) The sniper and the flak track sit furthest off the curve because they're specialists.
 
 Two things in the fit matter for the design:
 
-- **Costs grow superlinearly with size.** The exponents sum to 1.56. Firepower is priced steeply (1.09); hit points are cheap (0.47).
-- **The curve is only valid near the data.** Taken at face value, a 1-HP light tank with a light tank's gun costs 400^0.47 ≈ 17× less. Sixteen of them beat a light tank easily. A curve fitted to the roster has degenerate optima off the roster's hull. That's why the curve is never used as an absolute price.
+- **Costs grow superlinearly with size.** The exponents sum to 1.51. Firepower is priced steeply (1.09); hit points are cheap (0.42).
+- **The curve is only valid near the data.** Taken at face value, a 1-HP light tank with a light tank's gun costs 400^0.42 ≈ 12× less. A dozen of them beat a light tank easily. A curve fitted to the roster has degenerate optima off the roster's hull. That's why the curve is never used as an absolute price.
 
 ### 2.3 Pricing an invention: relative to the chassis
 
@@ -92,15 +92,15 @@ The chassis is a playtested unit, so every price is a multiple of the chassis pr
 
 | stat | log-price term |
 |---|---|
-| hp | 0.47 · ln(hp / hp_c) |
+| hp | 0.42 · ln(hp / hp_c) |
 | firepower | 1.09 · ln(eDPS / eDPS_c) |
-| range | 0.137 · (range − range_c) |
-| speed | 0.218 · (speed − speed_c) |
+| range | 0.126 · (range − range_c) |
+| speed | 0.184 · (speed − speed_c) |
 | sight | 0.04 · (sight − sight_c) (set) |
 | fuel | 0.10 · ln(fuel / fuel_c) (set) |
 
 1. **Curve.** Sum the terms, counting each negative term (a downgrade) at **half credit**: cutting something refunds only half of what adding it costs. `curve = e^sum`.
-2. **Lanchester floor.** Under the square law an army's strength is N² · hp · dps, so a design that doesn't out-fight its chassis per unit of cost needs `price ≥ sqrt(r_hp · r_eDPS · e^(2·0.137·Δrange) · e^(2·0.218·Δspeed))`. The price is never below that floor.
+2. **Lanchester floor.** Under the square law an army's strength is N² · hp · dps, so a design that doesn't out-fight its chassis per unit of cost needs `price ≥ sqrt(r_hp · r_eDPS · e^(2·0.126·Δrange) · e^(2·0.184·Δspeed))`. The price is never below that floor.
 3. **Novelty premium.** `price = max(curve, floor) · (1 + 0.10 · novelty)`, where `novelty = |ln r_hp| + |ln r_eDPS| + |Δrange|/5 + |ln r_speed| + |Δsight|/10 + |ln r_fuel| + 0.5 if the weapon is swapped`.
 4. **Materials.** The chassis bill is scaled to the price. A borrowed weapon brings the donor's exotic materials with it (a laser needs lenses, a beam needs plasma), counted inside the price, not on top. Amounts are rounded **up** to multiples of 5.
 5. **Build time** is the chassis time × max(0.8, price^0.6), rounded **up** to half a second. A cheap variant can't build much faster, which caps spam by factory throughput.
@@ -167,15 +167,15 @@ Every row below is a headless test. The "rejected with" column quotes the actual
 | 21 | a fourth invention, or two researching at once | caps | `you have 3/3 inventions` / `t0:lancer is still in research (0%); one research project at a time` |
 | 22 | building another team's invention | ownership | `t0:lancer is Blueberry's invention; only they can build it` |
 | 23 | steel → 2 steel, steel → plasma, steel → iron_ore, a recipe from nothing, a circuit fab drawing no power, a 10× fab | recipe conservation | `element Fe: outputs hold 2 but inputs only 1` · `element U: … only 0` · `it's mined, not manufactured` · `needs inputs` · `no free energy` · `throughput 50 se/s exceeds 8` |
-| 24 | **search**: 6,000 random designs across all 15 chassis (25% with weapon swaps) | all of the above | 571 pass; the most efficient is **0.89×** its chassis, the median **0.54×** |
+| 24 | **search**: 6,000 random designs across all 15 chassis (25% with weapon swaps) | all of the above | 571 pass; the most efficient is **0.94×** its chassis, the median **0.57×** |
 
 ### Balance
 
-**No design out-fights its chassis per unit of cost.** That holds by construction (the Lanchester floor) and in the random search (max 0.89). Inventions are side-grades, not upgrades. Their value comes from adapting to a specific opponent:
+**No design out-fights its chassis per unit of cost.** That holds by construction (the Lanchester floor) and in the random search (max 0.94). Inventions are side-grades, not upgrades. Their value comes from adapting to a specific opponent:
 
 - The Lancer hits aircraft, which a light tank can't.
-- The Bulwark is a slow tank that soaks damage (0.85× efficiency).
-- An artillery piece at the 12-tile cap is a valid design (355 steel, 120 circuits).
+- The Bulwark is a slow tank that soaks damage (0.88× efficiency).
+- An artillery piece at the 12-tile cap is a valid design (350 steel, 120 circuits).
 
 The median of 0.5× looks harsh until you compare the standard roster on the same metric. Relative to the light tank: rifleman 5.75, rocket_soldier 1.68, scout_buggy 1.32, heavy_tank 0.57, apc 0.63, mammoth 0.22, artillery 0.14, gunship 0.10, stealth_bomber 0.04. The game already charges heavily for concentration, reach, flight and specialisation, and inventions sit inside that band. That's also why efficiency is compared with the chassis, never across units.
 
@@ -183,9 +183,9 @@ The median of 0.5× looks harsh until you compare the standard roster on the sam
 
 | NoveltyPremium | DowngradeCredit | median efficiency | max | notes |
 |---|---|---|---|---|
-| 0.15 | 0.5 | 0.50 | 0.88 | strict |
-| **0.10** | **0.5** | **0.54** | **0.89** | **shipped default** |
-| 0.0 | 0.9 | 0.86 | 1.00 | the floor binds; downgrade spam reaches 0.69× |
+| 0.15 | 0.5 | 0.50 | 0.88 | strict (measured with the first fit) |
+| **0.10** | **0.5** | **0.57** | **0.94** | **shipped default** |
+| 0.0 | 0.9 | 0.86 | 1.00 | the floor binds; downgrade spam reaches 0.69× (measured with the first fit) |
 
 Start strict and loosen once telemetry shows how agents use inventions. Players won't notice a loosening; a tightening breaks designs they rely on.
 
@@ -218,14 +218,14 @@ An LLM can still have an optional, off-path role: writing flavour text (a descri
 | seat recycling | `CreateTeam(reuse)` drops the previous occupant's inventions. Their units are already gone (salvaged or defeated) |
 | commands | the `propose_tech` case and help text; the train "Valid:" list includes your inventions |
 | state | text and JSON `inventions` (status, research %, cost, stats); `enemy_inventions_seen` (stats of enemy inventions with a unit currently in view, with the name marked as player text); inventions in `build_options` / `build_now` / `build_blocked`; production % uses `w.Def` |
-| rules | `rules.inventions` gives the schema, limits, price formula and research bill. `RulesVersion` goes from 4 to 5 |
+| rules | `rules.inventions` gives the schema, limits, price formula and research bill. `RulesVersion` goes to 9 (main was at 8 when this was merged up) |
 | Unity | compiles as C# 9 (no new language features in Sim), no UnityEngine in Sim. `Invention.cs.meta` is committed |
 
 ### Still needed (not in the prototype)
 
 - **View (out of scope here).** `Models.Build(e.Def.Key)` → `Models.Build(e.Def.ModelKey)` in `WorldView.cs:268`, and `IconBox(…, e.Def.ModelKey, …)` in `Hud.cs:1254`, so an invention uses its chassis's model and icon with the team tint (`ModelKey` already exists). Add a small badge (a star or a letter) over invented units and show `Def.Name` in the selection panel. No new art is needed. Until then an invented unit finds no prefab and falls through to `Models.Build`'s default case: a team-coloured 0.5 cube. That's ugly but doesn't crash, because the `Defs.Get` hook resolves the key for the `trained`/`destroyed` handlers and the HUD queue rows.
-- **Gateway (mcp/, out of scope here).** Add a `changes.js` entry with `rules: 5`, for example: "Inventions: propose_tech designs your own variant of a unit you can build; dry_run quotes it; research at an electronics_plant, then train its key." Nothing else changes, because `command` already passes extra fields through. Optionally add a `propose_tech` example to the command tool's description.
-- **Persistence.** Inventions live in the World, which lives as long as the room's headless process, the same as every unit and stockpile. A gateway restart doesn't touch them (the gateway only proxies). A game restart clears them, as it clears everything else. If game saves arrive, serialise `Invention` with its proposal and re-run `Evaluate` on load rather than trusting stored stats; a constants change would then show up as a load-time diff.
+- **Gateway (mcp/, out of scope here).** Add a `changes.js` entry with `rules: 9`, for example: "Inventions: propose_tech designs your own variant of a unit you can build; dry_run quotes it; research at an electronics_plant, then train its key." Nothing else changes, because `command` already passes extra fields through. Optionally add a `propose_tech` example to the command tool's description.
+- **Persistence (done).** Saved games (`Sim/Snapshot.cs`, schema 3) carry each invention with the stats and price it was researched with, and its research progress. A deploy resumes a game with its inventions, the units built from them and their queue entries. They are deliberately not re-evaluated on load: the team paid for that design, so a pricing change in a newer build mustn't alter it mid-game. Only designs whose chassis or weapon donor no longer exists are dropped, along with their units. While a snapshot loads, its world installs the `Defs.Get` hook first, so queue and entity keys resolve (it hands the hook back if the load fails). In-flight shots from an invented weapon are saved too.
 - **Broadcast.** Research events are team-only. Other teams find out by meeting the unit (`enemy_inventions_seen`), which is realistic and spoils no surprise. An arena-wide "Blueberry fielded a new design" chat line is optional, and should be generated text only.
 - **Scripted AI.** The house AI ignores inventions; it never proposes and treats enemy inventions like any unit. Optionally give it a few curated templates (e.g. "Bulwark" when it's losing tank fights).
 - **Capture and reverse-engineering (phase 3).** Units can't be captured today. Suggested design: destroying N units of an enemy invention gives your team a discount on researching the *same* design (half the research bill per kill, down to 25%). It still goes through your own tier gating, so you can only copy what you could build. Invented structures, once they exist, would become capturable by engineers. A captured invented structure keeps working for the captor, but they can't build more without reverse-engineering it.
@@ -253,25 +253,27 @@ An LLM can still have an optional, off-path role: writing flavour text (a descri
 
 ## 6. Test results
 
-`cd headless && dotnet run -c Release -- --test`: **All tests passed** (194 PASS, 0 FAIL). That's the existing 143 checks plus 51 new invention checks in `headless/InventionTests.cs`. Key lines:
+`cd headless && dotnet run -c Release -- --test`: **All tests passed** (293 PASS, 0 FAIL), on main as of the catch-up, including the invention checks in `headless/InventionTests.cs` and saved-game coverage of inventions in `headless/SnapshotTests.cs`. Key lines:
 
 ```
 PASS  the fitted point-buy curve prices all 15 standard armed units within 0.55-1.7x of their real cost (rms log error 0.24)
 PASS  every standard converter recipe passes the conservation rules
-PASS  a slower, tougher heavy tank is valid: costs 475 steel, 95 circuits (950 se vs 800), build 14.5s, research 180 steel, 105 circuits / 51s, novelty 0.52, efficiency 0.85x
-PASS  a light tank carrying rocket-soldier rockets is valid: costs 330 steel, 70 copper, efficiency 0.53x
+PASS  a slower, tougher heavy tank is valid: costs 470 steel, 95 circuits (945 se vs 800), build 14.5s, research 180 steel, 105 circuits / 51s, novelty 0.52, efficiency 0.88x
+PASS  a light tank carrying rocket-soldier rockets is valid: costs 330 steel, 70 copper, efficiency 0.51x
 PASS  quotes are deterministic: the same proposal in a fresh world gets the identical quote
-PASS  random search: 571/6000 designs pass (median efficiency 0.54x); the most cost-efficient is 0.89x its chassis (cap 1.02)
+PASS  random search: 571/6000 designs pass (median efficiency 0.57x); the most cost-efficient is 0.94x its chassis (cap 1.02)
 PASS  propose_tech starts research and pays for it: researching t0:lancer (87s at your electronics_plant)
 PASS  it can't be trained before research finishes: t0:lancer is still being researched (0%)
 PASS  another team can't build it: t0:lancer is Blueberry's invention; only they can build it
 PASS  research completes after 87s and is announced to the team
-PASS  a Lancer rolls out of the factory (model light_tank, fuel 199.84999, resolvable by the view)
+PASS  a Lancer rolls out of the factory (model light_tank, fuel 200, resolvable by the view)
 PASS  the enemy who meets it sees its stats, with the name marked as player text
-PASS  it fights: the enemy scout buggy is destroyed (lancer hp 315/360)
-PASS  get_rules documents propose_tech and its limits (rules_version 5)
+PASS  it fights: the enemy scout buggy is destroyed (lancer hp 318/360)
+PASS  get_rules documents propose_tech and its limits (rules_version 9)
+PASS  a researched invention keeps its stats and price, its unit in the field and its place in the queue (330 steel, 70 copper, 11s)
+PASS  research in progress resumes where it was (3%), and inventions stay their team's own
 ```
 
 ### Unrelated bug found during the spike
 
-`StateView.AsciiMap` (served as `/api/map`, the `get_map` tool) throws `KeyNotFoundException: 'deep_mine'` as soon as a deep mine is on the map. The structure `Glyph` table has no entry for `deep_mine`. This is on `main` and comes from the deep-mining change, not this branch. It showed up as a crash at the end of a 15-minute AI-vs-AI `--selftest`. The fix is to add a glyph for `deep_mine` (and add it to the legend line). Until then, `get_map` fails for any player who can see a deep mine.
+`StateView.AsciiMap` (`/api/map`, the `get_map` tool) threw `KeyNotFoundException: 'deep_mine'` once a deep mine was on the map, because the `Glyph` table had no `deep_mine` entry. Fixed on main (`deep_mine` is `Q`, with a fallback glyph for any structure without one).
