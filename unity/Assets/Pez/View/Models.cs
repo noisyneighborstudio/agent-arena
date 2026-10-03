@@ -15,6 +15,7 @@ namespace Pez.View
         public bool HasModel => Model != null;
         public Vector3 BarrelRest;
         public Gait Gait;            // infantry walk cycle (legs, hips) or null
+        public Plinths.Spec Plinth;  // a structure's foundation (its pad turned into a plinth with driveway ramps) or null
     }
 
     /// <summary>
@@ -121,6 +122,8 @@ namespace Pez.View
         /// Mesh.RecalculateNormals, which smooths across every corner, so boxes shade like pillows. The handoff's
         /// renders (three.js) flat-shade normal-less meshes: unweld each mesh once and recompute, so every face is flat.
         /// </summary>
+        /// Also swaps the instance's glTF materials for the tuned Pez/Model PBR ones (Look.Convert), and stores the
+        /// bevel data Pez/Model shades its chamfered edges from (see BevelData).
         public static void FlatShade(GameObject go)
         {
             foreach (var mf in go.GetComponentsInChildren<MeshFilter>(true))
@@ -130,7 +133,109 @@ namespace Pez.View
                 if (!flatMeshes.TryGetValue(src, out var flat)) flatMeshes[src] = flat = Unweld(src);
                 mf.sharedMesh = flat;
             }
+            Look.Convert(go);
         }
+
+        /// <summary>
+        /// Per triangle corner, the bevel Pez/Model shades (a "shading chamfer": the edges of every convex crease get a
+        /// narrow band with the chamfer's normal, so they catch a highlight line like a real 45-degree chamfer; geometry,
+        /// silhouettes, pivots and footprints are untouched). Returned per unwelded vertex:
+        ///   uv3 = distance to each of the triangle's three edges (exact when interpolated; 1000 for an edge that gets
+        ///         no bevel: coplanar seams such as a quad's diagonal, and concave creases), w = bevel width (0 = none);
+        ///   uv4, uv5 = each edge's bevel normal in tangent space, xy only (z is positive);
+        ///   tangent = a unit tangent in the face plane (w = 1), the frame those normals are expressed in.
+        /// The bevel width scales with the part (connected piece) it's on: 3% of its size, 0.012 to 0.05 units.
+        /// </summary>
+        static (Vector4[] dist, Vector4[] bev01, Vector4[] bev2, Vector4[] tan) BevelData(Vector3[] v, List<int[]> subs)
+        {
+            // Weld by position (the source may split vertices by material or UV), then index edges.
+            var ids = new Dictionary<Vector3Int, int>();
+            int Id(Vector3 p) { var k = new Vector3Int(Mathf.RoundToInt(p.x * 2000f), Mathf.RoundToInt(p.y * 2000f), Mathf.RoundToInt(p.z * 2000f)); if (!ids.TryGetValue(k, out int i)) ids[k] = i = ids.Count; return i; }
+            var tris = new List<int>();
+            foreach (var t in subs) tris.AddRange(t);
+            int nt = tris.Count / 3;
+            var pid = new int[tris.Count];
+            for (int i = 0; i < tris.Count; i++) pid[i] = Id(v[tris[i]]);
+            // Connected pieces (union-find over welded vertices), for the bevel width.
+            var parent = new int[ids.Count];
+            for (int i = 0; i < parent.Length; i++) parent[i] = i;
+            int Find(int x) { while (parent[x] != x) x = parent[x] = parent[parent[x]]; return x; }
+            for (int t = 0; t < nt; t++) { int r0 = Find(pid[t * 3]); parent[Find(pid[t * 3 + 1])] = r0; parent[Find(pid[t * 3 + 2])] = Find(r0); }
+            var lo = new Dictionary<int, Vector3>(); var hi = new Dictionary<int, Vector3>();
+            for (int i = 0; i < tris.Count; i++)
+            {
+                int r = Find(pid[i]); var p = v[tris[i]];
+                lo[r] = lo.TryGetValue(r, out var l0) ? Vector3.Min(l0, p) : p;
+                hi[r] = hi.TryGetValue(r, out var h0) ? Vector3.Max(h0, p) : p;
+            }
+            var normals = new Vector3[nt];
+            for (int t = 0; t < nt; t++)
+                normals[t] = Vector3.Cross(v[tris[t * 3 + 1]] - v[tris[t * 3]], v[tris[t * 3 + 2]] - v[tris[t * 3]]).normalized; // outward (Unity winding)
+            var edges = new Dictionary<long, List<int>>(); // edge key -> triangle * 3 + corner opposite the edge
+            long Key(int a, int b) => a < b ? ((long)a << 32) | (uint)b : ((long)b << 32) | (uint)a;
+            for (int t = 0; t < nt; t++)
+                for (int c = 0; c < 3; c++)
+                {
+                    long k = Key(pid[t * 3 + (c + 1) % 3], pid[t * 3 + (c + 2) % 3]);
+                    if (!edges.TryGetValue(k, out var l)) edges[k] = l = new List<int>(2);
+                    l.Add(t * 3 + c);
+                }
+            var dist = new Vector4[tris.Count]; var bev01 = new Vector4[tris.Count]; var bev2 = new Vector4[tris.Count]; var tan = new Vector4[tris.Count];
+            var bevTs = new Vector2[3];
+            var keep = new bool[3]; var h = new float[3];
+            for (int t = 0; t < nt; t++)
+            {
+                var n = normals[t];
+                var p0 = v[tris[t * 3]]; var p1 = v[tris[t * 3 + 1]]; var p2 = v[tris[t * 3 + 2]];
+                var tg = Vector3.Cross(n, Mathf.Abs(n.y) < 0.9f ? Vector3.up : Vector3.right).normalized;
+                var bt = Vector3.Cross(n, tg);
+                float area2 = Vector3.Cross(p1 - p0, p2 - p0).magnitude;
+                int root = Find(pid[t * 3]);
+                float size = (hi[root] - lo[root]).magnitude;
+                float width = Mathf.Clamp(size * 0.03f, 0.012f, 0.05f);
+                for (int c = 0; c < 3; c++)
+                {
+                    int ia = t * 3 + (c + 1) % 3, ib = t * 3 + (c + 2) % 3;
+                    var ea = v[tris[ia]]; var eb = v[tris[ib]];
+                    float len = (eb - ea).magnitude;
+                    h[c] = len > 1e-6f ? area2 / len : 0f;
+                    var l = edges[Key(pid[ia], pid[ib])];
+                    Vector3 bevel = Vector3.zero;
+                    bool crease = false;
+                    if (l.Count == 1)
+                    {
+                        // An open edge (a plate's rim): lean the bevel outward in the face's plane.
+                        var outward = Vector3.Cross(eb - ea, n).normalized;
+                        if (Vector3.Dot(outward, v[tris[t * 3 + c]] - ea) > 0) outward = -outward;
+                        bevel = (n + outward).normalized; crease = true;
+                    }
+                    foreach (int other in l)
+                    {
+                        int ot = other / 3;
+                        if (ot == t) continue;
+                        var n2 = normals[ot];
+                        if (Vector3.Dot(n, n2) > 0.94f) continue; // coplanar (within ~20 degrees): no crease
+                        // Convex when the neighbour's far corner lies behind this face.
+                        if (Vector3.Dot(v[tris[other]] - ea, n) < -1e-4f) { crease = true; bevel = (n + n2).normalized; }
+                    }
+                    keep[c] = crease && h[c] > width * 1.5f; // skip slivers narrower than the bevel
+                    bevTs[c] = keep[c] ? new Vector2(Vector3.Dot(bevel, tg), Vector3.Dot(bevel, bt)) : Vector2.zero;
+                }
+                bool any = keep[0] || keep[1] || keep[2];
+                for (int c = 0; c < 3; c++)
+                {
+                    int o = t * 3 + c;
+                    dist[o] = new Vector4(keep[0] ? (c == 0 ? h[0] : 0) : 1000f, keep[1] ? (c == 1 ? h[1] : 0) : 1000f, keep[2] ? (c == 2 ? h[2] : 0) : 1000f, any ? width : 0f);
+                    bev01[o] = new Vector4(bevTs[0].x, bevTs[0].y, bevTs[1].x, bevTs[1].y);
+                    bev2[o] = new Vector4(bevTs[2].x, bevTs[2].y, 0, 0);
+                    tan[o] = new Vector4(tg.x, tg.y, tg.z, 1f);
+                }
+            }
+            return (dist, bev01, bev2, tan);
+        }
+
+        /// <summary>A flat-shaded copy of a mesh with the chamfer shading data (for procedural meshes such as plinths).</summary>
+        public static Mesh FlatMesh(Mesh src) => Unweld(src);
 
         static Mesh Unweld(Mesh src)
         {
@@ -143,9 +248,11 @@ namespace Pez.View
             var uvs = new List<Vector2>();
             var cols = new List<Color>();
             var subs = new List<int[]>();
+            var srcSubs = new List<int[]>();
             for (int s = 0; s < src.subMeshCount; s++)
             {
                 var tris = src.GetTriangles(s);
+                srcSubs.Add(tris);
                 var outTris = new int[tris.Length];
                 for (int i = 0; i < tris.Length; i++)
                 {
@@ -159,6 +266,10 @@ namespace Pez.View
             var m = new Mesh { name = src.name + "_flat" };
             if (verts.Count > 65000) m.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
             m.SetVertices(verts);
+            // Unwelded vertex i is source corner i (submeshes in order): the bevel data lines up one to one.
+            var (dist, bev01, bev2, tan) = BevelData(v, srcSubs);
+            m.SetUVs(3, dist); m.SetUVs(4, bev01); m.SetUVs(5, bev2);
+            m.SetTangents(tan);
             if (hasUv) m.SetUVs(0, uvs);
             if (hasCol) m.SetColors(cols);
             m.subMeshCount = subs.Count;
@@ -197,7 +308,7 @@ namespace Pez.View
                         {
                             t.EnableKeyword("_EMISSION");
                             t.globalIlluminationFlags = MaterialGlobalIlluminationFlags.None;
-                            if (t.HasProperty("_EmissionColor")) t.SetColor("_EmissionColor", color * 1.4f);
+                            if (t.HasProperty("_EmissionColor")) t.SetColor("_EmissionColor", color * 2.4f); // HDR: feeds the bloom
                             if (t.HasProperty("emissiveFactor")) t.SetColor("emissiveFactor", color * 1.4f);
                         }
                         oreTinted[(m, oreType)] = t;
@@ -247,6 +358,7 @@ namespace Pez.View
                 var go = Object.Instantiate(prefab, rig.Body, false);
                 go.name = key; // PezMotion reads its profile from the object name
                 FlatShade(go);
+                if (Pez.Sim.Defs.Get(key)?.IsStructure == true) rig.Plinth = Plinths.Apply(go, key);
                 TintTeam(go, team);
                 rig.Model = go;
                 rig.Turret = PezMotion.FindDeep(go.transform, "turret");

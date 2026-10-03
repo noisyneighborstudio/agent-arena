@@ -18,7 +18,7 @@ namespace Pez.View
         static FxSystems inst;
         public static FxSystems I => inst != null ? inst : inst = Create();
 
-        public ParticleSystem Flash, Fire, Smoke, Dust, Sparks, Shards, Ring, Scorch;
+        public ParticleSystem Flash, Fire, Smoke, Dust, Sparks, Shards, Ring, Scorch, Pool;
         Transform ground;
         public static readonly Vector3 Wind = new Vector3(0.22f, 0f, 0.1f);
 
@@ -113,13 +113,13 @@ namespace Pez.View
             ground.position = Vector3.zero;
 
             // Flash: a white-hot core that collapses within a tenth of a second (additive).
-            Flash = Make("flash", Mat("PezFxGlow", 3030, ("_Shape", 0), ("_Opacity", 0), ("_Boost", 1.8f)), 400, 0f, 0f, glowStreams);
+            Flash = Make("flash", Mat("PezFxGlow", 3030, ("_Shape", 0), ("_Opacity", 0), ("_Boost", 1.5f)), 400, 0f, 0f, glowStreams);
             SizeOverLife(Flash, new Keyframe(0, 1f), new Keyframe(1, 0.35f));
             ColorOverLife(Flash, Grad(new[] { (0f, Color.white), (1f, new Color(1f, 0.75f, 0.4f)) }, new[] { (0f, 1f), (1f, 0f) }));
 
             // Fireball: hot gas pushed out by the blast, stopped by drag, lifted by buoyancy, cooling through
             // white, yellow, orange and red to dark soot. Partly occluding, so the dark end really darkens.
-            Fire = Make("fire", Mat("PezFxGlow", 3010, ("_Shape", 3), ("_Opacity", 0.72f), ("_Boost", 1.3f), ("_Noise", 0.55f)), 4000, -0.32f, 4.5f, glowStreams);
+            Fire = Make("fire", Mat("PezFxGlow", 3010, ("_Shape", 3), ("_Opacity", 0.8f), ("_Boost", 0.92f), ("_Noise", 0.55f)), 4000, -0.32f, 4.5f, glowStreams);
             Fire.GetComponent<ParticleSystemRenderer>().sortMode = ParticleSystemSortMode.YoungestInFront;
             SizeOverLife(Fire, new Keyframe(0, 0.55f), new Keyframe(0.25f, 1f), new Keyframe(1, 1.3f));
             ColorOverLife(Fire, Grad(new[]
@@ -171,11 +171,19 @@ namespace Pez.View
             SizeOverLife(Ring, new Keyframe(0, 0.12f, 0f, 4f), new Keyframe(0.35f, 0.78f), new Keyframe(1, 1f));
             ColorOverLife(Ring, Grad(new[] { (0f, Color.white), (1f, Color.white) }, new[] { (0f, 1f), (0.5f, 0.55f), (1f, 0f) }));
 
-            // Scorch: a dark blotch burnt into the ground that fades over half a minute.
-            Scorch = Make("scorch", Mat("PezFxGlow", 2991, ("_Shape", 2), ("_Opacity", 1f), ("_Boost", 1f), ("_Noise", 0.6f)), 400, 0f, 0f, glowStreams,
+            // Scorch: a dark blotch burnt into the ground that fades over a minute or so (Fx.Scorch sets the life).
+            Scorch = Make("scorch", Mat("PezFxGlow", 2991, ("_Shape", 2), ("_Opacity", 1f), ("_Boost", 1f), ("_Noise", 0.6f)), 900, 0f, 0f, glowStreams,
                 ParticleSystemRenderMode.HorizontalBillboard);
             SizeOverLife(Scorch, new Keyframe(0, 0.5f), new Keyframe(0.01f, 1f), new Keyframe(1, 1f));
             ColorOverLife(Scorch, Grad(new[] { (0f, Color.white), (1f, Color.white) }, new[] { (0f, 1f), (0.55f, 0.9f), (1f, 0f) }));
+
+            // Light pool: the warm splash an explosion or muzzle flash throws on the ground around it (additive, flat on
+            // the ground under the fog overlay). Every lamp makes one, so the light reads in every view and on every
+            // stream even when the per-pixel point-light budget is spent.
+            Pool = Make("pool", Mat("PezFxGlow", 2993, ("_Shape", 0), ("_Opacity", 0f), ("_Boost", 0.9f)), 300, 0f, 0f, glowStreams,
+                ParticleSystemRenderMode.HorizontalBillboard);
+            SizeOverLife(Pool, new Keyframe(0, 0.8f), new Keyframe(0.2f, 1f), new Keyframe(1, 1.05f));
+            ColorOverLife(Pool, Grad(new[] { (0f, Color.white), (1f, new Color(1f, 0.6f, 0.35f)) }, new[] { (0f, 1f), (0.3f, 0.55f), (1f, 0f) }));
 
             for (int i = 0; i < LightCount; i++)
             {
@@ -254,6 +262,7 @@ namespace Pez.View
             Emit(Sparks, at, Vector3.up, 0.01f, 0.2f, clear);
             Emit(Ring, at, Vector3.zero, 0.1f, 0.2f, clear);
             Emit(Scorch, at, Vector3.zero, 0.1f, 0.2f, clear);
+            Emit(Pool, at, Vector3.zero, 0.1f, 0.2f, clear);
             EmitShard(at + Vector3.down * 3f, Vector3.zero, 0.01f, 0.2f, clear);
         }
 
@@ -297,6 +306,11 @@ namespace Pez.View
             l.transform.position = pos;
             l.color = c; l.range = range; l.intensity = intensity; l.enabled = true;
             lightStart[i] = Time.time; lightLife[i] = life; lightPeak[i] = intensity;
+            // The ground splash under it, weaker the higher the light is (an air burst lights the ground less).
+            float a = Mathf.Clamp01(intensity / 4.5f) * Mathf.Clamp01(1f - pos.y / (range * 1.1f));
+            if (a > 0.03f)
+                Emit(Pool, new Vector3(pos.x, 0.05f, pos.z), Vector3.zero, range * 1.25f, Mathf.Max(0.12f, life * 1.8f),
+                    new Color32((byte)(Mathf.Clamp01(c.r) * 255), (byte)(Mathf.Clamp01(c.g) * 255), (byte)(Mathf.Clamp01(c.b) * 255), (byte)(a * 255)));
         }
 
         // ---------------------------------------------------------------- delayed bursts, smoulder, falling hulks

@@ -148,9 +148,12 @@ namespace Pez.View
             }
         }
 
-        /// <summary>A dark blotch burnt into the ground; fades over 25 s.</summary>
+        /// <summary>A dark blotch burnt into the ground; stays a while (the battle's history), fading over 75 s.</summary>
         public static void Scorch(Vector3 pos, float size) =>
-            Emit(S.Scorch, new Vector3(pos.x, 0.035f, pos.z), Vector3.zero, size * Random.Range(0.9f, 1.1f), 25f, ScorchCol, Random.Range(0f, 360f));
+            Emit(S.Scorch, new Vector3(pos.x, 0.035f, pos.z), Vector3.zero, size * Random.Range(0.9f, 1.1f), 75f, ScorchCol, Random.Range(0f, 360f));
+
+        /// <summary>Line effects (beams, tracers) are additive: lift them above the bloom threshold so they glow.</summary>
+        static Color Hot(Color c, float k) => new Color(c.r * k, c.g * k, c.b * k, c.a);
 
         /// <summary>A plain explosion of the given scale (C4 charges and anything without its own recipe).</summary>
         public static void Explosion(Vector3 pos, float size) => Blast(pos, size, pos.y < 0.9f);
@@ -316,6 +319,7 @@ namespace Pez.View
         {
             var go = new GameObject("tracer");
             var lr = go.AddComponent<LineRenderer>();
+            c = Hot(c, 1.4f);
             var mat = Mats.UnlitInstance(c, true);
             lr.sharedMaterial = mat;
             lr.positionCount = 2;
@@ -331,6 +335,8 @@ namespace Pez.View
         {
             var go = new GameObject("beam");
             var lr = go.AddComponent<LineRenderer>();
+            var lampColor = c;
+            c = Hot(c, 1.5f);
             var mat = Mats.UnlitInstance(c, true);
             lr.sharedMaterial = mat;
             lr.positionCount = 2;
@@ -340,7 +346,7 @@ namespace Pez.View
             lr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             var f = go.AddComponent<FxLife>();
             f.Life = 0.22f; f.Mat = mat; f.Color = c;
-            S.Lamp(b + Up * 0.3f, c, 3f, 3f, 0.25f);
+            S.Lamp(b + Up * 0.3f, lampColor, 3f, 3f, 0.25f);
         }
     }
 }

@@ -46,6 +46,7 @@ namespace Pez.EditorTools
             PlayerSettings.defaultScreenHeight = 1080;
             PlayerSettings.resizableWindow = true;
             PlayerSettings.macRetinaSupport = true;
+            PlayerSettings.enableFrameTimingStats = true; // GPU frame times for PerfProbe (-perfprobe)
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
             Debug.Log("Pez setup complete");
