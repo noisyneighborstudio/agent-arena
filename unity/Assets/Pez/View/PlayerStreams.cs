@@ -16,6 +16,8 @@ namespace Pez.View
         public GameRunner Runner;
         public int Width = 1280, Height = 720; // the cap for player streams and look stills (bandwidth)
         public float SnapshotInterval = 0.15f; // a stream polled for snapshots (the look tool), not watched live
+        /// <summary>Stream frames rendered since startup (for PerfProbe).</summary>
+        public static int RenderCount;
         Camera cam;
         RenderTexture rt, resolved;
         readonly Dictionary<int, (Vector3 focus, float last, int seat)> state = new Dictionary<int, (Vector3, float, int)>();
@@ -170,6 +172,7 @@ namespace Pez.View
             RtsCamera.AimSun(yaw); // the sun sits at the upper left of whichever view renders
             cam.targetTexture = rt;
             cam.Render();
+            RenderCount++;
             cam.targetTexture = null;
             Graphics.Blit(rt, resolved);
             FrameServer.Encode(resolved, team);
