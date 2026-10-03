@@ -334,6 +334,35 @@ namespace Pez.View
             Emit(S.Pool, new Vector3(ground.x, 0.05f, ground.z), Vector3.zero, Random.Range(2.2f, 2.8f) * size, 0.3f, Alpha(FirePool, Random.Range(0.25f, 0.4f)));
         }
 
+        /// <summary>A heavy gun's blast on the ground around the firer: a dust ring, and for artillery dust kicked outward.</summary>
+        public static void GroundRing(Vector3 at, float size, float alpha, int puffs)
+        {
+            var g = Ground(at);
+            Emit(S.Ring, g + Up * 0.05f, Vector3.zero, size, 0.35f + 0.1f * size, Alpha(Color32.Lerp(DustPale, Cream, 0.4f), alpha), Random.Range(0f, 360f));
+            for (int i = 0; i < puffs; i++)
+            {
+                var dir = Flat(1f);
+                Emit(S.Dust, g + dir * 0.4f + Up * 0.1f, dir * Random.Range(1f, 1.8f) + Up * Random.Range(0.1f, 0.4f),
+                    Random.Range(0.35f, 0.55f), Random.Range(1.2f, 2f), Vary(DustBiscuit, 0.06f, 200));
+            }
+        }
+
+        /// <summary>After an artillery shot: three gun-smoke puffs drift from the barrel tip and linger.</summary>
+        public static void BarrelSmoke(Vector3 tip)
+        {
+            for (int i = 0; i < 3; i++)
+                Emit(S.Dust, tip + Random.insideUnitSphere * 0.06f, Up * Random.Range(0.15f, 0.35f) + Random.insideUnitSphere * 0.1f,
+                    Random.Range(0.22f, 0.32f), Random.Range(1.8f, 2.6f), Alpha(GunSmoke, 0.55f));
+        }
+
+        /// <summary>Artillery deploys: its spades bite, kicking dust back from a rear corner.</summary>
+        public static void SpadeDust(Vector3 at, Vector3 back)
+        {
+            for (int i = 0; i < 2; i++)
+                Emit(S.Dust, Ground(at) + Up * 0.08f, back * Random.Range(0.4f, 0.8f) + Flat(0.2f) + Up * Random.Range(0.15f, 0.35f),
+                    Random.Range(0.25f, 0.38f), Random.Range(1f, 1.5f), Vary(DustBiscuit, 0.06f, 200));
+        }
+
         /// <summary>A construction stage lands: a biscuit dust puff kicked out at each corner of the footprint.</summary>
         public static void StageDust(Vector3 center, float sx, float sz)
         {

@@ -23,6 +23,9 @@ namespace Pez.View
             public float LandK;          // aircraft: 0 flying, 1 parked on its pad (eases between)
             // Hull feel (MOTION.md): nose-up under acceleration, dip when braking, kick back on firing.
             public float HullSpeed, HullPitch, HullPitchVel;
+            // Mass in motion: the heavy's start squat, artillery deployed (0..1) and whether it has rammed this cycle.
+            public float StartSquat, Deploy;
+            public bool Rammed;
             public int OreTint = -1;     // deep mine: the ore its tube is tinted to; mining truck: the ore its load shows
             public int Born;             // frame the view was made (deploys pair a unit with the structure it became)
             public float BoardT;         // boarding: 0..1 while the passenger shrinks into its carrier
@@ -60,6 +63,7 @@ namespace Pez.View
         readonly Dictionary<int, (Vector3 start, Vec2 simStart, float total)> projectileStart = new Dictionary<int, (Vector3, Vec2, float)>();
         /// <summary>How far (tiles) a shell flies from the barrel tip before it is exactly on the sim's path.</summary>
         const float MuzzleBlend = 0.12f;
+        readonly Dictionary<int, Transform> shellShadows = new Dictionary<int, Transform>();
         public static readonly Color[] OreColors =
         {
             PezPalette.OreIronOre,   // cinnamon
@@ -531,6 +535,7 @@ namespace Pez.View
                 var targetRot = Quaternion.Euler(0, Yaw(e.Facing), 0);
                 rig.Root.rotation = Quaternion.Slerp(rig.Root.rotation, targetRot, Time.deltaTime * 14f);
                 if (!e.IsAir && e.Def.Armor != Armor.Infantry) HullFeel(v);
+                if (e.Def.Key == "artillery" && rig.HasModel) Artillery(v);
                 if (rig.HasModel)
                 {
                     if (rig.Turret != null) Aim(v);
@@ -727,18 +732,84 @@ namespace Pez.View
             else if (ph > dv.DockBest) dv.DockBest = ph;
         }
 
-        /// <summary>Acceleration pitches the hull nose-up 2 degrees, braking dips it 3 (a 0.25 s spring on the visual body).</summary>
+        /// <summary>A hull's spring per weight class (production review rec. 5): period, damping, nose-up and nose-down
+        /// limits (deg), and the kick a shot gives it (deg).</summary>
+        struct HullClass { public float Period, Damping, Up, Down, Kick; }
+        static readonly HullClass LightHull = new HullClass { Period = 0.25f, Damping = 0.35f, Up = 2f, Down = 3f, Kick = 1.5f };   // bobs twice
+        static readonly HullClass HeavyHull = new HullClass { Period = 0.6f, Damping = 0.55f, Up = 1.5f, Down = 2.5f, Kick = 2.5f };  // one slow rock
+        static readonly HullClass ArtyHull = new HullClass { Period = 0.5f, Damping = 0.7f, Up = 2f, Down = 3f, Kick = 3f };
+        static readonly HullClass OtherHull = new HullClass { Period = 0.3f, Damping = 0.5f, Up = 2f, Down = 3f, Kick = 1.5f };
+
+        static HullClass ClassOf(Entity e) => e.Def.Key switch
+        {
+            "light_tank" or "laser_tank" or "scout_buggy" => LightHull,
+            "heavy_tank" or "mammoth_tank" => HeavyHull,
+            "artillery" => ArtyHull,
+            _ => OtherHull,
+        };
+
+        /// <summary>
+        /// Mass in motion: acceleration pitches the hull nose-up and braking dips it, on an underdamped spring per weight
+        /// class (light bobs twice, heavy rocks once slowly, artillery settles). The braking dip starts about 0.3 s before
+        /// the sim stops the vehicle (it's about to reach its firing range or its move point), so stopping and the first
+        /// shot's kick no longer cancel. The heavy squats a little as it pulls away.
+        /// </summary>
         void HullFeel(EV v)
         {
             float dt = Time.deltaTime;
             if (dt <= 0) return;
-            float speed = Vec2.Dist(v.E.PrevPos, v.E.Pos) / World.Dt;
+            var e = v.E;
+            var hc = ClassOf(e);
+            float speed = Vec2.Dist(e.PrevPos, e.Pos) / World.Dt;
             float smoothed = Mathf.Lerp(v.HullSpeed, speed, 1f - Mathf.Exp(-dt * 6f));
             float accel = (smoothed - v.HullSpeed) / dt;
             v.HullSpeed = smoothed;
-            float target = Mathf.Clamp(-accel * 1.5f, -2f, 3f); // nose-up is negative pitch
-            v.HullPitch = Mathf.SmoothDamp(v.HullPitch, target, ref v.HullPitchVel, 0.25f, Mathf.Infinity, dt);
+            float target = Mathf.Clamp(-accel * 1.5f, -hc.Up, hc.Down); // nose-up is negative pitch
+            if (e.Moving && AboutToStop(e)) target = hc.Down;
+            float w = 6.2831853f / hc.Period;
+            v.HullPitchVel += (w * w * (target - v.HullPitch) - 2f * hc.Damping * w * v.HullPitchVel) * dt;
+            v.HullPitch = Mathf.Clamp(v.HullPitch + v.HullPitchVel * dt, -hc.Up * 1.6f, hc.Down * 1.6f);
             v.Rig.Body.localRotation = Quaternion.Euler(v.HullPitch, 0, 0);
+            if (e.Def.Key == "heavy_tank") v.StartSquat = Mathf.MoveTowards(v.StartSquat, accel > 0.4f ? 1f : 0f, dt / 0.25f);
+            if (e.Def.Key == "heavy_tank" || e.Def.Key == "artillery")
+            {
+                var bp = v.Rig.Body.localPosition; bp.y = -0.015f * v.StartSquat - 0.04f * v.Deploy; v.Rig.Body.localPosition = bp;
+            }
+        }
+
+        /// <summary>Will the sim stop this vehicle within about 0.3 s? (It stops dead at Range x 0.95 from an attack target,
+        /// or on reaching its move point.)</summary>
+        bool AboutToStop(Entity e)
+        {
+            float reach = e.Def.Speed * 0.3f;
+            if ((e.Order == Order.Attack || e.Order == Order.AttackMove) && e.TargetId != 0 && e.Def.Weapon != null)
+            {
+                var t = World.Get(e.TargetId);
+                if (t != null) { float rem = Vec2.Dist(e.Pos, t.Center) - e.Def.Weapon.Range * 0.95f; return rem > 0f && rem < reach; }
+            }
+            if (e.Order == Order.Move) { float rem = Vec2.Dist(e.Pos, e.OrderPos); return rem < reach; }
+            return false;
+        }
+
+        /// <summary>
+        /// Artillery's cycle inside its 3.5 s cooldown: it deploys when it stops to fight (body squats 0.04 over 0.4 s,
+        /// spade dust at the rear corners), loads (the barrel rams back and returns, 0.4 s, ending well before the earliest
+        /// shot) and undeploys in 0.25 s when the sim moves it.
+        /// </summary>
+        void Artillery(EV v)
+        {
+            var e = v.E;
+            bool engaged = Time.time - v.LastFire < 3f || e.Order == Order.Attack;
+            bool deploy = !e.Moving && engaged;
+            float was = v.Deploy;
+            v.Deploy = Mathf.MoveTowards(v.Deploy, deploy ? 1f : 0f, Time.deltaTime / (deploy ? 0.4f : 0.25f));
+            if (was < 0.9f && v.Deploy >= 0.9f)
+            {
+                var r = v.Rig.Root;
+                Fx.SpadeDust(r.position - r.forward * 0.42f + r.right * 0.26f, -r.forward);
+                Fx.SpadeDust(r.position - r.forward * 0.42f - r.right * 0.26f, -r.forward);
+            }
+            if (engaged && e.Cooldown > 0.2f && e.Cooldown < 0.6f && !v.Rammed) { v.Rig.Motion.Ram(); v.Rammed = true; }
         }
 
         void SyncProjectiles(float alpha)
@@ -754,11 +825,19 @@ namespace Pez.View
                     if (Views.TryGetValue(p.SourceId, out var sv) && sv.Rig.HasMuzzle && sv.Rig.Root.gameObject.activeInHierarchy) from = MuzzleOf(p.SourceId, p.PrevPos);
                     else from = W(p.PrevPos, sv != null ? sv.Rig.Root.position.y + 0.3f : 0.4f);
                     var c = p.Weapon.Name == "rocket" ? new Color(1f, 0.55f, 0.2f) : new Color(1f, 0.9f, 0.5f);
-                    t = Models.Part(transform, PrimitiveType.Sphere, from, Vector3.one * (p.Weapon.Name == "heavy_cannon" ? 0.14f : 0.1f), Mats.Glow(c, 4f));
+                    bool shell = p.Weapon.Name == "artillery";
+                    t = Models.Part(transform, PrimitiveType.Sphere, from, Vector3.one * (shell ? 0.16f : p.Weapon.Name == "heavy_cannon" ? 0.14f : 0.1f), Mats.Glow(c, shell ? 2.2f : 4f));
                     t.GetComponent<Renderer>().shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
                     var trail = t.gameObject.AddComponent<TrailRenderer>();
                     trail.sharedMaterial = Mats.Unlit(new Color(c.r, c.g, c.b, 0.5f), true);
-                    trail.time = p.Weapon.Name == "rocket" ? 0.5f : 0.12f;
+                    trail.time = p.Weapon.Name == "rocket" ? 0.5f : shell ? 0.35f : 0.12f;
+                    if (shell)
+                    {
+                        // Its shadow crosses the ground under it, so viewers can read where it will land.
+                        var sh = Models.Part(transform, PrimitiveType.Cylinder, new Vector3(from.x, 0.03f, from.z), new Vector3(0.22f, 0.002f, 0.22f), Mats.Unlit(new Color(0.09f, 0.07f, 0.06f, 0.35f)));
+                        sh.GetComponent<Renderer>().shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                        shellShadows[p.Id] = sh;
+                    }
                     trail.startWidth = 0.08f; trail.endWidth = 0f;
                     trail.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
                     projectiles[p.Id] = t;
@@ -775,12 +854,21 @@ namespace Pez.View
                 float off = 1f - Mathf.SmoothStep(0f, 1f, Vec2.Dist(ground, simStart) / MuzzleBlend);
                 if (off > 0f) { pos.x += (start.x - simStart.X) * off; pos.z += (start.z - simStart.Y) * off; }
                 t.position = pos;
+                if (shellShadows.TryGetValue(p.Id, out var shadow))
+                {
+                    shadow.position = new Vector3(pos.x, 0.03f, pos.z);
+                    if (shadow.gameObject.activeSelf != t.gameObject.activeSelf) shadow.gameObject.SetActive(t.gameObject.activeSelf);
+                }
                 bool show = PovTeam < 0 || VisibleTile(p.Pos);
                 if (t.gameObject.activeSelf != show) t.gameObject.SetActive(show);
             }
             var dead = new List<int>();
             foreach (var kv in projectiles) if (!live.Contains(kv.Key)) dead.Add(kv.Key);
-            foreach (var id in dead) { Destroy(projectiles[id].gameObject); projectiles.Remove(id); projectileStart.Remove(id); }
+            foreach (var id in dead)
+            {
+                Destroy(projectiles[id].gameObject); projectiles.Remove(id); projectileStart.Remove(id);
+                if (shellShadows.TryGetValue(id, out var sh)) { Destroy(sh.gameObject); shellShadows.Remove(id); }
+            }
         }
 
         bool VisibleTile(Vec2 p)
@@ -829,9 +917,19 @@ namespace Pez.View
                             break;
                         }
                     case "fire":
-                        Fx.MuzzleFlash(MuzzleOf(ev.A, ev.Pos), ev.Key == "heavy_cannon" ? 0.2f : 0.13f);
-                        Kick(ev.A, 0.08f);
-                        break;
+                        {
+                            var tip = MuzzleOf(ev.A, ev.Pos);
+                            bool arty = ev.Key == "artillery";
+                            Fx.MuzzleFlash(tip, arty ? 0.3f : ev.Key == "heavy_cannon" ? 0.2f : 0.13f);
+                            if (Views.TryGetValue(ev.A, out var sv) && !sv.E.IsStructure)
+                            {
+                                // The ground notices: a dust ring under a heavy's shot, a blast ring and lingering smoke for artillery.
+                                if (ev.Key == "heavy_cannon") Fx.GroundRing(sv.Rig.Root.position, 1.4f, 0.5f, 0);
+                                if (arty) { Fx.GroundRing(sv.Rig.Root.position, 2f, 0.6f, 6); Fx.BarrelSmoke(tip); }
+                            }
+                            Kick(ev.A, 0.08f);
+                            break;
+                        }
                     case "trained":
                         if (Views.TryGetValue(ev.A, out var tv2))
                         {
@@ -902,7 +1000,8 @@ namespace Pez.View
         Vector3 MuzzleOf(int id, Vec2 fallback)
         {
             if (Views.TryGetValue(id, out var v) && v.Rig.Barrel != null)
-                return v.Rig.HasMuzzle ? v.Rig.Barrel.TransformPoint(v.Rig.MuzzleLocal) : v.Rig.Barrel.position + v.Rig.Barrel.parent.forward * 0.35f;
+                return v.Rig.Twin ? v.Rig.Barrel.TransformPoint((v.Rig.Motion.NextTwin & 1) == 0 ? v.Rig.MuzzleL : v.Rig.MuzzleR)
+                     : v.Rig.HasMuzzle ? v.Rig.Barrel.TransformPoint(v.Rig.MuzzleLocal) : v.Rig.Barrel.position + v.Rig.Barrel.parent.forward * 0.35f;
             return W(fallback, 0.4f);
         }
 
@@ -913,7 +1012,13 @@ namespace Pez.View
             if (!Views.TryGetValue(id, out var v)) return;
             v.LastFire = Time.time;
             if (v.Rig.HasModel) v.Rig.Motion.Fire(); else v.Recoil = amount;
-            if (!v.E.IsStructure && !v.E.IsAir && v.E.Def.Armor != Armor.Infantry) v.HullPitch -= 1.5f; // hull kicks back (nose up)
+            if (!v.E.IsStructure && !v.E.IsAir && v.E.Def.Armor != Armor.Infantry)
+            {
+                // The hull kicks back (nose up): an impulse on the spring, so it rides on top of any settling dip.
+                var hc = ClassOf(v.E);
+                v.HullPitchVel -= hc.Kick * 6.2831853f / hc.Period;
+                v.Rammed = false;
+            }
         }
 
         /// <summary>Open the roll-up door of the team's structure nearest a point (unit exits, truck docking).</summary>

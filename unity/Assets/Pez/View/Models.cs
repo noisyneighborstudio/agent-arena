@@ -18,6 +18,9 @@ namespace Pez.View
         /// tracers start here.</summary>
         public Vector3 MuzzleLocal;
         public bool HasMuzzle;
+        /// <summary>Twin barrels (heavy tank): each barrel's muzzle in barrel space; shots alternate L, R.</summary>
+        public Vector3 MuzzleL, MuzzleR;
+        public bool Twin;
         public Gait Gait;            // infantry walk cycle (legs, hips) or null
         public Plinths.Spec Plinth;  // a structure's foundation (its pad turned into a plinth with driveway ramps) or null
     }
@@ -384,6 +387,79 @@ namespace Pez.View
             return hi.z > lo.z;
         }
 
+        /// <summary>
+        /// Split a twin-barrel mesh (two parallel barrels, one node) into barrel_l and barrel_r children by the side of
+        /// x = 0 each triangle lies on, so each can recoil on its own shot. Returns each one's muzzle in barrel space.
+        /// </summary>
+        static bool SplitTwin(Transform barrel, out Vector3 muzzleL, out Vector3 muzzleR)
+        {
+            muzzleL = muzzleR = Vector3.zero;
+            var mf = barrel.GetComponentInChildren<MeshFilter>();
+            if (mf == null || mf.sharedMesh == null || !mf.sharedMesh.isReadable) return false;
+            var src = mf.sharedMesh;
+            if (!twinMeshes.TryGetValue(src, out var made)) twinMeshes[src] = made = SplitMesh(src);
+            if (made == null) return false;
+            for (int side = 0; side < 2; side++)
+            {
+                var go = new GameObject(side == 0 ? "barrel_l" : "barrel_r", typeof(MeshFilter), typeof(MeshRenderer));
+                go.transform.SetParent(mf.transform.parent, false);
+                go.transform.localPosition = mf.transform.localPosition;
+                go.transform.localRotation = mf.transform.localRotation;
+                go.transform.localScale = mf.transform.localScale;
+                go.GetComponent<MeshFilter>().sharedMesh = made[side];
+                go.GetComponent<MeshRenderer>().sharedMaterials = mf.GetComponent<MeshRenderer>().sharedMaterials;
+                var b = made[side].bounds;
+                var tip = barrel.InverseTransformPoint(go.transform.TransformPoint(new Vector3(b.center.x, b.center.y, b.max.z)));
+                if (side == 0) muzzleL = tip; else muzzleR = tip;
+            }
+            Object.DestroyImmediate(mf.gameObject);
+            return true;
+        }
+
+        static readonly Dictionary<Mesh, Mesh[]> twinMeshes = new Dictionary<Mesh, Mesh[]>();
+
+        /// <summary>The two halves of a twin-barrel mesh (shared by every heavy tank), or null if it isn't one.</summary>
+        static Mesh[] SplitMesh(Mesh src)
+        {
+            var v = src.vertices; var n = src.normals; var tg = src.tangents;
+            var uv3 = new List<Vector4>(); var uv4 = new List<Vector4>(); var uv5 = new List<Vector4>();
+            src.GetUVs(3, uv3); src.GetUVs(4, uv4); src.GetUVs(5, uv5);
+            var tris = src.triangles;
+            var made = new Mesh[2];
+            for (int side = 0; side < 2; side++)
+            {
+                var map = new Dictionary<int, int>();
+                var vi = new List<int>(); var ti = new List<int>();
+                for (int t = 0; t < tris.Length; t += 3)
+                {
+                    float cx = (v[tris[t]].x + v[tris[t + 1]].x + v[tris[t + 2]].x) / 3f;
+                    if ((cx < 0f) != (side == 0)) continue;
+                    for (int c = 0; c < 3; c++)
+                    {
+                        int o = tris[t + c];
+                        if (!map.TryGetValue(o, out int ni)) { map[o] = ni = vi.Count; vi.Add(o); }
+                        ti.Add(ni);
+                    }
+                }
+                if (ti.Count == 0) return null;
+                var m = new Mesh { name = src.name + (side == 0 ? "_l" : "_r") };
+                var pv = new Vector3[vi.Count]; var pn = new Vector3[vi.Count]; var pt = new Vector4[vi.Count];
+                var p3 = new Vector4[vi.Count]; var p4 = new Vector4[vi.Count]; var p5 = new Vector4[vi.Count];
+                for (int i = 0; i < vi.Count; i++)
+                {
+                    int o = vi[i];
+                    pv[i] = v[o]; if (n.Length > o) pn[i] = n[o]; if (tg.Length > o) pt[i] = tg[o];
+                    if (uv3.Count > o) p3[i] = uv3[o]; if (uv4.Count > o) p4[i] = uv4[o]; if (uv5.Count > o) p5[i] = uv5[o];
+                }
+                m.vertices = pv; m.normals = pn; m.tangents = pt;
+                m.SetUVs(3, p3); m.SetUVs(4, p4); m.SetUVs(5, p5);
+                m.SetTriangles(ti, 0);
+                m.RecalculateBounds();
+                made[side] = m;
+            }
+            return made;
+        }
+
         public static Rig Build(string key, int team)
         {
             var root = new GameObject(key).transform;
@@ -402,11 +478,16 @@ namespace Pez.View
                 rig.Barrel = PezMotion.FindDeep(go.transform, "barrel");
                 rig.Spinner = PezMotion.FindDeep(go.transform, "spinner");
                 rig.Bin = PezMotion.FindDeep(go.transform, "bin");
+                // The heavy tank's twin barrels are one node in the pack: split them so they can fire one at a time.
+                if (key == "heavy_tank" && rig.Barrel != null) rig.Twin = SplitTwin(rig.Barrel, out rig.MuzzleL, out rig.MuzzleR);
                 // Soldiers get hips and legs cut from their body mesh before PezMotion caches the turret's rest pose.
                 if (Pez.Sim.Defs.Get(key)?.Armor == Pez.Sim.Armor.Infantry) rig.Gait = Gait.FromModel(rig.Body, go, ++gaitSeed);
                 rig.Motion = go.AddComponent<PezMotion>();
                 // Visual turrets keep up with the sim's aim so shots leave the barrel, not the side of it.
                 if (rig.Motion.profile.turretYawSpeed > 0) rig.Motion.profile.turretYawSpeed = Mathf.Max(rig.Motion.profile.turretYawSpeed, 240f);
+                // Idle scan per class (MOTION.md): heavies sweep +-25 deg, artillery holds still.
+                if (key == "heavy_tank") rig.Motion.scanAmp = 25f;
+                if (key == "artillery") rig.Motion.idleScan = false;
                 rig.Emerge = go.AddComponent<PezEmerge>();
                 if (Altitudes.TryGetValue(key, out var alt)) rig.Altitude = alt;
                 if (rig.Barrel != null) { rig.BarrelRest = rig.Barrel.localPosition; rig.HasMuzzle = BarrelTip(rig.Barrel, out rig.MuzzleLocal); }

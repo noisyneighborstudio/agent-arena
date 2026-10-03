@@ -15,6 +15,8 @@ namespace Pez
         [Tooltip("Spinner runs at active rpm while true (harvesting, producing, under load).")]
         public bool working;
         public bool idleScan = true;
+        [Tooltip("Idle scan half-angle (deg); heavy tanks scan narrower, artillery not at all.")]
+        public float scanAmp = 40f;
 
         Transform turret, barrel, spinner, bin, binOre, door, lift, piston, mast, beam, oreTube;
         Vector3 barrelRestPos;
@@ -52,6 +54,9 @@ namespace Pez
             if (beam) beamRest = beam.localRotation;
             if (turret) turretRest = turret.localRotation;
             if (barrel) barrelRestPos = barrel.localPosition;
+            twinL = FindDeep(transform, "barrel_l"); twinR = FindDeep(transform, "barrel_r");
+            if (twinL) twinRestL = twinL.localPosition;
+            if (twinR) twinRestR = twinR.localPosition;
             if (bin) binRest = bin.localRotation;
             if (lift) liftRestY = lift.localPosition.y;
             scanPhase = Random.value * 10f;
@@ -70,7 +75,30 @@ namespace Pez
         }
         public void ClearAim() => hasTarget = false;
         public bool IsAimed(float toleranceDeg = 5f) => !turret || Mathf.Abs(Mathf.DeltaAngle(yaw, targetYaw)) <= toleranceDeg;
-        public void Fire() { if (barrel && profile.recoil > 0f) recoilT = 0f; }
+        public void Fire()
+        {
+            if (!barrel || profile.recoil <= 0f) return;
+            if (twinL && twinR) { if ((NextTwin++ & 1) == 0) recoilTL = 0f; else recoilTR = 0f; } // one barrel per shot, L-R-L
+            else recoilT = 0f;
+        }
+        /// <summary>Twin-barrel models (barrel_l / barrel_r, split from one mesh at load): which barrel fires next (even: L).</summary>
+        public int NextTwin;
+        public bool Twin => twinL && twinR;
+        /// <summary>Artillery loading: the barrel slides back 0.06 along its axis and returns over 0.4 s (the ram).</summary>
+        public void Ram() => ramT = 0f;
+        Transform twinL, twinR;
+        Vector3 twinRestL, twinRestR;
+        float recoilTL = -1f, recoilTR = -1f, ramT = -1f;
+
+        float Recoil(ref float t, float dt)
+        {
+            if (t < 0f) return 0f;
+            t += dt;
+            if (t < profile.recoilOut) return profile.recoil * (t / profile.recoilOut);
+            float k = Mathf.Clamp01((t - profile.recoilOut) / profile.recoilReturn);
+            if (k >= 1f) { t = -1f; return 0f; }
+            return profile.recoil * Mathf.Pow(1f - k, 3f);
+        }
         public void SetWorking(bool on) => working = on;
         /// <summary>Speed of the building's machinery (spinner, door, lift, beam): 0.5 on low power, as the sim halves
         /// production. Turrets and recoil are left alone: low power doesn't slow defences.</summary>
@@ -161,24 +189,19 @@ namespace Pez
             if (turret && profile.turretYawSpeed > 0f)
             {
                 float goal = hasTarget ? targetYaw
-                    : idleScan ? Mathf.Sin((Time.time + scanPhase) * 0.35f) * Mathf.Min(40f, profile.turretYawLimit) : 0f;
+                    : idleScan ? Mathf.Sin((Time.time + scanPhase) * 0.35f) * Mathf.Min(scanAmp, profile.turretYawLimit) : 0f;
                 yaw = Mathf.MoveTowardsAngle(yaw, goal, profile.turretYawSpeed * dt * (hasTarget ? 1f : 0.25f));
                 turret.localRotation = turretRest * Quaternion.Euler(0f, yaw, 0f);
             }
 
-            if (barrel && recoilT >= 0f)
+            if (barrel && (recoilT >= 0f || ramT >= 0f))
             {
-                recoilT += dt;
-                float d;
-                if (recoilT < profile.recoilOut) d = profile.recoil * (recoilT / profile.recoilOut);
-                else
-                {
-                    float k = Mathf.Clamp01((recoilT - profile.recoilOut) / profile.recoilReturn);
-                    d = profile.recoil * (1f - (1f - Mathf.Pow(1f - k, 3f)));
-                    if (k >= 1f) recoilT = -1f;
-                }
+                float d = Recoil(ref recoilT, dt);
+                if (ramT >= 0f) { ramT += dt; d += 0.06f * Mathf.Sin(Mathf.PI * Mathf.Clamp01(ramT / 0.4f)); if (ramT >= 0.4f) ramT = -1f; }
                 barrel.localPosition = barrelRestPos + barrel.localRotation * Vector3.back * d;
             }
+            if (twinL && recoilTL >= 0f) twinL.localPosition = twinRestL + Vector3.back * Recoil(ref recoilTL, dt);
+            if (twinR && recoilTR >= 0f) twinR.localPosition = twinRestR + Vector3.back * Recoil(ref recoilTR, dt);
 
             if (spinner && crane) Crane(dt);
             else if (spinner)
