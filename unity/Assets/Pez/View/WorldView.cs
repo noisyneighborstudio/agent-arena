@@ -360,8 +360,12 @@ namespace Pez.View
                         // while it empties (the sim clears CargoType at zero).
                         if (e.CargoType >= 0 && e.CargoType != v.OreTint) { Models.TintOre(rig.Model, e.CargoType); v.OreTint = e.CargoType; }
                         rig.Motion.SetWorking(e.Order == Order.Harvest && !e.Moving && e.HarvestTile.HasValue);
-                        // Tip the bin when unloading starts, and open the refinery dock door.
-                        if (e.Order == Order.ReturnOre && e.Cargo < v.PrevCargo && !v.Tipped)
+                        // In a bay the bed follows the sim's dock steps: it tips during Unload's settle and holds while the
+                        // ore goes in, then lowers in PullOut's first 0.25 s.
+                        rig.Motion.SetBinTipped(e.Order == Order.ReturnOre && e.Dock == DockStep.Unload);
+                        if (e.Order == Order.ReturnOre && e.Dock == DockStep.Unload && !v.Tipped) { v.Tipped = true; OpenDoorNear(e.Team, e.Pos, 2.5f, 2f); }
+                        // Unloading beside a drop-off whose lane is built over: the old one-shot tip, on the first ore out.
+                        if (e.Order == Order.ReturnOre && e.Dock < DockStep.Align && e.Cargo < v.PrevCargo && !v.Tipped)
                         {
                             rig.Motion.TipBin();
                             v.Tipped = true;

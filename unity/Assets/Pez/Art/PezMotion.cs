@@ -78,6 +78,10 @@ namespace Pez
         public void SnapLiftDown() { liftOffset = liftTarget = -0.6f; ApplyLift(); }
         public void SetBinLoad(float fraction) => binLoad = Mathf.Clamp01(fraction);
         public void TipBin() => tipT = 0f;
+        /// <summary>Bay unloading: hold the bed tipped (35 deg, raised over 0.3 s) while true; lower it over 0.25 s after.
+        /// The bed follows the sim's Dock steps (Unload raises it during the settle, PullOut lowers it).</summary>
+        public void SetBinTipped(bool up) => tipGoal = up ? 1f : 0f;
+        float tipK, tipGoal;
         /// <summary>Surveyor: thump `count` times, 1.2 s apart. OnThump fires on each slam.</summary>
         public void Survey(int count = 3) { thumpsLeft = thumpCount = count; thumpT = 0f; working = true; }
         public void CancelSurvey() { thumpsLeft = 0; thumpT = -1f; working = false; if (piston) piston.localPosition = pistonRest; }
@@ -170,6 +174,11 @@ namespace Pez
                 oreTube.localScale = new Vector3(1f, Mathf.Max(oreShown, 0.001f), 1f);
             }
 
+            if (bin && tipT < 0f && tipK != tipGoal)
+            {
+                tipK = Mathf.MoveTowards(tipK, tipGoal, dt / (tipGoal > tipK ? 0.3f : 0.25f));
+                bin.localRotation = binRest * Quaternion.Euler(-35f * Mathf.SmoothStep(0f, 1f, tipK), 0f, 0f);
+            }
             if (bin && tipT >= 0f)
             {
                 tipT += dt;
