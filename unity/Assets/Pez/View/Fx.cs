@@ -347,6 +347,24 @@ namespace Pez.View
             }
         }
 
+        /// <summary>One ore brick poured from a truck's bin: tumbling down toward the bay, settling, fading. Crystal and
+        /// uranium bricks glow (the shard shader's hot channel).</summary>
+        public static void OreBrick(Vector3 lip, Vector3 dir, Color32 c, bool glow)
+        {
+            var v = dir * Random.Range(0.6f, 1.1f) + Up * Random.Range(0.8f, 1.4f) + Random.insideUnitSphere * 0.2f;
+            S.EmitShard(lip + Random.insideUnitSphere * 0.06f, v, Random.Range(0.09f, 0.13f), Random.Range(2.2f, 3.2f), Vary(c, 0.1f, (byte)(glow ? 255 : 0)));
+        }
+
+        /// <summary>The ore lands in the bay: a puff of dust tinted toward the ore, rising over the truck so it reads from
+        /// above (the stream's "a delivery is happening" burst).</summary>
+        public static void PourDust(Vector3 pos, Color32 ore)
+        {
+            var c = Color32.Lerp(DustBiscuit, ore, 0.45f);
+            for (int i = 0; i < 2; i++)
+                Emit(S.Dust, pos + Random.insideUnitSphere * 0.1f, Flat(0.35f) + Up * Random.Range(0.6f, 1.0f),
+                    Random.Range(0.5f, 0.7f), Random.Range(1.2f, 1.8f), Vary(c, 0.06f, 220));
+        }
+
         static readonly Color32 SteamCol = new Color32(236, 228, 210, 175); // cream plastic, translucent
 
         /// <summary>A wisp of steam off a power plant tower: cream, cool (no glow), rising and spreading for about 2 s.</summary>

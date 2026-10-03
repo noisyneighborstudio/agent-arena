@@ -42,6 +42,9 @@ namespace Pez.View
             // Construction: the staked site, the last progress seen (stage landings) and the crane's beam cadence.
             public SiteView Site;
             public float PrevBuild = -1f, BeamT;
+            // The dump: the last bay step seen, the laden squat (eased), and the pour's dust cadence.
+            public DockStep PrevDock;
+            public float Squat, PourDust;
         }
 
         public World World { get; private set; }
@@ -537,6 +540,7 @@ namespace Pez.View
                         // ore goes in, then lowers in PullOut's first 0.25 s.
                         rig.Motion.SetBinTipped(e.Order == Order.ReturnOre && e.Dock == DockStep.Unload);
                         ReportDock(e);
+                        Dump(v);
                         // Unloading beside a drop-off whose lane is built over: the old one-shot tip, on the first ore out
                         // (the drop-off's door, lamps and chute answer through ReportDock).
                         if (e.Order == Order.ReturnOre && e.Dock < DockStep.Align && e.Cargo < v.PrevCargo && !v.Tipped)
@@ -576,6 +580,41 @@ namespace Pez.View
             }
             bool sel = Selected.Contains(e.Id) && !e.IsStructure; // structures get the HUD's corner brackets instead
             if (v.Ring.gameObject.activeSelf != sel) v.Ring.gameObject.SetActive(sel);
+        }
+
+        /// <summary>
+        /// The dump as a performance (economy review R3; fix 8), inside the sim's Unload, with the truck already backed in
+        /// (bin end to the building, so no pivot is needed):
+        ///  - the laden truck squats 0.03 and rises as the weight leaves (follows Cargo, eased);
+        ///  - the bed tips during Unload's 0.3 s settle (SetBinTipped);
+        ///  - every 10 ore that leaves pours one brick in the ore's colour (crystal and uranium glow) from the bin's rear
+        ///    lip, arcing over it into the bay, with an ore-tinted dust puff at the chute mouth every 0.25 s;
+        ///  - the bed slams down in PullOut's first 0.25 s with a 1.5 deg hull bounce, and one stubborn last brick pops out.
+        /// </summary>
+        void Dump(EV v)
+        {
+            var e = v.E;
+            var rig = v.Rig;
+            float load = e.Cargo / (float)e.Def.HarvestCapacity;
+            v.Squat = Mathf.MoveTowards(v.Squat, load, Time.deltaTime * 2f);
+            var bp = rig.Body.localPosition; bp.y = -0.03f * v.Squat; rig.Body.localPosition = bp;
+            bool bay = e.Order == Order.ReturnOre && (e.Dock == DockStep.Unload || e.Dock < DockStep.Align);
+            if (bay && e.Cargo < v.PrevCargo && e.CargoType >= 0 && rig.Bin != null)
+            {
+                var back = -rig.Root.forward;                          // the bin end, toward the building
+                var lip = rig.Bin.position + Vector3.up * 0.12f + back * 0.06f;
+                Color32 c = OreColors[e.CargoType];
+                int n = Mathf.Max(1, (v.PrevCargo - e.Cargo) / 10);
+                for (int i = 0; i < n; i++) Fx.OreBrick(lip, back, c, e.CargoType >= 2);
+                if ((v.PourDust -= Time.deltaTime) <= 0f) { v.PourDust = 0.25f; Fx.PourDust(lip + back * 0.1f + Vector3.up * 0.15f, c); }
+            }
+            if (e.Dock == DockStep.PullOut && v.PrevDock == DockStep.Unload)
+            {
+                v.HullPitchVel -= 18f;                                // the bed slams down: a small hull bounce
+                if (rig.Bin != null && v.OreTint >= 0)
+                    Fx.OreBrick(rig.Bin.position + Vector3.up * 0.15f, -rig.Root.forward * 0.4f + Vector3.up * 1.2f, OreColors[v.OreTint], v.OreTint >= 2);
+            }
+            v.PrevDock = e.Dock;
         }
 
         /// <summary>
