@@ -435,6 +435,7 @@ namespace Pez.Headless
         {
             var game = new Game(new GameConfig { Seed = 5, MapSize = 80, Controllers = new[] { "ai", "ai" } });
             var w = game.World;
+            w.Teams[0].ProtectedUntil = 1e6f; // this is about the AI's economy, not who wins the fight
             void Tick(float s) { for (int i = 0; i < s * World.TickRate; i++) game.Advance(World.Dt); }
             Tick(600);
             for (int i = 0; i < w.Map.Ore.Length; i++) w.Map.Ore[i] = 0; // the surface is mined out
@@ -490,6 +491,19 @@ namespace Pez.Headless
             }
             Check(done1 && done2 && queued && !bothIn && backedIn,
                   $"two trucks share one bay: one waits its turn beside the lane, each unloads backed in, facing out (both delivered {done1 && done2}, queued {queued}, both in at once {bothIn}, after {wq.Time:0.0}s)");
+
+            // Nothing can be built on a truck lane, and a drop-off whose south is walled off gets a bay on a clear side.
+            var (bayL, headL, _, okL) = wq.Bay(hqq);
+            var onLane = Int2.Of((bayL + headL) * 0.5f);
+            var why = wq.CanPlace(0, "power_plant", onLane.X, onLane.Y, 0, false);
+            Check(okL && why != null && why.Contains("truck lane"), $"building on a drop-off's truck lane is refused: {why}");
+            var wr = new World(2, 7, 80);
+            var hqr = wr.Owned(0).First(e => e.Def.Key == "command_center");
+            for (int x = hqr.Origin.X - 2; x < hqr.Origin.X + hqr.Def.SizeX + 2; x++)
+                for (int y = hqr.Origin.Y - 3; y < hqr.Origin.Y; y++)
+                    if (wr.Map.InBounds(x, y) && wr.Map.Occupant[wr.Map.Idx(x, y)] == 0) wr.Map.Tiles[wr.Map.Idx(x, y)] = Terrain.Rock;
+            var (_, _, facingR, okR) = wr.Bay(hqr);
+            Check(okR && MathF.Abs(MathF.Cos(facingR)) > 0.99f, $"with rock south of it, the command center's bay moves to a clear side (facing {facingR * 180 / MathF.PI:0} degrees)");
 
             // Two vehicles meeting head-on in a one-tile corridor both get through.
             var w2 = new World(2, 7, 80);
