@@ -35,6 +35,7 @@ def main():
     ap.add_argument("--frames", type=int, required=True)
     ap.add_argument("--key", default="mining_truck")
     ap.add_argument("--id", type=int, default=0)
+    ap.add_argument("--at", default="", help="x,y: a fixed camera on this spot instead of following a unit (records --seconds)")
     ap.add_argument("--team", type=int, default=-1, help="only units of this team")
     ap.add_argument("--seconds", type=float, default=30)
     ap.add_argument("--fps", type=float, default=6)
@@ -57,6 +58,10 @@ def main():
     def frame():
         return json.loads(get(f"{api}/api/view/frame"))
 
+    if a.at:
+        x, y = (float(v) for v in a.at.split(","))
+        post(f"{api}/api/admin/camera", {"menu": "close", "edge_pan": False, "select": [], "x": x, "y": y, "distance": a.distance})
+        a.id, a.until_docked = -1, False
     # Pick the unit: a given id, or (until-docked) a loaded truck on its way to unload that hasn't reached the bay yet.
     uid = a.id
     deadline = time.time() + 240
@@ -75,16 +80,17 @@ def main():
             time.sleep(1)
     if not uid:
         raise SystemExit("no suitable unit found")
-    post(f"{api}/api/admin/camera", {"menu": "close", "edge_pan": False, "select": [uid], "distance": a.distance})
-    print("recording unit", uid)
+    if uid > 0:
+        post(f"{api}/api/admin/camera", {"menu": "close", "edge_pan": False, "select": [uid], "distance": a.distance})
+    print("recording", f"unit {uid}" if uid > 0 else f"the spot {a.at}")
 
     log, n, t0, saw_dock, end_at = [], 0, time.time(), False, None
     while True:
         now = time.time() - t0
-        d = unit(uid) or {}
-        ent = next((e for e in frame()["entities"] if e[0] == uid), None)
+        d = (unit(uid) or {}) if uid > 0 else {}
+        ent = next((e for e in frame()["entities"] if e[0] == uid), None) if uid > 0 else None
         # Keep the camera on it (selection follows mobile units; re-assert in case something deselected it).
-        if n % 12 == 0:
+        if uid > 0 and n % 12 == 0:
             post(f"{api}/api/admin/camera", {"select": [uid], "distance": a.distance})
         try:
             jpg = get(f"{fr}/frame.jpg")
