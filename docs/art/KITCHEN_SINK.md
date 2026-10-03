@@ -22,7 +22,8 @@ labelled gallery for art review. It runs its own private copy of the live build,
 | `arena/kitchen-sink.sh ensure` | What CI runs: unless stopped by hand, starts it if it's down and restarts it if the live build changed. |
 
 `PEZZ_SINK_APP=/path/to/Pezz.app arena/kitchen-sink.sh restart` runs a different build (a branch you built yourself) in
-the same room; CI's next `ensure` puts it back on the live build.
+the same room; the next deploy puts it back on the live build. A build without the kitchen sink in it (one that predates
+it) is never used: the room stays on the copy it has, and `status` says so.
 
 ### How it stays live
 
@@ -57,11 +58,11 @@ The room is a 227x227 map built in code (`unity/Assets/Pez/Sim/KitchenSink.cs`),
 | **Economy loop** | Four drop-offs, one per ore: iron into a refinery, copper into a refinery, crystal into an outpost, uranium into a command center, three trucks each (harvest, queue beside the lane, align, reverse, unload with the ore-coloured pour, pull out). Two idle trucks parked and powered down. |
 | **Power** | The same row of buildings on Blueberry (powered, with a fusion reactor) and on Lime (low power: plant flicker and dropouts, sputtering steam, dimmed consumers at half speed). |
 | **Fires and damage** | Power plant, barracks and factory at 100%, 45% (smouldering), 25% (standing fire) and 8% (raging). The wind shows in their smoke and embers. |
-| **Units** | Every unit idle, Blueberry above Cherry: infantry and the mine, vehicles, heavy armour with an invented unit per team (Hornet, Lancer, with the amber badge), aircraft hovering. |
-| **Combat range** | Seventeen lanes, each a Blueberry shooter firing at a Cherry target that never takes damage: rifle, machine gun, rockets, laser, light cannon, heavy cannon, beam cannon, mammoth twin cannon, artillery (with a spotter drone), sniper, C4, flak, gunship rockets, stealth bomber, gun turret, SAM site, laser tower. |
+| **Units** | Every unit idle, Blueberry above Cherry: infantry and the mine, vehicles, heavy armour with an invented unit per team (Hornet, Lancer, with the amber badge), aircraft hovering (the three drones, chopper, gunship, bomber). |
+| **Combat range** | Eighteen lanes, each a Blueberry shooter firing at a Cherry target that never takes damage: rifle, machine gun, rockets, laser, light cannon, heavy cannon, beam cannon, mammoth twin cannon, artillery (with a spotter drone), sniper, C4, flak, gunship rockets, stealth bomber, gun turret, SAM site, laser tower, the Reaper's hellfires. |
 | **Units in motion** | Eight lanes driving back and forth: infantry, buggy, light hull, heavy hull, super-heavy, artillery, laden truck, APC. |
 | **Deep mining** | A deposit of each ore with its zone stake, deposits at two thirds and one third, a deep mine working and one exhausted, a surveyor surveying in turn at two spots, and a drill rig driving onto its zone and deploying (looping). |
-| **Air and logistics** | Four aircraft on a circuit, a gunship that flies a beat then lands on its airfield, refuels and lifts off, an APC and a transport chopper loading and unloading infantry, and a stranded tank. |
+| **Air and logistics** | Six aircraft on a circuit (including the high-flying Reaper), a gunship that flies a beat then lands on its airfield, refuels and lifts off, an APC and a transport chopper loading and unloading infantry, and a stranded tank. |
 | **Wrecks and explosions** | A vehicle destroyed every 6 s in one of four slots (each wreck lingers about 20 s), and nine explosion pads fired in turn (artillery, heavy cannon, rocket, bombs, mine, C4, vehicle, building, infantry) whose scorch marks build up. |
 | **Terrain and ore** | Grass, dirt, rock and water; a full field of each ore; a field that runs down over 40 s, lies mined out for 12 s and regrows; and a mined-out field (the faded scar). |
 
