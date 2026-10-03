@@ -30,7 +30,7 @@ namespace Pez.Headless
                 var shooter = w.SpawnUnit(0, "heavy_tank", w.Owned(0).First(e => e.IsStructure));
                 hq.Hp = 1;
                 typeof(World).GetMethod("Damage", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).Invoke(w, new object[] { hq, 50f, shooter, 0, false });
-                long spilled = w.Map.Ore.Sum(x => (long)x) - before;
+                long spilled = w.Map.Ore.Sum(x => (long)x) - before - w.Teams[0].Stats.SalvageLeft; // less the wreck's own salvage (a kill)
                 var alert = w.Alerts.Active(w, 0).FirstOrDefault(a => a.Kind == "salvage_available");
                 Check(spilled >= 30900 && alert != null && alert.Lost.Any(l => l.StartsWith(spilled.ToString())),
                       $"a 31000 stockpile spills in full ({spilled} on the ground; alert: {alert?.Lost.FirstOrDefault()})");

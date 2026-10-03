@@ -124,7 +124,8 @@ namespace Pez.Sim
             o.Set("enemy_inventions_seen", Tech.SeenJson(w, team));
 
             o.Set("stats", new JObj().Set("kills", t.Stats.Kills).Set("units_lost", t.Stats.UnitsLost)
-                .Set("structures_lost", t.Stats.StructuresLost).Set("ore_mined", t.Stats.OreMined));
+                .Set("structures_lost", t.Stats.StructuresLost).Set("ore_mined", t.Stats.OreMined)
+                .Set("kill_value", t.Stats.KillValue).Set("salvage_left", t.Stats.SalvageLeft));
             o.Set("events", StateView.EventList(w, team, sinceSeq, 25).Select(e => (object)new JObj()
                 .Set("seq", e.seq).Set("t", e.t).Set("type", e.type).Set("text", e.text)).ToList());
             o.Set("last_event_seq", w.Events.Count > 0 ? w.Events[w.Events.Count - 1].Seq : 0);

@@ -238,6 +238,14 @@ namespace Pez.Sim
             return tiles;
         }
 
+        /// <summary>Remove all ore within r tiles of a map point.</summary>
+        void ClearOre(Vec2 at, int r)
+        {
+            for (int y = (int)at.Y - r; y <= (int)at.Y + r; y++)
+                for (int x = (int)at.X - r; x <= (int)at.X + r; x++)
+                    if (w.Map.InBounds(x, y)) w.Map.Ore[w.Map.Idx(x, y)] = 0;
+        }
+
         void Patch(float a, float b, float r, Terrain t)
         {
             var c = P(a, b);
@@ -751,11 +759,15 @@ namespace Pez.Sim
                     {
                         w.Emit("destroyed", e.Team, e.Id, 0, e.Center, key: e.Def.Key);
                         w.Remove(e);
+                        // An enemy kill leaves a quarter of the wreck's cost as ore: the piles grow up out of the ground.
+                        w.ShowcaseSalvage(e.Def.Key, at, e.Team == Blue ? Red : Blue, e.Team);
                         e = null;
                     }
+                    else if (e == null && c >= 22f) ClearOre(at, 2); // the slot's salvage is cleared before the next wreck
                 });
             }
             Item("Wrecks", "destroyed one every 6 s: blast, burning hull, darkening wreck that lingers about 20 s", 11.5f, 10, 9);
+            Item("Salvage piles", "each wreck leaves a quarter of its cost as ore piles (iron, copper, uranium) that grow up around it; cleared after 20 s", 11.5f, 8, 9);
 
             // Explosion pads: one effect every 2 s, in turn, each on its own pad so its scorch builds up there.
             var pads = new (string type, string key, string name)[]

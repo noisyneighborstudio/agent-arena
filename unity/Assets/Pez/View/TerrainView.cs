@@ -446,33 +446,58 @@ namespace Pez.View
             }
         }
 
-        readonly List<(int idx, PezEmerge e, int start, int shown)> oreTiles = new List<(int, PezEmerge, int, int)>();
+        /// <summary>One tile's ore model: its five clusters show the tile's ore against `Start` (a full tile).</summary>
+        class OreTile { public int Idx, Type, Start, Shown; public PezEmerge Em; public GameObject Go; }
+        // By tile, in tile order (so the update walks them the same way every time).
+        readonly SortedDictionary<int, OreTile> oreTiles = new SortedDictionary<int, OreTile>();
+        GameObject[] oreModels;
+        Transform oreParent;
+        readonly System.Random oreRng = new System.Random(99);
+        float nextOreScan;
+        /// <summary>A pile that appears where there was none (salvage) is drawn against this much ore as "full".</summary>
+        const int PileFull = 300;
+
+        static int ClustersFor(int ore, int start) => ore <= 0 ? 0 : Mathf.Clamp(Mathf.CeilToInt(5f * ore / Mathf.Max(1, start)), 1, 5);
+
+        /// <summary>
+        /// An ore model on tile i. Built with the map, it shows its clusters at once; one that appears later (salvage
+        /// landing, a mined-out field regrowing where the view had nothing) grows its clusters up out of the ground.
+        /// </summary>
+        void AddOreTile(int i, int type, int start, bool grow)
+        {
+            int x = i % map.W, y = i / map.W;
+            var go = Instantiate(oreModels[type], oreParent, false);
+            Models.FlatShade(go); // faceted bricks and shards, as in the art pack's renders
+            go.transform.localPosition = new Vector3(x + 0.5f, 0, y + 0.5f);
+            go.transform.localRotation = Quaternion.Euler(0, oreRng.Next(4) * 90, 0);
+            foreach (var r in go.GetComponentsInChildren<Renderer>()) r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            var em = go.AddComponent<PezEmerge>();
+            int want = ClustersFor(map.Ore[i], start);
+            bool seen = explored == null || explored[i];
+            grow &= seen; // nobody watches it appear in the shroud
+            for (int c = 0; c < 5; c++)
+            {
+                if (grow || c >= want) PezMotion.FindDeep(go.transform, "cluster_" + c)?.gameObject.SetActive(false);
+                if (grow && c < want) em.StartCoroutine(em.Regrow(c, 1.2f + 0.3f * c));
+            }
+            go.SetActive(seen);
+            oreTiles[i] = new OreTile { Idx = i, Type = type, Start = start, Shown = want, Em = em, Go = go };
+        }
 
         void BuildOre()
         {
-            // Art-pack ore tiles: five clusters per tile that sink as the tile is mined out.
-            var oreModels = new GameObject[4];
+            // Art-pack ore tiles: five clusters per tile that sink as the tile is mined out (and grow back if it regrows).
+            oreModels = new GameObject[4];
             for (int k = 0; k < 4; k++) oreModels[k] = Resources.Load<GameObject>("PezModels/ores/" + Defs.Ores[k]);
             if (oreModels.All(m => m != null))
             {
-                var parent0 = new GameObject("Ore").transform;
-                parent0.SetParent(transform, false);
-                var rng0 = new System.Random(99);
+                oreParent = new GameObject("Ore").transform;
+                oreParent.SetParent(transform, false);
                 for (int i = 0; i < map.Ore.Length; i++)
-                {
-                    if (map.Ore[i] <= 0) continue;
-                    int x = i % map.W, y = i / map.W;
-                    var go = Instantiate(oreModels[map.OreType[i]], parent0, false);
-                    Models.FlatShade(go); // faceted bricks and shards, as in the art pack's renders
-                    go.transform.localPosition = new Vector3(x + 0.5f, 0, y + 0.5f);
-                    go.transform.localRotation = Quaternion.Euler(0, rng0.Next(4) * 90, 0);
-                    foreach (var r in go.GetComponentsInChildren<Renderer>()) r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-                    var em = go.AddComponent<PezEmerge>();
-                    oreTiles.Add((i, em, map.Ore[i], 5));
-                    decor.Add((i, go));
-                }
+                    if (map.Ore[i] > 0) AddOreTile(i, map.OreType[i], map.Ore[i], false);
                 return;
             }
+            oreModels = null;
             var rng = new System.Random(99);
             // Iron and copper are dull metallic rock; crystal and uranium glow.
             Material[][] mats =
@@ -501,6 +526,38 @@ namespace Pez.View
                     crystals.Add((i, t, s));
                 }
             }
+        }
+
+        readonly List<int> oreGone = new List<int>();
+
+        /// <summary>
+        /// Every half second: clusters sink one by one as a tile is mined and grow back up as it regrows. Every two
+        /// seconds: ore that appeared where the view has no model (salvage, regrowth) gets one, and a pile that's gone
+        /// for good (mined out, nothing to regrow) is cleared away.
+        /// </summary>
+        void UpdateOreTiles()
+        {
+            if (oreModels == null) return;
+            oreGone.Clear();
+            foreach (var o in oreTiles.Values)
+            {
+                int ore = map.Ore[o.Idx];
+                if (ore > 0 && map.OreType[o.Idx] != o.Type) { oreGone.Add(o.Idx); continue; } // another ore landed here: redraw
+                int want = ClustersFor(ore, o.Start);
+                if (want == o.Shown || !o.Em.gameObject.activeInHierarchy) continue; // animating needs a live object; shrouded tiles catch up later
+                for (int c = 0; c < 5; c++)
+                {
+                    if (c < want && c >= o.Shown) o.Em.StartCoroutine(o.Em.Regrow(c, 2f)); // grows back up out of the ground
+                    else if (c >= want && c < o.Shown) o.Em.SetClusterAmount(c, 0f);   // sinks away
+                }
+                o.Shown = want;
+                if (want == 0 && !map.Regrows(o.Idx)) oreGone.Add(o.Idx);
+            }
+            foreach (int i in oreGone) { Destroy(oreTiles[i].Go, map.Ore[i] > 0 ? 0f : 1.5f); oreTiles.Remove(i); }
+            if (Time.time < nextOreScan) return;
+            nextOreScan = Time.time + 2f;
+            for (int i = 0; i < map.Ore.Length; i++)
+                if (map.Ore[i] > 0 && !oreTiles.ContainsKey(i)) AddOreTile(i, map.OreType[i], Mathf.Max(map.Ore[i], map.RegrowTarget(i), PileFull), true);
         }
 
         static Vector2 Random2(System.Random rng)
@@ -609,6 +666,11 @@ namespace Pez.View
                 bool on = explored == null || explored[idx];
                 if (d.activeSelf != on) d.SetActive(on);
             }
+            foreach (var o in oreTiles.Values)
+            {
+                bool on = explored == null || explored[o.Idx];
+                if (o.Go.activeSelf != on) o.Go.SetActive(on);
+            }
             if (team < 0) return;
             var vis = w.Teams[team].Visible;
             var exp = w.Teams[team].Explored;
@@ -639,15 +701,7 @@ namespace Pez.View
             UpdateFields();
             if (Time.time < nextClusters) return;
             nextClusters = Time.time + 0.5f;
-            for (int n = 0; n < oreTiles.Count; n++)
-            {
-                var (idx, em, start, shown) = oreTiles[n];
-                // Clusters disappear one by one as the tile's ore runs down.
-                int want = map.Ore[idx] <= 0 ? 0 : Mathf.Clamp(Mathf.CeilToInt(5f * map.Ore[idx] / start), 1, 5);
-                if (want == shown || !em.gameObject.activeInHierarchy) continue; // sinking needs a live object; shrouded tiles catch up later
-                for (int c = 0; c < 5; c++) em.SetClusterAmount(c, c < want ? 1f : 0f);
-                oreTiles[n] = (idx, em, start, want);
-            }
+            UpdateOreTiles();
             foreach (var (idx, t, s) in crystals)
             {
                 float f = Mathf.Clamp01(map.Ore[idx] / 300f);

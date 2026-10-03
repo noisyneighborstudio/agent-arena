@@ -199,7 +199,7 @@ namespace Pez.Sim
 
             o.Set("stats", new JObj()
                 .Set("kills", t.Stats.Kills).Set("units_lost", t.Stats.UnitsLost).Set("structures_lost", t.Stats.StructuresLost)
-                .Set("ore_mined", t.Stats.OreMined));
+                .Set("ore_mined", t.Stats.OreMined).Set("kill_value", t.Stats.KillValue).Set("salvage_left", t.Stats.SalvageLeft));
 
             o.Set("events", EventsFor(w, team, sinceSeq, 25));
             o.Set("last_event_seq", w.Events.Count > 0 ? w.Events[w.Events.Count - 1].Seq : 0);
@@ -398,8 +398,9 @@ namespace Pez.Sim
         /// 12: from a playtest: fuel warnings on move, reserve (converters leave raw ore alone), runs_dry_in_s and
         ///     deep_mine_running_low, train structure_id, spread, unit sight in rules and state, mutual sight.
         /// 13: drones by mission: recon_drone (light, 1.5 map widths), long_range_drone (2), reaper_drone (high altitude, armed, 24).
+        /// 14: salvage from kills (a quarter of what an enemy destroys is left as ore; SALVAGE ON THE FIELD alert).
         /// </summary>
-        public const int RulesVersion = 13;
+        public const int RulesVersion = 14;
 
         public static JObj Rules()
         {
@@ -416,6 +417,7 @@ namespace Pez.Sim
                 "Specialists: engineers capture enemy buildings below 50% HP; snipers delete infantry from range 9; commandos C4 buildings. APCs and transport choppers carry infantry (load/unload). Mine layers plant hidden mines. Flak tracks are mobile anti-air. Mammoth tanks are super-heavy and self-repair to 50%. Recon drones are cheap flying scouts.",
                 "Repair trucks (factory) fix vehicles, aircraft and structures for steel; medics (barracks) heal infantry for free. Both auto-tend anything damaged within 6 tiles when idle, so park them behind your army.",
                 "Aircraft ignore terrain. Only rockets, lasers, SAMs, gunships (and weakly, rifles/mg) can hit them. Stealth bombers are invisible except within 3 tiles of your units or inside your radar dome range.",
+                "Salvage: anything an enemy destroys (with a unit, turret, mine, or a fire it set) leaves about a quarter of its cost as ore on and around the spot (infantry a tenth; a mining truck also spills its load; circuits, lenses and plasma count double, as their raw ore). Anyone's mining trucks can collect it, so the side that holds the ground after a fight profits. Selling, crashes, resignations and your own losses to nobody leave nothing. A SALVAGE ON THE FIELD alert (one per area, with the running total) tells both sides where it lies; stats show kill_value (what you destroyed) and salvage_left.",
                 "Protect your command center: when a team's LAST command center is destroyed, its entire stockpile spills out as salvage ore on the footprint, and anyone's trucks can mine it (first come, first served). The team plays on with whatever else it has.",
                 "Infantry walk (0.8-1.05 tiles/s); every vehicle is faster. Use APCs, transport choppers or together:true to keep mixed groups together.",
                 "Deep mining: surface ore runs out. A geological_surveyor (factory) surveys for deep deposits: wherever it finds one (within 12 tiles of where it stops for 8s) it plants a flag, and that deposit becomes one of your mining zones (mining_zones in state: id, ore, position, amount left, status free/yours/taken/exhausted, who flagged it and when; only your team sees them). 'survey' checks one spot; 'prospect' sets surveyors roaming on their own: survey, flag, move on to the nearest unsurveyed spot, until nothing is left in the area (x, y, radius) or you give another order. They refuel by themselves and steer clear of enemy bases you know about. Each surveyor shows its survey phase in my_units (traveling with distance and ETA, surveying with seconds left, refuelling, stranded, failed) and, when a survey can't be done, why (unreachable site, out of fuel, off the map). Then 'drill' sends a drill_rig to a zone ({\"type\":\"drill\",\"units\":[RIG],\"zone\":ID}, or omit zone for the nearest free one): it drives there and deploys into a deep_mine on arrival, which pumps 4 ore/s of that zone's ore straight into your stockpile (no trucks needed) until it runs dry (it needs 50 power). One mine per zone. A rig parked within 3 tiles of a zone can also just 'deploy'.",

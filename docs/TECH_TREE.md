@@ -27,6 +27,12 @@ copper_ore --[Mining Refinery 5/s]-->  copper
 plasma 0.1/s --[Fusion Reactor]--> +500 power
 ```
 
+## Holding ground pays
+
+The surface runs out and deep deposits run dry, so a long game is decided by who holds ground, not who hoards it.
+
+- **Salvage from kills.** Anything an enemy destroys (with a unit, turret, mine, or a fire it set) leaves about 25% of its cost as ore on and around the spot: 10% for infantry, and a mining truck also spills its load. Costs convert as for any salvage (steel and iron ore to iron ore, circuits to two copper ore, plasma to two uranium; deployed structures count as the truck that made them). Nothing is left for selling, crashes, your own side's fire, or deaths with no enemy cause. Piles merge (a squad killed together leaves one pile), respect the 1,000-per-tile cap and never land on another ore. Anyone's trucks can collect it, so the winner has to hold the ground to profit. Both sides get one SALVAGE ON THE FIELD alert per area with the running total.
+
 ## Structures
 
 The Command Center builds every structure. A new structure must be placed within 6 tiles of one of your existing structures, so you take territory by building outward or by deploying Outposts.

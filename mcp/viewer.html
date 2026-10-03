@@ -215,7 +215,7 @@ document.body.classList.toggle("spectator", SPECTATOR);
 if (SPECTATOR) { document.getElementById("sidetitle").textContent = "Arena"; document.getElementById("feedtitle").textContent = "Arena chat"; }
 const cv = document.getElementById("c"), ctx = cv.getContext("2d");
 const mini = document.getElementById("mini"), mctx = mini.getContext("2d");
-let map = null, frame = null, mapVersion = -1, terrainCanvas = null, shroudCanvas = document.createElement("canvas");
+let map = null, frame = null, mapVersion = -1, oreVersion = -1, terrainCanvas = null, shroudCanvas = document.createElement("canvas");
 let cam = { x: 40, y: 40, scale: 8 }, fitted = false, selected = 0;
 const pretty = (k) => String(k).replaceAll("_", " ").replace(/^./, (c) => c.toUpperCase());
 const clock = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
@@ -269,7 +269,7 @@ async function getJSON(u) { const r = await fetch(u, { cache: "no-store" }); if 
 
 async function loadMap(data) {
   map = data ?? await getJSON(`${BASE}/map`);
-  mapVersion = map.version;
+  mapVersion = map.version; oreVersion = map.ore_version ?? -1;
   terrainCanvas = document.createElement("canvas");
   terrainCanvas.width = map.w; terrainCanvas.height = map.h;
   const t = terrainCanvas.getContext("2d"), img = t.createImageData(map.w, map.h);
@@ -307,7 +307,7 @@ async function tick() {
     showResults(frame.results, frame.rejoin);
     noteVanished(prev, frame);
     if (frame.waiting) { document.getElementById("where").textContent = frame.waiting; setTimeout(tick, 2000); return; }
-    if (!map || frame.version !== mapVersion) await loadMap();
+    if (!map || frame.version !== mapVersion || (frame.ore_version ?? -1) !== oreVersion) await loadMap();
     if (frame.shroud) {
       const s = shroudCanvas.getContext("2d"), img = s.createImageData(map.w, map.h);
       for (let y = 0; y < map.h; y++)

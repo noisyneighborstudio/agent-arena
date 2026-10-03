@@ -489,7 +489,7 @@ namespace Pez.Api
                 tiles.Append("gdrw"[(int)m.Tiles[i]]);
                 ore.Append(m.Ore[i] <= 0 ? '.' : "icxu"[m.OreType[i]]);
             }
-            return new JObj().Set("w", m.W).Set("h", m.H).Set("version", w.MapVersion).Set("tiles", tiles.ToString()).Set("ore", ore.ToString())
+            return new JObj().Set("w", m.W).Set("h", m.H).Set("version", w.MapVersion).Set("ore_version", w.OreVersion).Set("tiles", tiles.ToString()).Set("ore", ore.ToString())
                 .Set("team", team).Set("flavor", team >= 0 ? w.Teams[team].Name : "Spectator");
         }
 
@@ -569,7 +569,8 @@ namespace Pez.Api
                 shots.Add(new List<object> { ev.Seq, ev.Type, Math.Round(ev.Pos.X, 1), Math.Round(ev.Pos.Y, 1), Math.Round(ev.Pos2.X, 1), Math.Round(ev.Pos2.Y, 1), ev.Team, ev.A });
             }
             shots.Reverse();
-            var o = new JObj().Set("tick", w.Tick).Set("time_s", (float)Math.Round(w.Time, 1)).Set("version", w.MapVersion)
+            // ore_version: new salvage or regrowth on bare ground; the web viewer fetches the map again (replays keep to version).
+            var o = new JObj().Set("tick", w.Tick).Set("time_s", (float)Math.Round(w.Time, 1)).Set("version", w.MapVersion).Set("ore_version", w.OreVersion)
                 .Set("teams", w.Teams.Select(t => new JObj().Set("id", t.Id).Set("flavor", t.Name).Set("player", t.PlayerName ?? t.Controller)
                     .Set("status", t.Resigned ? "resigned" : t.Left ? "left" : t.Defeated ? "eliminated" : "playing").Set("kills", t.Stats.Kills)
                     // Spectators (delayed) see everyone's size; a player only sees their own (in "you").

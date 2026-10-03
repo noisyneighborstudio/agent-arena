@@ -65,6 +65,7 @@ namespace Pez.Headless
             FieldRefuelling();
             ArenaCleared();
             AiGoesDeep();
+            EconomyAndEndgame();
             Snapshots();
             InventedTech();
             PlaytestFixes();

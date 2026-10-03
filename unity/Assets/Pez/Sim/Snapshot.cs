@@ -27,8 +27,9 @@ namespace Pez.Sim
     public static class Snapshot
     {
         public const string Format = "pezz-snapshot";
-        /// <summary>1: first version. 2: mining zones, prospecting surveyors, drill rigs' zones, arena champion. 3: agent inventions.</summary>
-        public const int Schema = 3;
+        /// <summary>1: first version. 2: mining zones, prospecting surveyors, drill rigs' zones, arena champion. 3: agent inventions.
+        /// 4: economy and endgame (salvage from kills, ore regrowth, construction trucks, the match clock, derricks, defence upkeep).</summary>
+        public const int Schema = 4;
         public const int MinReader = 1;
         /// <summary>Events kept: the last two minutes, plus recent chat, at most MaxEvents. Alerts: the last minute.</summary>
         const int MaxEvents = 1500;
@@ -103,6 +104,7 @@ namespace Pez.Sim
             var s = t.Stats;
             o.Set("stats", new JObj().Put("units_built", s.UnitsBuilt).Put("structures_built", s.StructuresBuilt).Put("units_lost", s.UnitsLost)
                 .Put("structures_lost", s.StructuresLost).Put("kills", s.Kills).Put("ore_mined", s.OreMined)
+                .Put("kill_value", s.KillValue).Put("salvage_left", s.SalvageLeft)
                 .Set("built", s.Built.Aggregate(new JObj(), (j, kv) => j.Set(kv.Key, kv.Value))));
             return o;
         }
@@ -154,6 +156,7 @@ namespace Pez.Sim
                 var st = t.Stats;
                 s.Load("units_built", ref st.UnitsBuilt); s.Load("structures_built", ref st.StructuresBuilt); s.Load("units_lost", ref st.UnitsLost);
                 s.Load("structures_lost", ref st.StructuresLost); s.Load("kills", ref st.Kills); s.Load("ore_mined", ref st.OreMined);
+                s.Load("kill_value", ref st.KillValue); s.Load("salvage_left", ref st.SalvageLeft);
                 var b = s.Obj("built");
                 if (b != null) foreach (var kv in b) if (kv.Value is double n) st.Built[kv.Key] = (int)n;
             }
@@ -176,7 +179,7 @@ namespace Pez.Sim
              .PutV("progress_pos", e.ProgressPos).Put("progress_at", e.ProgressAt).Put("ghost_until", e.GhostUntil).Put("progress_dist", e.ProgressDist);
             if (e.Waypoints.Count > 0) o.Set("waypoints", SnapIO.Vs(e.Waypoints));
             o.Put("waypoint_loop", e.WaypointLoop).Put("retreat_below", e.RetreatBelow).Put("retreating", e.Retreating)
-             .Put("repath_timer", e.RepathTimer).Put("moving", e.Moving).Put("last_attacker", e.LastAttackerId)
+             .Put("repath_timer", e.RepathTimer).Put("moving", e.Moving).Put("last_attacker", e.LastAttackerId).Put("last_attacker_team", e.LastAttackerTeam, -1)
              .Put("last_hit_time", e.LastHitTime, -999f).Put("last_call_for_help", e.LastCallForHelp, -999f)
              .Put("responding", e.Responding).PutV("home_pos", e.HomePos)
              .Put("cargo", e.Cargo).Put("cargo_type", e.CargoType, -1).Put("harvest_type", e.HarvestType, -1);
@@ -216,7 +219,7 @@ namespace Pez.Sim
             d.Load("progress_pos", ref e.ProgressPos); d.Load("progress_at", ref e.ProgressAt); d.Load("ghost_until", ref e.GhostUntil); d.Load("progress_dist", ref e.ProgressDist);
             e.Waypoints.AddRange(SnapIO.ToVecs(d.Arr("waypoints")));
             d.Load("waypoint_loop", ref e.WaypointLoop); d.Load("retreat_below", ref e.RetreatBelow); d.Load("retreating", ref e.Retreating);
-            d.Load("repath_timer", ref e.RepathTimer); d.Load("moving", ref e.Moving); d.Load("last_attacker", ref e.LastAttackerId);
+            d.Load("repath_timer", ref e.RepathTimer); d.Load("moving", ref e.Moving); d.Load("last_attacker", ref e.LastAttackerId); d.Load("last_attacker_team", ref e.LastAttackerTeam);
             d.Load("last_hit_time", ref e.LastHitTime); d.Load("last_call_for_help", ref e.LastCallForHelp);
             d.Load("responding", ref e.Responding); d.Load("home_pos", ref e.HomePos);
             d.Load("cargo", ref e.Cargo); d.Load("cargo_type", ref e.CargoType); d.Load("harvest_type", ref e.HarvestType);
@@ -391,7 +394,7 @@ namespace Pez.Sim
             return new JObj().Set("next_seq", nextSeq)
                 .Set("alerts", keep.Select(a => (object)new JObj().Set("seq", a.Seq).Set("team", a.Team).Set("kind", a.Kind)
                     .PutEnum("priority", a.Priority, Priority.Medium).Set("pos", SnapIO.V(a.Pos)).Set("start_tick", a.StartTick).Set("last_tick", a.LastTick)
-                    .Put("count", a.Count).Put("open", openSet.Contains(a))
+                    .Put("count", a.Count).Put("open", openSet.Contains(a)).Put("amount", a.Amount)
                     .Set("victims", a.Victims.Cast<object>().ToList()).Set("attackers", a.Attackers.Cast<object>().ToList())
                     .Set("lost", a.Lost.Cast<object>().ToList())).ToList());
         }
@@ -404,7 +407,7 @@ namespace Pez.Sim
             {
                 var a = new Alert();
                 x.Load("seq", ref a.Seq); x.Load("team", ref a.Team); x.Load("kind", ref a.Kind); x.LoadEnum("priority", ref a.Priority);
-                x.Load("pos", ref a.Pos); x.Load("start_tick", ref a.StartTick); x.Load("last_tick", ref a.LastTick); x.Load("count", ref a.Count);
+                x.Load("pos", ref a.Pos); x.Load("start_tick", ref a.StartTick); x.Load("last_tick", ref a.LastTick); x.Load("count", ref a.Count); x.Load("amount", ref a.Amount);
                 foreach (var v in x.Arr("victims")) if (v is double id) a.Victims.Add((int)id);
                 foreach (var v in x.Arr("attackers")) if (v is double id) a.Attackers.Add((int)id);
                 foreach (var v in x.Arr("lost")) if (v != null) a.Lost.Add(v.ToString());

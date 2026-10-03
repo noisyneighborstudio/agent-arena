@@ -22,6 +22,8 @@ namespace Pez.Sim
     public class TeamStats
     {
         public int UnitsBuilt, StructuresBuilt, UnitsLost, StructuresLost, Kills, OreMined;
+        /// <summary>The ore value of everything this team destroyed (World.ValueOf), and the salvage its kills left on the ground.</summary>
+        public int KillValue, SalvageLeft;
         public readonly Dictionary<string, int> Built = new Dictionary<string, int>();
         public void Count(string key) => Built[key] = (Built.TryGetValue(key, out var n) ? n : 0) + 1;
     }
@@ -821,6 +823,7 @@ namespace Pez.Sim
             Guard("cleanup", Cleanup);
             if (Tick % 4 == 0) Guard("visibility", UpdateVisibility);
             Guard("victory", CheckVictory);
+            TickOreVersion();
             if (Showcase != null) Guard("showcase", Showcase.Hold); // the kitchen sink room only (KitchenSink.cs)
         }
 
@@ -1376,8 +1379,10 @@ namespace Pez.Sim
                 Alerts.Raise(this, e.Team, "building_burning", Priority.High, e.Center, e, hit: false);
             }
             float rate = e.Def.MaxHp * (0.003f + 0.009f * (1f - f / BurnBelow));
-            var setBy = e.LastAttackerId != 0 ? Get(e.LastAttackerId) : null;
-            Damage(e, rate * Dt, null, setBy != null && setBy.Team != e.Team ? setBy.Team : -1, burn: true);
+            // Whoever last hurt it set the fire: the kill (and the salvage) is theirs even if that unit has since died.
+            // Nobody else's: a fire on a building its own side captured, or one that was never hit by an enemy, is no one's kill.
+            int setBy = e.LastAttackerTeam >= 0 ? e.LastAttackerTeam : e.LastAttackerId != 0 ? Get(e.LastAttackerId)?.Team ?? -1 : -1;
+            Damage(e, rate * Dt, null, setBy != e.Team ? setBy : -1, burn: true);
         }
 
         void Damage(Entity t, float amount, Entity src, int srcTeam = -1, bool burn = false)
@@ -1387,6 +1392,7 @@ namespace Pez.Sim
             int team = src?.Team ?? srcTeam;
             t.Hp -= amount;
             if (src != null) t.LastAttackerId = src.Id;
+            if (!burn && team >= 0) t.LastAttackerTeam = team;
             if (!burn)
             {
                 if (Time - t.LastHitTime > 10f && (t.IsStructure || t.IsHarvester))
@@ -1408,10 +1414,19 @@ namespace Pez.Sim
                 var lost = Alerts.Raise(this, t.Team, t.IsStructure ? "structure_lost" : "units_lost", t.IsStructure ? Priority.Critical : Priority.Medium, t.Center, attacker: src);
                 lost.Lost.Add($"{t.Def.Key} #{t.Id}");
                 bool lastHq = t.Def.Key == "command_center" && !Entities.Any(o => !o.Dead && o != t && o.Team == t.Team && o.Def.Key == "command_center");
+                // Killed by another team (its unit, turret, mine, or a fire it set): part of the wreck is left as salvage.
+                bool enemyKill = team >= 0 && team < Teams.Count && team != t.Team;
+                float value = 0;
+                var salvage = enemyKill ? KillSalvage(t, out value) : null;
+                if (enemyKill) Teams[team].Stats.KillValue += (int)value;
                 Remove(t);
                 if (lastHq) ReleaseStockpile(t);
+                if (salvage != null) DropSalvage(t, salvage, team);
             }
         }
+
+        /// <summary>Hurt t as if src (or a shot from srcTeam whose shooter is gone) hit it. For tests and the showcase.</summary>
+        internal void Hurt(Entity t, float amount, Entity src, int srcTeam = -1) => Damage(t, amount, src, srcTeam);
 
         /// <summary>
         /// Classify a hit the way a human commander would hear it: buildings and trucks under fire, or units

@@ -50,6 +50,8 @@ namespace Pez.Sim
         public float RepathTimer;
         public bool Moving;
         public int LastAttackerId;
+        /// <summary>The team that last hurt it (-1 = nobody yet). Outlives the attacker, so a fire's kill and salvage still go to whoever set it.</summary>
+        public int LastAttackerTeam = -1;
         public float LastHitTime = -999;
         public float LastCallForHelp = -999;
 
