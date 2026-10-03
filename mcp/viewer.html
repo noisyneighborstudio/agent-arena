@@ -212,6 +212,7 @@ const ICON = {
 };
 const SPECTATOR = !BASE.startsWith("/view/");
 document.body.classList.toggle("spectator", SPECTATOR);
+if (SPECTATOR) { document.getElementById("sidetitle").textContent = "Arena"; document.getElementById("feedtitle").textContent = "Arena chat"; }
 const cv = document.getElementById("c"), ctx = cv.getContext("2d");
 const mini = document.getElementById("mini"), mctx = mini.getContext("2d");
 let map = null, frame = null, mapVersion = -1, terrainCanvas = null, shroudCanvas = document.createElement("canvas");
@@ -222,7 +223,7 @@ const num = (n) => Number(n).toLocaleString("en-US");
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]); }
 // Unit icons. A unit with no icon of its own (a new one the art hasn't caught up with) borrows its closest relative's,
 // and failing that shows a lettered glyph; a miss is remembered, so nothing is re-requested every poll.
-const ICON_BASE = { recon_drone: "gunship", transport_chopper: "gunship", mammoth_tank: "heavy_tank", flak_track: "light_tank", apc: "light_tank",
+const ICON_BASE = { long_range_drone: "recon_drone", reaper_drone: "recon_drone", recon_drone: "gunship", transport_chopper: "gunship", mammoth_tank: "heavy_tank", flak_track: "light_tank", apc: "light_tank",
   minelayer: "mining_truck", commando: "rifleman", sniper: "rifleman", engineer: "medic" };
 const iconMissing = new Set();
 function iconKey(key) {
@@ -744,6 +745,11 @@ function draw() {
   if (cv.width !== innerWidth * dpr) { cv.width = innerWidth * dpr; cv.height = innerHeight * dpr; if (!fitted) fitAll(); }
   drawMini();
   ctx.fillStyle = "#2A2420"; ctx.fillRect(0, 0, cv.width, cv.height);
+  if (frame?.waiting && !replay) { // the delayed feed is still filling: say so where the map will be
+    ctx.fillStyle = "#9BA5AE"; ctx.textAlign = "center"; ctx.font = `${Math.round(15 * (devicePixelRatio || 1))}px "IBM Plex Sans", sans-serif`;
+    ctx.fillText(frame.waiting, cv.width / 2, cv.height / 2); ctx.textAlign = "start";
+    return;
+  }
   if (!map || !frame) return;
   const fol = selected && frame.entities.find((x) => x[0] === selected && x[8] === 0);
   if (fol && !drag?.moved) { cam.x += (fol[3] - cam.x) * 0.15; cam.y += (fol[4] - cam.y) * 0.15; } // ride along with the selected unit
@@ -963,7 +969,7 @@ async function showFrame(jpg) {
       const bmp = await createImageBitmap(blob);
       if (liveImg.width !== bmp.width || liveImg.height !== bmp.height) { liveImg.width = bmp.width; liveImg.height = bmp.height; }
       liveCtx.drawImage(bmp, 0, 0); bmp.close(); liveShown++; liveTotal++;
-      if (!liveOk) { liveOk = true; setMode(true); }
+      if (!liveOk) { liveOk = true; setMode(!replay); } // video is the default, unless a replay is playing
     } catch {}
   }
   decoding = false;

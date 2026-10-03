@@ -49,7 +49,9 @@ namespace Pez.EditorTools
                 foreach (var key in keys)
                 {
                     Rig rig;
-                    try { rig = Models.Build(key, 0); }
+                    // Units that borrow another's model until they have art (ModelAs) are drawn the way the game draws them.
+                    var def = Pez.Sim.Defs.Get(key);
+                    try { rig = Models.Build(def?.ModelKey ?? key, 0); }
                     catch (System.Exception ex) { Debug.LogWarning($"PEZICON {key}: no model ({ex.Message})"); continue; }
                     var go = rig.Root.gameObject;
                     go.transform.SetParent(root.transform, false);
@@ -57,6 +59,7 @@ namespace Pez.EditorTools
                     rig.Root.position = Vector3.zero;
                     if (rig.Body != null) rig.Body.localPosition = new Vector3(0, rig.Altitude > 0 ? 0.35f : 0f, 0);
                     rig.Root.rotation = Quaternion.Euler(0, -35f, 0);
+                    if (def?.ModelAs != null && rig.Model != null && def.ModelScale != 1f) rig.Model.transform.localScale *= def.ModelScale;
                     var b = new Bounds(rig.Root.position, Vector3.zero);
                     foreach (var r in go.GetComponentsInChildren<Renderer>()) b.Encapsulate(r.bounds);
                     // Three-quarter view from the front left, framed so the model fills about two thirds of the height.
