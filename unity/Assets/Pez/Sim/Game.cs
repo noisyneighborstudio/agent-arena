@@ -22,6 +22,8 @@ namespace Pez.Sim
         public int HouseAIs = 1;
         /// <summary>Open arena: house players resign (leaving salvage) once more than this many players are active.</summary>
         public int HouseResignAbove = 5;
+        /// <summary>The kitchen sink: a showcase room holding every asset in every state (KitchenSink.cs), not a game.</summary>
+        public bool KitchenSink;
     }
 
     /// <summary>Owns a World plus who controls each team, and advances it in real time.</summary>
@@ -42,9 +44,10 @@ namespace Pez.Sim
         {
             Config = cfg;
             Speed = cfg.Speed;
-            World = new World(cfg.Controllers.Length, cfg.Seed, cfg.MapSize, cfg.OreScale) { Open = cfg.Open, MaxPlayers = cfg.MaxPlayers, MaxMapSize = cfg.MaxMapSize };
+            World = cfg.KitchenSink ? Sim.KitchenSink.Build()
+                  : new World(cfg.Controllers.Length, cfg.Seed, cfg.MapSize, cfg.OreScale) { Open = cfg.Open, MaxPlayers = cfg.MaxPlayers, MaxMapSize = cfg.MaxMapSize };
             ais.Clear();
-            for (int i = 0; i < cfg.Controllers.Length; i++)
+            for (int i = 0; i < cfg.Controllers.Length && i < World.Teams.Count; i++)
             {
                 World.Teams[i].Controller = cfg.Controllers[i];
                 if (cfg.Controllers[i] == "ai")

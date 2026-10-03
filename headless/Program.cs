@@ -39,6 +39,7 @@ namespace Pez.Headless
             World.Profile = args.Contains("--profile");
             if (args.Contains("--selftest")) return SelfTest(cfg, int.Parse(Arg("--max-minutes", "30")));
             if (args.Contains("--test")) return Tests.Run();
+            if (args.Contains("--test-kitchen-sink")) return Tests.RunKitchenSink();
             if (args.Contains("--trace")) return Trace(cfg, int.Parse(Arg("--trace", "1")), float.Parse(Arg("--seconds", "60")));
 
             var game = new Game(cfg);

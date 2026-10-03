@@ -227,7 +227,7 @@ namespace Pez.View
         {
             foreach (var t in World.Teams)
             {
-                bool on = World.IsProtected(t.Id);
+                bool on = World.IsProtected(t.Id) && World.Showcase == null; // the kitchen sink protects everyone: no domes there
                 shields.TryGetValue(t.Id, out var dome);
                 if (!on) { if (dome != null) { Destroy(dome.gameObject); shields.Remove(t.Id); } continue; }
                 if (dome == null)

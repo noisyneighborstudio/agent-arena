@@ -775,6 +775,7 @@ namespace Pez.Sim
             Guard("cleanup", Cleanup);
             if (Tick % 4 == 0) Guard("visibility", UpdateVisibility);
             Guard("victory", CheckVictory);
+            if (Showcase != null) Guard("showcase", Showcase.Hold); // the kitchen sink room only (KitchenSink.cs)
         }
 
         void UpdatePower()

@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Pezz: kitchen sink</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  /* The HUD kit, as in mcp/viewer.html: panels rgba(16,19,23,.9), border #2A3138, radius 12, cream for "on", amber for attention. */
+  :root { --bg:#2A2420; --panel:rgba(16,19,23,.9); --border:#2A3138; --line:#3A4047; --btn:#22282E; --ink:#E8EBEE; --cream:#ECE4D2; --muted:#9BA5AE; --soft:#C5CCD2; --amber:#FFA22E; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--ink); font:14px/1.45 "IBM Plex Sans",-apple-system,"Segoe UI",sans-serif; overflow:hidden; }
+  #live { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; user-select:none; -webkit-user-drag:none; cursor:grab; touch-action:none; background:var(--bg); }
+  #live:active { cursor:grabbing; }
+  .panel { background:var(--panel); border:1px solid var(--border); border-radius:12px; box-sizing:border-box; }
+  .head { font-family:"Chakra Petch",sans-serif; font-weight:600; font-size:12px; letter-spacing:.14em; color:var(--muted); text-transform:uppercase; }
+  .mono { font-family:"IBM Plex Mono",monospace; }
+  button { font:inherit; color:var(--ink); background:var(--btn); border:0; border-radius:8px; cursor:pointer; }
+  button.on { background:var(--cream); color:#101317; font-weight:500; }
+
+  #top { position:absolute; left:16px; right:16px; top:16px; height:56px; display:flex; align-items:center; gap:14px; padding:0 8px 0 18px; }
+  #top .word { font-family:"Chakra Petch",sans-serif; font-weight:700; font-size:22px; letter-spacing:.04em; }
+  #top .rule { width:1px; height:26px; background:var(--border); flex:none; }
+  #top .sub { font-family:"Chakra Petch",sans-serif; font-weight:600; font-size:14px; letter-spacing:.14em; color:var(--muted); white-space:nowrap; }
+  #now { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-weight:600; font-size:15px; }
+  #speed { display:flex; gap:5px; }
+  #speed button { min-width:44px; height:40px; font-family:"IBM Plex Mono",monospace; font-size:14px; }
+  #stat { color:var(--muted); font-size:12px; white-space:nowrap; }
+
+  #index { position:absolute; left:16px; top:88px; bottom:16px; width:340px; display:flex; flex-direction:column; overflow:hidden; }
+  #index .find { padding:12px 12px 8px; display:flex; gap:8px; }
+  #q { flex:1; height:36px; border-radius:8px; border:1px solid var(--line); background:#101317; color:var(--ink); padding:0 10px; font:14px "IBM Plex Sans",sans-serif; outline:none; min-width:0; }
+  #q:focus { border-color:var(--cream); }
+  #list { overflow-y:auto; padding:0 6px 12px 12px; flex:1; -webkit-overflow-scrolling:touch; }
+  .dist { margin-top:10px; }
+  .dist > .dh { display:flex; align-items:baseline; gap:8px; cursor:pointer; padding:6px 8px; border-radius:8px; }
+  .dist > .dh:hover, .it:hover { background:#1B2026; }
+  .dist > .dh b { font-family:"Chakra Petch",sans-serif; font-weight:600; font-size:15px; letter-spacing:.02em; }
+  .dist > .dh span { color:var(--muted); font-size:12px; }
+  .dist .about { color:var(--muted); font-size:12.5px; padding:0 8px 4px; }
+  .it { padding:5px 8px 5px 18px; border-radius:8px; cursor:pointer; border-left:3px solid transparent; }
+  .it b { font-weight:500; font-size:13.5px; } .it div { color:var(--muted); font-size:12px; line-height:1.35; }
+  .it.cur, .dh.cur { background:#1F252B; border-left-color:var(--cream); }
+
+  #caption { position:absolute; left:372px; right:16px; bottom:16px; margin:0 auto; max-width:760px; padding:12px 16px; display:flex; gap:12px; align-items:center; }
+  #caption .txt { flex:1; min-width:0; }
+  #caption b { font-family:"Chakra Petch",sans-serif; font-size:17px; font-weight:600; }
+  #caption .st { color:var(--soft); font-size:13.5px; }
+  #caption .nav { display:flex; gap:6px; flex:none; }
+  #caption .nav button { height:40px; min-width:44px; padding:0 12px; }
+  #help { color:var(--muted); font-size:12px; margin-top:2px; }
+
+  #legend { position:absolute; right:16px; top:88px; width:380px; max-height:calc(100% - 200px); overflow-y:auto; padding:14px 16px; display:none; }
+  #legend.open { display:block; }
+  #legend dl { margin:8px 0 0; } #legend dt { font-weight:600; font-size:13.5px; margin-top:8px; } #legend dd { margin:1px 0 0; color:var(--soft); font-size:13px; }
+  .sw { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:6px; vertical-align:-1px; }
+
+  #down { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); padding:18px 22px; display:none; text-align:center; max-width:420px; }
+  #bIndex { display:none; }
+
+  /* Phones and narrow windows: the index is a sheet that slides up; the caption sits at the bottom. */
+  @media (max-width: 900px) {
+    #top { left:8px; right:8px; top:8px; height:50px; gap:8px; padding:0 6px 0 12px; }
+    #top .sub, #top .rule.r2, #stat { display:none; }
+    #speed button { min-width:38px; height:36px; font-size:13px; }
+    #index { left:8px; right:8px; width:auto; top:auto; bottom:8px; height:62%; transform:translateY(calc(100% + 16px)); transition:transform .25s ease; z-index:5; }
+    #index.open { transform:none; }
+    #caption { left:8px; right:8px; bottom:8px; padding:10px 12px; }
+    #caption .nav button { min-width:40px; padding:0 10px; height:38px; }
+    #help { display:none; }
+    #bIndex { display:inline-block; }
+    #legend { left:8px; right:8px; width:auto; top:66px; max-height:60%; z-index:6; }
+  }
+</style>
+</head>
+<body>
+<img id="live" draggable="false" alt="">
+
+<div class="panel" id="top">
+  <span class="word">PEZ</span><span class="rule"></span><span class="sub">Kitchen sink</span><span class="rule r2"></span>
+  <span id="now">Connecting…</span>
+  <span id="stat" class="mono"></span>
+  <div id="speed"><button data-s="pause" title="Pause (space)">❚❚</button><button data-s="0.5">½×</button><button data-s="1">1×</button><button data-s="2">2×</button><button data-s="4">4×</button></div>
+</div>
+
+<aside class="panel" id="index">
+  <div class="find"><input id="q" placeholder="Find an asset or state" autocomplete="off"><button id="bOverview" title="The whole room">All</button></div>
+  <div id="list"></div>
+</aside>
+
+<div class="panel" id="legend"><div class="head">Legend</div><dl id="leg"></dl></div>
+
+<div class="panel" id="caption">
+  <div class="txt"><b id="cName">Kitchen sink</b><div class="st" id="cStates">Every unit and structure in every state the game can show.</div>
+    <div id="help">drag to pan · scroll to zoom · Q/E rotate · [ ] previous / next · T tour · L legend · / find</div></div>
+  <div class="nav"><button id="bIndex" title="Index">Index</button><button id="bPrev" title="Previous ([)">◀</button><button id="bNext" title="Next (])">▶</button><button id="bTour" title="Tour every exhibit (T)">Tour</button><button id="bLegend" title="Legend (L)">Key</button></div>
+</div>
+
+<div class="panel" id="down"><b>The kitchen sink isn't answering.</b><div class="st" style="margin-top:6px;color:var(--muted)">Run <span class="mono">arena/kitchen-sink.sh open</span> on the host. This page reconnects by itself.</div></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const img = $('live');
+let cat = null, flat = [], cur = -1, tour = null;
+
+// ---- the stream (MJPEG): reconnect if it drops (the room restarted on a new build)
+function connect() { img.src = 'stream?' + Date.now(); }
+img.onerror = () => setTimeout(connect, 1500);
+connect();
+
+// ---- look around: pan, zoom and rotate go to the game camera
+let acc = {dx:0, dy:0, zoom:1, yaw:0}, sending = false;
+function flush() {
+  if (sending) return; const a = acc;
+  if (!a.dx && !a.dy && a.zoom === 1 && !a.yaw) return;
+  acc = {dx:0, dy:0, zoom:1, yaw:0}; sending = true;
+  fetch(`cam?dx=${a.dx.toFixed(4)}&dy=${a.dy.toFixed(4)}&zoom=${a.zoom.toFixed(3)}&yaw=${a.yaw.toFixed(1)}`).finally(() => { sending = false; setTimeout(flush, 30); });
+}
+const pts = new Map(); let pinch = 0;
+img.addEventListener('pointerdown', e => { img.setPointerCapture(e.pointerId); pts.set(e.pointerId, {x:e.clientX, y:e.clientY}); stopTour(); });
+img.addEventListener('pointerup', e => { pts.delete(e.pointerId); pinch = 0; });
+img.addEventListener('pointercancel', e => { pts.delete(e.pointerId); pinch = 0; });
+img.addEventListener('pointermove', e => {
+  const p = pts.get(e.pointerId); if (!p) return;
+  const r = img.getBoundingClientRect();
+  if (pts.size === 1) { acc.dx -= (e.clientX - p.x) / r.width; acc.dy += (e.clientY - p.y) / r.height; }
+  p.x = e.clientX; p.y = e.clientY;
+  if (pts.size === 2) {
+    const [a, b] = [...pts.values()], d = Math.hypot(a.x - b.x, a.y - b.y);
+    if (pinch) acc.zoom *= Math.min(1.3, Math.max(0.77, pinch / d));
+    pinch = d;
+  }
+  flush();
+});
+img.addEventListener('wheel', e => { e.preventDefault(); acc.zoom *= e.deltaY < 0 ? 0.9 : 1.11; flush(); }, {passive:false});
+
+// ---- the index
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function render() {
+  const q = $('q').value.trim().toLowerCase();
+  let html = '';
+  cat.districts.forEach((d, di) => {
+    const items = d.items.map((it, ii) => ({it, i: flat.findIndex(f => f.d === di && f.ii === ii)}))
+      .filter(({it}) => !q || (d.name + ' ' + it.name + ' ' + it.states).toLowerCase().includes(q));
+    if (q && !items.length && !d.name.toLowerCase().includes(q)) return;
+    const hi = flat.findIndex(f => f.d === di && f.ii < 0);
+    html += `<div class="dist"><div class="dh${cur === hi ? ' cur' : ''}" data-i="${hi}"><b>${esc(d.name)}</b><span>${d.items.length}</span></div>`;
+    if (!q) html += `<div class="about">${esc(d.about)}</div>`;
+    for (const {it, i} of items) html += `<div class="it${cur === i ? ' cur' : ''}" data-i="${i}"><b>${esc(it.name)}</b><div>${esc(it.states)}</div></div>`;
+    html += '</div>';
+  });
+  $('list').innerHTML = html || '<div style="color:var(--muted);padding:12px">Nothing matches.</div>';
+  const c = $('list').querySelector('.cur'); if (c && !q) c.scrollIntoView({block:'nearest'});
+}
+$('list').addEventListener('click', e => { const el = e.target.closest('[data-i]'); if (!el) return; stopTour(); go(+el.dataset.i); if (innerWidth <= 900) $('index').classList.remove('open'); });
+$('q').addEventListener('input', render);
+
+function go(i) {
+  if (!flat.length) return;
+  cur = (i + flat.length) % flat.length;
+  const f = flat[cur];
+  fetch('goto', {method:'POST', body: JSON.stringify({x:f.x, y:f.y, zoom:f.zoom, yaw: cat.yaw ?? 45})});
+  $('now').textContent = f.ii < 0 ? f.name : `${f.district} · ${f.name}`;
+  $('cName').textContent = f.name;
+  $('cStates').textContent = f.states;
+  history.replaceState(null, '', '#' + f.slug);
+  render();
+}
+function overview() {
+  stopTour(); const n = cat.map_size;
+  fetch('goto', {method:'POST', body: JSON.stringify({x:n / 2, y:n / 2, zoom:40, yaw:45})});
+  cur = -1; $('now').textContent = 'The whole room'; $('cName').textContent = 'The whole room';
+  $('cStates').textContent = 'Every district at once. Pick one from the index, or press Tour.'; render();
+}
+$('bOverview').onclick = overview;
+$('bPrev').onclick = () => { stopTour(); go(cur - 1); };
+$('bNext').onclick = () => { stopTour(); go(cur + 1); };
+function stopTour() { if (tour) { clearInterval(tour); tour = null; $('bTour').classList.remove('on'); } }
+$('bTour').onclick = () => { if (tour) return stopTour(); $('bTour').classList.add('on'); go(cur + 1); tour = setInterval(() => go(cur + 1), 9000); };
+$('bLegend').onclick = () => { $('legend').classList.toggle('open'); $('bLegend').classList.toggle('on'); };
+$('bIndex').onclick = () => $('index').classList.toggle('open');
+addEventListener('keydown', e => {
+  if (e.target === $('q')) { if (e.key === 'Escape') { $('q').value = ''; render(); $('q').blur(); } return; }
+  const k = e.key.toLowerCase();
+  if (k === '[') { stopTour(); go(cur - 1); } else if (k === ']') { stopTour(); go(cur + 1); }
+  else if (k === 't') $('bTour').onclick(); else if (k === 'l') $('bLegend').onclick();
+  else if (k === '/') { e.preventDefault(); $('q').focus(); }
+  else if (k === ' ') { e.preventDefault(); speed(paused ? {paused:false} : {paused:true}); }
+  else if (k === 'q') { acc.yaw += 15; flush(); } else if (k === 'e') { acc.yaw -= 15; flush(); }
+  else if (k === 'a' || k === 'arrowleft') { acc.dx -= .08; flush(); } else if (k === 'd' || k === 'arrowright') { acc.dx += .08; flush(); }
+  else if (k === 'w' || k === 'arrowup') { acc.dy += .08; flush(); } else if (k === 's' || k === 'arrowdown') { acc.dy -= .08; flush(); }
+});
+
+const slug = s => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+async function load() {
+  try {
+    cat = await (await fetch('catalog')).json();
+    if (!cat.districts) throw 0;
+  } catch { cat = null; setTimeout(load, 3000); return; }
+  flat = [];
+  cat.districts.forEach((d, di) => {
+    flat.push({d: di, ii: -1, district: d.name, name: d.name, states: d.about, x: d.x, y: d.y, zoom: d.zoom, slug: slug(d.id)});
+    d.items.forEach((it, ii) => flat.push({d: di, ii, district: d.name, name: it.name, states: it.states, x: it.x, y: it.y, zoom: it.zoom, slug: slug(d.id + '-' + it.name)}));
+  });
+  $('leg').innerHTML = cat.legend.map(l => `<dt>${esc(l.term)}</dt><dd>${esc(l.meaning)}</dd>`).join('');
+  const want = flat.findIndex(f => '#' + f.slug === location.hash);
+  if (want >= 0) go(want); else { cur = -1; render(); $('now').textContent = 'Pick a district'; }
+}
+load();
+
+// ---- speed and status
+let paused = false;
+function showSpeed(s) {
+  paused = !!s.paused;
+  document.querySelectorAll('#speed button').forEach(b => b.classList.toggle('on', b.dataset.s === 'pause' ? s.paused : (!s.paused && Number(b.dataset.s) === s.speed)));
+}
+async function speed(body) { try { showSpeed(await (await fetch('speed', {method:'POST', body: JSON.stringify(body)})).json()); } catch {} }
+document.querySelectorAll('#speed button').forEach(b => b.onclick = () => speed(b.dataset.s === 'pause' ? {paused: !paused} : {speed: Number(b.dataset.s), paused: false}));
+async function poll() {
+  try {
+    const s = await (await fetch('status')).json();
+    if (s.error) throw 0;
+    $('down').style.display = 'none';
+    showSpeed(s);
+    $('stat').textContent = `${Math.round(s.render_fps || 0)} fps · ${Math.floor(s.time_s / 60)}:${String(Math.floor(s.time_s % 60)).padStart(2, '0')}` + (s.build ? ` · ${s.build}` : '');
+    if (!cat) load();
+  } catch { $('down').style.display = 'block'; }
+}
+poll(); setInterval(poll, 4000);
+</script>
+</body>
+</html>

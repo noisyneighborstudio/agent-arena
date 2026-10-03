@@ -384,6 +384,7 @@ namespace Pez.Api
                             OreScale = d?.Num("ore_scale", game.Config.OreScale) ?? game.Config.OreScale,
                             MaxPlayers = game.Config.MaxPlayers, MaxMapSize = game.Config.MaxMapSize,
                             HouseAIs = game.Config.HouseAIs, HouseResignAbove = game.Config.HouseResignAbove,
+                            KitchenSink = game.Config.KitchenSink, // the showcase room restarts as the showcase
                         };
                         if (d != null && d.TryGetValue("controllers", out var cs) && cs is List<object> cl2) cfg.Controllers = cl2.Select(x => x.ToString()).ToArray();
                         else cfg.Controllers = game.Config.Controllers;
@@ -393,6 +394,10 @@ namespace Pez.Api
                         OnRestart?.Invoke();
                         return Json.Write(new JObj().Set("ok", true).Set("seed", cfg.Seed).Set("map_size", game.World.Map.W).Set("ore_scale", cfg.OreScale).Set("controllers", cfg.Controllers.ToList()));
                     }
+                case "/api/admin/showcase":
+                    // The kitchen sink room's catalog (districts, exhibits, camera targets, legend) for its viewer page.
+                    if (w.Showcase == null) { status = 404; return "{\"ok\":false,\"error\":\"not the kitchen sink room\"}"; }
+                    return Json.Write(w.Showcase.Catalog());
                 case "/api/admin/inventions":
                     // Host-only: every invention in this game with its inventor and record, for the gateway's central
                     // registry (designs evaluated later for permanent inclusion). Not a player endpoint.

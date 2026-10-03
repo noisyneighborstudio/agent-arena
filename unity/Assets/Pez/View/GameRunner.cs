@@ -11,6 +11,7 @@ namespace Pez.View
     /// so the project needs no authored scene content.
     /// Command line: -team0 human|ai|claude|codex|llm -team1 ... -model0 sonnet -effort0 medium -orders0 "text" -seed N -mapsize 80 -open -port 7777 -speed 1 -autostart
     ///               -resume (resume the saved game; an -open arena does by default) -fresh (discard it) -snapshot path
+    ///               -kitchensink (the showcase room: every asset in every state, docs/art/KITCHEN_SINK.md; never saved)
     /// The running game is saved to ~/.config/pezz/rooms/game-PORT.json (see RoomSaver), so a relaunch picks it up.
     /// </summary>
     public class GameRunner : MonoBehaviour
@@ -46,6 +47,7 @@ namespace Pez.View
             Application.targetFrameRate = 60;
             QualitySettings.vSyncCount = 0;
             MenuConfig = ParseArgs(out bool autostart);
+            if (MenuConfig.KitchenSink) Application.targetFrameRate = KitchenSinkView.Fps; // it shares the machine with the live arena
             Game = new Game(MenuConfig);
             InMenu = !autostart;
             SetupScene();
@@ -53,10 +55,14 @@ namespace Pez.View
             // A saved game for this port (a new build swapped in, or the app restarted): carry on with it.
             var args = System.Environment.GetCommandLineArgs();
             int si = System.Array.IndexOf(args, "-snapshot");
-            saver = new RoomSaver(si >= 0 && si + 1 < args.Length ? args[si + 1] : RoomSaver.DefaultFile(Port)) { Log = Debug.Log };
-            resumed = saver.TryResume(Game, Api, args.Contains("-resume"), MenuConfig.Open && autostart, args.Contains("-fresh"));
+            // The kitchen sink is rebuilt from code every launch: nothing to save or resume.
+            if (!MenuConfig.KitchenSink)
+            {
+                saver = new RoomSaver(si >= 0 && si + 1 < args.Length ? args[si + 1] : RoomSaver.DefaultFile(Port)) { Log = Debug.Log };
+                resumed = saver.TryResume(Game, Api, args.Contains("-resume"), MenuConfig.Open && autostart, args.Contains("-fresh"));
+            }
             if (resumed) InMenu = false;
-            if (Api != null)
+            if (Api != null && saver != null)
             {
                 Api.OnRestart = () => saver.Forget(Game);
                 Api.OnSave = () => saver.Save(Game, Api, "requested");
@@ -69,6 +75,12 @@ namespace Pez.View
             string Arg(string name, string def) { int i = System.Array.IndexOf(args, name); return i >= 0 && i + 1 < args.Length ? args[i + 1] : def; }
             autostart = args.Contains("-autostart");
             Port = int.Parse(Arg("-port", "7777"));
+            if (args.Contains("-kitchensink"))
+            {
+                autostart = true;
+                var sink = new[] { "showcase", "showcase", "showcase", "showcase" }; // nobody plays: no AI, no agents, a spectator's view
+                return new GameConfig { KitchenSink = true, Controllers = sink, Orders = new string[sink.Length], Speed = 1f, Seed = 1 };
+            }
             return new GameConfig
             {
                 Seed = int.Parse(Arg("-seed", Random.Range(1, 99999).ToString())),
@@ -183,6 +195,12 @@ namespace Pez.View
             cam.cullingMask = ~TerrainView.TeamFogMask & ~(1 << Bars.Layer);
             if (camGo.GetComponent<PezPost>() == null) camGo.AddComponent<PezPost>();
             gameObject.AddComponent<PlayerStreams>().Runner = this;
+            if (MenuConfig.KitchenSink)
+            {
+                // The showcase room: no HUD over the exhibits (the viewer page labels them), and it idles when nobody watches.
+                Hud.enabled = false;
+                gameObject.AddComponent<KitchenSinkView>().Runner = this;
+            }
         }
 
         static readonly string[] AgentClis = { "claude", "codex", "grok", "gemini" };
@@ -194,7 +212,7 @@ namespace Pez.View
             startingFromMenu = true;
             // The sim only knows "llm"; which CLI plays is the launcher's business.
             var simControllers = cfg.Controllers.Select(c => AgentClis.Contains(c) ? "llm" : c).ToArray();
-            Game.Restart(new GameConfig { Seed = cfg.Seed, Speed = cfg.Speed, MapSize = cfg.MapSize, Controllers = simControllers, Orders = (string[])cfg.Orders?.Clone(), Open = cfg.Open });
+            Game.Restart(new GameConfig { Seed = cfg.Seed, Speed = cfg.Speed, MapSize = cfg.MapSize, Controllers = simControllers, Orders = (string[])cfg.Orders?.Clone(), Open = cfg.Open, KitchenSink = cfg.KitchenSink });
             InMenu = false;
             if (cfg.Controllers.Any(c => AgentClis.Contains(c))) LaunchAgents(cfg.Controllers);
             if (cfg.Open) LaunchGateway(); else StopGateway();
