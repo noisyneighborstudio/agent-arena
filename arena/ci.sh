@@ -59,7 +59,8 @@ pass() {
   [ "$target" = "$(cat "$CI/failed" 2>/dev/null)" ] && return 0
   log "main is at ${target[1,7]} (live: ${deployed[1,7]:-none}): testing"
   status testing "$target"
-  git -C "$WT" checkout -q --detach "$target" || return 2
+  # -f: Unity writes .meta files for new scripts into this checkout; once main carries them, a plain checkout refuses.
+  git -C "$WT" checkout -q -f --detach "$target" || return 2
 
   # 1. Tests and syntax: never deploy a red build.
   if ! (cd "$WT/headless" && dotnet run -c Release -- --test) > "$CI/test.log" 2>&1 || ! grep -q "All tests passed" "$CI/test.log"; then
@@ -117,7 +118,7 @@ pass() {
 
   # 4. The live checkout moves to the deployed commit; the gateway restarts onto it if it changed (MCP sessions, rooms
   #    and commander links survive restarts), and the overflow rooms' engine is rebuilt there for new rooms.
-  git -C "$LIVE" checkout -q --detach "$target"
+  git -C "$LIVE" checkout -q -f --detach "$target"
   (cd "$LIVE/headless" && dotnet build -c Release >/dev/null 2>&1)
   if [ $changed_mcp = 1 ]; then
     (cd "$LIVE/mcp" && [ package.json -nt node_modules ] && npm install --silent >/dev/null 2>&1)
