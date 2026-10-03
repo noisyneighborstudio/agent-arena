@@ -23,7 +23,7 @@ namespace Pez.View
             public float LandK;          // aircraft: 0 flying, 1 parked on its pad (eases between)
             // Hull feel (MOTION.md): nose-up under acceleration, dip when braking, kick back on firing.
             public float HullSpeed, HullPitch, HullPitchVel;
-            public int OreTint = -1;     // deep mine: the ore its tube is tinted to
+            public int OreTint = -1;     // deep mine: the ore its tube is tinted to; mining truck: the ore its load shows
             public int Born;             // frame the view was made (deploys pair a unit with the structure it became)
             public float BoardT;         // boarding: 0..1 while the passenger shrinks into its carrier
             public Bars Bars;            // world-space health and fuel bars (seen by every camera)
@@ -354,6 +354,9 @@ namespace Pez.View
                     if (e.IsHarvester)
                     {
                         rig.Motion.SetBinLoad(e.Cargo / (float)e.Def.HarvestCapacity);
+                        // The load shows the ore it really is (crystal and uranium glow). The bin keeps the last colour
+                        // while it empties (the sim clears CargoType at zero).
+                        if (e.CargoType >= 0 && e.CargoType != v.OreTint) { Models.TintOre(rig.Model, e.CargoType); v.OreTint = e.CargoType; }
                         rig.Motion.SetWorking(e.Order == Order.Harvest && !e.Moving && e.HarvestTile.HasValue);
                         // Tip the bin when unloading starts, and open the refinery dock door.
                         if (e.Order == Order.ReturnOre && e.Cargo < v.PrevCargo && !v.Tipped)

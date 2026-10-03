@@ -280,10 +280,13 @@ namespace Pez.View
         }
 
         static readonly Dictionary<(Material, int), Material> oreTinted = new Dictionary<(Material, int), Material>();
+        static readonly Dictionary<Material, Material> oreSource = new Dictionary<Material, Material>(); // tinted copy -> original
 
         /// <summary>
-        /// Swap every M_OreTint material (deep mine ore tube, deposit stake cap) for a copy in an ore's colour; crystal
-        /// and uranium glow (art pack v0.4).
+        /// Recolour every ore material on a model to an ore type: M_OreTint (deep mine ore tube, deposit stake cap, art
+        /// pack v0.4) and M_Ore_* (the mining truck's load, bin_ore, which ships as M_Ore_Cinnamon). Crystal and uranium
+        /// glow, as they do in the field (their emission means a charged ore). Re-tinting is safe: a tinted copy maps back
+        /// to its original, so copies never chain.
         /// </summary>
         public static void TintOre(GameObject go, int oreType)
         {
@@ -297,7 +300,9 @@ namespace Pez.View
                 for (int i = 0; i < mats.Length; i++)
                 {
                     var m = mats[i];
-                    if (m == null || !m.name.StartsWith("M_OreTint")) continue;
+                    if (m == null) continue;
+                    if (oreSource.TryGetValue(m, out var original)) m = original;
+                    if (!m.name.StartsWith("M_OreTint") && !m.name.StartsWith("M_Ore_")) continue;
                     if (!oreTinted.TryGetValue((m, oreType), out var t))
                     {
                         t = new Material(m) { name = m.name + "_ore" + oreType, enableInstancing = true };
@@ -308,13 +313,17 @@ namespace Pez.View
                         {
                             t.EnableKeyword("_EMISSION");
                             t.globalIlluminationFlags = MaterialGlobalIlluminationFlags.None;
-                            if (t.HasProperty("_EmissionColor")) t.SetColor("_EmissionColor", color * 2.4f); // HDR: feeds the bloom
-                            if (t.HasProperty("emissiveFactor")) t.SetColor("emissiveFactor", color * 1.4f);
+                            // The field's own emissive (crystal glows laser cyan, uranium acid), not the paler albedo,
+                            // so a hauled load reads as the same stuff as the field it came from. HDR: feeds the bloom.
+                            Color e = oreType == 2 ? (Color)PezPalette.EmissiveCyanLaserOptics : (Color)PezPalette.EmissiveAcidUraniumElectronics;
+                            if (t.HasProperty("_EmissionColor")) t.SetColor("_EmissionColor", e * 2.2f);
+                            if (t.HasProperty("emissiveFactor")) t.SetColor("emissiveFactor", e * 1.4f);
                         }
+                        else if (t.HasProperty("_EmissionColor")) t.SetColor("_EmissionColor", Color.black);
                         oreTinted[(m, oreType)] = t;
+                        oreSource[t] = m;
                     }
-                    mats[i] = t;
-                    changed = true;
+                    if (mats[i] != t) { mats[i] = t; changed = true; }
                 }
                 if (changed) r.sharedMaterials = mats;
             }
