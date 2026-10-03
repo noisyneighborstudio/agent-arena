@@ -74,7 +74,15 @@ namespace Pez
             targetYaw = Mathf.Clamp(Mathf.DeltaAngle(0f, a), -lim, lim);
             hasTarget = true;
         }
-        public void ClearAim() => hasTarget = false;
+        public void ClearAim()
+        {
+            if (hasTarget) holdUntil = Time.time + 3f; // keep watching where the fight was for a moment
+            hasTarget = false;
+        }
+
+        // Idle turrets are mostly still: after a fight they hold their aim ~3 s, settle forward, and only now and then
+        // glance to one side and back (restrained idle life; a constant sweep read as an amusement-park ride).
+        float holdUntil, nextGlance = -1f, glanceUntil, glanceYaw;
         public bool IsAimed(float toleranceDeg = 5f) => !turret || Mathf.Abs(Mathf.DeltaAngle(yaw, targetYaw)) <= toleranceDeg;
         public void Fire()
         {
@@ -194,9 +202,22 @@ namespace Pez
 
             if (turret && profile.turretYawSpeed > 0f)
             {
-                float goal = hasTarget ? targetYaw
-                    : idleScan ? Mathf.Sin((Time.time + scanPhase) * 0.35f) * Mathf.Min(scanAmp, profile.turretYawLimit) : 0f;
-                yaw = Mathf.MoveTowardsAngle(yaw, goal, profile.turretYawSpeed * dt * (hasTarget ? 1f : 0.25f));
+                float now = Time.time, goal;
+                if (hasTarget) goal = targetYaw;
+                else if (now < holdUntil) goal = yaw;
+                else
+                {
+                    if (nextGlance < 0f) nextGlance = now + 8f + scanPhase * 3f;
+                    if (idleScan && now >= nextGlance)
+                    {
+                        float amp = Mathf.Min(scanAmp, profile.turretYawLimit) * 0.6f;
+                        glanceYaw = Random.Range(-amp, amp);
+                        glanceUntil = now + Random.Range(1.8f, 3f);
+                        nextGlance = now + Random.Range(20f, 45f);
+                    }
+                    goal = now < glanceUntil ? glanceYaw : 0f;
+                }
+                yaw = Mathf.MoveTowardsAngle(yaw, goal, profile.turretYawSpeed * dt * (hasTarget ? 1f : 0.2f));
                 turret.localRotation = turretRest * Quaternion.Euler(0f, yaw, 0f);
             }
 

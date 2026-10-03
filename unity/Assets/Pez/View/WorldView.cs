@@ -493,7 +493,7 @@ namespace Pez.View
             else if (!surveying && m.Surveying) m.CancelSurvey();
         }
 
-        /// <summary>Point the model's turret where the sim says it's facing; idle turrets scan.</summary>
+        /// <summary>Point the model's turret where the sim says it's facing; idle turrets rest (PezMotion: hold, settle, an occasional glance).</summary>
         void Aim(EV v)
         {
             var e = v.E;
