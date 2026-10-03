@@ -357,14 +357,6 @@ namespace Pez.View
             float dt = Time.deltaTime, now = Time.time;
             if (dt <= 0f) return;
 
-            // Light pool: the warm splash an explosion or muzzle flash throws on the ground around it (additive, flat on
-            // the ground under the fog overlay). Every lamp makes one, so the light reads in every view and on every
-            // stream even when the per-pixel point-light budget is spent.
-            Pool = Make("pool", Mat("PezFxGlow", 2993, ("_Shape", 0), ("_Opacity", 0f), ("_Boost", 0.9f)), 300, 0f, 0f, glowStreams,
-                ParticleSystemRenderMode.HorizontalBillboard);
-            SizeOverLife(Pool, new Keyframe(0, 0.8f), new Keyframe(0.2f, 1f), new Keyframe(1, 1.05f));
-            ColorOverLife(Pool, Grad(new[] { (0f, Color.white), (1f, new Color(1f, 0.6f, 0.35f)) }, new[] { (0f, 1f), (0.3f, 0.55f), (1f, 0f) }));
-
             for (int i = 0; i < LightCount; i++)
             {
                 var l = lights[i];

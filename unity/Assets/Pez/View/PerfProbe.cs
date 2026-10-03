@@ -29,6 +29,13 @@ namespace Pez.View
             DontDestroyOnLoad(probe.gameObject);
         }
 
+        static int FxParticles()
+        {
+            int n = 0;
+            foreach (var ps in FxSystems.I.GetComponentsInChildren<ParticleSystem>()) n += ps.particleCount;
+            return n;
+        }
+
         void LateUpdate()
         {
             Application.targetFrameRate = -1; // GameRunner caps at 60 in Awake; measure what the frame really costs
@@ -44,9 +51,17 @@ namespace Pez.View
             double g = 0; foreach (var x in gpu) g += x; g = gpu.Count > 0 ? g / gpu.Count : 0;
             int streams = PlayerStreams.RenderCount - streamStart;
             var line = string.Format(System.Globalization.CultureInfo.InvariantCulture,
-                "{0:yyyy-MM-ddTHH:mm:ss} frames={1} avg_ms={2:F2} p50_ms={3:F2} p95_ms={4:F2} max_ms={5:F2} fps={6:F1} gpu_ms={7:F2} stream_frames_per_s={8:F1} screen={9}x{10}",
+                "{0:yyyy-MM-ddTHH:mm:ss} frames={1} avg_ms={2:F2} p50_ms={3:F2} p95_ms={4:F2} max_ms={5:F2} fps={6:F1} gpu_ms={7:F2} stream_frames_per_s={8:F1} screen={9}x{10} mono_mb={11:F0} bars={12} fx_particles={13} gameobjects={14}",
                 System.DateTime.Now, ms.Count, avg, ms[ms.Count / 2], ms[(int)(ms.Count * 0.95f)], ms[ms.Count - 1], ms.Count / span, g, streams / span,
-                Screen.width, Screen.height);
+                Screen.width, Screen.height, UnityEngine.Profiling.Profiler.GetMonoUsedSizeLong() / 1048576.0, Bars.Count, FxParticles(),
+                Object.FindObjectsByType<Transform>(FindObjectsSortMode.None).Length);
+            if (System.Array.IndexOf(System.Environment.GetCommandLineArgs(), "-perfnames") >= 0)
+            {
+                var names = new Dictionary<string, int>();
+                foreach (var t in Object.FindObjectsByType<Transform>(FindObjectsSortMode.None)) { names.TryGetValue(t.name, out int c); names[t.name] = c + 1; }
+                var top = new List<KeyValuePair<string, int>>(names); top.Sort((a, b) => b.Value.CompareTo(a.Value));
+                for (int i = 0; i < 5 && i < top.Count; i++) line += $" {top[i].Key}:{top[i].Value}";
+            }
             try { System.IO.File.AppendAllText(path, line + "\n"); } catch { }
             ms.Clear(); gpu.Clear();
             windowStart = Time.unscaledTime; streamStart = PlayerStreams.RenderCount;

@@ -16,6 +16,8 @@ namespace Pez.View
     {
         public const int Layer = 29;
         static readonly List<MeshRenderer> all = new List<MeshRenderer>();
+        /// <summary>Bar renderers registered for the overlay pass (PerfProbe reports it).</summary>
+        public static int Count => all.Count;
         static readonly List<MaterialPropertyBlock> blocks = new List<MaterialPropertyBlock>();
 
         /// <summary>Queue every bar that's showing (enabled, in an active entity) into an overlay command buffer.</summary>
