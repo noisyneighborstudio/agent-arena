@@ -64,6 +64,16 @@ namespace Pez.View
         // the 8% value budget, a soft disc of ore colour under each ore field, and a light shore band around lakes.
         // The Pez/Ground shader adds the cream speckles and the faint diamond tile grid on top.
         const float BlotchStrength = 0.04f; // +-4% value: light and dark together stay inside 8%
+        const float MacroStrength = 0.035f; // broad value/warmth variation (quality pass), +-3.5%
+
+        /// <summary>Slope of a smooth dune height field, baked per ground vertex; Pez/Ground shades it against the sun.</summary>
+        static Vector2 DuneSlope(float x, float y)
+        {
+            float H(float a, float b) => Mathf.PerlinNoise(a * 0.32f + 5.1f, b * 0.32f + 2.7f) * 0.6f + Mathf.PerlinNoise(a * 0.7f + 17.3f, b * 0.7f + 8.9f) * 0.4f;
+            const float e = 0.1f;
+            float h0 = H(x, y);
+            return new Vector2(H(x + e, y) - h0, H(x, y + e) - h0) / e;
+        }
         const float OrePadAlpha = 0.34f, ShoreWidth = 0.7f;
 
         /// <summary>GLSL-style smoothstep (Mathf.SmoothStep interpolates between its first two arguments instead).</summary>
@@ -184,6 +194,7 @@ namespace Pez.View
             var verts = new Vector3[vw * vh];
             var cols = new Color[vw * vh];
             var blotch = Blotches(vw, vh);
+            var dunes = new Vector2[vw * vh];
             var pads = OrePads(vw, vh);
             for (int vy = 0; vy < vh; vy++)
                 for (int vx = 0; vx < vw; vx++)
@@ -206,6 +217,10 @@ namespace Pez.View
                     }
                     // Rocks get craggy noise; open ground stays near y=0 so picking with a flat plane is accurate.
                     if (h > -0.05f) h += (Mathf.PerlinNoise(fx * 0.8f + 11, fy * 0.8f + 5) - 0.5f) * 0.05f;
+                    // Broad variation (quality pass): a little lighter/darker and warmer/cooler every few tiles.
+                    float macro = Mathf.PerlinNoise(fx * 0.11f + 3.7f, fy * 0.11f + 1.3f) * 0.65f + Mathf.PerlinNoise(fx * 0.27f + 9.1f, fy * 0.27f + 4.4f) * 0.35f - 0.5f;
+                    c.r *= 1f + macro * MacroStrength * 2f * 1.03f; c.g *= 1f + macro * MacroStrength * 2f; c.b *= 1f + macro * MacroStrength * 2f * 0.96f;
+                    dunes[i] = DuneSlope(fx, fy);
                     verts[i] = new Vector3(fx, h, fy);
                     cols[i] = c.linear; // vertex colours aren't converted in linear colour space
                 }
@@ -232,11 +247,12 @@ namespace Pez.View
                     var cv = new Vector3[w * h];
                     var cn = new Vector3[w * h];
                     var cc = new Color[w * h];
+                    var cd = new Vector2[w * h];
                     for (int y = 0; y < h; y++)
                         for (int x = 0; x < w; x++)
                         {
                             int src = (cy + y) * vw + cx + x, dst = y * w + x;
-                            cv[dst] = verts[src]; cn[dst] = normals[src]; cc[dst] = cols[src];
+                            cv[dst] = verts[src]; cn[dst] = normals[src]; cc[dst] = cols[src]; cd[dst] = dunes[src];
                         }
                     var ct = new int[(w - 1) * (h - 1) * 6];
                     int k = 0;
@@ -249,6 +265,7 @@ namespace Pez.View
                         }
                     var mesh = new Mesh { name = "terrain_" + cx / step + "_" + cy / step };
                     mesh.vertices = cv; mesh.normals = cn; mesh.colors = cc; mesh.triangles = ct;
+                    mesh.SetUVs(1, cd); // dune slope, for Pez/Ground's sun-lit relief
                     mesh.RecalculateBounds();
                     var go = new GameObject(mesh.name);
                     go.transform.SetParent(root, false);

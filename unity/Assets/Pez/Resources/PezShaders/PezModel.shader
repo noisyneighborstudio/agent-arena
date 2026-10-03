@@ -57,7 +57,7 @@ Shader "Pez/Model"
             fixed4 c = UNITY_ACCESS_INSTANCED_PROP(Props, _Color);
             half edgeK = _Edge * _PezEdgeScale, grime = _Grime * _PezGrimeScale;
             float3 wp = IN.worldPos;
-            float n = vnoise3(wp * 1.7) * 0.65 + vnoise3(wp * 4.3 + 11.0) * 0.35; // 0..1, low frequency
+            float n = vnoise3(wp * 2.3); // 0..1, low frequency
             float3 albedo = c.rgb * (1.0 + (n - 0.5) * 0.14 * grime);
             albedo *= lerp(1.0 - _Foot, 1.0, saturate(wp.y / 0.45));
             float edge = 0;
