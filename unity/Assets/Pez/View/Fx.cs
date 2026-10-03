@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace Pez.View
@@ -57,8 +58,19 @@ namespace Pez.View
 
         // ---------------------------------------------------------------- helpers
 
-        static void Emit(ParticleSystem ps, Vector3 pos, Vector3 vel, float size, float life, Color32 c, float rot = 0f) =>
-            FxSystems.Emit(ps, pos, vel, size, life, c, rot);
+        static void Emit(ParticleSystem ps, Vector3 pos, Vector3 vel, float size, float life, Color32 c, float rot = 0f)
+        {
+            if (Audience == null) { FxSystems.Emit(ps, pos, vel, size, life, c, rot); return; }
+            foreach (var layer in Audience) FxSystems.Emit(S.OnLayer(ps, layer), pos, vel, size, life, c, rot);
+        }
+
+        /// <summary>
+        /// While set, effects go only to these render layers (one per camera audience) instead of every camera. A
+        /// building's state effects (damage smoke and fire, power-plant steam) are emitted this way, so a player's stream
+        /// only shows them when that player can actually see the building (they'd otherwise rise out of the fog over a
+        /// remembered enemy structure and give its state away). Set and cleared around the call by WorldView.
+        /// </summary>
+        public static List<int> Audience;
 
         static Color32 Vary(Color32 c, float amount, byte alpha = 255)
         {

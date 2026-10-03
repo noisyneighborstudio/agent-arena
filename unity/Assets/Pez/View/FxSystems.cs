@@ -266,6 +266,27 @@ namespace Pez.View
             EmitShard(at + Vector3.down * 3f, Vector3.zero, 0.01f, 0.2f, clear);
         }
 
+        // ---------------------------------------------------------------- audiences
+
+        readonly Dictionary<(ParticleSystem, int), ParticleSystem> audiences = new Dictionary<(ParticleSystem, int), ParticleSystem>();
+
+        /// <summary>
+        /// A copy of a system drawn on one render layer only, so an effect can be shown to some cameras and not others
+        /// (the main view's layer, or one player stream's team layer: see TerrainView's fog layers). Made once, on demand.
+        /// </summary>
+        public ParticleSystem OnLayer(ParticleSystem src, int layer)
+        {
+            if (audiences.TryGetValue((src, layer), out var ps) && ps != null) return ps;
+            var go = Instantiate(src.gameObject, src.transform.parent);
+            go.name = $"{src.name}@{layer}";
+            foreach (var t in go.GetComponentsInChildren<Transform>(true)) t.gameObject.layer = layer;
+            ps = go.GetComponent<ParticleSystem>();
+            ps.Clear(true);
+            ps.Play(true);
+            audiences[(src, layer)] = ps;
+            return ps;
+        }
+
         // ---------------------------------------------------------------- emission
 
         public static void Emit(ParticleSystem ps, Vector3 pos, Vector3 vel, float size, float life, Color32 color, float rotation = 0f)

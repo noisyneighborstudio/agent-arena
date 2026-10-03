@@ -35,6 +35,7 @@ namespace Pez.View
             // Power state on structures: emissive renderers, the smoothed glow and what was last applied, steam.
             public Renderer[] Glows;
             public float GlowK = -1f, GlowShown = -1f, RateShown = 1f, SteamAcc;
+            public bool GlowHidden;      // the neutral "last seen" glow is applied (a stream render of fogged enemy state)
             // Damage state on finished buildings: smoke and fire intensity (eased), emitters, and the roof they rise from.
             public float SmokeK, FireK, SmokeAcc, FireAcc;
             public Bounds? Roof;
@@ -110,6 +111,25 @@ namespace Pez.View
             return Mathf.Clamp01(1f - (Time.time - t) / FogFade);
         }
 
+        readonly List<int> audience = new List<int>();
+
+        /// <summary>
+        /// The cameras that may see a building's state effects right now: the main view (if its team sees the building,
+        /// or it's a spectator view) and each player's stream whose team sees it. Remembered-but-unseen enemy buildings
+        /// show none of their current state.
+        /// </summary>
+        List<int> AudienceFor(Entity e)
+        {
+            audience.Clear();
+            if (PovTeam < 0 || e.Team == PovTeam || World.IsVisibleTo(PovTeam, e)) audience.Add(TerrainView.MainFogLayer);
+            for (int t = 0; t < Mathf.Min(8, World.Teams.Count); t++)
+                if (e.Team == t || World.IsVisibleTo(t, e)) audience.Add(TerrainView.TeamFogLayerBase + t);
+            return audience;
+        }
+
+        /// <summary>Does this view's team see a building's live state (power, damage), or only remember it under fog?</summary>
+        bool SeesState(Entity e, int team) => team < 0 || e.Team == team || World.IsVisibleTo(team, e);
+
         bool ShownFor(Entity e, int team) => !e.IsCarried && (team < 0 || World.IsVisibleTo(team, e) ||
                                              (e.IsStructure && World.Teams[team].KnownEnemyStructures.ContainsKey(e.Id)));
 
@@ -130,6 +150,17 @@ namespace Pez.View
                 bool ring = team == PovTeam && Selected.Contains(v.E.Id) && !v.E.IsStructure;
                 if (v.Ring.gameObject.activeSelf != ring) v.Ring.gameObject.SetActive(ring);
                 v.Bars?.ForView(v.E, team); // a player's stream shows only their own units' fuel
+                // A remembered enemy building under fog shows no live power state: neutral glow in that render.
+                if (show && v.Glows != null && v.GlowShown >= 0f)
+                {
+                    bool hide = !SeesState(v.E, team);
+                    if (hide != v.GlowHidden)
+                    {
+                        float g = hide ? 0.8f : v.GlowShown;
+                        PezShade.Set(v.Glows, Mathf.Lerp(0.15f, 1f, Mathf.InverseLerp(0.25f, 1f, g)), g);
+                        v.GlowHidden = hide;
+                    }
+                }
             }
             Deposits?.SetPov(team, PovTeam);
         }
@@ -318,7 +349,8 @@ namespace Pez.View
             }
             // The lamp body darkens with its light (a cyan core at 0.25 emission still read as lit from its albedo).
             glow *= v.Blink;
-            if (Mathf.Abs(glow - v.GlowShown) > 0.01f) { PezShade.Set(v.Glows, Mathf.Lerp(0.15f, 1f, Mathf.InverseLerp(0.25f, 1f, glow)), glow); v.GlowShown = glow; }
+            if (!SeesState(e, PovTeam)) glow = 0.8f; // remembered under fog: no live state
+            if (v.GlowHidden || Mathf.Abs(glow - v.GlowShown) > 0.01f) { PezShade.Set(v.Glows, Mathf.Lerp(0.15f, 1f, Mathf.InverseLerp(0.25f, 1f, glow)), glow); v.GlowShown = glow; v.GlowHidden = false; }
             if (rate != v.RateShown) { v.Rig.Motion.SetRate(rate); v.RateShown = rate; }
         }
 
@@ -394,10 +426,14 @@ namespace Pez.View
             Vector3 At(float spread) => new Vector3(roof.center.x + Random.Range(-spread, spread) * roof.extents.x, roof.max.y * 0.85f,
                                                     roof.center.z + Random.Range(-spread, spread) * roof.extents.z);
             v.SmokeAcc += dt * (v.FireK > 0f ? Mathf.Lerp(3f, 7f, v.FireK) : 3f) * v.SmokeK;
+            Fx.Audience = AudienceFor(e);
             while (v.SmokeAcc >= 1f) { v.SmokeAcc -= 1f; Fx.DamageSmoke(At(0.35f), size); }
-            if (v.FireK <= 0f) return;
-            v.FireAcc += dt * 7f * v.FireK;
-            while (v.FireAcc >= 1f) { v.FireAcc -= 1f; Fx.DamageFire(At(0.3f), size, roof.center); }
+            if (v.FireK > 0f)
+            {
+                v.FireAcc += dt * 7f * v.FireK;
+                while (v.FireAcc >= 1f) { v.FireAcc -= 1f; Fx.DamageFire(At(0.3f), size, roof.center); }
+            }
+            Fx.Audience = null;
         }
 
         /// <summary>Cream steam wisps off both towers: one every 0.8/load s each; on low power, bursts of 3 then a 1 s gap.</summary>
@@ -411,12 +447,15 @@ namespace Pez.View
                 v.SteamAcc += dt * 5f;    // 3 puffs in the burst
             }
             else v.SteamAcc += dt * Mathf.Max(load, 0.2f) / 0.8f;
+            if (v.SteamAcc < 1f) return;
+            Fx.Audience = AudienceFor(v.E);
             while (v.SteamAcc >= 1f)
             {
                 v.SteamAcc -= 1f;
                 var m = v.Rig.Model.transform;
                 for (int i = 0; i < Towers.Length; i++) Fx.Steam(m.TransformPoint(Towers[i]), low ? 0.3f : 0.38f);
             }
+            Fx.Audience = null;
         }
 
         /// <summary>Surveyor: thump while it stands surveying (each slam sends a ripple); moving off cancels.</summary>
@@ -879,7 +918,26 @@ namespace Pez.View
             return World.Map.InBounds(t.X, t.Y) && World.Teams[PovTeam].Visible[World.Map.Idx(t.X, t.Y)];
         }
 
+        /// <summary>The cameras that may see an event's effects: the main view, and each stream whose team sees the spot.</summary>
+        List<int> AudienceAt(Vec2 p, int eventTeam)
+        {
+            audience.Clear();
+            audience.Add(TerrainView.MainFogLayer);
+            var tile = Int2.Of(p);
+            bool inMap = World.Map.InBounds(tile.X, tile.Y);
+            int idx = inMap ? World.Map.Idx(tile.X, tile.Y) : 0;
+            for (int t = 0; t < Mathf.Min(8, World.Teams.Count); t++)
+                if (t == eventTeam || inMap && World.Teams[t].Visible[idx]) audience.Add(TerrainView.TeamFogLayerBase + t);
+            return audience;
+        }
+
         void PlayEvents()
+        {
+            try { PlayEventsInner(); }
+            finally { Fx.Audience = null; }
+        }
+
+        void PlayEventsInner()
         {
             var evs = World.Events;
             int start = evs.Count - 1;
@@ -890,6 +948,8 @@ namespace Pez.View
                 lastSeq = ev.Seq;
                 bool visible = PovTeam < 0 || VisibleTile(ev.Pos) || ev.Team == PovTeam;
                 if (!visible) continue;
+                // Its effects (blasts, smoke, sparks, scorch) only reach the player streams whose team can see the spot.
+                Fx.Audience = AudienceAt(ev.Pos, ev.Team);
                 switch (ev.Type)
                 {
                     case "shot":
