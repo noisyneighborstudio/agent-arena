@@ -2,7 +2,8 @@
 //  - Structures: SetBuildProgress(0..1) raises stage_0..stage_3 out of the ground, then unfolds functional nodes.
 //  - Units: PlayExit(...) drives a new unit out through its producer's door, or presents it on the airfield lift.
 //  - Ores: SetClusterAmount / Regrow scale clusters, sinking empty ones.
-//  - Everything: PlayRemove() runs the reverse transform, then destroys the GameObject.
+//  - Everything: PlayRemove() runs the reverse transform, then destroys the GameObject (a destroyed vehicle first
+//    lies as a dark wreck for 20 s, its head beside it).
 // Requires opaque terrain at y = 0 so geometry below ground is hidden while it rises.
 using System.Collections;
 using UnityEngine;
@@ -182,7 +183,9 @@ namespace Pez
         }
 
         // ---------------------------------------------------------------- removal
-        /// <summary>Destroyed or sold. Structures sink stage by stage; units sink and darken. Destroys the GameObject at the end.</summary>
+        /// <summary>Destroyed or sold. Structures sink stage by stage; units sink, and a destroyed vehicle is left as a
+        /// charred wreck: every renderer (team stripe included) darkens to 30% over 0.5 s, the head is blown off and
+        /// lands beside the hull, and the wreck stays 20 s before it sinks. Destroys the GameObject at the end.</summary>
         public IEnumerator PlayRemove(bool destroyed, float seconds = 1.5f)
         {
             var m = GetComponent<PezMotion>();
@@ -198,28 +201,69 @@ namespace Pez
             }
             else
             {
+                Renderer[] parts = destroyed ? GetComponentsInChildren<Renderer>() : null; // before the head leaves
                 Transform turret = PezMotion.FindDeep(transform, "turret");
-                if (destroyed && turret) StartCoroutine(Fling(turret));
-                for (float t = 0f; t < .5f; t += Time.deltaTime) { transform.position = origin + Vector3.down * .06f * (t / .5f); yield return null; }
-                if (destroyed) yield return new WaitForSeconds(20f);
+                if (destroyed && turret) StartCoroutine(Fling(turret, origin.y));
+                for (float t = 0f; t < .5f; t += Time.deltaTime)
+                {
+                    float k = t / .5f;
+                    transform.position = origin + Vector3.down * .06f * k;
+                    if (destroyed) PezShade.Set(parts, Mathf.Lerp(1f, WreckDim, k * (2f - k)), 1f);
+                    yield return null;
+                }
+                transform.position = origin + Vector3.down * .06f;
+                if (destroyed) { PezShade.Set(parts, WreckDim, 1f); yield return new WaitForSeconds(20f); }
                 Vector3 p = transform.position;
                 for (float t = 0f; t < 2f; t += Time.deltaTime) { transform.position = p + Vector3.down * 0.6f * (t / 2f); yield return null; }
             }
             Destroy(gameObject);
         }
 
-        IEnumerator Fling(Transform head)
+        /// <summary>How dark a wreck goes. MOTION.md says "darkens to 30%"; that's 30% as seen, which is about 0.08 in the
+        /// linear light the shader works in (0.3 linear still showed a bright team colour on the stream).</summary>
+        public const float WreckDim = 0.08f;
+
+        /// <summary>
+        /// The head is blown off on a ballistic arc (up 2.5, sideways about 1, tumbling 540 deg/s), bounces once and
+        /// comes to rest on the ground beside the hull, cocked on its base. It stays part of the wreck (it darkens, waits
+        /// and sinks with it), so nothing shrinks away.
+        /// </summary>
+        IEnumerator Fling(Transform head, float groundY)
         {
-            head.SetParent(null, true);
-            Vector3 v = new Vector3(Random.Range(-.8f, .8f), 2.5f, Random.Range(-.8f, .8f)), p = head.position;
-            for (float t = 0f; t < .6f; t += Time.deltaTime)
+            head.SetParent(transform, true);
+            var side = Random.insideUnitCircle.normalized * Random.Range(.85f, 1.1f); // clear of the hull
+            Vector3 v = new Vector3(side.x, 2.5f, side.y), p = head.position;
+            float spin = 540f; int bounces = 0;
+            Vector3 axis = Vector3.Cross(Vector3.up, new Vector3(side.x, 0f, side.y)).normalized;
+            for (float t = 0f; t < 3f; t += Time.deltaTime)
             {
-                p += v * Time.deltaTime; v += Physics.gravity * Time.deltaTime;
-                head.position = p; head.Rotate(Vector3.right, 540f * Time.deltaTime);
-                head.localScale = Vector3.one * (1f - t / .6f);
+                float dt = Time.deltaTime;
+                p += v * dt; v += Physics.gravity * dt;
+                head.Rotate(axis, spin * dt, Space.World);
+                if (p.y <= groundY && v.y < 0f)
+                {
+                    p.y = groundY;
+                    if (bounces++ >= 1) break;
+                    v = new Vector3(v.x * .45f, -v.y * .28f, v.z * .45f); // a dull, heavy bounce
+                    spin *= .35f;
+                }
+                head.position = p;
                 yield return null;
             }
-            Destroy(head.gameObject);
+            // Settle on its base: keep the heading it landed with, cocked 8-22 degrees.
+            var from = head.rotation;
+            var fwd = Vector3.ProjectOnPlane(head.forward, Vector3.up);
+            if (fwd.sqrMagnitude < 1e-4f) fwd = Vector3.ProjectOnPlane(head.up, Vector3.up);
+            var rest = Quaternion.AngleAxis(Random.Range(8f, 22f) * (Random.value < .5f ? -1f : 1f), new Vector3(side.x, 0f, side.y).normalized) *
+                       Quaternion.LookRotation(fwd.sqrMagnitude > 1e-4f ? fwd.normalized : Vector3.forward, Vector3.up);
+            Vector3 slide = new Vector3(v.x, 0f, v.z) * .08f;
+            for (float t = 0f; t < .18f; t += Time.deltaTime)
+            {
+                float k = t / .18f;
+                head.SetPositionAndRotation(new Vector3(p.x, groundY, p.z) + slide * k, Quaternion.Slerp(from, rest, k * (2f - k)));
+                yield return null;
+            }
+            head.SetPositionAndRotation(new Vector3(p.x, groundY, p.z) + slide, rest);
         }
     }
 }

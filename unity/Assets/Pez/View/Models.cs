@@ -14,6 +14,10 @@ namespace Pez.View
         public PezEmerge Emerge;
         public bool HasModel => Model != null;
         public Vector3 BarrelRest;
+        /// <summary>Art-pack models: the barrel's far end (the middle of its +Z face) in barrel space. Shots, flashes and
+        /// tracers start here.</summary>
+        public Vector3 MuzzleLocal;
+        public bool HasMuzzle;
         public Gait Gait;            // infantry walk cycle (legs, hips) or null
         public Plinths.Spec Plinth;  // a structure's foundation (its pad turned into a plinth with driveway ramps) or null
     }
@@ -280,10 +284,13 @@ namespace Pez.View
         }
 
         static readonly Dictionary<(Material, int), Material> oreTinted = new Dictionary<(Material, int), Material>();
+        static readonly Dictionary<Material, Material> oreSource = new Dictionary<Material, Material>(); // tinted copy -> original
 
         /// <summary>
-        /// Swap every M_OreTint material (deep mine ore tube, deposit stake cap) for a copy in an ore's colour; crystal
-        /// and uranium glow (art pack v0.4).
+        /// Recolour every ore material on a model to an ore type: M_OreTint (deep mine ore tube, deposit stake cap, art
+        /// pack v0.4) and M_Ore_* (the mining truck's load, bin_ore, which ships as M_Ore_Cinnamon). Crystal and uranium
+        /// glow, as they do in the field (their emission means a charged ore). Re-tinting is safe: a tinted copy maps back
+        /// to its original, so copies never chain.
         /// </summary>
         public static void TintOre(GameObject go, int oreType)
         {
@@ -297,7 +304,9 @@ namespace Pez.View
                 for (int i = 0; i < mats.Length; i++)
                 {
                     var m = mats[i];
-                    if (m == null || !m.name.StartsWith("M_OreTint")) continue;
+                    if (m == null) continue;
+                    if (oreSource.TryGetValue(m, out var original)) m = original;
+                    if (!m.name.StartsWith("M_OreTint") && !m.name.StartsWith("M_Ore_")) continue;
                     if (!oreTinted.TryGetValue((m, oreType), out var t))
                     {
                         t = new Material(m) { name = m.name + "_ore" + oreType, enableInstancing = true };
@@ -308,13 +317,17 @@ namespace Pez.View
                         {
                             t.EnableKeyword("_EMISSION");
                             t.globalIlluminationFlags = MaterialGlobalIlluminationFlags.None;
-                            if (t.HasProperty("_EmissionColor")) t.SetColor("_EmissionColor", color * 2.4f); // HDR: feeds the bloom
-                            if (t.HasProperty("emissiveFactor")) t.SetColor("emissiveFactor", color * 1.4f);
+                            // The field's own emissive (crystal glows laser cyan, uranium acid), not the paler albedo,
+                            // so a hauled load reads as the same stuff as the field it came from. HDR: feeds the bloom.
+                            Color e = oreType == 2 ? (Color)PezPalette.EmissiveCyanLaserOptics : (Color)PezPalette.EmissiveAcidUraniumElectronics;
+                            if (t.HasProperty("_EmissionColor")) t.SetColor("_EmissionColor", e * 2.2f);
+                            if (t.HasProperty("emissiveFactor")) t.SetColor("emissiveFactor", e * 1.4f);
                         }
+                        else if (t.HasProperty("_EmissionColor")) t.SetColor("_EmissionColor", Color.black);
                         oreTinted[(m, oreType)] = t;
+                        oreSource[t] = m;
                     }
-                    mats[i] = t;
-                    changed = true;
+                    if (mats[i] != t) { mats[i] = t; changed = true; }
                 }
                 if (changed) r.sharedMaterials = mats;
             }
@@ -347,6 +360,30 @@ namespace Pez.View
             }
         }
 
+        /// <summary>
+        /// The muzzle of an art-pack barrel: the middle of the far (+Z) end of the barrel's meshes, in barrel space. Every
+        /// barrel in the pack points along its node's +Z (checked per model: light 0.525, heavy 0.69, artillery 0.85 on a
+        /// node pitched 60 degrees up, laser and SAM racks to their emitter faces), so the tip follows recoil and pitch.
+        /// </summary>
+        static bool BarrelTip(Transform barrel, out Vector3 tip)
+        {
+            var lo = new Vector3(float.MaxValue, float.MaxValue, float.MaxValue);
+            var hi = -lo;
+            foreach (var mf in barrel.GetComponentsInChildren<MeshFilter>(true))
+            {
+                if (mf.sharedMesh == null) continue;
+                var b = mf.sharedMesh.bounds;
+                for (int c = 0; c < 8; c++)
+                {
+                    var corner = new Vector3((c & 1) == 0 ? b.min.x : b.max.x, (c & 2) == 0 ? b.min.y : b.max.y, (c & 4) == 0 ? b.min.z : b.max.z);
+                    var p = barrel.InverseTransformPoint(mf.transform.TransformPoint(corner));
+                    lo = Vector3.Min(lo, p); hi = Vector3.Max(hi, p);
+                }
+            }
+            tip = new Vector3((lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, hi.z);
+            return hi.z > lo.z;
+        }
+
         public static Rig Build(string key, int team)
         {
             var root = new GameObject(key).transform;
@@ -372,7 +409,7 @@ namespace Pez.View
                 if (rig.Motion.profile.turretYawSpeed > 0) rig.Motion.profile.turretYawSpeed = Mathf.Max(rig.Motion.profile.turretYawSpeed, 240f);
                 rig.Emerge = go.AddComponent<PezEmerge>();
                 if (Altitudes.TryGetValue(key, out var alt)) rig.Altitude = alt;
-                if (rig.Barrel != null) rig.BarrelRest = rig.Barrel.localPosition;
+                if (rig.Barrel != null) { rig.BarrelRest = rig.Barrel.localPosition; rig.HasMuzzle = BarrelTip(rig.Barrel, out rig.MuzzleLocal); }
                 return rig;
             }
             var tc = Mats.Team(team);

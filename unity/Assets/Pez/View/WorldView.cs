@@ -23,12 +23,18 @@ namespace Pez.View
             public float LandK;          // aircraft: 0 flying, 1 parked on its pad (eases between)
             // Hull feel (MOTION.md): nose-up under acceleration, dip when braking, kick back on firing.
             public float HullSpeed, HullPitch, HullPitchVel;
-            public int OreTint = -1;     // deep mine: the ore its tube is tinted to
+            public int OreTint = -1;     // deep mine: the ore its tube is tinted to; mining truck: the ore its load shows
             public int Born;             // frame the view was made (deploys pair a unit with the structure it became)
             public float BoardT;         // boarding: 0..1 while the passenger shrinks into its carrier
             public Bars Bars;            // world-space health and fuel bars (seen by every camera)
             public bool MainShow = true; // the local view's visibility and fade scale, restored after a stream render
             public float MainScale = 1f;
+            // Power state on structures: emissive renderers, the smoothed glow and what was last applied, steam.
+            public Renderer[] Glows;
+            public float GlowK = -1f, GlowShown = -1f, RateShown = 1f, SteamAcc;
+            // Damage state on finished buildings: smoke and fire intensity (eased), emitters, and the roof they rise from.
+            public float SmokeK, FireK, SmokeAcc, FireAcc;
+            public Bounds? Roof;
         }
 
         public World World { get; private set; }
@@ -36,7 +42,9 @@ namespace Pez.View
         public DeepDepositsView Deposits { get; private set; }
         public readonly Dictionary<int, EV> Views = new Dictionary<int, EV>();
         readonly Dictionary<int, Transform> projectiles = new Dictionary<int, Transform>();
-        readonly Dictionary<int, (Vector3 start, float total)> projectileStart = new Dictionary<int, (Vector3, float)>();
+        readonly Dictionary<int, (Vector3 start, Vec2 simStart, float total)> projectileStart = new Dictionary<int, (Vector3, Vec2, float)>();
+        /// <summary>How far (tiles) a shell flies from the barrel tip before it is exactly on the sim's path.</summary>
+        const float MuzzleBlend = 0.12f;
         public static readonly Color[] OreColors =
         {
             PezPalette.OreIronOre,   // cinnamon
@@ -247,6 +255,104 @@ namespace Pez.View
             v.Rig.Motion.SetOreLevel(d.Initial > 0 ? d.Amount / d.Initial : 0);
         }
 
+        // Power plant tower tops in model space (the two M_E_Cyan cores; the pack's glTF x is mirrored on import).
+        static readonly Vector3[] Towers = { new Vector3(0.42f, 1.45f, -0.30f), new Vector3(-0.42f, 1.65f, 0.32f) };
+
+        /// <summary>
+        /// Power you can see (MOTION.md power_plant; base-building review rec. 1). From the team's PowerUsed,
+        /// PowerProduced and LowPower:
+        ///  - power plant cores glow 0.6 to 1.0 with the load (eased over 0.4 s); on low power they flicker at 4 Hz
+        ///    between 0.25 and 1 with a 0.1 s dropout every 2-3 s; dark until the plant is complete (the sim counts only
+        ///    complete plants). Steam rises from both towers, faster under load; on low power it sputters.
+        ///  - consumers (Power &lt; 0) dim their emissives to 50% and run their machinery at half speed on low power, as
+        ///    the sim halves their production.
+        /// </summary>
+        void Power(EV v)
+        {
+            var e = v.E;
+            var t = World.Teams[e.Team];
+            bool plant = e.Def.Key == "power_plant";
+            v.Glows ??= PezShade.Emissive(v.Rig.Model);
+            float dt = Time.deltaTime, now = Time.time, glow, rate = 1f;
+            if (plant)
+            {
+                float load = t.PowerProduced > 0 ? Mathf.Clamp01(t.PowerUsed / (float)t.PowerProduced) : 1f;
+                float steady = e.IsComplete ? Mathf.Lerp(0.6f, 1f, load) : 0f;
+                v.GlowK = v.GlowK < 0f ? steady : Mathf.MoveTowards(v.GlowK, steady, dt / 0.4f);
+                glow = v.GlowK;
+                if (e.IsComplete && t.LowPower)
+                {
+                    // 4 Hz flicker, and now and then the cores drop out for a tenth of a second.
+                    float ph = now * 4f + e.Id * 0.37f;
+                    glow = ph - Mathf.Floor(ph) < 0.5f ? 1f : 0.25f;
+                    float cyc = now / 2.5f + e.Id * 0.61f, inCyc = (cyc - Mathf.Floor(cyc)) * 2.5f;
+                    if (inCyc < 0.1f) glow = 0.05f;
+                }
+                if (e.IsComplete) Steam(v, load, t.LowPower);
+            }
+            else
+            {
+                float target = e.IsComplete && t.LowPower ? 0.5f : 1f;
+                v.GlowK = v.GlowK < 0f ? target : Mathf.MoveTowards(v.GlowK, target, dt / 0.4f);
+                glow = v.GlowK;
+                rate = e.IsComplete && t.LowPower ? 0.5f : 1f;
+            }
+            // The lamp body darkens with its light (a cyan core at 0.25 emission still read as lit from its albedo).
+            if (Mathf.Abs(glow - v.GlowShown) > 0.01f) { PezShade.Set(v.Glows, Mathf.Lerp(0.15f, 1f, Mathf.InverseLerp(0.25f, 1f, glow)), glow); v.GlowShown = glow; }
+            if (rate != v.RateShown) { v.Rig.Motion.SetRate(rate); v.RateShown = rate; }
+        }
+
+        /// <summary>
+        /// Damage states on finished buildings (base-building review rec. 3): below 50% health a smoke column rises from
+        /// the roof (3 puffs/s); below 25% it thickens (7/s) and the building burns, with embers and its fire's light
+        /// flickering on the ground. Fades in over 0.5 s and out over 2 s (repairs clear it). Never on construction
+        /// sites: they're low on health by design (HP rises with build progress).
+        /// </summary>
+        void Damage(EV v)
+        {
+            var e = v.E;
+            float hp = e.Hp / Mathf.Max(1f, e.Def.MaxHp), dt = Time.deltaTime;
+            float smoke = e.IsComplete && hp < 0.5f ? 1f : 0f, fire = e.IsComplete && hp < 0.25f ? 1f : 0f;
+            v.SmokeK = Mathf.MoveTowards(v.SmokeK, smoke, dt / (smoke > v.SmokeK ? 0.5f : 2f));
+            v.FireK = Mathf.MoveTowards(v.FireK, fire, dt / (fire > v.FireK ? 0.5f : 2f));
+            if (v.SmokeK <= 0f) return;
+            if (v.Roof == null)
+            {
+                // Once, from the finished model: the roof the smoke rises from (the top fifth of its bounds).
+                var b = new Bounds(v.Rig.Root.position, Vector3.zero);
+                foreach (var r in v.Rig.Model.GetComponentsInChildren<Renderer>()) b.Encapsulate(r.bounds);
+                v.Roof = b;
+            }
+            var roof = v.Roof.Value;
+            float size = Mathf.Sqrt(Mathf.Max(1, e.Def.SizeX));
+            Vector3 At(float spread) => new Vector3(roof.center.x + Random.Range(-spread, spread) * roof.extents.x, roof.max.y * 0.85f,
+                                                    roof.center.z + Random.Range(-spread, spread) * roof.extents.z);
+            v.SmokeAcc += dt * (v.FireK > 0f ? Mathf.Lerp(3f, 7f, v.FireK) : 3f) * v.SmokeK;
+            while (v.SmokeAcc >= 1f) { v.SmokeAcc -= 1f; Fx.DamageSmoke(At(0.35f), size); }
+            if (v.FireK <= 0f) return;
+            v.FireAcc += dt * 7f * v.FireK;
+            while (v.FireAcc >= 1f) { v.FireAcc -= 1f; Fx.DamageFire(At(0.3f), size, roof.center); }
+        }
+
+        /// <summary>Cream steam wisps off both towers: one every 0.8/load s each; on low power, bursts of 3 then a 1 s gap.</summary>
+        void Steam(EV v, float load, bool low)
+        {
+            float dt = Time.deltaTime;
+            if (low)
+            {
+                float cyc = Time.time / 1.6f + v.E.Id * 0.3f, inCyc = (cyc - Mathf.Floor(cyc)) * 1.6f;
+                if (inCyc >= 0.6f) return; // the gap
+                v.SteamAcc += dt * 5f;    // 3 puffs in the burst
+            }
+            else v.SteamAcc += dt * Mathf.Max(load, 0.2f) / 0.8f;
+            while (v.SteamAcc >= 1f)
+            {
+                v.SteamAcc -= 1f;
+                var m = v.Rig.Model.transform;
+                for (int i = 0; i < Towers.Length; i++) Fx.Steam(m.TransformPoint(Towers[i]), low ? 0.3f : 0.38f);
+            }
+        }
+
         /// <summary>Surveyor: thump while it stands surveying (each slam sends a ripple); moving off cancels.</summary>
         void Survey(EV v)
         {
@@ -296,6 +402,8 @@ namespace Pez.View
                 // Build stages rise out of the pad as construction progresses.
                 if (!Mathf.Approximately(v.BuiltShown, e.BuildProgress)) { rig.Emerge.SetBuildProgress(e.BuildProgress); v.BuiltShown = e.BuildProgress; }
                 rig.Motion.SetWorking(e.IsComplete && Producing(e));
+                if (e.Def.Key == "power_plant" || e.Def.Power < 0) Power(v);
+                if (e.IsComplete || v.SmokeK > 0f) Damage(v);
                 if (e.Def.Key == "deep_mine") DeepMine(v);
                 if (rig.Turret != null) Aim(v);
                 if (v.DoorTimer > 0 && (v.DoorTimer -= Time.deltaTime) <= 0) rig.Motion.SetDoorOpen(false);
@@ -354,9 +462,16 @@ namespace Pez.View
                     if (e.IsHarvester)
                     {
                         rig.Motion.SetBinLoad(e.Cargo / (float)e.Def.HarvestCapacity);
+                        // The load shows the ore it really is (crystal and uranium glow). The bin keeps the last colour
+                        // while it empties (the sim clears CargoType at zero).
+                        if (e.CargoType >= 0 && e.CargoType != v.OreTint) { Models.TintOre(rig.Model, e.CargoType); v.OreTint = e.CargoType; }
                         rig.Motion.SetWorking(e.Order == Order.Harvest && !e.Moving && e.HarvestTile.HasValue);
-                        // Tip the bin when unloading starts, and open the refinery dock door.
-                        if (e.Order == Order.ReturnOre && e.Cargo < v.PrevCargo && !v.Tipped)
+                        // In a bay the bed follows the sim's dock steps: it tips during Unload's settle and holds while the
+                        // ore goes in, then lowers in PullOut's first 0.25 s.
+                        rig.Motion.SetBinTipped(e.Order == Order.ReturnOre && e.Dock == DockStep.Unload);
+                        if (e.Order == Order.ReturnOre && e.Dock == DockStep.Unload && !v.Tipped) { v.Tipped = true; OpenDoorNear(e.Team, e.Pos, 2.5f, 2f); }
+                        // Unloading beside a drop-off whose lane is built over: the old one-shot tip, on the first ore out.
+                        if (e.Order == Order.ReturnOre && e.Dock < DockStep.Align && e.Cargo < v.PrevCargo && !v.Tipped)
                         {
                             rig.Motion.TipBin();
                             v.Tipped = true;
@@ -418,8 +533,12 @@ namespace Pez.View
                 live.Add(p.Id);
                 if (!projectiles.TryGetValue(p.Id, out var t))
                 {
+                    // The shell leaves the real barrel tip (art-pack models), not the sim's 2D muzzle at a fixed height.
+                    Vector3 from;
+                    if (Views.TryGetValue(p.SourceId, out var sv) && sv.Rig.HasMuzzle && sv.Rig.Root.gameObject.activeInHierarchy) from = MuzzleOf(p.SourceId, p.PrevPos);
+                    else from = W(p.PrevPos, sv != null ? sv.Rig.Root.position.y + 0.3f : 0.4f);
                     var c = p.Weapon.Name == "rocket" ? new Color(1f, 0.55f, 0.2f) : new Color(1f, 0.9f, 0.5f);
-                    t = Models.Part(transform, PrimitiveType.Sphere, W(p.Pos, 0.4f), Vector3.one * (p.Weapon.Name == "heavy_cannon" ? 0.14f : 0.1f), Mats.Glow(c, 4f));
+                    t = Models.Part(transform, PrimitiveType.Sphere, from, Vector3.one * (p.Weapon.Name == "heavy_cannon" ? 0.14f : 0.1f), Mats.Glow(c, 4f));
                     t.GetComponent<Renderer>().shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
                     var trail = t.gameObject.AddComponent<TrailRenderer>();
                     trail.sharedMaterial = Mats.Unlit(new Color(c.r, c.g, c.b, 0.5f), true);
@@ -427,16 +546,19 @@ namespace Pez.View
                     trail.startWidth = 0.08f; trail.endWidth = 0f;
                     trail.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
                     projectiles[p.Id] = t;
-                    var src = Views.TryGetValue(p.SourceId, out var sv) ? sv.Rig.Root.position.y + 0.3f : 0.4f;
-                    projectileStart[p.Id] = (W(p.Pos, src), Mathf.Max(0.1f, Vec2.Dist(p.Pos, p.TargetPos)));
+                    projectileStart[p.Id] = (from, p.PrevPos, Mathf.Max(0.1f, Vec2.Dist(p.PrevPos, p.TargetPos)));
                 }
-                // Height: from the shooter's altitude to the target's, with a lob for artillery.
-                var (start, total) = projectileStart[p.Id];
+                // Height: from the barrel tip to the target's height, with a lob for artillery. Across the ground the shell
+                // starts at the tip and joins the sim's path within MuzzleBlend tiles of flight.
+                var (start, simStart, total) = projectileStart[p.Id];
                 var ground = Vec2.Lerp(p.PrevPos, p.Pos, alpha);
                 float k = Mathf.Clamp01(1f - Vec2.Dist(ground, p.TargetPos) / total);
                 float endY = Views.TryGetValue(p.TargetId, out var tv) ? tv.Rig.Root.position.y + 0.3f : 0.3f;
                 float arc = p.Weapon.Name == "artillery" ? 4f * k * (1 - k) * Mathf.Min(4f, total * 0.35f) : 0f;
-                t.position = W(ground, Mathf.Lerp(start.y, endY, k) + arc);
+                var pos = W(ground, Mathf.Lerp(start.y, endY, k) + arc);
+                float off = 1f - Mathf.SmoothStep(0f, 1f, Vec2.Dist(ground, simStart) / MuzzleBlend);
+                if (off > 0f) { pos.x += (start.x - simStart.X) * off; pos.z += (start.z - simStart.Y) * off; }
+                t.position = pos;
                 bool show = PovTeam < 0 || VisibleTile(p.Pos);
                 if (t.gameObject.activeSelf != show) t.gameObject.SetActive(show);
             }
@@ -555,10 +677,12 @@ namespace Pez.View
             }
         }
 
+        /// <summary>Where a shot leaves the shooter: the real barrel tip on art-pack models (it follows the turret's yaw,
+        /// the barrel's pitch and its recoil), a fixed reach on procedural placeholders.</summary>
         Vector3 MuzzleOf(int id, Vec2 fallback)
         {
             if (Views.TryGetValue(id, out var v) && v.Rig.Barrel != null)
-                return v.Rig.Barrel.position + v.Rig.Barrel.parent.forward * 0.35f;
+                return v.Rig.HasMuzzle ? v.Rig.Barrel.TransformPoint(v.Rig.MuzzleLocal) : v.Rig.Barrel.position + v.Rig.Barrel.parent.forward * 0.35f;
             return W(fallback, 0.4f);
         }
 

@@ -11,7 +11,10 @@
 //  - HDR emission (_EmissionColor), so the glowing parts feed the bloom;
 //  - a dielectric specular scale (_SpecK): the metallic workflow's fixed 4% reflectance adds the same white to every
 //    channel, which on saturated team paint reads as a pink-washed red under a strong sun. Team paint runs at about a
-//    third of it, so team colours stay vivid (lit through Unity's StandardSpecular, metalness converted here).
+//    third of it, so team colours stay vivid (lit through Unity's StandardSpecular, metalness converted here);
+//  - two per-renderer view states, set through a MaterialPropertyBlock (PezShade) and instanced, so batching survives:
+//    _PezDim darkens everything (a wreck goes to 0.3, charred and matte) and _PezGlow scales only the emission
+//    (power plant cores following the load, consumers dimmed on low power, dock lamps).
 // Lives in Resources so it ships in builds.
 Shader "Pez/Model"
 {
@@ -26,6 +29,8 @@ Shader "Pez/Model"
         _Foot ("Ground darkening", Range(0,1)) = 0.18
         _SpecK ("Dielectric specular scale", Range(0,1)) = 1
         [Enum(UnityEngine.Rendering.CullMode)] _CullMode ("Cull", Float) = 2
+        _PezDim ("View: darken (wrecks)", Range(0,1)) = 1
+        _PezGlow ("View: emission scale", Float) = 1
     }
     SubShader
     {
@@ -57,6 +62,8 @@ Shader "Pez/Model"
         half4 _EmissionColor;
         UNITY_INSTANCING_BUFFER_START(Props)
             UNITY_DEFINE_INSTANCED_PROP(fixed4, _Color)
+            UNITY_DEFINE_INSTANCED_PROP(half, _PezDim)
+            UNITY_DEFINE_INSTANCED_PROP(half, _PezGlow)
         UNITY_INSTANCING_BUFFER_END(Props)
 
         float hash3(float3 p) { p = frac(p * 0.3183099 + 0.1); p *= 17.0; return frac(p.x * p.y * p.z * (p.x + p.y + p.z)); }
@@ -102,10 +109,11 @@ Shader "Pez/Model"
             albedo = lerp(albedo, albedo * 1.25 + 0.03, bevel * edgeK); // a worn, slightly lighter edge
             // Metallic to specular, as Unity's DiffuseAndSpecularFromMetallic, with the dielectric reflectance scaled.
             float f0 = 0.04 * _SpecK;
-            o.Specular = lerp(f0.xxx, albedo, _Metallic);
-            o.Albedo = albedo * (1 - f0) * (1 - _Metallic);
-            o.Smoothness = saturate(_Glossiness * (1.0 - (n - 0.5) * 0.35 * grime) + bevel * 0.08);
-            o.Emission = _EmissionColor.rgb;
+            half dim = UNITY_ACCESS_INSTANCED_PROP(Props, _PezDim);
+            o.Specular = lerp(f0.xxx, albedo, _Metallic) * dim;
+            o.Albedo = albedo * (1 - f0) * (1 - _Metallic) * dim;
+            o.Smoothness = saturate(_Glossiness * (1.0 - (n - 0.5) * 0.35 * grime) + bevel * 0.08) * lerp(0.6, 1.0, dim);
+            o.Emission = _EmissionColor.rgb * (dim * UNITY_ACCESS_INSTANCED_PROP(Props, _PezGlow));
             o.Alpha = 1;
         }
         ENDCG
