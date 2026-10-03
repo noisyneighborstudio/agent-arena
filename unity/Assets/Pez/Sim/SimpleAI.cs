@@ -63,7 +63,10 @@ namespace Pez.Sim
             bool prospect = w.HasComplete(team, "electronics_plant") && t.Amount("steel") > 400;
             // With the surface dry and no deep mine yet, the economy comes first: no army or new buildings (except power)
             // until a rig is on its way.
-            bool economyFirst = surfaceDry && !mine.Any(e => e.Def.Key == "deep_mine" || e.Def.Key == "drill_rig") &&
+            // Regrowing fields keep a trickle of surface ore about, so "dry" alone no longer says when to go deep: a free
+            // mining zone already flagged and no deep mine yet means saving for a rig too.
+            bool zoneWaiting = w.Map.Deep.Any(d => t.Surveyed.Contains(d.Id) && d.Amount > 0 && (d.MineId == 0 || w.Get(d.MineId) == null));
+            bool economyFirst = (surfaceDry || zoneWaiting) && !mine.Any(e => e.Def.Key == "deep_mine" || e.Def.Key == "drill_rig") &&
                                 !t.UnitQueues[Producer.Factory].Any(q => q.Key == "drill_rig") && w.HasComplete(team, "electronics_plant");
 
             // ---- Base building
@@ -99,8 +102,9 @@ namespace Pez.Sim
             int wantTrucks = System.Math.Min(10, 3 + Count("mining_refinery") * 2 + Count("outpost") * 2);
             if (trucks.Count < wantTrucks && t.UnitQueues[Producer.CommandCenter].Count == 0 && t.Amount("iron_ore") >= 200 + (reserve.TryGetValue("iron_ore", out var ri) ? ri : 0))
                 Do(w, "type", "train", "unit", "mining_truck");
-            // Trucks cost raw iron ore, which the refineries eat as it arrives: short of trucks, keep enough back for one.
-            int keep = trucks.Count < wantTrucks ? 200 : 0;
+            // Trucks cost raw iron ore, which the refineries eat as it arrives: down to its last couple of trucks, keep
+            // enough back for one (not more: trucks lost far afield shouldn't swallow the whole income).
+            int keep = trucks.Count < 3 ? 200 : 0;
             if (t.Reserved("iron_ore") != keep) Do(w, "type", "reserve", "item", "iron_ore", "amount", keep);
             // Iron is the bulk resource: roughly 3 of every 5 trucks; one each on copper, then crystal/uranium as tech needs them.
             var plan = new List<int> { Map.Iron, Map.Iron, Map.Copper, Map.Iron };
@@ -259,8 +263,10 @@ namespace Pez.Sim
 
             // ---- Defense: anything hostile near a base gets everyone nearby.
             var army = mine.Where(e => !e.IsStructure && e.IsArmed).ToList();
-            var threat = w.Entities.FirstOrDefault(e => !e.Dead && e.Team != team && !e.IsStructure && w.IsVisibleTo(team, e) &&
-                                                        structures.Any(s => Vec2.Dist(e.Pos, s.Center) < 10));
+            // (Its base, not a derrick out in the contested middle: armies passing a derrick would otherwise keep the whole
+            // army home on defence and the AI would never attack.)
+            var threat = w.Entities.FirstOrDefault(e => !e.Dead && e.Team != team && e.Team >= 0 && !e.IsStructure && w.IsVisibleTo(team, e) &&
+                                                        structures.Any(s => s.Def.Key != "derrick" && Vec2.Dist(e.Pos, s.Center) < 10));
             if (threat != null)
             {
                 foreach (var u in army.Where(u => (u.Order == Order.Idle || u.Order == Order.Move) && u.Def.Weapon.CanHit(threat.Def)))
