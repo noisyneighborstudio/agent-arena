@@ -4,6 +4,13 @@ namespace Pez.Sim
 {
     public enum Order { Idle, Move, AttackMove, Attack, Harvest, ReturnOre, Repair, Board, Capture, LayMines, Refuel, Survey, Drill }
 
+    /// <summary>
+    /// A mining truck delivering ore backs into its drop-off's bay, one truck at a time: drive to the head of the lane
+    /// (Approach), wait beside it if the bay is busy (Queue), turn to face away from the building (Align), reverse in
+    /// (Reverse), settle and tip the load (Unload), then drive out (PullOut). See World.UpdateHarvester.
+    /// </summary>
+    public enum DockStep { None, Approach, Queue, Align, Reverse, Unload, PullOut }
+
     public class Entity
     {
         public int Id;
@@ -56,6 +63,8 @@ namespace Pez.Sim
         public int HarvestType = -1; // preferred ore type, -1 = nearest of any
         public Int2? HarvestTile;
         public float WorkTimer;
+        public DockStep Dock;        // where it is in backing into a drop-off's bay
+        public int DockAt;           // the drop-off structure it's delivering to
 
         // Deep mines: the deposit underneath
         public int DepositId;
@@ -113,6 +122,17 @@ namespace Pez.Sim
             float cy = System.MathF.Max(Origin.Y, System.MathF.Min(p.Y, Origin.Y + Def.SizeY));
             return Vec2.Dist(p, new Vec2(cx, cy));
         }
+
+        /// <summary>What a delivering truck is doing at the bay, for players (null when it isn't docking).</summary>
+        public string DockName => Order != Order.ReturnOre ? null : Dock switch
+        {
+            DockStep.Queue => "waiting for the bay",
+            DockStep.Align => "lining up to back in",
+            DockStep.Reverse => "backing into the bay",
+            DockStep.Unload => "unloading",
+            DockStep.PullOut => "pulling out",
+            _ => null,
+        };
 
         public string OrderName => Order == Order.Survey && Prospecting ? "prospect" : Order.ToString().ToLowerInvariant() switch
         {

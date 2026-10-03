@@ -460,8 +460,36 @@ namespace Pez.Headless
             var truck = At(w.SpawnUnit(0, "mining_truck", refinery), dock + new Vec2(7, -1));
             truck.Cargo = 150; truck.CargoType = 0; w.SetOrder(truck, Order.ReturnOre, truck.Pos);
             // Make the refinery the only drop-off so it has to dock there.
-            Run(w, 25);
-            Check(truck.Cargo == 0, $"a truck docking through a crowd of parked tanks still unloads (cargo left {truck.Cargo}, truck at {truck.Pos}, dock {dock}, order {truck.OrderName}, moving {truck.Moving}, ghost {truck.GhostUntil:0.0} t {w.Time:0.0})");
+            int mined0 = w.Teams[0].Stats.OreMined;
+            var steps = new List<DockStep>();
+            for (int k = 0; k < 25 * World.TickRate && w.Teams[0].Stats.OreMined - mined0 < 150; k++)
+            {
+                w.Step();
+                if (steps.Count == 0 || steps[steps.Count - 1] != truck.Dock) steps.Add(truck.Dock);
+            }
+            Check(w.Teams[0].Stats.OreMined - mined0 >= 150, $"a truck docking through a crowd of parked tanks still unloads (delivered {w.Teams[0].Stats.OreMined - mined0}, truck at {truck.Pos}, dock {dock}, {truck.Dock}, t {w.Time:0.0})");
+            Check(string.Join(",", steps).Contains("Approach,Align,Reverse,Unload,PullOut"), $"it lines up, backs into the bay, unloads and pulls out ({string.Join(" > ", steps)})");
+
+            // Two trucks arriving together: one backs in, the other waits beside the lane, then takes its turn.
+            var wq = new World(2, 7, 80);
+            var hqq = wq.Owned(0).First(e => e.Def.Key == "command_center");
+            foreach (var o in wq.Owned(0).Where(e => e.IsHarvester).ToList()) wq.Remove(o);
+            var bayQ = wq.DockPoint(hqq);
+            var t1 = At(wq.SpawnUnit(0, "mining_truck", hqq), bayQ + new Vec2(-3, -4));
+            var t2 = At(wq.SpawnUnit(0, "mining_truck", hqq), bayQ + new Vec2(3, -4));
+            foreach (var tq in new[] { t1, t2 }) { tq.Cargo = 150; tq.CargoType = 0; wq.SetOrder(tq, Order.ReturnOre, tq.Pos); }
+            bool bothIn = false, queued = false, backedIn = false, done1 = false, done2 = false;
+            for (int k = 0; k < 40 * World.TickRate && !(done1 && done2); k++)
+            {
+                wq.Step();
+                done1 |= t1.Dock == DockStep.PullOut; done2 |= t2.Dock == DockStep.PullOut;
+                if (t1.Dock >= DockStep.Align && t2.Dock >= DockStep.Align) bothIn = true;
+                if (t1.Dock == DockStep.Queue || t2.Dock == DockStep.Queue) queued = true;
+                foreach (var tq in new[] { t1, t2 })
+                    if (tq.Dock == DockStep.Unload && Vec2.Dist(tq.Pos, bayQ) < 0.05f && MathF.Abs(tq.Facing + MathF.PI / 2) < 0.05f) backedIn = true;
+            }
+            Check(done1 && done2 && queued && !bothIn && backedIn,
+                  $"two trucks share one bay: one waits its turn beside the lane, each unloads backed in, facing out (both delivered {done1 && done2}, queued {queued}, both in at once {bothIn}, after {wq.Time:0.0}s)");
 
             // Two vehicles meeting head-on in a one-tile corridor both get through.
             var w2 = new World(2, 7, 80);

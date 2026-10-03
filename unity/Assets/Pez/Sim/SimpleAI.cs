@@ -59,6 +59,9 @@ namespace Pez.Sim
             {
                 if (t.PowerProduced - t.PowerUsed < 25 && structures.Count > 1)
                     next = w.MissingPrereq(team, Defs.Get("fusion_reactor")) == null && t.Amount("plasma") > 80 && Count("fusion_reactor") == 0 ? "fusion_reactor" : "power_plant";
+                // Trucks queueing for the bays: another refinery (each bay takes one truck at a time).
+                else if (mine.Count(e => e.IsHarvester && e.Dock == DockStep.Queue) >= 2 && Count("mining_refinery") is int nr && nr >= 1 && nr < 4)
+                    next = "mining_refinery";
                 else
                 {
                     var need = new Dictionary<string, int>();

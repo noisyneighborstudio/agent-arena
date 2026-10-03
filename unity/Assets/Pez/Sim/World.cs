@@ -80,7 +80,8 @@ namespace Pez.Sim
             { Producer.Airfield, new List<ProdItem>() },
         };
         /// <summary>Enemy structures this team has seen: id -> (key, origin, team).</summary>
-        public readonly Dictionary<int, (string key, Int2 origin, int team)> KnownEnemyStructures = new Dictionary<int, (string, Int2, int)>();
+        // Sorted by id so every reader (the scripted AI, rally points) sees the same order in a game and in its resumed copy.
+        public readonly SortedDictionary<int, (string key, Int2 origin, int team)> KnownEnemyStructures = new SortedDictionary<int, (string, Int2, int)>();
         /// <summary>Deep deposits this team's surveyors have found (by deposit id), and where they've surveyed.</summary>
         public readonly HashSet<int> Surveyed = new HashSet<int>();
         public readonly List<Vec2> SurveySites = new List<Vec2>();
@@ -713,6 +714,7 @@ namespace Pez.Sim
             e.TargetId = target;
             e.Path = null;
             e.RepathTimer = 0;
+            e.Dock = DockStep.None; e.DockAt = 0;
             if (o == Order.Idle) e.GuardPos = e.Pos;
             e.Responding = false; // any new order (from a commander or the response itself) replaces the old one
             e.SpeedCap = 0;
@@ -1384,24 +1386,157 @@ namespace Pez.Sim
                 return;
             }
 
-            // ReturnOre
-            var refinery = Entities.Where(s => !s.Dead && s.Team == e.Team && s.IsStructure && s.IsComplete && s.Def.DropOff)
-                                   .OrderBy(s => Vec2.DistSq(s.Center, e.Pos)).FirstOrDefault();
-            if (refinery == null) { e.Moving = false; return; }
-            var dock = DockPoint(refinery);
-            if (Vec2.Dist(e.Pos, dock) > 0.6f) { FollowPath(e, dock, 0.5f); return; }
-            e.Moving = false;
-            e.WorkTimer += Dt;
-            if (e.WorkTimer >= 0.1f)
+            // ReturnOre: back into a drop-off's bay, one truck at a time, unload, drive out.
+            var refinery = e.DockAt != 0 ? Get(e.DockAt) : null;
+            // Until it reaches a lane, a truck keeps reconsidering (another bay may have freed up or been built).
+            bool rethink = e.Dock <= DockStep.Approach && (Tick + e.Id) % TickRate == 0;
+            if (refinery == null || refinery.Dead || !refinery.IsComplete || refinery.Team != e.Team || rethink)
             {
-                e.WorkTimer = 0;
-                int give = Math.Min(10, e.Cargo);
-                e.Cargo -= give;
-                if (e.CargoType >= 0) Teams[e.Team].Add(Defs.Ores[e.CargoType], give);
-                Teams[e.Team].Stats.OreMined += give;
-                if (e.Cargo <= 0) { e.CargoType = -1; e.Order = Order.Harvest; e.Path = null; }
+                var was = refinery;
+                if (e.Dock >= DockStep.Reverse && e.Cargo <= 0) { FinishDelivery(e); return; } // the bay's building is gone; the load is already in
+                refinery = ChooseDropOff(e);
+                if (refinery != was) { e.DockAt = refinery?.Id ?? 0; e.Dock = DockStep.Approach; e.Path = null; }
+            }
+            if (refinery == null) { e.Moving = false; return; }
+            var bay = DockPoint(refinery);
+            var head = bay + new Vec2(0, -BayLength);
+            if (!LaneClear(bay, head))
+            {
+                // Nowhere to back in (the lane is built over or blocked by terrain): unload beside the drop-off.
+                if (Vec2.Dist(e.Pos, bay) > 0.6f) { FollowPath(e, bay, 0.5f); return; }
+                e.Moving = false;
+                TipOre(e);
+                if (e.Cargo <= 0) FinishDelivery(e);
+                return;
+            }
+            switch (e.Dock)
+            {
+                case DockStep.None:
+                case DockStep.Approach:
+                case DockStep.Queue:
+                    if (BayTaken(refinery, e))
+                    {
+                        // Wait beside the lane, out of the way, until the bay is free.
+                        if (e.Dock == DockStep.Queue || Vec2.Dist(e.Pos, head) < 4f)
+                        {
+                            if (e.Dock != DockStep.Queue) e.Path = null;
+                            e.Dock = DockStep.Queue;
+                            var spot = head + new Vec2(e.Id % 2 == 0 ? 1.7f : -1.7f, -1.3f);
+                            if (!Map.Passable(Int2.Of(spot).X, Int2.Of(spot).Y)) spot = head + new Vec2(0, -1.6f);
+                            FollowPath(e, spot, 0.4f);
+                            return;
+                        }
+                        e.Dock = DockStep.Approach;
+                        FollowPath(e, head, 0.35f);
+                        return;
+                    }
+                    if (e.Dock == DockStep.Queue) e.Path = null;
+                    e.Dock = DockStep.Approach;
+                    if (Vec2.Dist(e.Pos, head) > 0.35f) { FollowPath(e, head, 0.3f); return; }
+                    e.Dock = DockStep.Align;
+                    e.Moving = false;
+                    e.Path = null;
+                    return;
+                case DockStep.Align:
+                    // Turn on the spot to face away from the building (the bin end toward it), settling onto the lane.
+                    e.Moving = false;
+                    e.Facing = RotateToward(e.Facing, BayFacing, AlignTurnRate * Dt);
+                    e.Pos = e.Pos + (head - e.Pos) * MathF.Min(1f, 4f * Dt);
+                    if (MathF.Abs(AngleDiff(e.Facing, BayFacing)) < 0.02f) { e.Facing = BayFacing; e.Dock = DockStep.Reverse; }
+                    return;
+                case DockStep.Reverse:
+                    {
+                        // Back in slowly; the truck keeps facing out of the bay.
+                        var to = bay - e.Pos;
+                        float dist = to.Length, step = MathF.Min(dist, e.Def.Speed * ReverseSpeed * Dt);
+                        if (dist > 1e-4f) e.Pos = e.Pos + to / dist * step;
+                        e.Moving = true;
+                        if (dist - step < 0.01f) { e.Pos = bay; e.Moving = false; e.Dock = DockStep.Unload; e.WorkTimer = -UnloadSettle; }
+                        return;
+                    }
+                case DockStep.Unload:
+                    e.Moving = false;
+                    TipOre(e);
+                    if (e.Cargo <= 0) { e.Dock = DockStep.PullOut; e.WorkTimer = -BedLower; }
+                    return;
+                case DockStep.PullOut:
+                    {
+                        // Lower the bed, then drive forward out of the bay to the head of the lane.
+                        e.WorkTimer += Dt;
+                        if (e.WorkTimer < 0) { e.Moving = false; return; }
+                        var to = head - e.Pos;
+                        float dist = to.Length, step = MathF.Min(dist, e.Def.Speed * PullOutSpeed * Dt);
+                        if (dist > 1e-4f) e.Pos = e.Pos + to / dist * step;
+                        e.Moving = true;
+                        if (dist - step < 0.01f) FinishDelivery(e);
+                        return;
+                    }
             }
         }
+
+        // The bay: trucks line up BayLength tiles out, turn to face away, reverse in, and unload. These timings are the
+        // delivery's cost in the economy (about 6 s a trip on top of the 1.5 s unload), and the one-truck-at-a-time
+        // bay makes a big fleet want more than one drop-off.
+        public const float BayLength = 2.0f, AlignTurnRate = 3.2f, ReverseSpeed = 0.7f, PullOutSpeed = 1.0f, UnloadSettle = 0.3f, BedLower = 0.25f;
+        static readonly float BayFacing = -MathF.PI / 2; // facing south, out of the bay (drop-off doors face south)
+
+        /// <summary>Tip 10 ore every 0.1 s into the team's stockpile (WorkTimer starts below zero for a settle first).</summary>
+        void TipOre(Entity e)
+        {
+            e.WorkTimer += Dt;
+            if (e.WorkTimer < 0.1f) return;
+            e.WorkTimer = 0;
+            int give = Math.Min(10, e.Cargo);
+            e.Cargo -= give;
+            if (e.CargoType >= 0) Teams[e.Team].Add(Defs.Ores[e.CargoType], give);
+            Teams[e.Team].Stats.OreMined += give;
+        }
+
+        void FinishDelivery(Entity e)
+        {
+            e.CargoType = -1;
+            e.Order = Order.Harvest;
+            e.Path = null;
+            e.Dock = DockStep.None;
+            e.DockAt = 0;
+            e.Moving = false;
+        }
+
+        /// <summary>
+        /// The drop-off whose bay is quickest to reach: distance to the head of its lane, plus a few tiles for each truck
+        /// already headed there, and a big penalty if its lane is built over (it would have to unload beside it).
+        /// </summary>
+        Entity ChooseDropOff(Entity e)
+        {
+            Entity best = null; float bestCost = float.MaxValue;
+            foreach (var s in Entities)
+            {
+                if (s.Dead || s.Team != e.Team || !s.IsStructure || !s.IsComplete || !s.Def.DropOff) continue;
+                var bay = DockPoint(s); var head = bay + new Vec2(0, -BayLength);
+                int waiting = 0;
+                foreach (var o in Entities) if (o != e && !o.Dead && o.IsHarvester && o.DockAt == s.Id) waiting++;
+                float cost = Vec2.Dist(head, e.Pos) + 4f * waiting + (LaneClear(bay, head) ? 0 : 30f);
+                if (cost < bestCost) { best = s; bestCost = cost; }
+            }
+            return best;
+        }
+
+        /// <summary>Another truck is in this bay (lining up, backing in, unloading or pulling out).</summary>
+        bool BayTaken(Entity dropOff, Entity e) =>
+            Entities.Any(o => o != e && !o.Dead && o.IsHarvester && o.DockAt == dropOff.Id && o.Dock >= DockStep.Align);
+
+        bool LaneClear(Vec2 bay, Vec2 head)
+        {
+            for (float f = 0; f <= 1.001f; f += 0.25f)
+            {
+                var t = Int2.Of(bay + (head - bay) * f);
+                if (!Map.InBounds(t.X, t.Y) || !Map.Passable(t.X, t.Y)) return false;
+            }
+            return true;
+        }
+
+        /// <summary>A docking truck holds its line: separation moves others out of its way, never it.</summary>
+        static bool HoldsLine(Entity e) => e.Dock >= DockStep.Align;
 
         public Vec2 DockPoint(Entity refinery) => new Vec2(refinery.Origin.X + refinery.Def.SizeX / 2f, refinery.Origin.Y - 0.5f);
 
@@ -1950,6 +2085,10 @@ namespace Pez.Sim
                     float len = MathF.Sqrt(dsq);
                     var n = len > 1e-4f ? d / len : new Vec2(1, 0);
                     float push = (min - len) * 0.25f;
+                    bool ha = HoldsLine(a), hb = HoldsLine(b);
+                    if (ha && hb) continue;
+                    if (ha) { GiveWay(b, a); TryNudge(b, n * (push * 2)); continue; }
+                    if (hb) { GiveWay(a, b); TryNudge(a, n * (-push * 2)); continue; }
                     // Idle units get out of a moving friendly's way rather than wedging it.
                     if (a.Moving && !b.Moving) GiveWay(b, a); else if (b.Moving && !a.Moving) GiveWay(a, b);
                     // Stationary units yield to moving ones a bit more.

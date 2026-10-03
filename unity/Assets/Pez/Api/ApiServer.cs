@@ -508,6 +508,7 @@ namespace Pez.Api
             var target = e.TargetId != 0 ? w.Get(e.TargetId) : null;
             if (target != null && e.Order != Order.Idle) o.Set("target", $"{target.Def.Name} #{target.Id}");
             if (d.UsesFuel) o.Set("fuel_pct", StateView.Pct(e.FuelFraction)).Set("landed", e.Landed).Set("stranded", e.Stranded);
+            if (e.DockName != null) o.Set("dock", e.DockName);
             if (e.IsHarvester) o.Set("cargo", $"{e.Cargo}/{d.HarvestCapacity}{(e.CargoType >= 0 ? " " + Defs.Ores[e.CargoType] : "")}");
             if (d.Capacity > 0) o.Set("passengers", $"{e.Passengers.Count}/{d.Capacity}");
             if (e.Waypoints.Count > 0) o.Set("waypoints", e.Waypoints.Count).Set("patrol", e.WaypointLoop);
