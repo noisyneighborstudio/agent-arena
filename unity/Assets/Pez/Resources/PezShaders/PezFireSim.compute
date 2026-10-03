@@ -1,0 +1,413 @@
+// A building's fire as a small 3D fluid simulation (FireSim.cs drives it, one grid per burning building, built by
+// FireVoxels). After Ignitement's breakdown (Unity blog, "Real-time fluid simulation: fire VFX"), adapted from their 2D
+// top-down field to a local 3D grid, because a building's fire is vertical: flames climb walls and lick out of openings.
+//
+// Per step: advect (semi-Lagrangian, hardware trilinear filtering) with sources, combustion, buoyancy and wind in the
+// same pass; then vorticity confinement (curl, confine), then the pressure projection (divergence, Jacobi, project)
+// so the flow is incompressible and goes round the building (cells inside it are solid, from the signed distance).
+//
+// Fields (all world units, one tile is one unit):
+//   Vel  xyz velocity (units/s)
+//   Scal x temperature (drives buoyancy and flame colour), y soot (black smoke), z steam and pale smoke (white),
+//        w reaction (burning gas: the visible flame, short-lived)
+//   Emit r skin fuel, g opening, b patch coverage threshold, a opening pulse phase   (static, FireVoxels)
+//   Sdf  signed distance to the building in cells (static)
+// Lives in Resources so it ships in builds.
+
+#pragma kernel Clear
+#pragma kernel Advect
+#pragma kernel Curl
+#pragma kernel Confine
+#pragma kernel Divergence
+#pragma kernel Jacobi
+#pragma kernel Project
+#pragma kernel Reduce
+#pragma kernel Splat
+#pragma kernel ClearMap
+#pragma kernel Outflow
+#pragma kernel SparkSpawn
+#pragma kernel SparkStep
+
+int3 _Dim;
+float3 _DimF;
+float _H, _Dt, _SimTime, _Seed;
+float3 _Origin;
+float3 _Wind;
+float _Fire, _Smoulder, _Coverage, _Ext, _ExtRadius, _RoofY, _Buoy, _Vort;
+float3 _ExtPos;
+
+Texture3D<float4> _Vel;   RWTexture3D<float4> _VelOut;
+Texture3D<float4> _Scal;  RWTexture3D<float4> _ScalOut;
+Texture3D<float4> _Curl;  RWTexture3D<float4> _CurlOut;
+Texture3D<float> _Press;  RWTexture3D<float> _PressOut;
+Texture3D<float> _Div;    RWTexture3D<float> _DivOut;
+Texture3D<float> _Sdf;
+Texture3D<float4> _Emit;
+SamplerState linear_clamp_sampler;
+
+float hash31(float3 p) { p = frac(p * 0.3183099 + 0.1); p *= 17.0; return frac(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+float vnoise(float3 x)
+{
+    float3 i = floor(x), f = frac(x); f = f * f * (3 - 2 * f);
+    return lerp(lerp(lerp(hash31(i), hash31(i + float3(1, 0, 0)), f.x), lerp(hash31(i + float3(0, 1, 0)), hash31(i + float3(1, 1, 0)), f.x), f.y),
+                lerp(lerp(hash31(i + float3(0, 0, 1)), hash31(i + float3(1, 0, 1)), f.x), lerp(hash31(i + float3(0, 1, 1)), hash31(i + float3(1, 1, 1)), f.x), f.y), f.z);
+}
+
+bool Inside(int3 c) { return all(c >= 0) && all(c < _Dim); }
+bool Solid(int3 c) { return Inside(c) && _Sdf[c] < 0; }
+float3 SdfNormal(int3 c)
+{
+    int3 lo = 0, hi = _Dim - 1;
+    float3 g = float3(_Sdf[clamp(c + int3(1, 0, 0), lo, hi)] - _Sdf[clamp(c - int3(1, 0, 0), lo, hi)],
+                      _Sdf[clamp(c + int3(0, 1, 0), lo, hi)] - _Sdf[clamp(c - int3(0, 1, 0), lo, hi)],
+                      _Sdf[clamp(c + int3(0, 0, 1), lo, hi)] - _Sdf[clamp(c - int3(0, 0, 1), lo, hi)]);
+    return g / max(length(g), 1e-4);
+}
+
+// ---------------------------------------------------------------------------------------------------------- advect
+
+[numthreads(4, 4, 4)]
+void Clear(uint3 id : SV_DispatchThreadID)
+{
+    int3 c = (int3)id;
+    if (!Inside(c)) return;
+    _VelOut[c] = 0; _ScalOut[c] = 0; _PressOut[c] = 0;
+}
+
+// A pop: a pocket of gas flares up and pushes out (with the burst of sparks FireSim throws at the same moment).
+float3 _PopPos;
+float _PopK;
+
+[numthreads(4, 4, 4)]
+void Advect(uint3 id : SV_DispatchThreadID)
+{
+    int3 c = (int3)id;
+    if (!Inside(c)) return;
+    if (_Sdf[c] < 0) { _VelOut[c] = 0; _ScalOut[c] = 0; return; }
+    float3 v0 = _Vel[c].xyz;
+    float3 p = (float3(c) + 0.5) - v0 * (_Dt / _H);
+    float3 uvw = p / _DimF;
+    float4 s; float3 vel;
+    // Air coming in from outside the domain is clean and moves with the wind; the ground below is a wall.
+    if (uvw.x < 0 || uvw.x > 1 || uvw.z < 0 || uvw.z > 1 || uvw.y > 1) { s = 0; vel = _Wind; }
+    else { uvw.y = max(uvw.y, 0.5 / _DimF.y); s = _Scal.SampleLevel(linear_clamp_sampler, uvw, 0); vel = _Vel.SampleLevel(linear_clamp_sampler, uvw, 0).xyz; }
+    float T = s.x, soot = s.y, steam = s.z, R = s.w;
+    float dt = _Dt;
+    float3 wp = _Origin + (float3(c) + 0.5) * _H;
+    float4 e = _Emit[c];
+
+    // How hard this spot is being fought (a repair at _ExtPos): strongest near it, some everywhere on the building.
+    float q = _Ext * (0.4 + 0.6 * saturate(1 - length(wp - _ExtPos) / _ExtRadius));
+    float sup = 1 - 0.92 * q;
+
+    // Sources. Patches boil slowly over the surface, so the fire moves about instead of burning in fixed spots.
+    float boil = vnoise(wp * 1.7 + float3(_Seed, -_SimTime * 0.9, _Seed * 0.37));
+    float caught = smoothstep(e.b - 0.07, e.b + 0.07, _Coverage);
+    float burn = e.r * caught * saturate(boil * 2.4 - 0.9) * _Fire; // sparse, strong: tongues, not a film
+    float pulse = vnoise(float3(_SimTime * 1.4 + e.a * 37.0, e.a * 11.0, 0.5));
+    float win = e.g * saturate((_Fire - 0.1) * 3.0) * (0.35 + 0.9 * pulse);
+    float pop = _PopK * saturate(1 - length(wp - _PopPos) / 0.35);
+    float src = (burn + win * 3.0) * sup + pop * 6.0;
+    R += src * 10.0 * dt;
+    T += src * 2.5 * dt;
+    // Smouldering: a few spots give off hot, pale grey wisps and no flame.
+    float sm = e.r * smoothstep(e.b - 0.05, e.b + 0.05, 0.3) * _Smoulder * saturate(1 - _Fire * 2.5)
+             * saturate(boil * 2.2 - 0.6) * sup;
+    T += sm * 2.0 * dt; steam += sm * 1.6 * dt; soot += sm * 1.3 * dt;
+    // A hot structure being cooled steams off its whole skin.
+    steam += e.r * caught * q * (0.25 + 0.75 * max(_Fire, 0.4 * _Smoulder)) * 2.2 * dt;
+
+    // Combustion: burning gas lasts about a third of a second, releasing heat and, uncontrolled, thick soot.
+    float dR = R * (1 - exp(-dt / lerp(0.32, 0.55, _Fire))); // bigger fires, taller flames
+    R -= dR;
+    T += dR * 1.1;
+    soot += dR * lerp(0.35, 1.15, _Fire) * (1 - 0.95 * saturate(_Ext * 1.5)) * 0.55;
+    steam += dR * 0.05;
+    // Fought: flame and heat knocked down and turned to steam (the white billow where the repair hits).
+    float kq = 1 - exp(-q * 4.0 * dt);
+    float knocked = T * kq + R * kq * 1.6;
+    T -= T * kq; R -= R * saturate(kq * 1.6);
+    steam += knocked * 1.8;
+
+    // Cooling and dissipation; everything thins out toward the open sides and top (no hard edge to the domain).
+    float3 u = (float3(c) + 0.5) / _DimF;
+    float edge = smoothstep(1.0, 0.8, u.y) * smoothstep(0.0, 0.1, u.x) * smoothstep(1.0, 0.9, u.x) * smoothstep(0.0, 0.1, u.z) * smoothstep(1.0, 0.9, u.z);
+    float fade = 2.5 * (1 - edge);
+    T *= exp(-dt * (1.2 + fade));
+    soot *= exp(-dt * (0.08 + fade));
+    steam *= exp(-dt * (0.7 + fade));
+    R *= exp(-dt * fade * 2);
+
+    // Forces: heat rises; soot is a little heavy; above the roofs the prevailing wind takes the plume.
+    vel.y += (T * _Buoy - soot * 0.08) * dt;
+    float wk = 0.2 + 1.3 * saturate((wp.y - _RoofY * 0.7) / 0.9);
+    vel.xz += (_Wind.xz - vel.xz) * (1 - exp(-wk * dt));
+    // Flicker: a fine noise force where it's hot, so flames lick and tear at sizes the grid can only just hold.
+    float3 np = wp * 2.6 + float3(0, -_SimTime * 2.2, _Seed);
+    float3 lick = float3(vnoise(np), vnoise(np + 17.3), vnoise(np + 41.7)) - 0.5;
+    vel += lick * (T * 9.0 + R * 4.0) * dt;
+    // Openings: flame jets out of the opening; buoyancy then curls it up the wall above.
+    if (e.g > 0) vel += SdfNormal(c) * win * sup * 18.0 * dt;
+    vel.y += sm * 10.0 * dt; // smoulder wisps lift off rather than pooling on the roof
+    if (pop > 0) vel += normalize(wp - _PopPos + float3(0, 0.05, 0)) * pop * 6.0;
+    vel *= exp(-dt * 0.25);
+
+    _VelOut[c] = float4(vel, 0);
+    _ScalOut[c] = float4(max(T, 0), max(soot, 0), max(steam, 0), max(R, 0));
+}
+
+// ---------------------------------------------------------------------------------------------------------- vorticity
+
+float3 V(int3 c) { return Inside(c) ? _Vel[c].xyz : _Wind; }
+
+[numthreads(4, 4, 4)]
+void Curl(uint3 id : SV_DispatchThreadID)
+{
+    int3 c = (int3)id;
+    if (!Inside(c)) return;
+    float3 l = V(c - int3(1, 0, 0)), r = V(c + int3(1, 0, 0)), d = V(c - int3(0, 1, 0)), u = V(c + int3(0, 1, 0)), b = V(c - int3(0, 0, 1)), f = V(c + int3(0, 0, 1));
+    float3 w = float3((u.z - d.z) - (f.y - b.y), (f.x - b.x) - (r.z - l.z), (r.y - l.y) - (u.x - d.x)) / (2 * _H);
+    _CurlOut[c] = float4(w, length(w));
+}
+
+float W(int3 c) { return _Curl[clamp(c, 0, _Dim - 1)].w; }
+
+[numthreads(4, 4, 4)]
+void Confine(uint3 id : SV_DispatchThreadID)
+{
+    int3 c = (int3)id;
+    if (!Inside(c)) return;
+    float3 vel = _Vel[c].xyz;
+    if (_Sdf[c] >= 0)
+    {
+        float3 eta = float3(W(c + int3(1, 0, 0)) - W(c - int3(1, 0, 0)), W(c + int3(0, 1, 0)) - W(c - int3(0, 1, 0)), W(c + int3(0, 0, 1)) - W(c - int3(0, 0, 1)));
+        float3 N = eta / (length(eta) + 1e-5);
+        // Stronger where it's hot: the flames swirl, the cooled smoke rolls more gently.
+        float heat = saturate(_Scal[c].x * 1.5 + 0.25);
+        vel += _Vort * heat * _H * cross(N, _Curl[c].xyz) * _Dt;
+    }
+    _VelOut[c] = float4(vel, 0);
+}
+
+// ---------------------------------------------------------------------------------------------------------- pressure
+
+// A neighbour's velocity for the divergence: the building and the ground are walls (no flow through them), the open
+// sides and top let flow out freely (the cell's own velocity).
+float3 VN(int3 n, float3 own)
+{
+    float3 v = own;
+    if (n.y < 0) v = float3(own.x, 0, own.z);
+    else if (Inside(n)) v = _Sdf[n] < 0 ? 0 : _Vel[n].xyz;
+    return v;
+}
+
+[numthreads(4, 4, 4)]
+void Divergence(uint3 id : SV_DispatchThreadID)
+{
+    int3 c = (int3)id;
+    if (!Inside(c)) return;
+    float3 o = _Vel[c].xyz;
+    float div = (VN(c + int3(1, 0, 0), o).x - VN(c - int3(1, 0, 0), o).x + VN(c + int3(0, 1, 0), o).y - VN(c - int3(0, 1, 0), o).y
+               + VN(c + int3(0, 0, 1), o).z - VN(c - int3(0, 0, 1), o).z) / (2 * _H);
+    _DivOut[c] = _Sdf[c] < 0 ? 0 : div;
+}
+
+// Pressure of a neighbour: zero out in the open air past the sides and top; mirrored (no flow) at walls and the ground.
+float PN(int3 n, float own)
+{
+    float p = own;
+    if (n.y >= 0) p = !Inside(n) ? 0 : _Sdf[n] < 0 ? own : _Press[n];
+    return p;
+}
+
+[numthreads(4, 4, 4)]
+void Jacobi(uint3 id : SV_DispatchThreadID)
+{
+    int3 c = (int3)id;
+    if (!Inside(c)) return;
+    if (_Sdf[c] < 0) { _PressOut[c] = 0; return; }
+    float o = _Press[c];
+    float sum = PN(c + int3(1, 0, 0), o) + PN(c - int3(1, 0, 0), o) + PN(c + int3(0, 1, 0), o) + PN(c - int3(0, 1, 0), o)
+              + PN(c + int3(0, 0, 1), o) + PN(c - int3(0, 0, 1), o);
+    _PressOut[c] = (sum - _Div[c] * _H * _H) / 6;
+}
+
+[numthreads(4, 4, 4)]
+void Project(uint3 id : SV_DispatchThreadID)
+{
+    int3 c = (int3)id;
+    if (!Inside(c)) return;
+    if (_Sdf[c] < 0) { _VelOut[c] = 0; return; }
+    float o = _Press[c];
+    float3 g = float3(PN(c + int3(1, 0, 0), o) - PN(c - int3(1, 0, 0), o), PN(c + int3(0, 1, 0), o) - PN(c - int3(0, 1, 0), o),
+                      PN(c + int3(0, 0, 1), o) - PN(c - int3(0, 0, 1), o)) / (2 * _H);
+    float3 vel = _Vel[c].xyz - g;
+    if (c.y == 0) vel.y = max(vel.y, 0);
+    _VelOut[c] = float4(vel, 0);
+}
+
+// ---------------------------------------------------------------------------------------------------------- the fire light map
+// After Ignitement's light map: the fire's light, blurred, in one world-space texture that every lit surface samples
+// once (at its position pushed out along its normal). Ours is 2D over the whole map (0.5 tile texels): rgb is the fire's
+// light, a is the shadow its smoke throws on the ground. Each burning building writes its own rectangle.
+
+Texture2D<float4> _Map;  RWTexture2D<float4> _MapOut;
+int2 _RectMin, _RectSize;
+float2 _MapOrigin;
+float _MapTexel;
+float3 _SunDir;   // toward the sun
+float _LightGain;
+
+// The light a cell gives off: the flame's colour by temperature, brightest where gas is burning.
+float3 FlameLight(float4 s)
+{
+    float t = saturate(s.x * 0.9);
+    float3 col = lerp(float3(1.0, 0.32, 0.06), float3(1.0, 0.72, 0.35), t);
+    return col * (s.w * 1.4 + s.x * 0.25);
+}
+
+// The fire's light gathered into 4x3x4 blocks over the lower 70% of the domain (where the flames are): each block's
+// summed glow and the glow-weighted centre it comes from.
+RWStructuredBuffer<float4> _LightsOut;
+StructuredBuffer<float4> _Lights;
+
+[numthreads(4, 3, 4)]
+void Reduce(uint3 id : SV_DispatchThreadID)
+{
+    int x0 = id.x * _Dim.x / 4, x1 = (id.x + 1) * _Dim.x / 4;
+    int z0 = id.z * _Dim.z / 4, z1 = (id.z + 1) * _Dim.z / 4;
+    int top = (int)(_Dim.y * 0.7);
+    int y0 = id.y * top / 3, y1 = (id.y + 1) * top / 3;
+    float3 sum = 0, centre = 0; float w = 0;
+    for (int z = z0; z < z1; z++)
+        for (int y = y0; y < y1; y++)
+            for (int x = x0; x < x1; x++)
+            {
+                float3 l = FlameLight(_Scal[int3(x, y, z)]);
+                float lw = l.r + l.g + l.b;
+                sum += l; centre += (float3(x, y, z) + 0.5) * lw; w += lw;
+            }
+    int i = (id.z * 3 + id.y) * 4 + id.x;
+    float3 mid = float3(x0 + x1, y0 + y1, z0 + z1) * 0.5;
+    _LightsOut[i * 2] = float4(_Origin + (w > 1e-4 ? centre / w : mid) * _H, 0);
+    _LightsOut[i * 2 + 1] = float4(sum * _H * _H * _H, 0);
+}
+
+[numthreads(8, 8, 1)]
+void Splat(uint3 id : SV_DispatchThreadID)
+{
+    if (any((int2)id.xy >= _RectSize)) return;
+    int2 t = _RectMin + (int2)id.xy;
+    float2 xz = _MapOrigin + (float2(t) + 0.5) * _MapTexel;
+    float3 size = _DimF * _H;
+    // Light: the flames' glow from Reduce's 48 blocks, each a light at its glow's centroid, falling off with distance
+    // (to a point at roof height above this texel, so the ground right under the fire is lit most and the glow spreads
+    // a few tiles).
+    float3 light = 0;
+    float3 at = float3(xz.x, _RoofY * 0.6, xz.y);
+    [loop] for (int k = 0; k < 48; k++)
+    {
+        float4 lp = _Lights[k * 2];
+        float3 d = lp.xyz - at;
+        light += _Lights[k * 2 + 1].rgb / (0.5 + dot(d, d) * 1.4);
+    }
+    light *= _LightGain;
+    // Smoke shadow: march from the ground toward the sun through the soot.
+    float od = 0;
+    float3 p = float3(xz.x, 0.05, xz.y);
+    float stepLen = size.y / 12.0 / max(_SunDir.y, 0.35);
+    [loop] for (int m = 0; m < 12; m++)
+    {
+        p += _SunDir * stepLen;
+        float3 uvw = (p - _Origin) / size;
+        if (any(uvw < 0) || any(uvw > 1)) continue;
+        float4 s = _Scal.SampleLevel(linear_clamp_sampler, uvw, 0);
+        od += (s.y * 2.2 + s.z * 0.5) * stepLen;
+    }
+    float shadow = 1 - exp(-od * 1.5);
+    float4 prev = _Map[t];
+    _MapOut[t] = float4(prev.rgb + light, 1 - (1 - prev.a) * (1 - shadow));
+}
+
+[numthreads(8, 8, 1)]
+void ClearMap(uint3 id : SV_DispatchThreadID)
+{
+    if (any((int2)id.xy >= _RectSize)) return;
+    _MapOut[_RectMin + (int2)id.xy] = 0;
+}
+
+// ---------------------------------------------------------------------------------------------------------- outflow
+// What leaves the top of the domain, for the particle plume that carries the smoke on up (FireSim reads it back, as
+// Ignitement reads its fire back for gameplay): 4x4 columns of (soot, steam, wind-borne x, z velocity).
+
+RWStructuredBuffer<float4> _Outflow;
+
+[numthreads(4, 4, 1)]
+void Outflow(uint3 id : SV_DispatchThreadID)
+{
+    int x0 = id.x * _Dim.x / 4, x1 = (id.x + 1) * _Dim.x / 4;
+    int z0 = id.y * _Dim.z / 4, z1 = (id.y + 1) * _Dim.z / 4;
+    int y0 = (int)(_Dim.y * 0.7), y1 = (int)(_Dim.y * 0.8);
+    float4 sum = 0; float n = 0;
+    for (int z = z0; z < z1; z++)
+        for (int y = y0; y < y1; y++)
+            for (int x = x0; x < x1; x++)
+            {
+                int3 c = int3(x, y, z);
+                float4 s = _Scal[c];
+                float3 v = _Vel[c].xyz;
+                float up = max(v.y, 0.05);
+                sum += float4(s.y * up, s.z * up, v.x * (s.y + s.z), v.z * (s.y + s.z));
+                n += 1;
+            }
+    float m = max(sum.x + sum.y, 1e-5);
+    _Outflow[id.y * 4 + id.x] = float4(sum.x / n, sum.y / n, sum.z / m, sum.w / m);
+}
+
+// ---------------------------------------------------------------------------------------------------------- sparks
+// GPU embers and sparks that ride the simulated flow (Ignitement's particles sample the velocity field the same way).
+
+struct Spark { float3 pos; float life; float3 vel; float life0; float4 k; }; // k: coupling to the flow, gravity, size, seed
+RWStructuredBuffer<Spark> _Sparks;
+int _SparkCount, _SpawnHead, _SpawnCount;
+float3 _SpawnPos, _SpawnVel;
+float _SpawnRadius, _SpawnSpeed, _SpawnCouple, _SpawnGravity, _SpawnSize, _SpawnLife;
+
+float hash11(float n) { return frac(sin(n * 12.9898 + 78.233) * 43758.5453); }
+
+[numthreads(64, 1, 1)]
+void SparkSpawn(uint3 id : SV_DispatchThreadID)
+{
+    if ((int)id.x >= _SpawnCount) return;
+    uint i = ((uint)_SpawnHead + id.x) % (uint)_SparkCount;
+    float s = _Seed * 13.1 + id.x * 1.618 + _SimTime * 7.7;
+    float3 r = float3(hash11(s), hash11(s + 1.3), hash11(s + 2.9)) * 2 - 1;
+    float3 dir = normalize(r + float3(0, 0.0001, 0));
+    Spark p;
+    p.pos = _SpawnPos + r * _SpawnRadius;
+    p.vel = _SpawnVel + dir * _SpawnSpeed * (0.35 + 0.65 * hash11(s + 4.1));
+    p.life0 = _SpawnLife * (0.6 + 0.8 * hash11(s + 5.3));
+    p.life = p.life0;
+    p.k = float4(_SpawnCouple, _SpawnGravity, _SpawnSize * (0.6 + 0.8 * hash11(s + 6.7)), hash11(s + 8.2));
+    _Sparks[i] = p;
+}
+
+[numthreads(64, 1, 1)]
+void SparkStep(uint3 id : SV_DispatchThreadID)
+{
+    if ((int)id.x >= _SparkCount) return;
+    Spark p = _Sparks[id.x];
+    if (p.life <= 0) return;
+    float3 uvw = (p.pos - _Origin) / (_DimF * _H);
+    float3 flow = (all(uvw > 0) && all(uvw < 1)) ? _Vel.SampleLevel(linear_clamp_sampler, uvw, 0).xyz : _Wind;
+    p.vel += (flow - p.vel) * (1 - exp(-p.k.x * _Dt));
+    p.vel.y -= p.k.y * _Dt;
+    // A little flutter of its own, so embers in the same plume don't move as one.
+    float f = p.k.w * 40 + _SimTime * 3;
+    p.vel.xz += float2(sin(f), cos(f * 1.3)) * 0.8 * _Dt;
+    p.pos += p.vel * _Dt;
+    if (p.pos.y < 0.02 && p.vel.y < 0) { p.pos.y = 0.02; p.vel.y *= -0.3; p.vel.xz *= 0.5; }
+    if ((all(uvw > 0) && all(uvw < 1)) && _Sdf.SampleLevel(linear_clamp_sampler, uvw, 0) < 0) { p.vel = reflect(p.vel, float3(0, 1, 0)) * 0.3; }
+    p.life -= _Dt;
+    _Sparks[id.x] = p;
+}

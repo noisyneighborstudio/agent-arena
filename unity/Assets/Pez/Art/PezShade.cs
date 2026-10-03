@@ -1,6 +1,7 @@
 // Per-renderer view states on Pez/Model materials, set through one shared MaterialPropertyBlock (no allocation):
 //  - Dim: darkens albedo, specular and emission (a wreck charred to 0.3);
-//  - Glow: scales the emission only (power plant cores, consumers on low power, dock lamps).
+//  - Glow: scales the emission only (power plant cores, consumers on low power, dock lamps);
+//  - Burn: a fire inside glowing through an opening (FireSim's burning buildings).
 // Both are instanced properties in PezModel.shader, so instanced batching keeps working.
 using UnityEngine;
 
@@ -8,7 +9,7 @@ namespace Pez
 {
     public static class PezShade
     {
-        static readonly int DimId = Shader.PropertyToID("_PezDim"), GlowId = Shader.PropertyToID("_PezGlow");
+        static readonly int DimId = Shader.PropertyToID("_PezDim"), GlowId = Shader.PropertyToID("_PezGlow"), BurnId = Shader.PropertyToID("_PezBurn");
         static MaterialPropertyBlock block;
 
         public static void Set(Renderer r, float dim, float glow)
@@ -19,6 +20,34 @@ namespace Pez
             block.SetFloat(DimId, dim);
             block.SetFloat(GlowId, glow);
             r.SetPropertyBlock(block);
+        }
+
+        /// <summary>Dim only (leaves Glow): a burning building charring.</summary>
+        public static void SetDim(Renderer[] rs, float dim)
+        {
+            if (rs == null) return;
+            block ??= new MaterialPropertyBlock();
+            foreach (var r in rs)
+            {
+                if (r == null) continue;
+                r.GetPropertyBlock(block);
+                block.SetFloat(DimId, dim);
+                r.SetPropertyBlock(block);
+            }
+        }
+
+        /// <summary>Burn: a fire inside lights up the opening (dark recesses, doors, vents, glass) from behind, 0..1.</summary>
+        public static void SetBurn(Renderer[] rs, float burn)
+        {
+            if (rs == null) return;
+            block ??= new MaterialPropertyBlock();
+            foreach (var r in rs)
+            {
+                if (r == null) continue;
+                r.GetPropertyBlock(block);
+                block.SetFloat(BurnId, burn);
+                r.SetPropertyBlock(block);
+            }
         }
 
         public static void Set(Renderer[] rs, float dim, float glow)

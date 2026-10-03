@@ -18,7 +18,7 @@ namespace Pez.View
         static FxSystems inst;
         public static FxSystems I => inst != null ? inst : inst = Create();
 
-        public ParticleSystem Flash, Fire, Smoke, Dust, Sparks, Shards, Ring, Scorch, Pool, Flame;
+        public ParticleSystem Flash, Fire, Smoke, Dust, Sparks, Shards, Ring, Scorch, Pool, Flame, Plume;
         Transform ground;
         /// <summary>
         /// The prevailing wind (world units/s, horizontal): one wind over the whole map, so every plume nearby leans the
@@ -158,6 +158,15 @@ namespace Pez.View
             }, new[] { (0f, 0f), (0.08f, 1f), (0.6f, 0.8f), (1f, 0f) }));
             Turbulence(Flame, 0.3f, 1.6f);
             var fn = Flame.noise; fn.frequency = 2.2f; fn.scrollSpeed = 1.2f; // fine, fast flicker
+
+            // Plume: a simulated building fire's smoke carried on up past the top of its grid (FireSim reads back what
+            // leaves the grid and emits here): cool (it's high above the flames), buoyant, fading in so the hand-over from
+            // the volume doesn't show, spreading and leaning downwind. Black soot to white steam by colour.
+            Plume = Make("plume", Mat("PezFxSmoke", 3001, ("_Heat", 0f), ("_Noise", 0.42f)), 3000, -0.07f, 1.1f, smokeStreams);
+            Plume.GetComponent<ParticleSystemRenderer>().sortMode = ParticleSystemSortMode.Distance;
+            SizeOverLife(Plume, new Keyframe(0, 0.7f), new Keyframe(0.35f, 1.2f), new Keyframe(1, 2.3f));
+            ColorOverLife(Plume, Grad(new[] { (0f, Color.white), (1f, Color.white) }, new[] { (0f, 0f), (0.18f, 0.85f), (0.55f, 0.55f), (1f, 0f) }));
+            Turbulence(Plume, 0.12f, 1.1f);
 
             // Dust: cool, heavier than smoke, kicked out along the ground and settling (no glow).
             Dust = Make("dust", Mat("PezFxSmoke", 3000, ("_Heat", 0f), ("_Noise", 0.7f)), 3000, -0.01f, 2.4f, smokeStreams);
@@ -303,6 +312,7 @@ namespace Pez.View
             Emit(Scorch, at, Vector3.zero, 0.1f, 0.2f, clear);
             Emit(Pool, at, Vector3.zero, 0.1f, 0.2f, clear);
             Emit(Flame, at, Vector3.up, 0.1f, 0.2f, clear);
+            Emit(Plume, at, Vector3.up, 0.1f, 0.2f, clear);
             EmitShard(at + Vector3.down * 3f, Vector3.zero, 0.01f, 0.2f, clear);
         }
 

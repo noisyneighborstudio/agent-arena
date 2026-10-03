@@ -43,7 +43,14 @@ namespace Pez.View
             // Damage state on finished buildings: smoke and fire intensity (eased), emitters, and the roof they rise from.
             public float SmokeK, FireK;
             public Vector3[] FireSpots;  // where a burning building's flames rise from (fixed per building)
-            public BuildingFire Fire = new BuildingFire();
+            public BuildingFire Fire = new BuildingFire(); // the particle fire, where the fluid fire can't run
+            public FireSim Sim;          // the fluid fire (null when not burning, or when the budget's spent)
+            public float SimRetry;       // when to try for a fluid fire again after the budget was full
+            public float RepairAt = -99f, ExtK; // the last repair beam on it, and how hard its fire is being fought (eased)
+            public Vector3 RepairPoint;
+            public FireShade Shade;      // openings glowing with the fire inside, the rest charring
+            public bool ShadeHidden;     // shown clean for a fogged view's render
+            public float CharK;          // how charred (eased: blackens over a few seconds, clears as it's repaired)
             public Bounds? Roof;
             // Drop-offs: the dock lamps and chute, and what the bay's truck reported this frame or last.
             public DockView Dock;
@@ -103,7 +110,11 @@ namespace Pez.View
             mapVersion = w.MapVersion;
             lastSeq = w.Events.Count > 0 ? w.Events[w.Events.Count - 1].Seq : 0;
             Fx.Prewarm();
+            FireArea();
         }
+
+        /// <summary>The fire light map covers the whole map, with a margin.</summary>
+        void FireArea() => FireSim.SetMapArea(new Vector2(-8f, -8f), new Vector2(World.Map.W + 16f, World.Map.H + 16f), TerrainView.MainFogLayer);
 
         // When a unit drops out of a team's sight it shrinks away over half a second instead of blinking off.
         const float FogFade = 0.5f;
@@ -170,6 +181,13 @@ namespace Pez.View
                 }
             }
             Deposits?.SetPov(team, PovTeam);
+            FireSim.SetPovLayer(team == PovTeam ? TerrainView.MainFogLayer : TerrainView.TeamFogLayerBase + team);
+            foreach (var v in Views.Values)
+            {
+                if (v.Shade == null || !v.Rig.Root.gameObject.activeSelf) continue;
+                bool hide = !SeesState(v.E, team);
+                if (hide != v.ShadeHidden) { v.Shade.Show(!hide); v.ShadeHidden = hide; }
+            }
         }
 
         int mapVersion;
@@ -182,6 +200,7 @@ namespace Pez.View
             tgo.transform.SetParent(transform, false);
             Terrain = tgo.AddComponent<TerrainView>();
             Terrain.Build(World.Map);
+            FireArea();
             mapVersion = World.MapVersion;
             nextFog = 0;
             MapRebuilt?.Invoke();
@@ -290,6 +309,12 @@ namespace Pez.View
                 rig.Emerge.StartCoroutine(rig.Emerge.PlayRemove(wreck, v.E.IsStructure ? 1.2f : 1.5f));
             }
             Destroy(rig.Root.gameObject);
+            if (v.Sim != null) { v.Sim.Release(); v.Sim = null; }
+        }
+
+        void OnDestroy()
+        {
+            foreach (var v in Views.Values) if (v.Sim != null) { v.Sim.Release(); v.Sim = null; }
         }
 
         bool Producing(Entity e)
@@ -346,7 +371,7 @@ namespace Pez.View
                     float cyc = now / 2.5f + e.Id * 0.61f, inCyc = (cyc - Mathf.Floor(cyc)) * 2.5f;
                     if (inCyc < 0.1f) glow = 0.05f;
                 }
-                if (e.IsComplete) Steam(v, load, t.LowPower);
+                if (e.IsComplete && v.FireK < 0.15f) Steam(v, load, t.LowPower); // a burning plant's towers stop steaming (white smoke means it's being fought)
             }
             else
             {
@@ -430,6 +455,10 @@ namespace Pez.View
         ///  - raging (below about 12%): three spots, taller and denser flames, a thick black column, embers streaming
         ///    downwind.
         /// Fades in over 0.5 s and out over 2 s (repairs put it out). Everything drifts with FxSystems.Wind.
+        /// The fire itself is a fluid simulation shaped to the building (FireSim): it spreads over the roof in patches,
+        /// licks out of the openings (which glow with it), throws embers and the odd burst of sparks, and makes black
+        /// smoke; while a repair beam is on the building the fire is fought and its smoke turns to white steam. Past the
+        /// simulation budget, or on a machine without compute shaders, the particle fire (BuildingFire) stands in.
         /// </summary>
         void Damage(EV v)
         {
@@ -441,7 +470,11 @@ namespace Pez.View
             if (e.IsComplete && hp < World.BurnBelow) fire = Mathf.Max(fire, 0.05f);
             v.SmokeK = Mathf.MoveTowards(v.SmokeK, smoke, dt / (smoke > v.SmokeK ? 0.5f : 2f));
             v.FireK = Mathf.MoveTowards(v.FireK, fire, dt / (fire > v.FireK ? 0.8f : 2f));
-            if (v.SmokeK <= 0f && v.FireK <= 0f) return;
+            float ext = now - v.RepairAt < 1.3f ? 1f : 0f;
+            v.ExtK = Mathf.MoveTowards(v.ExtK, ext, dt / (ext > v.ExtK ? 0.4f : 1.0f));
+            v.CharK = Mathf.MoveTowards(v.CharK, v.FireK, dt / (v.FireK > v.CharK ? 2.5f : 4f));
+            bool burning = v.SmokeK > 0f || v.FireK > 0f;
+            if (!burning && v.Sim == null) { Scorch(v, 0f, 1f - 0.5f * v.CharK); return; }
             if (v.Roof == null)
             {
                 // Once, from the finished model: the roof (bounds), and three fire spots on it, fixed for this building.
@@ -454,10 +487,32 @@ namespace Pez.View
                 for (int i = 0; i < 3; i++)
                     v.FireSpots[i] = new Vector3(b.center.x + R(-0.55f, 0.55f) * b.extents.x, b.max.y * R(0.78f, 0.92f), b.center.z + R(-0.55f, 0.55f) * b.extents.z);
             }
+            // The fluid fire when there's room in the budget (FireSim.MaxLive), else the particle fire.
+            if (v.Sim != null && v.Sim.Dead) { v.Sim = null; v.SimRetry = now + 3f; }
+            if (v.Sim == null && burning && v.Rig.HasModel && now >= v.SimRetry)
+            {
+                v.Sim = FireSim.Create(v.Rig.Model, e.Id);
+                if (v.Sim == null) v.SimRetry = now + 2f;
+            }
             float size = Mathf.Sqrt(Mathf.Max(1, e.Def.SizeX));
             Fx.Audience = AudienceFor(e);
-            v.Fire.Tick(v.FireSpots, v.Roof.Value.center, size, v.SmokeK, v.FireK, e.Id);
+            if (v.Sim != null)
+            {
+                v.Sim.Tick(v.SmokeK, v.FireK, v.ExtK, v.RepairPoint, Fx.Audience);
+                if (v.Sim.Spent) { v.Sim.Release(); v.Sim = null; }
+            }
+            else if (burning) v.Fire.Tick(v.FireSpots, v.Roof.Value.center, size, v.SmokeK, v.FireK, e.Id);
             Fx.Audience = null;
+            // The openings glow with the fire inside, dimming as it's fought; the walls char as it burns.
+            Scorch(v, v.FireK * (1f - 0.6f * v.ExtK), 1f - 0.5f * v.CharK);
+        }
+
+        /// <summary>The building's own surfaces: openings glowing with the fire inside, the rest charring (FireShade).</summary>
+        void Scorch(EV v, float burn, float dim)
+        {
+            if (v.Shade == null) { if (burn <= 0f && dim >= 1f) return; v.Shade = new FireShade(v.Rig.Model); }
+            if (v.ShadeHidden) { v.Shade.Show(true); v.ShadeHidden = false; }
+            v.Shade.Set(burn, dim);
         }
 
         /// <summary>
@@ -553,7 +608,7 @@ namespace Pez.View
                 rig.Motion.SetWorking(e.IsComplete && Producing(e));
                 if (e.IsComplete && e.Def.Produces != Producer.None && e.Def.Key != "command_center" && e.Def.Key != "airfield") RollOut(v);
                 if (e.Def.Key == "power_plant" || e.Def.Power < 0) Power(v);
-                if (e.IsComplete || v.SmokeK > 0f) Damage(v);
+                if (e.IsComplete || v.SmokeK > 0f || v.Sim != null) Damage(v);
                 Construction(v);
                 if (e.Def.Key == "deep_mine") DeepMine(v);
                 if (World.Decaying(e) && Time.time >= v.DustNext)
@@ -1072,6 +1127,8 @@ namespace Pez.View
                             // Heal beam: team-neutral cream-white. Welding beam: caramel amber.
                             Fx.Beam(from, to, heal ? new Color(0.96f, 0.95f, 0.91f, 0.8f) : new Color(Mats.Amber.r, Mats.Amber.g, Mats.Amber.b, 0.9f), heal ? 0.05f : 0.035f);
                             if (!heal) Fx.MuzzleFlash(to, 0.05f); // welding sparks
+                            // A building being repaired is being fought: its fire turns to white steam where the beam lands.
+                            if (!heal && Views.TryGetValue(ev.B, out var fought) && fought.E.IsStructure) { fought.RepairAt = Time.time; fought.RepairPoint = to; }
                             break;
                         }
                     case "hit":

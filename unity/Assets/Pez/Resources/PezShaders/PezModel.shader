@@ -14,7 +14,9 @@
 //    third of it, so team colours stay vivid (lit through Unity's StandardSpecular, metalness converted here);
 //  - two per-renderer view states, set through a MaterialPropertyBlock (PezShade) and instanced, so batching survives:
 //    _PezDim darkens everything (a wreck goes to 0.3, charred and matte) and _PezGlow scales only the emission
-//    (power plant cores following the load, consumers dimmed on low power, dock lamps).
+//    (power plant cores following the load, consumers dimmed on low power, dock lamps);
+//  - burning buildings (FireSim): the fire light map lights every surface near a fire and its smoke shadows them
+//    (PezFire.cginc), and _PezBurn (per renderer, set on a burning building's openings) lights them from behind.
 // Lives in Resources so it ships in builds.
 Shader "Pez/Model"
 {
@@ -31,6 +33,7 @@ Shader "Pez/Model"
         [Enum(UnityEngine.Rendering.CullMode)] _CullMode ("Cull", Float) = 2
         _PezDim ("View: darken (wrecks)", Range(0,1)) = 1
         _PezGlow ("View: emission scale", Float) = 1
+        _PezBurn ("View: fire inside (openings)", Range(0,1)) = 0
     }
     SubShader
     {
@@ -56,7 +59,8 @@ Shader "Pez/Model"
             fixed4 color : COLOR;
             UNITY_VERTEX_INPUT_INSTANCE_ID
         };
-        struct Input { float3 worldPos; float4 edge; float4 bev01; float2 bev2; };
+        #include "PezFire.cginc"
+        struct Input { float3 worldPos; float4 edge; float4 bev01; float2 bev2; float3 worldNormal; INTERNAL_DATA };
         half _Glossiness, _Metallic, _Edge, _Grime, _Foot, _SpecK;
         half _PezEdgeScale, _PezGrimeScale; // globals (Look.EdgeScale, Look.GrimeScale)
         half4 _EmissionColor;
@@ -64,6 +68,7 @@ Shader "Pez/Model"
             UNITY_DEFINE_INSTANCED_PROP(fixed4, _Color)
             UNITY_DEFINE_INSTANCED_PROP(half, _PezDim)
             UNITY_DEFINE_INSTANCED_PROP(half, _PezGlow)
+            UNITY_DEFINE_INSTANCED_PROP(half, _PezBurn)
         UNITY_INSTANCING_BUFFER_END(Props)
 
         float hash3(float3 p) { p = frac(p * 0.3183099 + 0.1); p *= 17.0; return frac(p.x * p.y * p.z * (p.x + p.y + p.z)); }
@@ -114,6 +119,19 @@ Shader "Pez/Model"
             o.Albedo = albedo * (1 - f0) * (1 - _Metallic) * dim;
             o.Smoothness = saturate(_Glossiness * (1.0 - (n - 0.5) * 0.35 * grime) + bevel * 0.08) * lerp(0.6, 1.0, dim);
             o.Emission = _EmissionColor.rgb * (dim * UNITY_ACCESS_INSTANCED_PROP(Props, _PezGlow));
+            // A burning building's light on the surfaces around it, its smoke's shadow, and the openings glowing with
+            // the fire behind them (PezFire.cginc).
+            float4 fire = PezFireLight(wp, normalize(WorldNormalVector(IN, nrm)));
+            o.Albedo *= 1 - fire.a * 0.5;
+            half burn = UNITY_ACCESS_INSTANCED_PROP(Props, _PezBurn);
+            o.Emission += o.Albedo * fire.rgb * 0.6;
+            if (burn > 0.001)
+            {
+                // Fire behind an opening: uneven and moving (hot spots drifting up).
+                float behind = vnoise3(wp * 7.0 + float3(0, -_Time.y * 2.3, 0)) * 0.75 + vnoise3(wp * 15.0 + float3(0, -_Time.y * 4.1, 3.7)) * 0.45;
+                half3 inside = lerp(half3(0.75, 0.12, 0.02), half3(1.0, 0.55, 0.15), saturate(behind - 0.2));
+                o.Emission += inside * (burn * 4.0 * saturate(behind * 1.3 - 0.15) * PezFireFlicker(wp, _Time.y));
+            }
             o.Alpha = 1;
         }
         ENDCG

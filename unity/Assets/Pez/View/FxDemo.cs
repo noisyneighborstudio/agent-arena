@@ -8,7 +8,8 @@ namespace Pez.View
     /// "-fxdemo storm" instead sets off ten random explosions a second around the view centre (a frame-rate check).
     /// "-fxdemo wrecks" stages vehicle deaths (art review fix 1): a row of live light tank, heavy tank and artillery
     /// models at the view centre, and every 8 s one of a second row is destroyed beside them, so a capture can compare a
-    /// live hull with a fresh wreck and one that has lain a while. View-only: nothing here touches the sim.
+    /// live hull with a fresh wreck and one that has lain a while. "-fxdemo fires" stages building fires (FireSim) at every
+    /// stage, one of them fought by a repair beam. View-only: nothing here touches the sim.
     /// </summary>
     public class FxDemo : MonoBehaviour
     {
@@ -40,41 +41,70 @@ namespace Pez.View
             return new Plane(Vector3.up, Vector3.zero).Raycast(ray, out float t) ? ray.GetPoint(t) : Vector3.zero;
         }
 
-        // "-fxdemo fires": three stand-in buildings at the view centre, smouldering, burning and raging (BuildingFire).
+        // "-fxdemo fires": real buildings at the view centre, each burning at a stage (FireSim; BuildingFire where the
+        // fluid fire can't run): a barracks smouldering, a factory burning, a command center raging, and a power plant
+        // raging that a repair beam fights every other 8 s (black smoke, then white steam as it's knocked down).
         bool fires;
-        Vector3[][] fireSpots;
+        static readonly (string key, float smoke, float fire, bool fought)[] fireBench =
+        {
+            ("barracks", 1f, 0f, false), ("factory", 1f, 0.4f, false), ("command_center", 1f, 1f, false), ("power_plant", 1f, 1f, true),
+        };
+        Rig[] fireRigs;
+        FireSim[] fireSims;
+        FireShade[] fireShades;
         BuildingFire[] fireStates;
-        Vector3[] fireCentres;
-        GameObject[] fireBoxes;
+        Vector3 fireAt;
+        float fireBeamT;
 
         void Fires(Vector3 c)
         {
             // Follow the camera: if the view moved away, rebuild the bench at the new view centre.
-            if (fireSpots != null && (fireCentres[1] - c).magnitude > 6f)
+            if (fireRigs != null && (fireAt - c).magnitude > 8f)
             {
-                foreach (var b in fireBoxes) Destroy(b);
-                fireSpots = null;
+                for (int b = 0; b < fireRigs.Length; b++) { fireSims[b]?.Release(); Destroy(fireRigs[b].Root.gameObject); }
+                fireRigs = null;
             }
-            if (fireSpots == null)
+            if (fireRigs == null)
             {
-                fireBoxes = new GameObject[3];
-                fireSpots = new Vector3[3][]; fireStates = new BuildingFire[3]; fireCentres = new Vector3[3];
-                for (int b = 0; b < 3; b++)
+                fireAt = c;
+                int n = fireBench.Length;
+                fireRigs = new Rig[n]; fireSims = new FireSim[n]; fireStates = new BuildingFire[n]; fireShades = new FireShade[n];
+                for (int b = 0; b < n; b++)
                 {
-                    var centre = c + new Vector3((b - 1) * 3.2f, 0f, 0f);
-                    var box = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                    Destroy(box.GetComponent<Collider>());
-                    box.transform.position = centre + Vector3.up * 0.45f;
-                    box.transform.localScale = new Vector3(1.8f, 0.9f, 1.8f);
-                    box.GetComponent<Renderer>().sharedMaterial = Mats.Lit(new Color(0.85f, 0.82f, 0.76f));
-                    fireBoxes[b] = box;
-                    fireCentres[b] = centre;
-                    fireSpots[b] = new[] { centre + new Vector3(-0.4f, 0.92f, 0.3f), centre + new Vector3(0.45f, 0.92f, -0.2f), centre + new Vector3(0.05f, 0.92f, 0.5f) };
+                    var rig = Models.Build(fireBench[b].key, b & 1);
+                    rig.Root.position = new Vector3(Mathf.Round(c.x) + (b - (n - 1) * 0.5f) * 4f, 0f, Mathf.Round(c.z));
+                    rig.Emerge?.SetBuildProgress(1f);
+                    fireRigs[b] = rig;
                     fireStates[b] = new BuildingFire();
                 }
+                return; // voxelize next frame, once the transforms have settled
             }
-            float[] k = { 0f, 0.35f, 1f };
-            for (int b = 0; b < 3; b++) fireStates[b].Tick(fireSpots[b], fireCentres[b], 1.4f, 1f, k[b], b + 1);
+            float now = Time.time;
+            for (int b = 0; b < fireRigs.Length; b++)
+            {
+                var (key, smoke, fire, fought) = fireBench[b];
+                var rig = fireRigs[b];
+                if (fireSims[b] == null && rig.HasModel) { fireSims[b] = FireSim.Create(rig.Model, b + 1); fireShades[b] = new FireShade(rig.Model); }
+                bool beam = fought && ((int)(now / 8f) & 1) == 1;
+                var bounds = new Bounds(rig.Root.position, Vector3.zero);
+                foreach (var r in rig.Model.GetComponentsInChildren<Renderer>()) bounds.Encapsulate(r.bounds);
+                var hit = new Vector3(bounds.center.x, bounds.max.y * 0.8f, bounds.min.z);
+                if (beam && (fireBeamT -= Time.deltaTime) <= 0f)
+                {
+                    // As WorldView draws a repair: the caramel welding beam from a truck's spot in front, sparks at the work.
+                    fireBeamT = 0.3f;
+                    var from = new Vector3(bounds.center.x - 1.2f, 0.45f, bounds.min.z - 1.6f);
+                    Fx.Beam(from, hit, new Color(Mats.Amber.r, Mats.Amber.g, Mats.Amber.b, 0.9f), 0.035f);
+                    Fx.MuzzleFlash(hit, 0.05f);
+                }
+                fireShades[b]?.Set(fire * (beam ? 0.4f : 1f), 1f - 0.5f * fire);
+                if (fireSims[b] != null) fireSims[b].Tick(smoke, fire, beam ? 1f : 0f, hit, null);
+                else
+                {
+                    var spots = new[] { bounds.center + Vector3.up * bounds.extents.y * 0.85f, bounds.center + new Vector3(0.4f, bounds.extents.y * 0.8f, 0.3f), bounds.center + new Vector3(-0.4f, bounds.extents.y * 0.8f, -0.3f) };
+                    fireStates[b].Tick(spots, bounds.center, 1.4f, smoke, fire, b + 1);
+                }
+            }
         }
 
         void Update()
@@ -84,7 +114,6 @@ namespace Pez.View
             var c = Focus();
             var team = teams[step & 1];
             if (wrecks) { Wrecks(c); return; }
-            if (fires) { Fires(c); return; }
             if (storm)
             {
                 next = Time.time + 0.1f;

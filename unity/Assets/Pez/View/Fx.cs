@@ -379,6 +379,11 @@ namespace Pez.View
             Emit(S.Pool, pos, Vector3.zero, size, 0.35f, Alpha(FirePool, alpha));
 
         static readonly Color32 FirePool = new Color32(255, 140, 50, 255);
+        static readonly Color32 PlumeSoot = new Color32(26, 22, 20, 255), PlumeSteam = new Color32(238, 232, 220, 255);
+
+        /// <summary>A puff of a simulated fire's smoke continuing above its grid (FireSim): `pale` 0 is black soot, 1 white steam.</summary>
+        public static void Plume(Vector3 pos, Vector3 vel, float size, float pale, float alpha) =>
+            Emit(S.Plume, pos, vel, size, Random.Range(3.6f, 5.2f) * (1f - 0.35f * pale), Vary(Color32.Lerp(PlumeSoot, PlumeSteam, pale), 0.05f, (byte)(Mathf.Lerp(0.55f, 0.95f, alpha) * 255f)));
 
         /// <summary>A heavy gun's blast on the ground around the firer: a dust ring, and for artillery dust kicked outward.</summary>
         public static void GroundRing(Vector3 at, float size, float alpha, int puffs)

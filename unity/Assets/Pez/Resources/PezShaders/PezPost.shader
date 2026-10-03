@@ -176,6 +176,7 @@ Shader "Hidden/Pez/Post"
             c *= lerp(_PezAOTint.rgb, 1.0, ao);
         }
         c += tex2D(_PezBloomTex, i.uv).rgb * _PezBloom.w;
+        c = clamp(c, 0, 64); // an overflowed HDR pixel (a hot spark) must not go black through the curve
         c *= _PezGrade.x;
         c = 0.18 * pow(max(c, 1e-5) / 0.18, _PezGrade.y); // contrast about mid grey, before the curve
         c = PbrNeutral(c);

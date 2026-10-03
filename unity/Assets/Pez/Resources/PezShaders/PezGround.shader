@@ -27,6 +27,7 @@ Shader "Pez/Ground"
         CGPROGRAM
         #pragma surface surf Standard fullforwardshadows vertex:vert
         #pragma target 3.0
+        #include "PezFire.cginc"
         struct Input { float4 vcolor; float3 worldPos; float2 dune; };
         fixed4 _Color; half _Glossiness; half _Metallic;
         float _GridStrength, _GridPeriod, _GridWidth;
@@ -73,6 +74,10 @@ Shader "Pez/Ground"
             float lx = 1.0 - smoothstep(half_, half_ + fw.x * 1.2, g.x);
             float ly = 1.0 - smoothstep(half_, half_ + fw.y * 1.2, g.y);
             c *= 1.0 - max(lx, ly) * _GridStrength;
+            // A burning building's glow on the ground around it, and the shadow of its smoke (PezFire.cginc).
+            float4 fire = PezFireLight(IN.worldPos, float3(0, 1, 0));
+            c *= 1 - fire.a * 0.55;
+            o.Emission = c * fire.rgb;
             o.Albedo = c;
             o.Metallic = _Metallic;
             o.Smoothness = _Glossiness;
