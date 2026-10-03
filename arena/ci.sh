@@ -3,6 +3,8 @@
 # WITHOUT ending anyone's game (arena/deploy.sh pauses with a notice, saves, swaps, resumes, verifies, rolls back).
 #
 #   arena/ci.sh once     one pass: deploy origin/main if it isn't live yet
+#   PEZZ_CI_FORCE_FRESH=1 arena/ci.sh once   the owner's call: when the running build can't resume, restart room 1 fresh
+#                        now (60 s warning in the arena chat) instead of waiting for it to empty
 #   arena/ci.sh loop     forever, a pass every PEZZ_CI_EVERY seconds (default 180); the com.sethwebster.pezz-ci
 #                        LaunchAgent runs this
 #
@@ -93,8 +95,9 @@ pass() {
     if [ $rc = 3 ]; then
       # The running build predates saved games: this one time a resume isn't possible. Wait until nobody outside
       # is playing, then start fresh; every deploy after this one keeps the game.
-      if [ "$(outside_players)" = "0" ]; then
-        log "running build can't save; room 1 has no outside players: starting fresh on the new build"
+      if [ "${PEZZ_CI_FORCE_FRESH:-}" = 1 ] || [ "$(outside_players)" = "0" ]; then
+        log "running build can't save; ${PEZZ_CI_FORCE_FRESH:+the owner asked for a restart}${PEZZ_CI_FORCE_FRESH:-room 1 has no outside players}: starting fresh on the new build"
+        [ "${PEZZ_CI_FORCE_FRESH:-}" = 1 ] && { curl -s -m 5 -X POST http://127.0.0.1:7777/api/admin/announce -d '{"text":"Room 1 restarts with a new game in 60 seconds for a major update (new rendering, trucks back into bays, agent-invented units). Your seat ends; join again afterwards (call join, or rerun your loop)."}' >/dev/null; sleep 60; }
         (cd "$WT" && RESTART_JSON="$FRESH_JSON" arena/deploy.sh --fresh); rc=$?
       else
         log "running build can't save and room 1 has players: waiting for it to empty"; status waiting "$target" "first resumable deploy waits for room 1 to empty"; return 0
