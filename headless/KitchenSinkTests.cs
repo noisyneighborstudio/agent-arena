@@ -79,6 +79,7 @@ namespace Pez.Headless
             Check(Count("drilled") >= 10, $"the drill rig keeps deploying ({Count("drilled")} deep mines)");
             int ccs = w.Teams[KitchenSink.Blue].Stats.Built.TryGetValue("command_center", out var nc) ? nc : 0;
             Check(ccs >= 10, $"the construction truck keeps deploying into a command center ({ccs} times)");
+            Check(w.Entities.Count(e => !e.Dead && e.Offline) == 1, "one defence stands offline (upkeep unpaid)");
             Check(Count("captured") >= 5 && w.Entities.Count(e => !e.Dead && e.Def.Key == "derrick" && e.Team < 0) >= 1, $"an engineer keeps capturing a neutral derrick ({Count("captured")} captures)");
             Check(Count("boarded") >= 16 && Count("unloaded") >= 4, $"transports load and unload ({Count("boarded")} boardings, {Count("unloaded")} unloads)");
             Check(landed && Count("refuelled") >= 5, $"an aircraft lands and refuels ({Count("refuelled")} times)");

@@ -350,10 +350,11 @@ namespace Pez.View
             }
             else
             {
-                float target = e.IsComplete && t.LowPower ? 0.5f : 1f;
+                // An offline defence (upkeep unpaid) goes nearly dark and stops dead; low power halves everything.
+                float target = e.Offline ? 0.1f : e.IsComplete && t.LowPower ? 0.5f : 1f;
                 v.GlowK = v.GlowK < 0f ? target : Mathf.MoveTowards(v.GlowK, target, dt / 0.4f);
                 glow = v.GlowK;
-                rate = e.IsComplete && t.LowPower ? 0.5f : 1f;
+                rate = e.Offline ? 0f : e.IsComplete && t.LowPower ? 0.5f : 1f;
             }
             // The lamp body darkens with its light (a cyan core at 0.25 emission still read as lit from its albedo).
             glow *= v.Blink;

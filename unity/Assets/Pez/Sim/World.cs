@@ -31,6 +31,8 @@ namespace Pez.Sim
         public float DerrickSteel;
         /// <summary>Ore its trucks mined off ground that was never a field: salvage (from kills, or a leaver's base).</summary>
         public int SalvageMined;
+        /// <summary>Steel paid in upkeep for defences beyond the free ones.</summary>
+        public float UpkeepPaid;
         public readonly Dictionary<string, int> Built = new Dictionary<string, int>();
         public void Count(string key) => Built[key] = (Built.TryGetValue(key, out var n) ? n : 0) + 1;
     }
@@ -819,7 +821,7 @@ namespace Pez.Sim
                     else
                     {
                         if (e.IsComplete) Burn(e);
-                        if (!e.Dead && e.IsArmed && e.IsComplete) UpdateTurret(e);
+                        if (!e.Dead && e.IsArmed && e.IsComplete && !e.Offline) UpdateTurret(e);
                     }
                 }
                 catch (Exception ex)
@@ -836,6 +838,7 @@ namespace Pez.Sim
             Guard("victory", CheckVictory);
             Guard("match", MatchClock);
             Guard("derricks", DerrickUpkeepTick);
+            Guard("upkeep", Upkeep);
             Guard("regrowth", Regrow);
             TickOreVersion();
             if (Showcase != null) Guard("showcase", Showcase.Hold); // the kitchen sink room only (KitchenSink.cs)

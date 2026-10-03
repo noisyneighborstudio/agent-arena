@@ -193,6 +193,7 @@ namespace Pez.Sim
                 var s = $"#{e.Id} {e.Def.Key} at {e.Origin.X},{e.Origin.Y} ({e.Def.SizeX}x{e.Def.SizeY}) hp {(int)e.Hp}/{e.Def.MaxHp}";
                 if (!e.IsComplete) s += $" BUILDING {Pct(e.BuildProgress)}%";
                 if (w.Time - e.LastHitTime < 5) s += " UNDER ATTACK";
+                if (e.Offline) s += " OFFLINE (upkeep unpaid: holds fire until you have steel)";
                 var d = e.Def.Key == "deep_mine" ? w.Map.DepositById(e.DepositId) : null;
                 if (d != null) s += d.Amount > 0 ? $" pumping {Defs.Ores[d.Type]}: {(int)d.Amount} left, dry in ~{World.DeepMineSecondsLeft(d, w.Teams[team]):0}s" : " DRY (sell it)";
                 return s;
@@ -225,6 +226,7 @@ namespace Pez.Sim
             }).ToList());
 
             o.Set("derricks", DerrickInfo(w, team).Select(d => d.line).ToList());
+            o.Set("upkeep", UpkeepText(w, team));
 
             o.Set("visible_enemies", w.Entities.Where(e => !e.Dead && e.Team != team && e.Team >= 0 && w.IsVisibleTo(team, e)).Select(e =>
                 e.IsStructure
@@ -248,7 +250,7 @@ namespace Pez.Sim
             o.Set("stats", new JObj()
                 .Set("kills", t.Stats.Kills).Set("units_lost", t.Stats.UnitsLost).Set("structures_lost", t.Stats.StructuresLost)
                 .Set("ore_mined", t.Stats.OreMined).Set("kill_value", t.Stats.KillValue).Set("salvage_left", t.Stats.SalvageLeft)
-                .Set("derricks_captured", t.Stats.DerricksCaptured).Set("derrick_steel", (int)t.Stats.DerrickSteel));
+                .Set("derricks_captured", t.Stats.DerricksCaptured).Set("derrick_steel", (int)t.Stats.DerrickSteel).Set("upkeep_paid", (int)t.Stats.UpkeepPaid));
 
             o.Set("events", EventsFor(w, team, sinceSeq, 25));
             o.Set("last_event_seq", w.Events.Count > 0 ? w.Events[w.Events.Count - 1].Seq : 0);
@@ -286,6 +288,7 @@ namespace Pez.Sim
                     case "arena_cleared": s = e.Text; break;
                     case "captured": if (e.Team == team || (e.Text != null && e.Text.Contains(w.Teams[team].Name + "'s"))) s = e.Text; break;
                     case "low_fuel": case "stranded": case "refuelled": case "retreating": case "unstalled": case "surveyed": case "depleted": case "drilled": case "drill_failed": case "survey_failed":
+                    case "defences_offline": case "defences_online":
                     case "research_started": case "researched":
                         if (e.Team == team) s = e.Text; break;
                     case "defeated": case "game_over": s = e.Text; break;
@@ -297,6 +300,26 @@ namespace Pez.Sim
         }
 
         public static List<Entity> RadarContacts(World w, int team) => w.RadarContacts(team);
+
+        /// <summary>Defence upkeep as data: how many armed defences, how many are free, what the rest cost, which are offline.</summary>
+        public static JObj UpkeepJson(World w, int team)
+        {
+            var defs = w.Defences(team);
+            int paying = Math.Max(0, defs.Count - World.FreeDefences);
+            return new JObj().Set("defences", defs.Count).Set("free", World.FreeDefences).Set("paying", paying)
+                .Set("steel_per_min", paying * World.UpkeepPerMinute).Set("per_defence_per_min", World.UpkeepPerMinute)
+                .Set("offline", defs.Where(e => e.Offline).Select(e => (object)e.Id).ToList());
+        }
+
+        public static string UpkeepText(World w, int team)
+        {
+            var defs = w.Defences(team);
+            int paying = Math.Max(0, defs.Count - World.FreeDefences);
+            var off = defs.Where(e => e.Offline).ToList();
+            return $"{defs.Count} armed defence(s): the first {World.FreeDefences} are free, each one past that costs {World.UpkeepPerMinute:0} steel/min" +
+                   (paying > 0 ? $" (you pay {paying * World.UpkeepPerMinute:0} steel/min)" : "") +
+                   (off.Count > 0 ? $". OFFLINE for want of steel (holding fire, newest first): {string.Join(", ", off.Select(e => $"{e.Def.Key} #{e.Id}"))}" : "");
+        }
 
         /// <summary>
         /// Every derrick on the map (their sites are public, like the map itself) as this team knows it: whose it is if
@@ -477,8 +500,9 @@ namespace Pez.Sim
         /// 16: construction_truck (factory): deploys into a command center; a team with one isn't out.
         /// 17: the match clock: sudden death at hour 4 (regrowth stops), decay 30 min later, the match ends on points at hour 5.
         /// 18: neutral derricks near the middle: an engineer captures one at any health; it pays its holder 1.5 steel/s.
+        /// 19: defence upkeep: armed defences past the first 4 cost 3 steel/min each; unpaid ones go offline, newest first.
         /// </summary>
-        public const int RulesVersion = 18;
+        public const int RulesVersion = 19;
 
         public static JObj Rules()
         {
@@ -497,6 +521,7 @@ namespace Pez.Sim
                 "Aircraft ignore terrain. Only rockets, lasers, SAMs, gunships (and weakly, rifles/mg) can hit them. Stealth bombers are invisible except within 3 tiles of your units or inside your radar dome range.",
                 "Regrowth: mined surface fields slowly grow back toward what they started with: from ore a field still has (spreading to its neighbouring tiles), or from its root (the richest tile) once it's mined to nothing. Fastest in the middle of the map (a mined-bare map earns back a few ore/s, most of it in the middle), barely at all in the corners. Nothing regrows under a structure or on a tile a truck is working, and it stops at sudden death (the match clock). Deep mines (4 ore/s each) remain the bigger income: regrowth is the long tail that makes holding the middle pay.",
                 "Salvage: anything an enemy destroys (with a unit, turret, mine, or a fire it set) leaves about a quarter of its cost as ore on and around the spot (infantry a tenth; a mining truck also spills its load; circuits, lenses and plasma count double, as their raw ore). Anyone's mining trucks can collect it, so the side that holds the ground after a fight profits. Selling, crashes, resignations and your own losses to nobody leave nothing. A SALVAGE ON THE FIELD alert (one per area, with the running total) tells both sides where it lies; stats show kill_value (what you destroyed) and salvage_left.",
+                "Defence upkeep: your first 4 armed defences (gun_turret, sam_site, laser_tower) are free; each one past those costs 3 steel a minute (an 11-tower wall: 21 steel/min). If your stockpile can't pay, the newest go OFFLINE: they stand but hold fire until the steel is there again (a DEFENCES OFFLINE alert says which; 'upkeep' in state shows what you pay and what's offline). A base can always defend itself; walling up for good costs a trickle.",
                 "Derricks: neutral derricks stand near the middle of the map (two on a small map, more on bigger ones, added as it grows; 'derricks' in state lists them all). Nobody owns them and they can't be hurt; any engineer captures one whatever its health ('capture' with the derrick as target, no need to see it). Held, it pays you 1.5 steel/s (no power needed). Enemies take it back like any building: damage it below 50% and capture it with an engineer, or destroy it: it leaves salvage, and a fresh neutral derrick rises on the spot 2 minutes later. A derrick alone doesn't keep a team in the game. Leave or lose and yours go back to neutral.",
                 "Match clock: a match lasts hours, not forever. At sudden death (hour 4 of game time by default; 'match' in state says when) ore stops regrowing. 30 minutes later every structure starts to decay (0.03% of its health a second: repair trucks keep it up, and anything below 50% can be captured by an engineer). 60 minutes after sudden death the match ends on points: each team's share of the territory held (tiles within 6 of its finished structures), of the ore mined and of the value destroyed, 100 points each; the most points wins. Each stage is announced 10 minutes and 1 minute ahead (arena chat and a MATCH CLOCK alert). In an open arena the results stay up for 3 minutes, then a new match starts on a new map: join again for a seat.",
                 "Construction truck (factory, 1500 steel + 200 circuits): drive it anywhere and 'deploy' it into a new command_center where it stands (open ground, no ore, a clear truck lane, as for an outpost). It's insurance: a team that still has one isn't knocked out when its last structure falls, and can rebuild somewhere safe (with an empty stockpile, since the last command center's spills). Or deploy it to expand: every command center builds, trains trucks, takes ore and trickles 1 iron_ore/s.",

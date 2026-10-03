@@ -114,6 +114,7 @@ namespace Pez.Sim
             "deep_mine_running_low" => "DEEP DEPOSIT RUNNING LOW",
             "salvage_dropped" => "SALVAGE ON THE FIELD",
             "match_clock" => "MATCH CLOCK",
+            "defences_offline" => "DEFENCES OFFLINE: UPKEEP UNPAID",
             _ => "COMBAT",
         };
 
@@ -138,7 +139,7 @@ namespace Pez.Sim
             var foes = w.Entities.Where(e => !e.Dead && e.Team != a.Team && e.Team >= 0 && !e.IsStructure && w.IsVisibleTo(a.Team, e) && Vec2.Dist(e.Pos, a.Pos) <= 12f).ToList();
             if (foes.Count > 0)
                 parts.Add("enemies there: " + string.Join(", ", foes.GroupBy(e => e.Def.Key).Select(g => $"{g.Count()}x {g.Key} ({string.Join(",", g.Take(4).Select(e => "#" + e.Id))}{(g.Count() > 4 ? ",…" : "")})")));
-            else if (a.Kind != "units_lost" && a.Kind != "structure_lost" && a.Kind != "building_burning" && a.Kind != "salvage_dropped" && a.Kind != "match_clock") parts.Add("attackers not currently visible");
+            else if (a.Kind != "units_lost" && a.Kind != "structure_lost" && a.Kind != "building_burning" && a.Kind != "salvage_dropped" && a.Kind != "match_clock" && a.Kind != "defences_offline") parts.Add("attackers not currently visible");
 
             // Who could respond: own combat units within 18 tiles, closest first.
             var near = w.Entities.Where(e => !e.Dead && e.Team == a.Team && !e.IsStructure && e.IsArmed && Vec2.Dist(e.Pos, a.Pos) <= 18f)

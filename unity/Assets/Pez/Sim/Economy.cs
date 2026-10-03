@@ -77,6 +77,53 @@ namespace Pez.Sim
             }
         }
 
+        // ------------------------------------------------------------------ defence upkeep
+
+        /// <summary>Armed defences a team keeps for free; each one beyond these costs UpkeepPerMinute steel.</summary>
+        public const int FreeDefences = 4;
+        public const float UpkeepPerMinute = 3f;
+
+        /// <summary>A team's finished armed defences (turrets, SAM sites, laser towers), oldest first.</summary>
+        public List<Entity> Defences(int team) =>
+            Entities.Where(e => !e.Dead && e.Team == team && e.IsStructure && e.IsArmed && e.IsComplete).OrderBy(e => e.Id).ToList();
+
+        /// <summary>
+        /// Light upkeep for defences, every second: a team's first FreeDefences armed defences are free, and each one past
+        /// those costs UpkeepPerMinute steel a minute (an 11-tower wall: 21 steel a minute). What the stockpile can't pay
+        /// for goes offline, newest first: it stands but doesn't fire until the steel is there again. So a base can always
+        /// defend itself, and walling up for good costs a trickle.
+        /// </summary>
+        void Upkeep()
+        {
+            if (Tick % TickRate != 0) return;
+            foreach (var t in Teams)
+            {
+                if (t.Left || t.Defeated) continue;
+                var defs = Defences(t.Id);
+                float each = UpkeepPerMinute / 60f;
+                int paying = Math.Max(0, defs.Count - FreeDefences);
+                float steel = t.Stock.TryGetValue("steel", out var s) ? s : 0;
+                int afford = Math.Min(paying, (int)(steel / each + 1e-4f));
+                if (afford > 0) { t.Add("steel", -afford * each); t.Stats.UpkeepPaid += afford * each; }
+                var wentOff = new List<Entity>();
+                bool cameBack = false;
+                for (int i = 0; i < defs.Count; i++)
+                {
+                    bool off = i >= FreeDefences + afford; // the newest beyond what's paid for
+                    if (off && !defs[i].Offline) wentOff.Add(defs[i]);
+                    if (!off && defs[i].Offline) cameBack = true;
+                    defs[i].Offline = off;
+                }
+                if (wentOff.Count > 0)
+                {
+                    var a = Alerts.Raise(this, t.Id, "defences_offline", Priority.High, wentOff[0].Center, hit: false);
+                    a.Lost.Add($"{string.Join(", ", wentOff.Select(e => $"{e.Def.Key} #{e.Id}"))} offline: upkeep is {UpkeepPerMinute:0} steel/min for each defence past your first {FreeDefences}, and you're out of steel. They hold fire until it's paid (newest go offline first)");
+                    Emit("defences_offline", t.Id, wentOff[0].Id, 0, wentOff[0].Center, text: $"{wentOff.Count} defence(s) went offline: no steel for their upkeep ({UpkeepPerMinute:0} steel/min each past the first {FreeDefences})");
+                }
+                if (cameBack && defs.All(e => !e.Offline)) Emit("defences_online", t.Id, text: "all your defences are back online: their upkeep is paid");
+            }
+        }
+
         // ------------------------------------------------------------------ neutral derricks
 
         /// <summary>

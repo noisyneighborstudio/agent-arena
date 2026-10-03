@@ -893,6 +893,12 @@ namespace Pez.Sim
                 else if (T - taken > 10f) { site.Team = -1; site.Working = false; eng = null; }
             });
             Item("Derrick captured", "an engineer walks up and takes the neutral derrick: it turns Cherry's; released again after 10 s; loops", 46, 5, 9);
+
+            // Defence upkeep: a turret whose upkeep isn't paid stands dark and still, beside one that's paid.
+            var dark = Bldg(Red, "laser_tower", 51, 11);
+            holds.Add(() => dark.Offline = true);
+            Bldg(Red, "laser_tower", 54, 11);
+            Item("Defence offline (upkeep unpaid)", "left: dark and still, holding fire until its team has steel; right: paid and powered", 52.5f, 11);
         }
 
         static string Pretty(string key) => key.Contains(':') ? key : char.ToUpperInvariant(key[0]) + key.Substring(1).Replace('_', ' ');

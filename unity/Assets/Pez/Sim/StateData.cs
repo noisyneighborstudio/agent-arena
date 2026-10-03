@@ -32,6 +32,7 @@ namespace Pez.Sim
                     .Set("reserves", t.Reserve.Aggregate(new JObj(), (j, kv) => j.Set(kv.Key, kv.Value)))
                     .Set("power", new JObj().Set("produced", t.PowerProduced).Set("used", t.PowerUsed).Set("low", t.LowPower)))
                 .Set("map", new JObj().Set("w", w.Map.W).Set("h", w.Map.H).Set("sector_tiles", w.Map.W / 8))
+                .Set("upkeep", StateView.UpkeepJson(w, team))
                 .Set("match", StateView.MatchJson(w));
 
             o.Set("alerts", w.Alerts.Active(w, team).Select(a => (object)Alert(w, a)).ToList());
@@ -51,6 +52,7 @@ namespace Pez.Sim
                     .Set("hp", (int)e.Hp).Set("max_hp", e.Def.MaxHp).Set("complete", e.IsComplete).Set("progress_pct", StateView.Pct(e.BuildProgress))
                     .Set("working", e.Def.Recipes.Length > 0 || e.Def.Key == "fusion_reactor" ? (object)e.Working : null)
                     .Set("under_attack", w.Time - e.LastHitTime < 5);
+                if (e.IsArmed) s.Set("offline", e.Offline);
                 var d = e.Def.Key == "deep_mine" ? w.Map.DepositById(e.DepositId) : null;
                 if (d != null) s.Set("ore", Defs.Ores[d.Type]).Set("deposit_left", (int)d.Amount).Set("runs_dry_in_s", (int)World.DeepMineSecondsLeft(d, t));
                 return (object)s;
@@ -132,7 +134,7 @@ namespace Pez.Sim
             o.Set("stats", new JObj().Set("kills", t.Stats.Kills).Set("units_lost", t.Stats.UnitsLost)
                 .Set("structures_lost", t.Stats.StructuresLost).Set("ore_mined", t.Stats.OreMined)
                 .Set("kill_value", t.Stats.KillValue).Set("salvage_left", t.Stats.SalvageLeft)
-                .Set("derricks_captured", t.Stats.DerricksCaptured).Set("derrick_steel", (int)t.Stats.DerrickSteel));
+                .Set("derricks_captured", t.Stats.DerricksCaptured).Set("derrick_steel", (int)t.Stats.DerrickSteel).Set("upkeep_paid", (int)t.Stats.UpkeepPaid));
             o.Set("events", StateView.EventList(w, team, sinceSeq, 25).Select(e => (object)new JObj()
                 .Set("seq", e.seq).Set("t", e.t).Set("type", e.type).Set("text", e.text)).ToList());
             o.Set("last_event_seq", w.Events.Count > 0 ? w.Events[w.Events.Count - 1].Seq : 0);

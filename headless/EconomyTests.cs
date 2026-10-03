@@ -23,6 +23,55 @@ namespace Pez.Headless
             ConstructionTruck();
             MatchClock();
             Derricks();
+            DefenceUpkeep();
+        }
+
+        static void DefenceUpkeep()
+        {
+            var w = new World(2, 7, 96);
+            var t = w.Teams[0];
+            foreach (var u in w.Entities.Where(e => !e.IsStructure).ToList()) w.Remove(u);
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var turrets = new List<Entity>();
+            for (int i = 0; i < 11; i++) turrets.Add(w.SpawnStructure(0, "gun_turret", w.FindPlacement(0, "gun_turret").Value, 1f));
+            t.Stock["steel"] = 1000;
+            Run(w, 60.05f);
+            float paid = 1000 - t.Stock["steel"];
+            Check(Math.Abs(paid - 21f) < 0.6f && turrets.All(x => !x.Offline), $"an 11-turret base pays 3 steel/min for each turret past the first 4: {paid:0.0} steel a minute");
+            var st = D(StateData.Team(w, 0));
+            var up = (Dictionary<string, object>)st["upkeep"];
+            Check((double)up["defences"] == 11 && (double)up["paying"] == 7 && (double)up["steel_per_min"] == 21 && ((List<object>)up["offline"]).Count == 0, "state shows the upkeep: 11 defences, 7 paying, 21 steel/min");
+
+            // Out of steel: the newest go offline (the first 4 never do), and hold fire.
+            t.Stock["steel"] = 0.16f; // enough for 3 of the 7 for one second
+            Run(w, 1);
+            var off = turrets.Where(x => x.Offline).ToList();
+            Check(off.Count == 4 && off.All(x => x.Id > turrets[6].Id) && turrets.Take(4).All(x => !x.Offline),
+                  $"short of steel, the newest defences past the free ones go offline ({off.Count} offline: #{string.Join(", #", off.Select(x => x.Id))})");
+            t.Stock["steel"] = 0;
+            Run(w, 1);
+            Check(turrets.Count(x => x.Offline) == 7 && w.Alerts.Active(w, 0).Any(a => a.Kind == "defences_offline" && a.Priority == Priority.High),
+                  "with no steel at all, all 7 paid defences are offline and a DEFENCES OFFLINE alert says so");
+            Check(((List<string>)StateView.TeamState(w, 0)["my_structures"]).Count(l => l.Contains("OFFLINE")) == 7, "my_structures marks them OFFLINE");
+            // An enemy tank next to an offline turret and an online one: only the online one fires.
+            var enemy = w.SpawnUnit(1, "heavy_tank", w.Owned(1).First(e => e.IsStructure));
+            var offT = turrets.Last(); var onT = turrets[0];
+            enemy.Pos = enemy.PrevPos = enemy.GuardPos = offT.Center + new Vec2(3, 0);
+            w.SetOrder(enemy, Order.Idle, enemy.Pos);
+            w.UpdateVisibility();
+            float offFired = offT.LastFiredAt;
+            Run(w, 3);
+            Check(offT.LastFiredAt == offFired, "an offline defence holds its fire");
+            t.Stock["steel"] = 500;
+            Run(w, 1.05f);
+            Check(turrets.All(x => !x.Offline) && w.Events.Any(e => e.Type == "defences_online"), "paid again, they come back online");
+            // A base of 4 or fewer never pays anything.
+            var w2 = new World(2, 7, 96);
+            var t2 = w2.Teams[0];
+            for (int i = 0; i < 4; i++) w2.SpawnStructure(0, "gun_turret", w2.FindPlacement(0, "gun_turret").Value, 1f);
+            t2.Stock["steel"] = 0;
+            Run(w2, 30);
+            Check(w2.Defences(0).All(x => !x.Offline) && t2.Stats.UpkeepPaid == 0, "a base can always defend itself: the first 4 defences are free and never go offline");
         }
 
         static void Derricks()

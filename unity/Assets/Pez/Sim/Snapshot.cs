@@ -105,7 +105,7 @@ namespace Pez.Sim
             o.Set("stats", new JObj().Put("units_built", s.UnitsBuilt).Put("structures_built", s.StructuresBuilt).Put("units_lost", s.UnitsLost)
                 .Put("structures_lost", s.StructuresLost).Put("kills", s.Kills).Put("ore_mined", s.OreMined)
                 .Put("kill_value", s.KillValue).Put("salvage_left", s.SalvageLeft).Put("deep_mined", s.DeepMined)
-                .Put("derricks_captured", s.DerricksCaptured).Put("derrick_steel", s.DerrickSteel).Put("salvage_mined", s.SalvageMined)
+                .Put("derricks_captured", s.DerricksCaptured).Put("derrick_steel", s.DerrickSteel).Put("salvage_mined", s.SalvageMined).Put("upkeep_paid", s.UpkeepPaid)
                 .Set("built", s.Built.Aggregate(new JObj(), (j, kv) => j.Set(kv.Key, kv.Value))));
             return o;
         }
@@ -158,7 +158,7 @@ namespace Pez.Sim
                 s.Load("units_built", ref st.UnitsBuilt); s.Load("structures_built", ref st.StructuresBuilt); s.Load("units_lost", ref st.UnitsLost);
                 s.Load("structures_lost", ref st.StructuresLost); s.Load("kills", ref st.Kills); s.Load("ore_mined", ref st.OreMined);
                 s.Load("kill_value", ref st.KillValue); s.Load("salvage_left", ref st.SalvageLeft); s.Load("deep_mined", ref st.DeepMined);
-                s.Load("derricks_captured", ref st.DerricksCaptured); s.Load("derrick_steel", ref st.DerrickSteel); s.Load("salvage_mined", ref st.SalvageMined);
+                s.Load("derricks_captured", ref st.DerricksCaptured); s.Load("derrick_steel", ref st.DerrickSteel); s.Load("salvage_mined", ref st.SalvageMined); s.Load("upkeep_paid", ref st.UpkeepPaid);
                 var b = s.Obj("built");
                 if (b != null) foreach (var kv in b) if (kv.Value is double n) st.Built[kv.Key] = (int)n;
             }
@@ -187,7 +187,7 @@ namespace Pez.Sim
              .Put("cargo", e.Cargo).Put("cargo_type", e.CargoType, -1).Put("harvest_type", e.HarvestType, -1);
             if (e.HarvestTile.HasValue) o.Set("harvest_tile", new List<object> { e.HarvestTile.Value.X, e.HarvestTile.Value.Y });
             o.PutEnum("dock", e.Dock, DockStep.None).Put("dock_at", e.DockAt).Put("burning", e.Burning);
-            o.Put("work_timer", e.WorkTimer).Put("deposit", e.DepositId).Put("working", e.Working).Put("carrier", e.CarrierId);
+            o.Put("work_timer", e.WorkTimer).Put("deposit", e.DepositId).Put("working", e.Working).Put("carrier", e.CarrierId).Put("offline", e.Offline);
             if (e.Passengers.Count > 0) o.Set("passengers", e.Passengers.Cast<object>().ToList());
             o.Put("fuel", e.Fuel).Put("fuel_cap", e.FuelCap).Put("landed", e.Landed).Put("stranded", e.Stranded).Put("at_depot", e.AtDepot).Put("fuel_warned", e.FuelWarned)
              .Put("no_auto_refuel_until", e.NoAutoRefuelUntil).PutEnum("resume_order", e.ResumeOrder, Order.Idle)
@@ -227,7 +227,7 @@ namespace Pez.Sim
             d.Load("cargo", ref e.Cargo); d.Load("cargo_type", ref e.CargoType); d.Load("harvest_type", ref e.HarvestType);
             if (d.Has("harvest_tile", out var ht) && ht is List<object> hl && hl.Count >= 2) e.HarvestTile = new Int2(SnapIO.ToI(hl[0]), SnapIO.ToI(hl[1]));
             d.LoadEnum("dock", ref e.Dock); d.Load("dock_at", ref e.DockAt); d.Load("burning", ref e.Burning);
-            d.Load("work_timer", ref e.WorkTimer); d.Load("deposit", ref e.DepositId); d.Load("working", ref e.Working); d.Load("carrier", ref e.CarrierId);
+            d.Load("work_timer", ref e.WorkTimer); d.Load("deposit", ref e.DepositId); d.Load("working", ref e.Working); d.Load("carrier", ref e.CarrierId); d.Load("offline", ref e.Offline);
             foreach (var x in d.Arr("passengers")) if (x is double pid) e.Passengers.Add((int)pid);
             // A snapshot from before fuel existed: start full rather than stranded.
             e.Fuel = def.Fuel; d.Load("fuel", ref e.Fuel); d.Load("fuel_cap", ref e.FuelCap);

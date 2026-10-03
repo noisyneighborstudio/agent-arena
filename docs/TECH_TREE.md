@@ -37,6 +37,8 @@ The surface runs out and deep deposits run dry, so a long game is decided by who
 
 - **Neutral derricks.** Two derricks stand on a ring around the middle of the map (radius 12% of its size, the first pair the same distance from the first two bases), more on bigger maps (map area / 9,000, 2 to 8), added around the new middle as an open arena grows. Nobody owns them and they can't be hurt; any engineer captures one at any health. Held, it pays 1.5 steel/s (90 a minute: about a third of a refinery flat out). Enemies take it back like any building (an engineer once it's below 50%) or destroy it: it leaves salvage (a quarter of 600 steel) around its site, and a neutral derrick rises there again 2 minutes later. A derrick alone doesn't keep a team in the game; a team that leaves or is out gives its derricks back to neutral. The house AI sends engineers for the neutral ones.
 
+- **Defence upkeep.** A team's first 4 armed defences (gun turrets, SAM sites, laser towers) are free; each one past those costs 3 steel a minute (an 11-tower wall: 21 steel/min). What the stockpile can't pay for goes offline, newest first: it stands but holds fire until the steel is there again (DEFENCES OFFLINE alert; `upkeep` in state). A base can always defend itself; walling up and waiting costs a trickle.
+
 ## Structures
 
 The Command Center builds every structure. A new structure must be placed within 6 tiles of one of your existing structures, so you take territory by building outward or by deploying Outposts.

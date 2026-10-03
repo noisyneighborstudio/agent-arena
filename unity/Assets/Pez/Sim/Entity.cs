@@ -86,6 +86,8 @@ namespace Pez.Sim
 
         // Converters / reactors: currently producing
         public bool Working;
+        /// <summary>A defence whose upkeep its team can't pay: it stands, but doesn't fire until the steel is there (World.Upkeep).</summary>
+        public bool Offline;
 
         // Transports and passengers
         public int CarrierId;                         // != 0 while riding inside a transport
