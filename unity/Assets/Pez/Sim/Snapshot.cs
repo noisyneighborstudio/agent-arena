@@ -105,6 +105,7 @@ namespace Pez.Sim
             o.Set("stats", new JObj().Put("units_built", s.UnitsBuilt).Put("structures_built", s.StructuresBuilt).Put("units_lost", s.UnitsLost)
                 .Put("structures_lost", s.StructuresLost).Put("kills", s.Kills).Put("ore_mined", s.OreMined)
                 .Put("kill_value", s.KillValue).Put("salvage_left", s.SalvageLeft).Put("deep_mined", s.DeepMined)
+                .Put("derricks_captured", s.DerricksCaptured).Put("derrick_steel", s.DerrickSteel).Put("salvage_mined", s.SalvageMined)
                 .Set("built", s.Built.Aggregate(new JObj(), (j, kv) => j.Set(kv.Key, kv.Value))));
             return o;
         }
@@ -157,6 +158,7 @@ namespace Pez.Sim
                 s.Load("units_built", ref st.UnitsBuilt); s.Load("structures_built", ref st.StructuresBuilt); s.Load("units_lost", ref st.UnitsLost);
                 s.Load("structures_lost", ref st.StructuresLost); s.Load("kills", ref st.Kills); s.Load("ore_mined", ref st.OreMined);
                 s.Load("kill_value", ref st.KillValue); s.Load("salvage_left", ref st.SalvageLeft); s.Load("deep_mined", ref st.DeepMined);
+                s.Load("derricks_captured", ref st.DerricksCaptured); s.Load("derrick_steel", ref st.DerrickSteel); s.Load("salvage_mined", ref st.SalvageMined);
                 var b = s.Obj("built");
                 if (b != null) foreach (var kv in b) if (kv.Value is double n) st.Built[kv.Key] = (int)n;
             }
@@ -487,6 +489,7 @@ namespace Pez.Sim
                 .Set("safe_join_distance", SnapIO.X(SafeJoinDistance)).Set("protection_seconds", SnapIO.X(ProtectionSeconds)).Set("stall_grace", SnapIO.X(StallGrace))
                 .Set("next_id", nextId).Set("next_seq", nextSeq).Set("seat_counter", seatCounter).Set("rng", rng.State.ToString("x16"))
                 .Put("errors", Errors).Put("last_error", LastError).Put("arena_champion", ArenaChampion).Put("contested", contested).Put("regrown", Regrown).Set("sudden_death_at", SnapIO.X(SuddenDeathAt))
+                .Set("derrick_respawns", DerrickRespawns.Select(r => (object)new List<object> { r.origin.X, r.origin.Y, SnapIO.X(r.at) }).ToList())
                 .Set("event_counts", EventCounts.Aggregate(new JObj(), (j, kv) => j.Set(kv.Key, kv.Value)))
                 .Set("rate_snapshot", rateSnapshot.Select(kv => (object)new JObj().Set("team", kv.Key).Set("stock", SnapIO.Floats(kv.Value))).ToList())
                 .Set("air_warned", airWarned.Select(kv => (object)new List<object> { kv.Key.team, kv.Key.id, SnapIO.X(kv.Value) }).ToList())
@@ -521,6 +524,8 @@ namespace Pez.Sim
             d.Load("safe_join_distance", ref w.SafeJoinDistance); d.Load("protection_seconds", ref w.ProtectionSeconds); d.Load("stall_grace", ref w.StallGrace);
             d.Load("errors", ref w.Errors); d.Load("last_error", ref w.LastError);
             d.Load("arena_champion", ref w.ArenaChampion); d.Load("contested", ref w.contested); d.Load("regrown", ref w.Regrown); d.Load("sudden_death_at", ref w.SuddenDeathAt);
+            foreach (var x in d.Arr("derrick_respawns"))
+                if (x is List<object> l && l.Count >= 3) w.DerrickRespawns.Add((new Int2(SnapIO.ToI(l[0]), SnapIO.ToI(l[1])), SnapIO.ToF(l[2])));
 
             foreach (var id in d.Objs("inventions")) { var inv = Snapshot.ReadInvention(id); if (inv != null) w.Inventions[inv.Key] = inv; }
 

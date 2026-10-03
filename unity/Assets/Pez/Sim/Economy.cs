@@ -77,6 +77,138 @@ namespace Pez.Sim
             }
         }
 
+        // ------------------------------------------------------------------ neutral derricks
+
+        /// <summary>
+        /// A derrick's pay to its holder (steel a second, no power needed): about a third of a refinery running flat out,
+        /// 90 steel a minute. Worth a fight, not a game on its own.
+        /// </summary>
+        public const float DerrickSteel = 1.5f;
+        /// <summary>Seconds after a derrick is destroyed before a fresh neutral one rises on its site.</summary>
+        public const float DerrickRespawn = 120f;
+        /// <summary>What a derrick is worth when destroyed (its salvage is a quarter of this).</summary>
+        static readonly Dictionary<string, int> DerrickValue = new Dictionary<string, int> { { "steel", 600 } };
+
+        /// <summary>Destroyed derricks waiting to come back: (site origin, game time it rises again). In order of destruction.</summary>
+        public readonly List<(Int2 origin, float at)> DerrickRespawns = new List<(Int2, float)>();
+        bool derricksChecked;
+
+        /// <summary>How many derricks a map this size has: two up to about 130 tiles a side, then more, up to eight.</summary>
+        public static int DerrickCount(int w, int h) => Math.Clamp((int)MathF.Round(w * h / 9000f), 2, 8);
+
+        public IEnumerable<Entity> Derricks => Entities.Where(e => !e.Dead && e.Def.Key == "derrick");
+
+        /// <summary>
+        /// Keep the map's derricks: on a ring around the middle (radius 12% of the map), evenly spaced and starting across
+        /// the diagonal the first two bases share, so the first pair is the same distance from both. Sites near an
+        /// existing derrick (or one waiting to come back) are skipped. Each takes the nearest open 2x2 ground: no ore or
+        /// ore field, no structure, no truck lane, off the deep deposits, clear of base sites.
+        /// </summary>
+        void EnsureDerricks()
+        {
+            derricksChecked = true;
+            if (Showcase != null) return;
+            int want = DerrickCount(Map.W, Map.H);
+            var have = Derricks.Select(d => d.Center).Concat(DerrickRespawns.Select(r => new Vec2(r.origin.X + 1, r.origin.Y + 1))).ToList();
+            if (have.Count >= want) return;
+            var centre = new Vec2(Map.W / 2f, Map.H / 2f);
+            float radius = 0.12f * MathF.Min(Map.W, Map.H);
+            for (int k = 0; k < want * 2 && have.Count < want; k++)
+            {
+                // The first `want` angles evenly round the ring; then the halfway angles, if sites were blocked.
+                float a = 3 * MathF.PI / 4 + (k < want ? k : k - want + 0.5f) * 2 * MathF.PI / want;
+                var site = centre + new Vec2(MathF.Cos(a), MathF.Sin(a)) * radius;
+                if (have.Any(h => Vec2.Dist(h, site) < 8f)) continue;
+                var spot = DerrickSpot(Int2.Of(site));
+                if (!spot.HasValue) continue;
+                var d = PlaceDerrick(spot.Value);
+                have.Add(d.Center);
+            }
+        }
+
+        Int2? DerrickSpot(Int2 near)
+        {
+            for (int r = 0; r <= 10; r++)
+                for (int y = near.Y - r; y <= near.Y + r; y++)
+                    for (int x = near.X - r; x <= near.X + r; x++)
+                    {
+                        if (Math.Max(Math.Abs(x - near.X), Math.Abs(y - near.Y)) != r) continue;
+                        if (DerrickFits(new Int2(x, y))) return new Int2(x, y);
+                    }
+            return null;
+        }
+
+        bool DerrickFits(Int2 o)
+        {
+            for (int y = -1; y < 3; y++)
+                for (int x = -1; x < 3; x++)
+                {
+                    int tx = o.X + x, ty = o.Y + y;
+                    if (!Map.InBounds(tx, ty)) return false;
+                    int i = Map.Idx(tx, ty);
+                    if (Map.Occupant[i] != 0 || !Map.TerrainPassable(tx, ty)) return false; // open ground all round: reachable from every side
+                    bool foot = x >= 0 && y >= 0 && x < 2 && y < 2;
+                    if (foot && (Map.Ore[i] > 0 || Map.OreBase[i] > 0)) return false;
+                }
+            var c = new Vec2(o.X + 1, o.Y + 1);
+            if (Map.Spawns.Any(s => Vec2.Dist(s, c) < 18) || Map.Deep.Any(d => Vec2.Dist(d.Pos, c) < 3)) return false;
+            foreach (var t in Teams) if (BlocksLane(t.Id, o.X, o.Y, Defs.Get("derrick")) != null) return false;
+            return true;
+        }
+
+        Entity PlaceDerrick(Int2 origin)
+        {
+            var d = SpawnStructure(-1, "derrick", origin, 1f);
+            Emit("derrick", -1, d.Id, 0, d.Center, key: "derrick");
+            return d;
+        }
+
+        void DerrickTick(Entity e, Team team)
+        {
+            team.Add("steel", DerrickSteel * Dt);
+            team.Stats.DerrickSteel += DerrickSteel * Dt;
+            e.Working = true;
+        }
+
+        /// <summary>Who may capture it now: anyone's engineer if it's neutral (whatever its health), else below CaptureThreshold.</summary>
+        public static bool Capturable(Entity t) => t.Team < 0 || t.Hp <= t.Def.MaxHp * CaptureThreshold;
+
+        void DerrickCaptured(Entity d, int old)
+        {
+            var t = Teams[d.Team];
+            t.Stats.DerricksCaptured++;
+            Emit("derrick_captured", d.Team, d.Id, 0, d.Center, key: "derrick");
+            Emit("chat", -1, text: $"🛢️ {t.Name} ({t.PlayerName ?? t.Controller}) took {(old >= 0 ? $"{Teams[old].Name}'s" : "a neutral")} derrick at sector {StateView.Sector(Map, d.Center)}: +{DerrickSteel} steel/s while they hold it.");
+        }
+
+        /// <summary>A destroyed derrick leaves salvage (as any kill) and comes back neutral on its site after DerrickRespawn.</summary>
+        void DerrickDestroyed(Entity d) => DerrickRespawns.Add((d.Origin, Time + DerrickRespawn));
+
+        /// <summary>A team that leaves or is out gives its derricks back: they stand neutral (and whole) for anyone to take.</summary>
+        void ReleaseDerricks(int team)
+        {
+            foreach (var d in Derricks.Where(d => d.Team == team).ToList())
+            {
+                d.Team = -1; d.Hp = d.Def.MaxHp; d.Working = false; d.Burning = false; d.LastAttackerTeam = -1;
+                Emit("derrick_released", -1, d.Id, 0, d.Center, key: "derrick");
+            }
+        }
+
+        /// <summary>Once a second: destroyed derricks rise again when their time comes (if the site is clear), and a world
+        /// that had none (a game from before them) gets its set.</summary>
+        void DerrickUpkeepTick()
+        {
+            if (!derricksChecked) EnsureDerricks();
+            if (Tick % TickRate != 0 || DerrickRespawns.Count == 0) return;
+            for (int i = 0; i < DerrickRespawns.Count; i++)
+            {
+                var (origin, at) = DerrickRespawns[i];
+                if (Time < at) continue;
+                if (DerrickFits(origin)) { PlaceDerrick(origin); DerrickRespawns.RemoveAt(i); i--; }
+                else DerrickRespawns[i] = (origin, Time + 10f); // something stands there: try again shortly
+            }
+        }
+
         // ------------------------------------------------------------------ salvage from kills
 
         /// <summary>Share of a destroyed thing's cost left as salvage ore when an enemy kills it (infantry leave less).</summary>
@@ -96,6 +228,7 @@ namespace Pez.Sim
         public Dictionary<string, int> ValueOf(EntityDef d)
         {
             if (d.Cost.Count > 0) return d.Cost;
+            if (d.Key == "derrick") return DerrickValue;
             foreach (var u in Defs.All.Values) if (u.DeploysInto == d.Key && u.Cost.Count > 0) return u.Cost;
             if (d.Key == "command_center") return HqValue;
             return d.Cost;
@@ -142,7 +275,10 @@ namespace Pez.Sim
             var foot = new HashSet<Int2>();
             if (victim.IsStructure)
                 for (int y = 0; y < victim.Def.SizeY; y++) for (int x = 0; x < victim.Def.SizeX; x++) foot.Add(new Int2(victim.Origin.X + x, victim.Origin.Y + y));
-            DropSalvage(victim.Center, foot, victim.IsStructure ? (victim.Def.SizeX + 1) / 2 + 3 : 3, value, victim.Def.Key, victim.Id, killer, victim.Team);
+            // A derrick's site must stay clear for the one that rises there again: its salvage lands around it, not on it.
+            var avoid = victim.Def.Key == "derrick" ? foot : null;
+            if (avoid != null) foot = new HashSet<Int2>();
+            DropSalvage(victim.Center, foot, victim.IsStructure ? (victim.Def.SizeX + 1) / 2 + 3 : 3, value, victim.Def.Key, victim.Id, killer, victim.Team, avoid);
         }
 
         /// <summary>The kitchen sink's wrecks: what an enemy kill of a `key` at `at` would leave.</summary>
@@ -154,9 +290,9 @@ namespace Pez.Sim
             return DropSalvage(at, new HashSet<Int2>(), 3, value, key, 0, killer, victimTeam);
         }
 
-        int DropSalvage(Vec2 at, HashSet<Int2> foot, int reach, float[] value, string key, int victimId, int killer, int victimTeam)
+        int DropSalvage(Vec2 at, HashSet<Int2> foot, int reach, float[] value, string key, int victimId, int killer, int victimTeam, HashSet<Int2> avoid = null)
         {
-            int placed = PlaceSalvage(at, foot, value, reach);
+            int placed = PlaceSalvage(at, foot, value, reach, avoid);
             if (placed <= 0) return 0;
             if (killer >= 0 && killer < Teams.Count) Teams[killer].Stats.SalvageLeft += placed;
             Emit("salvage", killer, victimId, 0, at, key: key, text: $"{placed} ore of salvage from {key} #{victimId}");
@@ -170,7 +306,7 @@ namespace Pez.Sim
         }
 
         /// <summary>Put salvage ore down around a point (footprint tiles first). Returns the amount placed.</summary>
-        int PlaceSalvage(Vec2 at, HashSet<Int2> footprint, float[] value, int reach)
+        int PlaceSalvage(Vec2 at, HashSet<Int2> footprint, float[] value, int reach, HashSet<Int2> avoid = null)
         {
             int placed = 0;
             int cx = (int)at.X, cy = (int)at.Y;
@@ -183,7 +319,7 @@ namespace Pez.Sim
                 int left = (int)value[k];
                 if (left < MinSalvagePile) continue;
                 // Footprint first, then nearest; an existing pile of the same ore within reach is topped up first.
-                var order = tiles.Where(c => SalvageFits(c.t, k))
+                var order = tiles.Where(c => SalvageFits(c.t, k) && (avoid == null || !avoid.Contains(c.t)))
                                  .OrderBy(c => (footprint.Contains(c.t) ? -100f : 0f) + c.d - (Map.Ore[Map.Idx(c.t.X, c.t.Y)] > 0 ? 1.5f : 0f))
                                  .ThenBy(c => c.t.Y).ThenBy(c => c.t.X).ToList();
                 foreach (var (t, _) in order)

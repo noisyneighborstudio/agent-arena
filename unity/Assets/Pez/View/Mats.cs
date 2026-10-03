@@ -90,6 +90,8 @@ namespace Pez.View
             new Color32(142, 68, 217, 255), new Color32(58, 47, 158, 255), new Color32(15, 140, 138, 255), new Color32(142, 27, 74, 255),
         };
         public static readonly string[] TeamNames = { "Blueberry", "Cherry", "Lime", "Lemon", "Grape", "Blackberry", "Spearmint", "Plum" };
-        public static Color Team(int t) => t >= 0 && t < TeamColors.Length ? TeamColors[t] : Color.white;
+        /// <summary>Nobody's (team -1: a neutral derrick): the sugar pad's warm grey, so it reads as unclaimed, not as a ninth team.</summary>
+        public static readonly Color Neutral = PezPalette.MaterialsSugarPad;
+        public static Color Team(int t) => t < 0 ? Neutral : t < TeamColors.Length ? TeamColors[t] : Color.white;
     }
 }

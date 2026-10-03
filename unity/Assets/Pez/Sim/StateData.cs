@@ -80,7 +80,12 @@ namespace Pez.Sim
 
             o.Set("mines", mine.Where(e => e.IsMine).Select(m => (object)Point(m.Pos)).ToList());
 
-            o.Set("enemies", w.Entities.Where(e => !e.Dead && e.Team != team && w.IsVisibleTo(team, e)).Select(e =>
+            o.Set("derricks", StateView.DerrickInfo(w, team).Select(x => (object)new JObj().Set("id", x.d.Id).Set("x", x.d.Origin.X).Set("y", x.d.Origin.Y).Set("w", 2).Set("h", 2)
+                .Set("owner_team", x.owner >= -1 ? (object)x.owner : null).Set("owner", x.owner == -1 ? "neutral" : x.owner >= 0 ? w.Teams[x.owner].Name : null)
+                .Set("yours", x.owner == team).Set("in_sight", x.seen).Set("hp", x.seen ? (object)(int)x.d.Hp : null).Set("max_hp", x.d.Def.MaxHp)
+                .Set("capturable_now", x.capturable).Set("income_steel_per_s", World.DerrickSteel)).ToList());
+
+            o.Set("enemies", w.Entities.Where(e => !e.Dead && e.Team != team && e.Team >= 0 && w.IsVisibleTo(team, e)).Select(e =>
             {
                 var x = new JObj().Set("id", e.Id).Set("team", e.Team).Set("type", e.Def.Key).Set("hp", (int)e.Hp).Set("max_hp", e.Def.MaxHp)
                     .Set("structure", e.IsStructure).Set("air", e.IsAir);
@@ -92,7 +97,7 @@ namespace Pez.Sim
                 .Set("team", e.Team).Set("x", (int)e.Pos.X).Set("y", (int)e.Pos.Y).Set("kind", "aircraft")).ToList());
 
             o.Set("remembered_enemy_structures", t.KnownEnemyStructures
-                .Where(kv => { var e = w.Get(kv.Key); return e == null || !w.IsVisibleTo(team, e); })
+                .Where(kv => kv.Value.team >= 0 && kv.Value.key != "derrick" && (w.Get(kv.Key) is var e && (e == null || !w.IsVisibleTo(team, e))))
                 .Select(kv => (object)new JObj().Set("id", kv.Key).Set("team", kv.Value.team).Set("type", kv.Value.key)
                     .Set("x", kv.Value.origin.X).Set("y", kv.Value.origin.Y)).ToList());
 
@@ -126,7 +131,8 @@ namespace Pez.Sim
 
             o.Set("stats", new JObj().Set("kills", t.Stats.Kills).Set("units_lost", t.Stats.UnitsLost)
                 .Set("structures_lost", t.Stats.StructuresLost).Set("ore_mined", t.Stats.OreMined)
-                .Set("kill_value", t.Stats.KillValue).Set("salvage_left", t.Stats.SalvageLeft));
+                .Set("kill_value", t.Stats.KillValue).Set("salvage_left", t.Stats.SalvageLeft)
+                .Set("derricks_captured", t.Stats.DerricksCaptured).Set("derrick_steel", (int)t.Stats.DerrickSteel));
             o.Set("events", StateView.EventList(w, team, sinceSeq, 25).Select(e => (object)new JObj()
                 .Set("seq", e.seq).Set("t", e.t).Set("type", e.type).Set("text", e.text)).ToList());
             o.Set("last_event_seq", w.Events.Count > 0 ? w.Events[w.Events.Count - 1].Seq : 0);

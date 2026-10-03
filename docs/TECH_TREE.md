@@ -35,6 +35,8 @@ The surface runs out and deep deposits run dry, so a long game is decided by who
 
 - **Ore regrowth.** Mined surface fields slowly grow back toward their original amounts (the map remembers each field tile's original ore, `Map.OreBase`): from ore a field still has, spreading into its neighbouring tiles, and from the field's root (its richest tile) once it's mined to nothing. The rate per tile is 0.12 ore/s × √(ore richness) at the map's centre, falling steeply to 4% of that in the corners; nothing regrows under a structure, on a tile a truck is working, past the original amount, or after sudden death (the match clock). A mined-bare 96-tile map earns back about 7 ore/s (3.5 at richness 0.3), about 70% of it in the middle; a deep mine pumps 4/s, so deep mining stays the mid-game economy.
 
+- **Neutral derricks.** Two derricks stand on a ring around the middle of the map (radius 12% of its size, the first pair the same distance from the first two bases), more on bigger maps (map area / 9,000, 2 to 8), added around the new middle as an open arena grows. Nobody owns them and they can't be hurt; any engineer captures one at any health. Held, it pays 1.5 steel/s (90 a minute: about a third of a refinery flat out). Enemies take it back like any building (an engineer once it's below 50%) or destroy it: it leaves salvage (a quarter of 600 steel) around its site, and a neutral derrick rises there again 2 minutes later. A derrick alone doesn't keep a team in the game; a team that leaves or is out gives its derricks back to neutral. The house AI sends engineers for the neutral ones.
+
 ## Structures
 
 The Command Center builds every structure. A new structure must be placed within 6 tiles of one of your existing structures, so you take territory by building outward or by deploying Outposts.
@@ -57,6 +59,7 @@ The Command Center builds every structure. A new structure must be placed within
 | Fusion Reactor | 600 steel, 200 circuits, 50 plasma | enrichment_plant | +500 power (burns plasma) |
 | Airfield | 500 steel, 200 circuits | enrichment_plant | aircraft |
 | Outpost | deploy an Outpost Truck | – | forward ore drop-off, territory anchor, vision 9 |
+| Derrick | neutral, near the middle (capture it) | an engineer | pays its holder 1.5 steel/s, no power needed |
 
 ## Units
 

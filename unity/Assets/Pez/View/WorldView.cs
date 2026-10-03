@@ -28,6 +28,7 @@ namespace Pez.View
             public bool Rammed;
             public int OreTint = -1;     // deep mine: the ore its tube is tinted to; mining truck: the ore its load shows
             public float DustNext;       // decaying structure: when its next grit falls
+            public int TeamShown;        // the team colour its model wears (a captured building changes hands)
             public int Born;             // frame the view was made (deploys pair a unit with the structure it became)
             public float BoardT;         // boarding: 0..1 while the passenger shrinks into its carrier
             public Bars Bars;            // world-space health and fuel bars (seen by every camera)
@@ -293,6 +294,7 @@ namespace Pez.View
 
         bool Producing(Entity e)
         {
+            if (e.Team < 0) return false; // neutral: idle until someone takes it
             var t = World.Teams[e.Team];
             if (e.Def.Key == "command_center") return t.StructureQueue.Count > 0;
             if (e.Def.Key == "radar_dome") return e.IsComplete && !t.LowPower;
@@ -522,7 +524,7 @@ namespace Pez.View
             float r = e.IsStructure ? Mathf.Max(e.Def.SizeX, e.Def.SizeY) * 0.75f : e.Def.Radius * 2.6f;
             ring.localScale = new Vector3(r, 1f, r);
             ring.gameObject.SetActive(false);
-            var v = new EV { E = e, Rig = rig, Ring = ring, Born = Time.frameCount, Bars = e.IsMine ? null : new Bars(rig.Root, e, 0f) };
+            var v = new EV { E = e, Rig = rig, Ring = ring, Born = Time.frameCount, Bars = e.IsMine ? null : new Bars(rig.Root, e, 0f), TeamShown = e.Team };
             if (e.IsStructure) { rig.Root.position = W(e.Center); Plinths.Register(e.Id, rig.Root.position, rig.Plinth); }
             if (e.IsStructure && !e.IsComplete && rig.HasModel) v.Site = new SiteView(rig.Root, e.Def.SizeX, e.Def.SizeY);
             if (e.IsStructure && e.Def.DropOff && rig.HasModel)
@@ -537,6 +539,12 @@ namespace Pez.View
         {
             var e = v.E;
             var rig = v.Rig;
+            if (e.IsStructure && rig.HasModel && v.TeamShown != e.Team)
+            {
+                // Captured (an engineer took it; a derrick claimed or released): it wears its new owner's colours.
+                Models.TintTeam(rig.Model, e.Team);
+                v.TeamShown = e.Team;
+            }
             if (e.IsStructure && rig.HasModel)
             {
                 // Build stages rise out of the pad as construction progresses.
@@ -576,7 +584,7 @@ namespace Pez.View
                 }
                 else if (rig.Turret != null && e.Def.Key == "radar_dome")
                     rig.Turret.localRotation = Quaternion.Euler(0, e.IsComplete ? Time.time * 50f + e.Id * 47f : 0, 0);
-                else if (rig.Turret != null && e.Def.Key == "deep_mine")
+                else if (rig.Turret != null && e.Def.ModelKey == "deep_mine") // a deep mine, or a derrick drawn as one
                     rig.Turret.localRotation = Quaternion.Euler(e.Working ? Time.time * 140f + e.Id * 47f : 0, 0, 0); // the sheave turns while it pumps
                 else if (rig.Turret != null && e.Def.Key == "construction_yard")
                 {

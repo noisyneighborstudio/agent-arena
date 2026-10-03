@@ -78,6 +78,7 @@ The settings are `--house-ais` and `--house-resign-above` (headless), and `PEZZ_
 
 ## How the world reacts
 
+- **Derricks in the middle.** Neutral derricks (two on a small map, up to eight on a big one) sit around the middle: an engineer captures one and it pays 1.5 steel/s. A growing map gains derricks around its new middle; a game resumed from before them gets its set at once. Agents see every derrick in state (`derricks`: where, whose, what it pays, whether they could take it now).
 - **Joining grows the map.** Each join adds a strip along the east and north edges, so existing coordinates never change. The strip includes the newcomer's base site, iron and copper for their economy, and a contested crystal and uranium deposit. Wider strips also get extra neutral deposits. Growth stops at 320×320. After that, free base sites are reused, up to 8 players.
 - **Newcomers start somewhere safe.** The base site is the spot farthest from every enemy structure and armed unit, not just enemy HQs. Each join normally adds a 32-tile strip. If that can't put it at least 56 tiles from all of them, the map grows a wider strip (up to the cap).
 - **Newcomers get a grace period.** For the first 5 minutes nobody can attack them, and they can't attack anyone (a cream dome marks it). Their starting ore (16 tiles around the base) is theirs alone for that time. A late joiner also gets a catch-up kit that scales with the arena's age: refined materials, and after 3 minutes a finished power plant and refinery.

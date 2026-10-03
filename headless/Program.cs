@@ -107,7 +107,7 @@ namespace Pez.Headless
             void Report(string when)
             {
                 Console.WriteLine($"{when}: t={w.Time / 3600:0.00}h map {w.Map.W}x{w.Map.H}, field tiles {w.Map.OreBase.Count(x => x > 0)} (orig ore {w.Map.OreBase.Sum()}), surface ore {w.Map.Ore.Sum()}, regrown {w.Regrown}, " +
-                                  $"players {w.ActivePlayers}, game_over {w.GameOver}, errors {w.Errors} {w.LastError}");
+                                  $"derricks {w.Derricks.Count()} (held {w.Derricks.Count(d => d.Team >= 0)}), match {World.PhaseName(w.Phase)} (sudden death in {(w.SuddenDeathAt - w.Time) / 60:0} min), players {w.ActivePlayers}, game_over {w.GameOver}, errors {w.Errors} {w.LastError}");
                 foreach (var t in w.Teams.Where(t => !t.Left && !t.Defeated))
                     Console.WriteLine($"   {t.Name} ({t.PlayerName}): structures {w.Owned(t.Id).Count(e => e.IsStructure)}, units {w.Owned(t.Id).Count(e => !e.IsStructure)}, steel {t.Amount("steel")}, kills {t.Stats.Kills}, ore {t.Stats.OreMined}");
             }
@@ -152,7 +152,8 @@ namespace Pez.Headless
                 {
                     int mined = w.Teams.Sum(t => t.Stats.OreMined), deep = w.Teams.Sum(t => t.Stats.DeepMined), salvage = w.Teams.Sum(t => t.Stats.SalvageLeft);
                     int share = mined > 0 ? 100 * deep / mined : 0;
-                    Console.WriteLine($"econ t={w.Time / 60:0}m mined {mined} surface {mined - deep} deep {deep} deep_share {share}% regrown {w.Regrown} salvage_left {salvage} surface_left {w.Map.Ore.Sum()} kills {w.Teams.Sum(t => t.Stats.Kills)}");
+                    Console.WriteLine($"econ t={w.Time / 60:0}m mined {mined} surface {mined - deep} deep {deep} deep_share {share}% regrown {w.Regrown} salvage_left {salvage} salvage_mined {w.Teams.Sum(t => t.Stats.SalvageMined)} surface_left {w.Map.Ore.Sum()} kills {w.Teams.Sum(t => t.Stats.Kills)} " +
+                                      $"derricks {w.Derricks.Count()} held {w.Derricks.Count(d => d.Team >= 0)} captures {w.Teams.Sum(t => t.Stats.DerricksCaptured)} derrick_steel {(int)w.Teams.Sum(t => t.Stats.DerrickSteel)} phase {World.PhaseName(w.Phase)}");
                 }
             }
             Console.WriteLine($"Simulated {w.Time / 60:0.0} game-minutes in {sw.Elapsed.TotalSeconds:0.0}s real.");

@@ -22,6 +22,97 @@ namespace Pez.Headless
             OreRegrowth();
             ConstructionTruck();
             MatchClock();
+            Derricks();
+        }
+
+        static void Derricks()
+        {
+            var w = new World(2, 7, 96);
+            var ds = w.Derricks.ToList();
+            var mid = new Vec2(48, 48);
+            float d0 = Vec2.Dist(ds[0].Center, w.Teams[0].StartPos), d1 = Vec2.Dist(ds[0].Center, w.Teams[1].StartPos);
+            Check(ds.Count == 2 && ds.All(d => d.Team == -1 && Vec2.Dist(d.Center, mid) < 18) && Math.Abs(d0 - d1) < 6,
+                  $"a 96-tile map has two neutral derricks near the middle, about as far from each base ({d0:0} vs {d1:0} tiles)");
+            Check(World.DerrickCount(208, 208) == 5 && World.DerrickCount(320, 320) == 8, "bigger maps get more (5 at 208, 8 at 320)");
+            var d = ds[0];
+            var hq0 = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var tank = At(w.SpawnUnit(0, "heavy_tank", hq0), d.Center + new Vec2(3, 0));
+            w.Hurt(d, 5000, tank);
+            var ra = Commands.Execute(w, 0, Cmd("type", "attack", "units", new[] { tank.Id }, "target", d.Id));
+            Run(w, 5);
+            Check(d.Hp == d.Def.MaxHp && !Ok(ra) && tank.LastFiredAt < 0, $"a neutral derrick can't be hurt, and nobody shoots at it ({Said(ra)})");
+
+            // Captured by any engineer at full health, even out of sight; then it pays its holder.
+            tank.Pos = tank.PrevPos = tank.GuardPos = hq0.Center + new Vec2(0, -4); // out of the way (it would shoot the engineers)
+            foreach (var u in w.Owned(0).Concat(w.Owned(1)).Where(u => !u.IsStructure && u != tank).ToList()) w.Remove(u);
+            var t1 = w.Teams[1];
+            var eng = At(w.SpawnUnit(1, "engineer", w.Owned(1).First(e => e.IsStructure)), d.Center + new Vec2(1.6f, 0.4f));
+            var rc = Commands.Execute(w, 1, Cmd("type", "capture", "units", new[] { eng.Id }, "target", d.Id));
+            Run(w, 10);
+            float steel0 = t1.Amount("steel");
+            Run(w, 10);
+            float paid = t1.Amount("steel") - steel0;
+            Check(Ok(rc) && d.Team == 1 && eng.Dead && t1.Stats.DerricksCaptured == 1 && w.Events.Any(e => e.Type == "chat" && e.Text.Contains("derrick")),
+                  $"an engineer captures a neutral derrick at full health ({Said(rc)})");
+            Check(paid >= 14.5f && paid <= 15.5f + 10f /* the command center's trickle is iron, not steel */, $"it pays its holder 1.5 steel/s ({paid:0.0} steel in 10 s)");
+            // Its new owner's enemies: not above 50%, yes below it; destroyed it leaves salvage and comes back neutral.
+            var eng0 = At(w.SpawnUnit(0, "engineer", hq0), d.Center + new Vec2(-1.6f, 0));
+            w.UpdateVisibility();
+            var r1 = Commands.Execute(w, 0, Cmd("type", "capture", "units", new[] { eng0.Id }, "target", d.Id));
+            w.Hurt(d, d.Def.MaxHp * 0.6f, tank);
+            var r2 = Commands.Execute(w, 0, Cmd("type", "capture", "units", new[] { eng0.Id }, "target", d.Id));
+            Run(w, 10);
+            Check(!Ok(r1) && Ok(r2) && d.Team == 0, $"an owned derrick is taken back like any building: an engineer once it's below 50% ({Said(r1)})");
+            int salvage0 = w.Teams[1].Stats.SalvageLeft;
+            var raider = At(w.SpawnUnit(1, "heavy_tank", w.Owned(1).First(e => e.IsStructure)), d.Center + new Vec2(3, 3));
+            w.Hurt(d, 1e5f, raider);
+            Check(d.Dead && w.Teams[1].Stats.SalvageLeft - salvage0 == 150 && w.DerrickRespawns.Count == 1, $"destroyed, it leaves salvage ({w.Teams[1].Stats.SalvageLeft - salvage0} iron ore)");
+            Run(w, 119);
+            int during = w.Derricks.Count();
+            Run(w, 2);
+            var back = w.Derricks.FirstOrDefault(x => x.Origin.Equals(d.Origin));
+            Check(during == 1 && back != null && back.Team == -1 && back.Hp == back.Def.MaxHp, "and a fresh neutral derrick rises on its site two minutes later");
+
+            // A derrick doesn't keep a team in; a team that leaves or is out gives its derricks back.
+            var w2 = new World(2, 7, 96) { Open = true };
+            var dd = w2.Derricks.First();
+            foreach (var u in w2.Owned(0).Where(u => !u.IsStructure).ToList()) w2.Remove(u);
+            var e2 = At(w2.SpawnUnit(1, "engineer", w2.Owned(1).First(e => e.IsStructure)), dd.Center + new Vec2(1.6f, 0));
+            w2.SetOrder(e2, Order.Capture, dd.Center, dd.Id);
+            Run(w2, 8);
+            bool held = dd.Team == 1;
+            foreach (var e in w2.Owned(1).Where(e => e != dd).ToList()) w2.Remove(e);
+            Run(w2, 2);
+            Check(held && w2.Teams[1].Defeated && dd.Team == -1 && !dd.Dead, "a team left with nothing but a derrick is out, and its derrick goes back to neutral");
+            var t3 = w2.AddTeam("llm", "Joiner", out _);
+            int after = w2.Derricks.Count();
+            Check(w2.Map.W > 96 && after == World.DerrickCount(w2.Map.W, w2.Map.H), $"the map grows and gains derricks around its new middle ({w2.Map.W}x{w2.Map.H}: {after})");
+
+            // What players see: every derrick, whose it is, what it pays; neutral ones aren't listed as enemies.
+            var st = D(StateData.Team(w, 0));
+            var list = (List<object>)st["derricks"];
+            var enemies = (List<object>)st["enemies"];
+            Check(list.Count == 2 && list.Cast<Dictionary<string, object>>().All(x => x.ContainsKey("income_steel_per_s") && x.ContainsKey("owner_team")) &&
+                  !enemies.Cast<Dictionary<string, object>>().Any(x => (string)x["type"] == "derrick" && (double)x["team"] < 0),
+                  "state lists every derrick (where, whose, its pay) and never a neutral one as an enemy");
+            var text = StateView.TeamState(w, 0);
+            Check(((List<string>)text["derricks"]).Any(l => l.Contains("neutral") && l.Contains("capture")), $"the text state says how to take one ({((List<string>)text["derricks"]).FirstOrDefault()})");
+
+            // A game saved before derricks gets them when it resumes.
+            var g = new Game(new GameConfig { Seed = 8, MapSize = 96, Controllers = new[] { "llm", "llm" } });
+            var root = (Dictionary<string, object>)Json.Parse(Snap(g));
+            var ents = (List<object>)((Dictionary<string, object>)root["world"])["entities"];
+            ents.RemoveAll(x => (string)((Dictionary<string, object>)x)["def"] == "derrick");
+            var old = Resume(Json.Write(root));
+            Check(!old.World.Derricks.Any(), "(an old save has none)");
+            Step(old, 1);
+            Check(old.World.Derricks.Count() == 2 && old.World.Errors == 0, "a game from before derricks gets its set on resume");
+
+            // The house AI sends engineers for them.
+            var ai = new Game(new GameConfig { Seed = 9, MapSize = 96, Open = true, Controllers = new[] { "ai", "ai" } });
+            Step(ai, 12 * 60);
+            Check(ai.World.Derricks.Count(x => x.Team >= 0) >= 1 && ai.World.Teams.Sum(t => t.Stats.DerricksCaptured) >= 1,
+                  $"house AIs capture derricks with engineers ({ai.World.Derricks.Count(x => x.Team >= 0)} held after 12 minutes)");
         }
 
         static Dictionary<string, object> D(JObj o) => (Dictionary<string, object>)Json.Parse(Json.Write(o));

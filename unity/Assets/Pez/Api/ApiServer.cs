@@ -499,10 +499,10 @@ namespace Pez.Api
 
         static JObj UnitDetails(World w, Entity e, bool full)
         {
-            var t = w.Teams[e.Team];
+            var t = e.Team >= 0 ? w.Teams[e.Team] : null; // null: neutral (an unclaimed derrick)
             var d = e.Def;
             var o = new JObj().Set("ok", true).Set("id", e.Id).Set("type", d.Key).Set("name", d.Name).Set("team", e.Team)
-                .Set("flavor", t.Name).Set("player", t.PlayerName ?? t.Controller)
+                .Set("flavor", t?.Name ?? "Neutral").Set("player", t == null ? "nobody: any engineer can capture it" : t.PlayerName ?? t.Controller)
                 .Set("hp", (int)e.Hp).Set("max_hp", d.MaxHp).Set("armor", d.Armor.ToString().ToLowerInvariant())
                 .Set("structure", e.IsStructure).Set("air", e.IsAir).Set("description", d.Description);
             if (!e.IsStructure) o.Set("speed", d.Speed);

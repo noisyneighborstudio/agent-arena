@@ -1339,6 +1339,7 @@ namespace Pez.View
         /// <summary>The rest of what you'd want to know about one unit: whose it is and what it's up to.</summary>
         string UnitDetail(Entity e)
         {
+            if (e.Team < 0) return $"Neutral · any engineer can capture it, then it pays {World.DerrickSteel} steel/s";
             var t = W.Teams[e.Team];
             var parts = new List<string> { $"{t.Name} · {t.PlayerName ?? t.Controller}" };
             if (!e.IsStructure)

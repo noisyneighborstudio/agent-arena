@@ -847,7 +847,7 @@ namespace Pez.Sim
 
         void Endgame()
         {
-            Begin("endgame", "Endgame", "The long-game rules: the construction truck rebuilding a base, and a building decaying in the match's last half hour.", 94, 62, 56, 14);
+            Begin("endgame", "Endgame", "The long-game rules: the construction truck rebuilding a base, a building decaying in the match's last half hour, and the neutral derricks in the middle.", 94, 62, 56, 14);
             // The construction truck rolls a few tiles, stops and deploys into a command center; 14 s later the command
             // center is cleared and a new truck rolls up.
             var from = P(3, 4); var to = P(9, 4.5f);
@@ -871,6 +871,28 @@ namespace Pez.Sim
             Decaying.Add(decaying.Id);
             holds.Add(() => decaying.Hp = decaying.Def.MaxHp * (1f - 0.55f * (T % 60f) / 60f));
             Item("Decaying building", "the match's last half hour: grit crumbles off the roof, its health runs down (repair trucks keep it up); loops every 60 s", 18, 4);
+
+            // Derricks: one neutral (nobody's grey), one held by Blueberry (pumping, in team colours), and one an engineer
+            // keeps capturing: it walks up, the derrick takes Cherry's colours, and 10 s later it's released to neutral again.
+            Bldg(-1, "derrick", 28, 9);
+            Item("Neutral derrick", "nobody's: sugar-pad grey, idle; any engineer can capture it", 28, 9);
+            Bldg(Blue, "derrick", 34, 9);
+            Item("Derrick held", "in its holder's colours, the sheave turning: it pays 1.5 steel/s", 34, 9);
+            var site = Bldg(-1, "derrick", 43, 7);
+            var engFrom = P(50, 2);
+            Entity eng = null; float taken = -1;
+            holds.Add(() =>
+            {
+                if (site.Team < 0)
+                {
+                    taken = -1;
+                    if (eng == null || eng.Dead) { eng = w.PlaceUnit(Red, "engineer", engFrom, AlongLeft); w.SetOrder(eng, Order.Capture, site.Center, site.Id); }
+                    else if (eng.Order != Order.Capture) w.SetOrder(eng, Order.Capture, site.Center, site.Id);
+                }
+                else if (taken < 0) taken = T;
+                else if (T - taken > 10f) { site.Team = -1; site.Working = false; eng = null; }
+            });
+            Item("Derrick captured", "an engineer walks up and takes the neutral derrick: it turns Cherry's; released again after 10 s; loops", 46, 5, 9);
         }
 
         static string Pretty(string key) => key.Contains(':') ? key : char.ToUpperInvariant(key[0]) + key.Substring(1).Replace('_', ' ');

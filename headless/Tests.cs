@@ -871,6 +871,7 @@ namespace Pez.Headless
         static void Mines()
         {
             var w = new World(2, 7);
+            foreach (var d in w.Derricks.ToList()) w.Remove(d); // one stands on this scene's lane
             w.Teams[0].Add("steel", 200);
             var layer = At(Mine0(w, "minelayer"), new Vec2(30.5f, 30.5f));
             var r = Commands.Execute(w, 0, Cmd("type", "lay_mines", "units", new[] { layer.Id }, "x", 34, "y", 30, "count", 2));

@@ -135,7 +135,7 @@ namespace Pez.Sim
             if (a.Lost.Count > 0) parts.Add("lost: " + string.Join(", ", a.Lost.Take(6)) + (a.Lost.Count > 6 ? $" +{a.Lost.Count - 6} more" : ""));
 
             // Enemies now visible around the alert, grouped by type.
-            var foes = w.Entities.Where(e => !e.Dead && e.Team != a.Team && !e.IsStructure && w.IsVisibleTo(a.Team, e) && Vec2.Dist(e.Pos, a.Pos) <= 12f).ToList();
+            var foes = w.Entities.Where(e => !e.Dead && e.Team != a.Team && e.Team >= 0 && !e.IsStructure && w.IsVisibleTo(a.Team, e) && Vec2.Dist(e.Pos, a.Pos) <= 12f).ToList();
             if (foes.Count > 0)
                 parts.Add("enemies there: " + string.Join(", ", foes.GroupBy(e => e.Def.Key).Select(g => $"{g.Count()}x {g.Key} ({string.Join(",", g.Take(4).Select(e => "#" + e.Id))}{(g.Count() > 4 ? ",…" : "")})")));
             else if (a.Kind != "units_lost" && a.Kind != "structure_lost" && a.Kind != "building_burning" && a.Kind != "salvage_dropped" && a.Kind != "match_clock") parts.Add("attackers not currently visible");

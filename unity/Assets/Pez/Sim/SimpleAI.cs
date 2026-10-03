@@ -183,6 +183,23 @@ namespace Pez.Sim
                 }
             }
 
+            // ---- Derricks: engineers go for the neutral ones (a raiding AI also takes enemy ones it sees below 50%).
+            if (w.HasComplete(team, "barracks"))
+            {
+                var engineers = mine.Where(e => e.Def.Engineer).ToList();
+                var targets = w.Derricks.Where(d => d.Team != team && (d.Team < 0 || (!Passive && World.Capturable(d) && w.IsVisibleTo(team, d))))
+                                        .OrderBy(d => Vec2.Dist(d.Center, t.StartPos)).ToList();
+                foreach (var d in targets)
+                {
+                    if (engineers.Any(en => en.Order == Order.Capture && en.TargetId == d.Id)) continue;
+                    var free = engineers.FirstOrDefault(en => en.Order == Order.Idle);
+                    if (free != null) { Do(w, "type", "capture", "units", new[] { free.Id }, "target", d.Id); engineers.Remove(free); continue; }
+                    if (engineers.Count < 2 && !t.UnitQueues[Producer.Barracks].Any(q => q.Key == "engineer") && Affordable("engineer"))
+                        Do(w, "type", "train", "unit", "engineer");
+                    break;
+                }
+            }
+
             // ---- Keep a couple of repair trucks (they auto-repair whatever is damaged near them)
             if (w.HasComplete(team, "factory") && mine.Count(e => e.Def.Key == "repair_truck") < 2 &&
                 !t.UnitQueues[Producer.Factory].Any(p => p.Key == "repair_truck") && t.Amount("steel") > 300 && Affordable("repair_truck"))
@@ -257,7 +274,7 @@ namespace Pez.Sim
             if (idle.Count >= waveSize)
             {
                 Vec2 goal;
-                var known = t.KnownEnemyStructures.Values.ToList();
+                var known = t.KnownEnemyStructures.Values.Where(k => k.team >= 0).ToList(); // not neutral derricks
                 if (known.Count > 0) { var k = known.OrderBy(x => Vec2.Dist(new Vec2(x.origin.X, x.origin.Y), t.StartPos)).First(); goal = new Vec2(k.origin.X + 1, k.origin.Y + 1); }
                 else
                 {

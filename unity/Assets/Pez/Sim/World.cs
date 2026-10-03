@@ -26,6 +26,11 @@ namespace Pez.Sim
         public int KillValue, SalvageLeft;
         /// <summary>Of OreMined, what came from deep mines (the rest is surface ore and salvage, by truck).</summary>
         public int DeepMined;
+        /// <summary>Derricks this team has captured, and the steel they've paid it.</summary>
+        public int DerricksCaptured;
+        public float DerrickSteel;
+        /// <summary>Ore its trucks mined off ground that was never a field: salvage (from kills, or a leaver's base).</summary>
+        public int SalvageMined;
         public readonly Dictionary<string, int> Built = new Dictionary<string, int>();
         public void Count(string key) => Built[key] = (Built.TryGetValue(key, out var n) ? n : 0) + 1;
     }
@@ -238,6 +243,7 @@ namespace Pez.Sim
             Paths = new Pathfinder(Map);
             MakeCurrent();
             for (int t = 0; t < teamCount; t++) CreateTeam(Map.Spawns[t]);
+            EnsureDerricks();
             UpdatePower();
             UpdateVisibility();
         }
@@ -372,6 +378,7 @@ namespace Pez.Sim
             foreach (var e in Entities)
                 if (!e.Dead && e.Def.RangeMaps > 0) { float f = e.FuelFraction; e.FuelCap = DroneFuel(e.Def); e.Fuel = f * e.FuelMax; }
             MapVersion++;
+            EnsureDerricks(); // a bigger map gets more, around its new middle
         }
 
         static readonly Dictionary<string, (byte ore, float mult)> SalvageOf = new Dictionary<string, (byte, float)>
@@ -473,6 +480,7 @@ namespace Pez.Sim
         {
             var t = Teams[teamId];
             if (t.Left) return "already left";
+            ReleaseDerricks(teamId);
             var value = new float[4];
             void AddCost(Dictionary<string, int> cost, float f) { foreach (var kv in cost) if (SalvageOf.TryGetValue(kv.Key, out var s)) value[s.ore] += kv.Value * s.mult * f; }
             foreach (var kv in t.Stock) if (SalvageOf.TryGetValue(kv.Key, out var s) && kv.Value > 0) value[s.ore] += kv.Value * s.mult;
@@ -637,8 +645,7 @@ namespace Pez.Sim
                         int i = Map.Idx(e.Origin.X + x, e.Origin.Y + y);
                         if (Map.Occupant[i] == e.Id) Map.Occupant[i] = 0;
                     }
-                var team = Teams[e.Team];
-                team.StructureQueue.RemoveAll(p => p.StructureId == e.Id);
+                if (e.Team >= 0) Teams[e.Team].StructureQueue.RemoveAll(p => p.StructureId == e.Id);
                 UpdatePower();
             }
         }
@@ -828,6 +835,7 @@ namespace Pez.Sim
             if (Tick % 4 == 0) Guard("visibility", UpdateVisibility);
             Guard("victory", CheckVictory);
             Guard("match", MatchClock);
+            Guard("derricks", DerrickUpkeepTick);
             Guard("regrowth", Regrow);
             TickOreVersion();
             if (Showcase != null) Guard("showcase", Showcase.Hold); // the kitchen sink room only (KitchenSink.cs)
@@ -838,7 +846,7 @@ namespace Pez.Sim
             foreach (var t in Teams) { t.PowerProduced = 0; t.PowerUsed = 0; }
             foreach (var e in Entities)
             {
-                if (e.Dead || !e.IsStructure || !e.IsComplete) continue;
+                if (e.Dead || !e.IsStructure || !e.IsComplete || e.Team < 0) continue;
                 var t = Teams[e.Team];
                 if (e.Def.Key == "fusion_reactor" && !e.Working) continue; // out of plasma
                 if (e.Def.Power > 0) t.PowerProduced += e.Def.Power; else t.PowerUsed -= e.Def.Power;
@@ -853,8 +861,9 @@ namespace Pez.Sim
             bool powerChanged = false;
             foreach (var e in Entities)
             {
-                if (e.Dead || !e.IsStructure || !e.IsComplete) continue;
+                if (e.Dead || !e.IsStructure || !e.IsComplete || e.Team < 0) continue; // neutral derricks pay nobody
                 var team = Teams[e.Team];
+                if (e.Def.Key == "derrick") { DerrickTick(e, team); continue; }
                 if (e.Def.Key == "fusion_reactor")
                 {
                     float burn = 0.1f * Dt;
@@ -1176,16 +1185,19 @@ namespace Pez.Sim
         void UpdateCapture(Entity e)
         {
             var t = Get(e.TargetId);
-            if (t == null || !t.IsStructure || t.Team == e.Team || !t.IsComplete || t.Hp > t.Def.MaxHp * CaptureThreshold) { SetOrder(e, Order.Idle, e.Pos); return; }
+            if (t == null || !t.IsStructure || t.Team == e.Team || !t.IsComplete || !Capturable(t)) { SetOrder(e, Order.Idle, e.Pos); return; }
             if (t.DistFrom(e.Pos) > 0.6f) { Chase(e, t); return; }
             int old = t.Team;
             t.Team = e.Team;
             t.Rally = null;
+            t.LastAttackerTeam = -1; // its old owner's fire isn't the new owner's kill
             Teams[e.Team].KnownEnemyStructures.Remove(t.Id);
-            Teams[old].Stats.StructuresLost++;
+            if (old >= 0) Teams[old].Stats.StructuresLost++;
             Teams[e.Team].Stats.Count(t.Def.Key);
-            Emit("captured", e.Team, t.Id, e.Id, t.Center, key: t.Def.Key);
-            Alerts.Raise(this, old, "structure_lost", Priority.Critical, t.Center, attacker: e).Lost.Add($"{t.Def.Key} #{t.Id} (captured by an engineer)");
+            Emit("captured", e.Team, t.Id, e.Id, t.Center, key: t.Def.Key,
+                 text: $"{Teams[e.Team].Name}'s engineer captured {(old >= 0 ? $"{Teams[old].Name}'s" : "a neutral")} {t.Def.Key} #{t.Id} at {(int)t.Center.X},{(int)t.Center.Y}");
+            if (old >= 0) Alerts.Raise(this, old, "structure_lost", Priority.Critical, t.Center, attacker: e).Lost.Add($"{t.Def.Key} #{t.Id} (captured by an engineer)");
+            if (t.Def.Key == "derrick") DerrickCaptured(t, old);
             Remove(e); // the engineer moves in for good
             UpdatePower();
         }
@@ -1291,7 +1303,7 @@ namespace Pez.Sim
             Near(e.Pos, radius, nearTarget);
             foreach (var o in nearTarget)
             {
-                if (o.Dead || o.Team == e.Team || o.IsCarried) continue;
+                if (o.Dead || o.Team == e.Team || o.IsCarried || o.Team < 0) continue; // neutral derricks aren't enemies
                 if (IsProtected(o.Team) || IsProtected(e.Team)) continue; // newcomer protection: no fighting either way
                 if (e.Def.Weapon != null && !e.Def.Weapon.CanHit(o.Def)) continue;
                 float d = o.DistFrom(e.Pos);
@@ -1370,6 +1382,7 @@ namespace Pez.Sim
         /// </summary>
         void Burn(Entity e)
         {
+            if (e.Team < 0) return;
             float f = e.Hp / e.Def.MaxHp;
             if (f >= BurnBelow || e.Hp <= 0f)
             {
@@ -1394,6 +1407,7 @@ namespace Pez.Sim
         void Damage(Entity t, float amount, Entity src, int srcTeam = -1, bool burn = false)
         {
             if (t.Dead) return;
+            if (t.Team < 0) return; // neutral (an unclaimed derrick): can't be hurt
             if (IsProtected(t.Team)) return; // newcomer protection
             int team = src?.Team ?? srcTeam;
             t.Hp -= amount;
@@ -1428,6 +1442,7 @@ namespace Pez.Sim
                 Remove(t);
                 if (lastHq) ReleaseStockpile(t);
                 if (salvage != null) DropSalvage(t, salvage, team);
+                if (t.Def.Key == "derrick") DerrickDestroyed(t);
             }
         }
 
@@ -1487,6 +1502,7 @@ namespace Pez.Sim
                     int i = Map.Idx(tile.X, tile.Y);
                     int take = Math.Min(Math.Min(4, Map.Ore[i]), cap - e.Cargo);
                     Map.Ore[i] -= take;
+                    if (Map.OreBase[i] == 0) Teams[e.Team].Stats.SalvageMined += take;
                     if (take > 0) { e.Cargo += take; e.CargoType = Map.OreType[i]; }
                     e.TurretFacing += 0.3f; // spin the cutter for the view
                 }
@@ -2440,7 +2456,7 @@ namespace Pez.Sim
             if (hq) return null;
             bool dropOff = mine.Any(e => e.IsStructure && e.IsComplete && e.Def.DropOff);
             if (dropOff && mine.Any(e => e.IsHarvester && !e.Stranded && !e.IsCarried) && (mine.Any(e => e.IsHarvester && e.Cargo > 0) || Map.Ore.Any(o => o > 0))) return null;
-            if (mine.Any(e => e.IsStructure && e.Working)) return null;
+            if (mine.Any(e => e.IsStructure && e.Working && e.Def.Key != "derrick")) return null; // a derrick alone can't change the game
             if (t.UnitQueues.Values.Any(q => q.Count > 0)) return null;
             foreach (var d in Defs.All.Values)
                 if (d.BuiltBy != Producer.None && d.BuiltBy != Producer.CommandCenter && d.Cost.Count > 0 && MissingPrereq(t.Id, d) == null && t.Missing(d.Cost) == null)
@@ -2485,6 +2501,7 @@ namespace Pez.Sim
                 return;
             }
             t.Defeated = true;
+            ReleaseDerricks(t.Id);
             foreach (var e in Entities.Where(e => !e.Dead && e.Team == t.Id).ToList()) { Emit("destroyed", e.Team, e.Id, 0, e.Center, key: e.Def.Key); Remove(e); }
             Emit("defeated", t.Id, text: $"{t.Name} ({t.PlayerName ?? t.Controller}) could make no further progress ({why}) and was resigned as lost");
         }
@@ -2508,7 +2525,7 @@ namespace Pez.Sim
 
         /// <summary>A team is still in the game while it has a structure, or a construction truck that could deploy into one.</summary>
         public bool StillStanding(int team) =>
-            Entities.Any(e => !e.Dead && e.Team == team && (e.IsStructure || e.Def.DeploysInto == "command_center"));
+            Entities.Any(e => !e.Dead && e.Team == team && ((e.IsStructure && e.Def.Key != "derrick") || e.Def.DeploysInto == "command_center"));
 
         void CheckVictory()
         {
@@ -2522,6 +2539,7 @@ namespace Pez.Sim
                 {
                     if (team.Defeated || StillStanding(team.Id)) continue;
                     team.Defeated = true;
+                    ReleaseDerricks(team.Id);
                     foreach (var e in Entities.Where(e => !e.Dead && e.Team == team.Id).ToList()) { Emit("destroyed", e.Team, e.Id, 0, e.Center, key: e.Def.Key); Remove(e); }
                     Emit("defeated", team.Id, text: $"{team.Name} ({team.PlayerName ?? team.Controller}) has been eliminated");
                     ForgetTeam(team.Id);
@@ -2535,6 +2553,7 @@ namespace Pez.Sim
                 if (!StillStanding(team.Id))
                 {
                     team.Defeated = true;
+                    ReleaseDerricks(team.Id);
                     foreach (var e in Entities) if (!e.Dead && e.Team == team.Id) { Emit("destroyed", e.Team, e.Id, 0, e.Center, key: e.Def.Key); Remove(e); }
                     Emit("defeated", team.Id, text: $"{team.Name} ({team.PlayerName ?? team.Controller}) has been defeated");
                 }

@@ -224,7 +224,9 @@ namespace Pez.Sim
                 return s;
             }).ToList());
 
-            o.Set("visible_enemies", w.Entities.Where(e => !e.Dead && e.Team != team && w.IsVisibleTo(team, e)).Select(e =>
+            o.Set("derricks", DerrickInfo(w, team).Select(d => d.line).ToList());
+
+            o.Set("visible_enemies", w.Entities.Where(e => !e.Dead && e.Team != team && e.Team >= 0 && w.IsVisibleTo(team, e)).Select(e =>
                 e.IsStructure
                     ? $"#{e.Id} team{e.Team} {e.Def.Key} at {e.Origin.X},{e.Origin.Y} ({e.Def.SizeX}x{e.Def.SizeY}) hp {(int)e.Hp}/{e.Def.MaxHp}"
                     : $"#{e.Id} team{e.Team} {e.Def.Key} at {R(e.Pos.X)},{R(e.Pos.Y)} hp {(int)e.Hp}/{e.Def.MaxHp}").ToList());
@@ -234,7 +236,7 @@ namespace Pez.Sim
                 : blips.Select(e => $"enemy aircraft (team{e.Team}) at {(int)e.Pos.X},{(int)e.Pos.Y}").ToList());
 
             o.Set("remembered_enemy_structures", t.KnownEnemyStructures
-                .Where(kv => { var e = w.Get(kv.Key); return e == null || !w.IsVisibleTo(team, e); })
+                .Where(kv => kv.Value.team >= 0 && kv.Value.key != "derrick" && (w.Get(kv.Key) is var e && (e == null || !w.IsVisibleTo(team, e))))
                 .Select(kv => $"#{kv.Key} team{kv.Value.team} {kv.Value.key} at {kv.Value.origin.X},{kv.Value.origin.Y} (last seen)").ToList());
 
             o.Set("ore_fields", OreFields(w, t.Explored).Select(f => $"{f.type} around {f.cx},{f.cy}: {f.tiles} tiles, {f.total} units").ToList());
@@ -245,7 +247,8 @@ namespace Pez.Sim
 
             o.Set("stats", new JObj()
                 .Set("kills", t.Stats.Kills).Set("units_lost", t.Stats.UnitsLost).Set("structures_lost", t.Stats.StructuresLost)
-                .Set("ore_mined", t.Stats.OreMined).Set("kill_value", t.Stats.KillValue).Set("salvage_left", t.Stats.SalvageLeft));
+                .Set("ore_mined", t.Stats.OreMined).Set("kill_value", t.Stats.KillValue).Set("salvage_left", t.Stats.SalvageLeft)
+                .Set("derricks_captured", t.Stats.DerricksCaptured).Set("derrick_steel", (int)t.Stats.DerrickSteel));
 
             o.Set("events", EventsFor(w, team, sinceSeq, 25));
             o.Set("last_event_seq", w.Events.Count > 0 ? w.Events[w.Events.Count - 1].Seq : 0);
@@ -281,6 +284,7 @@ namespace Pez.Sim
                         else if (w.Teams[team].Visible[w.Map.Idx((int)e.Pos.X, (int)e.Pos.Y)]) s = $"destroyed enemy {e.Key} #{e.A}";
                         break;
                     case "arena_cleared": s = e.Text; break;
+                    case "captured": if (e.Team == team || (e.Text != null && e.Text.Contains(w.Teams[team].Name + "'s"))) s = e.Text; break;
                     case "low_fuel": case "stranded": case "refuelled": case "retreating": case "unstalled": case "surveyed": case "depleted": case "drilled": case "drill_failed": case "survey_failed":
                     case "research_started": case "researched":
                         if (e.Team == team) s = e.Text; break;
@@ -293,6 +297,30 @@ namespace Pez.Sim
         }
 
         public static List<Entity> RadarContacts(World w, int team) => w.RadarContacts(team);
+
+        /// <summary>
+        /// Every derrick on the map (their sites are public, like the map itself) as this team knows it: whose it is if
+        /// it's in sight or yours, else whose it was when last seen (or unknown), whether an engineer could take it now,
+        /// and what it pays.
+        /// </summary>
+        public static List<(Entity d, int owner, bool seen, bool known, bool capturable, string line)> DerrickInfo(World w, int team)
+        {
+            var list = new List<(Entity, int, bool, bool, bool, string)>();
+            var memory = w.Teams[team].KnownEnemyStructures;
+            foreach (var d in w.Derricks)
+            {
+                bool seen = d.Team == team || w.IsVisibleTo(team, d);
+                bool known = seen || memory.ContainsKey(d.Id);
+                int owner = seen ? d.Team : known ? memory[d.Id].team : -2;
+                bool capturable = seen && d.Team != team && World.Capturable(d);
+                string whose = owner == team ? $"YOURS: +{World.DerrickSteel} steel/s, hp {(int)d.Hp}/{d.Def.MaxHp}" + (d.Hp <= d.Def.MaxHp * World.CaptureThreshold ? " (below 50%: enemy engineers can take it; repair it)" : "")
+                             : owner == -1 ? $"neutral{(seen ? "" : " when last seen")}: any engineer captures it ('capture'), then it pays {World.DerrickSteel} steel/s"
+                             : owner >= 0 ? $"{w.Teams[owner].Name}'s (team{owner}){(seen ? $", hp {(int)d.Hp}/{d.Def.MaxHp}{(capturable ? ": below 50%, your engineers can take it" : ": damage it below 50% to capture it")}" : " when last seen")}"
+                             : "never seen: every derrick starts neutral, and any engineer captures a neutral one ('capture' works without sight)";
+                list.Add((d, owner, seen, known, capturable, $"#{d.Id} derrick at {d.Origin.X},{d.Origin.Y} (2x2): {whose}"));
+            }
+            return list;
+        }
 
         /// <summary>One mining zone (a flagged deep deposit) as a line: id, ore, where, how much, status, who flagged it.</summary>
         static string ZoneLine(World w, DeepDeposit d, int team)
@@ -362,7 +390,7 @@ namespace Pez.Sim
         {
             { "command_center", 'C' }, { "outpost", 'O' }, { "power_plant", 'P' }, { "mining_refinery", 'R' }, { "barracks", 'B' }, { "factory", 'F' },
             { "gun_turret", 'T' }, { "electronics_plant", 'E' }, { "radar_dome", 'D' }, { "sam_site", 'S' }, { "optics_lab", 'L' }, { "enrichment_plant", 'N' },
-            { "laser_tower", 'Z' }, { "composite_foundry", 'K' }, { "fusion_reactor", 'U' }, { "airfield", 'A' }, { "deep_mine", 'Q' },
+            { "laser_tower", 'Z' }, { "composite_foundry", 'K' }, { "fusion_reactor", 'U' }, { "airfield", 'A' }, { "deep_mine", 'Q' }, { "derrick", 'G' },
         };
         static char GlyphFor(string key) => Glyph.TryGetValue(key, out var c) ? c : 'Y';
 
@@ -412,7 +440,7 @@ namespace Pez.Sim
             }
             var sb = new StringBuilder();
             sb.AppendLine("Legend: . open  # rock  ~ water  blank = unexplored | ore: $ iron_ore  % copper_ore  * crystal  ! uranium  + your mining zone (flagged deep deposit)");
-            sb.AppendLine("YOUR structures: C command_center O outpost P power_plant R mining_refinery B barracks F factory T gun_turret E electronics_plant D radar_dome S sam_site L optics_lab N enrichment_plant Z laser_tower K composite_foundry U fusion_reactor A airfield Q deep_mine Y other (enemy: same letters lowercase)");
+            sb.AppendLine("YOUR structures: C command_center O outpost P power_plant R mining_refinery B barracks F factory T gun_turret E electronics_plant D radar_dome S sam_site L optics_lab N enrichment_plant Z laser_tower K composite_foundry U fusion_reactor A airfield Q deep_mine G derrick Y other (enemy and neutral: same letters lowercase)");
             sb.AppendLine("Units: yours i infantry v vehicle m mining_truck a aircraft ^ mine | enemy x infantry X vehicle M mining_truck W aircraft & mine | enemies outside your vision are hidden; enemy structures you've seen stay drawn");
             // Rulers: the full x number at every tenth column (0, 10, ... 220), then every column's units digit.
             var labels = new StringBuilder();
@@ -448,8 +476,9 @@ namespace Pez.Sim
         /// 15: mined surface fields slowly regrow, fastest in the middle of the map.
         /// 16: construction_truck (factory): deploys into a command center; a team with one isn't out.
         /// 17: the match clock: sudden death at hour 4 (regrowth stops), decay 30 min later, the match ends on points at hour 5.
+        /// 18: neutral derricks near the middle: an engineer captures one at any health; it pays its holder 1.5 steel/s.
         /// </summary>
-        public const int RulesVersion = 17;
+        public const int RulesVersion = 18;
 
         public static JObj Rules()
         {
@@ -468,6 +497,7 @@ namespace Pez.Sim
                 "Aircraft ignore terrain. Only rockets, lasers, SAMs, gunships (and weakly, rifles/mg) can hit them. Stealth bombers are invisible except within 3 tiles of your units or inside your radar dome range.",
                 "Regrowth: mined surface fields slowly grow back toward what they started with: from ore a field still has (spreading to its neighbouring tiles), or from its root (the richest tile) once it's mined to nothing. Fastest in the middle of the map (a mined-bare map earns back a few ore/s, most of it in the middle), barely at all in the corners. Nothing regrows under a structure or on a tile a truck is working, and it stops at sudden death (the match clock). Deep mines (4 ore/s each) remain the bigger income: regrowth is the long tail that makes holding the middle pay.",
                 "Salvage: anything an enemy destroys (with a unit, turret, mine, or a fire it set) leaves about a quarter of its cost as ore on and around the spot (infantry a tenth; a mining truck also spills its load; circuits, lenses and plasma count double, as their raw ore). Anyone's mining trucks can collect it, so the side that holds the ground after a fight profits. Selling, crashes, resignations and your own losses to nobody leave nothing. A SALVAGE ON THE FIELD alert (one per area, with the running total) tells both sides where it lies; stats show kill_value (what you destroyed) and salvage_left.",
+                "Derricks: neutral derricks stand near the middle of the map (two on a small map, more on bigger ones, added as it grows; 'derricks' in state lists them all). Nobody owns them and they can't be hurt; any engineer captures one whatever its health ('capture' with the derrick as target, no need to see it). Held, it pays you 1.5 steel/s (no power needed). Enemies take it back like any building: damage it below 50% and capture it with an engineer, or destroy it: it leaves salvage, and a fresh neutral derrick rises on the spot 2 minutes later. A derrick alone doesn't keep a team in the game. Leave or lose and yours go back to neutral.",
                 "Match clock: a match lasts hours, not forever. At sudden death (hour 4 of game time by default; 'match' in state says when) ore stops regrowing. 30 minutes later every structure starts to decay (0.03% of its health a second: repair trucks keep it up, and anything below 50% can be captured by an engineer). 60 minutes after sudden death the match ends on points: each team's share of the territory held (tiles within 6 of its finished structures), of the ore mined and of the value destroyed, 100 points each; the most points wins. Each stage is announced 10 minutes and 1 minute ahead (arena chat and a MATCH CLOCK alert). In an open arena the results stay up for 3 minutes, then a new match starts on a new map: join again for a seat.",
                 "Construction truck (factory, 1500 steel + 200 circuits): drive it anywhere and 'deploy' it into a new command_center where it stands (open ground, no ore, a clear truck lane, as for an outpost). It's insurance: a team that still has one isn't knocked out when its last structure falls, and can rebuild somewhere safe (with an empty stockpile, since the last command center's spills). Or deploy it to expand: every command center builds, trains trucks, takes ore and trickles 1 iron_ore/s.",
                 "Protect your command center: when a team's LAST command center is destroyed, its entire stockpile spills out as salvage ore on the footprint, and anyone's trucks can mine it (first come, first served). The team plays on with whatever else it has.",

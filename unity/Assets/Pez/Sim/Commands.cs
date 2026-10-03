@@ -30,7 +30,7 @@ namespace Pez.Sim
   {""type"":""heal"", ""units"":[IDS], ""target"":ID}       medics heal a wounded friendly infantry unit (free); same as repair
   {""type"":""load"", ""units"":[INFANTRY IDS], ""transport"":ID}   infantry walk to an APC / transport_chopper and board it
   {""type"":""unload"", ""units"":[TRANSPORT IDS]}          drop all passengers where the transport is
-  {""type"":""capture"", ""units"":[ENGINEER IDS], ""target"":ID}  engineer takes over an enemy structure below 50% HP (engineer is used up)
+  {""type"":""capture"", ""units"":[ENGINEER IDS], ""target"":ID}  engineer takes over an enemy structure below 50% HP, or a neutral derrick at any HP (engineer is used up)
   {""type"":""lay_mines"", ""units"":[MINELAYER IDS], ""x"":X, ""y"":Y, ""count"":N}  lay up to 8 hidden mines around x,y (30 steel each)
   {""type"":""deploy"", ""units"":[IDS]}                   deploy an outpost_truck into an Outpost or a construction_truck into a Command Center where it stands, or a drill_rig into a Deep Mine on a surveyed deep deposit within 3 tiles
   {""type"":""survey"", ""units"":[SURVEYOR IDS], ""x"":X, ""y"":Y}  survey one spot for deep ore deposits (8s, 12-tile radius), flag each one found as a mining zone (only your team sees them), then wait
@@ -301,6 +301,7 @@ namespace Pez.Sim
             var target = w.Get((int)c.Num("target", 0));
             if (target == null) return Err("target not found (it may be destroyed)");
             if (target.Team == team) return Err("that is your own unit");
+            if (target.Team < 0) return Err($"{target.Def.Key} #{target.Id} is neutral: it can't be hurt; capture it with an engineer instead");
             if (w.IsProtected(target.Team)) return Err($"that player is under newcomer protection for {(int)(w.Teams[target.Team].ProtectedUntil - w.Time)}s more");
             if (!w.IsVisibleTo(team, target)) return Err("target is not currently visible; use attack_move toward its last known position");
             var able = units.Where(u => u.Def.Weapon.CanHit(target.Def)).ToList();
@@ -399,14 +400,15 @@ namespace Pez.Sim
             var eng = ResolveUnits(w, team, c).Where(u => u.Def.Engineer).ToList();
             if (eng.Count == 0) return Err("no engineers given");
             var t = w.Get((int)c.Num("target", 0));
-            if (t == null || !t.IsStructure || t.Team == team) return Err("target must be an enemy structure");
-            if (!w.IsVisibleTo(team, t)) return Err("target is not currently visible");
+            if (t == null || !t.IsStructure || t.Team == team) return Err("target must be an enemy structure, or a neutral derrick");
+            // Neutral derricks are landmarks everyone knows about: no need to see one to send an engineer.
+            if (t.Team >= 0 && !w.IsVisibleTo(team, t)) return Err("target is not currently visible");
             if (w.IsProtected(t.Team)) return Err("that player is under newcomer protection");
             if (!t.IsComplete) return Err("can't capture a structure that's still under construction");
-            if (t.Hp > t.Def.MaxHp * World.CaptureThreshold)
+            if (!World.Capturable(t))
                 return Err($"{t.Def.Key} #{t.Id} is at {(int)t.Hp}/{t.Def.MaxHp}; damage it below 50% before an engineer can capture it");
             foreach (var u in eng) w.SetOrder(u, Order.Capture, t.Center, t.Id);
-            return Ok($"{eng.Count} engineer(s) moving to capture {t.Def.Key} #{t.Id}");
+            return Ok($"{eng.Count} engineer(s) moving to capture {(t.Team < 0 ? "the neutral " : "")}{t.Def.Key} #{t.Id}" + (t.Def.Key == "derrick" ? $" (it pays {World.DerrickSteel} steel/s while you hold it)" : ""));
         }
 
         static readonly Vec2[] MinePattern =
