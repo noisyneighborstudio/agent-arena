@@ -39,6 +39,9 @@ namespace Pez.View
             public DockView Dock;
             public int DockFrame = -10;
             public DockView.Phase DockBest;
+            // Construction: the staked site, the last progress seen (stage landings) and the crane's beam cadence.
+            public SiteView Site;
+            public float PrevBuild = -1f, BeamT;
         }
 
         public World World { get; private set; }
@@ -306,6 +309,52 @@ namespace Pez.View
             if (rate != v.RateShown) { v.Rig.Motion.SetRate(rate); v.RateShown = rate; }
         }
 
+        static readonly float[] StageLands = { 0.10f, 0.45f, 0.75f };
+        static readonly Color BeamCream = new Color(0.93f, 0.89f, 0.82f, 0.9f);
+
+        /// <summary>
+        /// Construction as an interaction (base-building review rec. 2; fix 7), all driven by the sim's BuildProgress and
+        /// StructureQueue, so low power slows it automatically and nothing waits on the view:
+        ///  - the site is staked out from the moment it's placed (SiteView), with a pallet of bricks while it's queued;
+        ///  - each stage landing (progress crossing 0.10, 0.45, 0.75) kicks dust out at the footprint's corners;
+        ///  - the command center's crane slews to the queue head and a cream construction beam runs from its hook to the
+        ///    rising structure every 0.25 s (stuttering on low power); with nothing queued the crane idles in a sweep.
+        /// </summary>
+        void Construction(EV v)
+        {
+            var e = v.E;
+            float dt = Time.deltaTime;
+            if (v.Site != null)
+            {
+                var q = World.Teams[e.Team].StructureQueue;
+                bool queued = !e.IsComplete && e.BuildProgress <= 0f && (q.Count == 0 || q[0].StructureId != e.Id);
+                v.Site.Tick(e.IsComplete, queued, dt);
+                if (v.Site.Done) v.Site = null;
+            }
+            float p = e.BuildProgress;
+            if (v.PrevBuild >= 0f && p > v.PrevBuild && !e.IsComplete)
+                foreach (var t in StageLands)
+                    if (v.PrevBuild < t && p >= t) Fx.StageDust(v.Rig.Root.position, e.Def.SizeX, e.Def.SizeY);
+            v.PrevBuild = p;
+            if (e.Def.Key == "command_center" && e.IsComplete) Crane(v);
+        }
+
+        void Crane(EV v)
+        {
+            var team = World.Teams[v.E.Team];
+            var head = team.StructureQueue.Count > 0 ? World.Get(team.StructureQueue[0].StructureId) : null;
+            var m = v.Rig.Motion;
+            m.SetCraneTarget(head != null, head != null ? W(head.Center) : Vector3.zero);
+            if (head == null || head.IsComplete || !Views.TryGetValue(head.Id, out var hv)) return;
+            if ((v.BeamT -= Time.deltaTime) > 0f) return;
+            v.BeamT = 0.25f;
+            if (team.LowPower && ((int)(Time.time * 8f) & 1) == 1) return; // stutters at 4 Hz on low power
+            float top = 0.15f + Mathf.Max(0.05f, head.BuildProgress) * Mathf.Max(head.Def.SizeX, head.Def.SizeY) * 0.55f;
+            var to = hv.Rig.Root.position + new Vector3(Random.Range(-0.1f, 0.1f), top, Random.Range(-0.1f, 0.1f));
+            Fx.Beam(m.CraneHook, to, BeamCream, 0.04f, lamp: false);
+            Fx.MuzzleFlash(to, 0.05f); // welding sparks at the work
+        }
+
         /// <summary>
         /// Damage states on finished buildings (base-building review rec. 3): below 50% health a smoke column rises from
         /// the roof (3 puffs/s); below 25% it thickens (7/s) and the building burns, with embers and its fire's light
@@ -394,6 +443,7 @@ namespace Pez.View
             ring.gameObject.SetActive(false);
             var v = new EV { E = e, Rig = rig, Ring = ring, Born = Time.frameCount, Bars = e.IsMine ? null : new Bars(rig.Root, e, 0f) };
             if (e.IsStructure) { rig.Root.position = W(e.Center); Plinths.Register(e.Id, rig.Root.position, rig.Plinth); }
+            if (e.IsStructure && !e.IsComplete && rig.HasModel) v.Site = new SiteView(rig.Root, e.Def.SizeX, e.Def.SizeY);
             if (e.IsStructure && e.Def.DropOff && rig.HasModel)
             {
                 var (bay, _, facing, _) = World.Bay(e);
@@ -413,6 +463,7 @@ namespace Pez.View
                 rig.Motion.SetWorking(e.IsComplete && Producing(e));
                 if (e.Def.Key == "power_plant" || e.Def.Power < 0) Power(v);
                 if (e.IsComplete || v.SmokeK > 0f) Damage(v);
+                Construction(v);
                 if (e.Def.Key == "deep_mine") DeepMine(v);
                 if (rig.Turret != null) Aim(v);
                 if (v.DoorTimer > 0 && (v.DoorTimer -= Time.deltaTime) <= 0) rig.Motion.SetDoorOpen(false);

@@ -334,6 +334,19 @@ namespace Pez.View
             Emit(S.Pool, new Vector3(ground.x, 0.05f, ground.z), Vector3.zero, Random.Range(2.2f, 2.8f) * size, 0.3f, Alpha(FirePool, Random.Range(0.25f, 0.4f)));
         }
 
+        /// <summary>A construction stage lands: a biscuit dust puff kicked out at each corner of the footprint.</summary>
+        public static void StageDust(Vector3 center, float sx, float sz)
+        {
+            for (int i = 0; i < 4; i++)
+            {
+                var dir = new Vector3((i & 1) == 0 ? -1f : 1f, 0f, (i & 2) == 0 ? -1f : 1f);
+                var at = new Vector3(center.x + dir.x * sx * 0.5f, 0.12f, center.z + dir.z * sz * 0.5f);
+                for (int k = 0; k < 2; k++)
+                    Emit(S.Dust, at + Random.insideUnitSphere * 0.1f, dir.normalized * Random.Range(0.6f, 1.2f) + Up * Random.Range(0.2f, 0.5f),
+                        Random.Range(0.35f, 0.55f), Random.Range(1.2f, 1.9f), Vary(Color32.Lerp(DustBiscuit, DustPale, Random.value), 0.05f, 200));
+            }
+        }
+
         static readonly Color32 SteamCol = new Color32(236, 228, 210, 175); // cream plastic, translucent
 
         /// <summary>A wisp of steam off a power plant tower: cream, cool (no glow), rising and spreading for about 2 s.</summary>
@@ -359,7 +372,7 @@ namespace Pez.View
             f.Life = 0.07f; f.Mat = mat; f.Color = c;
         }
 
-        public static void Beam(Vector3 a, Vector3 b, Color c, float width)
+        public static void Beam(Vector3 a, Vector3 b, Color c, float width, bool lamp = true)
         {
             var go = new GameObject("beam");
             var lr = go.AddComponent<LineRenderer>();
@@ -374,7 +387,7 @@ namespace Pez.View
             lr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             var f = go.AddComponent<FxLife>();
             f.Life = 0.22f; f.Mat = mat; f.Color = c;
-            S.Lamp(b + Up * 0.3f, lampColor, 3f, 3f, 0.25f);
+            if (lamp) S.Lamp(b + Up * 0.3f, lampColor, 3f, 3f, 0.25f);
         }
     }
 }

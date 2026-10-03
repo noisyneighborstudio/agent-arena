@@ -40,7 +40,7 @@ namespace Pez.View
         static Mesh quad;
         static Material material;
         static readonly int FillId = Shader.PropertyToID("_Fill"), FillColorId = Shader.PropertyToID("_FillColor"),
-                            SizeId = Shader.PropertyToID("_Size"), HazardId = Shader.PropertyToID("_Hazard");
+                            SizeId = Shader.PropertyToID("_Size"), HazardId = Shader.PropertyToID("_Hazard"), TicksId = Shader.PropertyToID("_Ticks");
         static readonly Color Fuel = new Color(0.56f, 0.89f, 1f);
 
         readonly MeshRenderer hp, fuel, badge;
@@ -95,7 +95,8 @@ namespace Pez.View
         /// <summary>Refresh from the entity (cheap when nothing changed).</summary>
         public void Update(Entity e)
         {
-            // Health (or construction progress, in amber, while a building goes up).
+            // Health, or construction progress while a building goes up: a cream ruler with ten segments, so a site at
+            // 45% never reads like a building at 45% health (amber, solid).
             building = e.IsStructure && !e.IsComplete;
             float f = building ? e.BuildProgress : Mathf.Clamp01(e.Hp / e.Def.MaxHp);
             bool want = building || f < 0.999f;
@@ -106,8 +107,9 @@ namespace Pez.View
                 hp.GetPropertyBlock(block);
                 block.SetFloat(FillId, f);
                 bool hazard = !building && f < 0.25f;
-                block.SetColor(FillColorId, building ? Mats.Amber : f < 0.5f && !hazard ? Mats.Amber : Mats.Cream);
+                block.SetColor(FillColorId, building ? Mats.Cream : f < 0.5f && !hazard ? Mats.Amber : Mats.Cream);
                 block.SetFloat(HazardId, hazard ? 1 : 0);
+                block.SetFloat(TicksId, building ? 10f : 0f);
                 hp.SetPropertyBlock(block);
             }
             // Fuel.

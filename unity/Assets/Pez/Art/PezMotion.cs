@@ -75,6 +75,64 @@ namespace Pez
         /// <summary>Speed of the building's machinery (spinner, door, lift, beam): 0.5 on low power, as the sim halves
         /// production. Turrets and recoil are left alone: low power doesn't slow defences.</summary>
         public void SetRate(float r) => machineRate = r;
+
+        // ---------------------------------------------------------------- crane (command center spinner)
+        bool crane, craneHasTarget;
+        Vector3 craneTarget, hookLocal;
+        Quaternion craneRest;
+        float craneYaw, jibAngle, craneIdlePhase;
+
+        /// <summary>
+        /// Command center: drive the spinner as a crane (MOTION.md aim_then_swing). With a target it slews its jib toward
+        /// the site at 90 deg/s and swings +-5 deg at 0.4 Hz while it works; without one it idles in a +-10 deg sweep
+        /// every 8 s. The jib's direction and the hook are read from the spinner's meshes once.
+        /// </summary>
+        public void SetCraneTarget(bool on, Vector3 world)
+        {
+            if (!spinner) return;
+            if (!crane)
+            {
+                crane = true;
+                craneRest = spinner.localRotation;
+                var lo = new Vector3(float.MaxValue, float.MaxValue, float.MaxValue); var hi = -lo;
+                foreach (var mf in spinner.GetComponentsInChildren<MeshFilter>(true))
+                {
+                    var b = mf.sharedMesh.bounds;
+                    for (int c = 0; c < 8; c++)
+                    {
+                        var p = spinner.InverseTransformPoint(mf.transform.TransformPoint(new Vector3((c & 1) == 0 ? b.min.x : b.max.x, (c & 2) == 0 ? b.min.y : b.max.y, (c & 4) == 0 ? b.min.z : b.max.z)));
+                        lo = Vector3.Min(lo, p); hi = Vector3.Max(hi, p);
+                    }
+                }
+                var mid = (lo + hi) * 0.5f;
+                var jib = new Vector2(mid.x, mid.z);
+                if (jib.sqrMagnitude < 1e-4f) jib = Vector2.up;
+                jib.Normalize();
+                jibAngle = Mathf.Atan2(jib.x, jib.y) * Mathf.Rad2Deg;
+                // The hook hangs at the jib's far end, a third of the way down from its top.
+                float reach = Mathf.Max(Mathf.Abs(jib.x) > 0.5f ? (jib.x > 0 ? hi.x : -lo.x) : (jib.y > 0 ? hi.z : -lo.z), 0.3f);
+                hookLocal = new Vector3(jib.x * reach, Mathf.Lerp(hi.y, lo.y, 0.4f), jib.y * reach);
+                craneIdlePhase = Random.value * 8f;
+            }
+            craneHasTarget = on;
+            craneTarget = world;
+        }
+
+        /// <summary>The crane hook in world space (where the construction beam starts).</summary>
+        public Vector3 CraneHook => spinner ? spinner.TransformPoint(hookLocal) : transform.position;
+
+        void Crane(float dt)
+        {
+            float goal;
+            if (craneHasTarget)
+            {
+                var local = spinner.parent.InverseTransformPoint(craneTarget) - spinner.localPosition;
+                goal = Mathf.Atan2(local.x, local.z) * Mathf.Rad2Deg - jibAngle + Mathf.Sin(Time.time * 0.4f * 6.2831853f) * 5f;
+            }
+            else goal = Mathf.Sin((Time.time + craneIdlePhase) * 6.2831853f / 8f) * 10f;
+            craneYaw = Mathf.MoveTowardsAngle(craneYaw, goal, 90f * machineRate * dt);
+            spinner.localRotation = Quaternion.Euler(0f, craneYaw, 0f) * craneRest;
+        }
         float machineRate = 1f;
         public void SetDoorOpen(bool open) => doorTarget = open ? 0.05f : 1f;
         public bool DoorIsOpen => doorScale <= 0.06f;
@@ -122,7 +180,8 @@ namespace Pez
                 barrel.localPosition = barrelRestPos + barrel.localRotation * Vector3.back * d;
             }
 
-            if (spinner)
+            if (spinner && crane) Crane(dt);
+            else if (spinner)
             {
                 float goalRpm = working ? profile.spinnerActiveRpm : profile.spinnerIdleRpm;
                 float rate = Mathf.Max(profile.spinnerActiveRpm, profile.spinnerIdleRpm, 1f) / Mathf.Max(profile.spinupTime, 0.05f);

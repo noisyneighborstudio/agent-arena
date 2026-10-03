@@ -11,6 +11,7 @@ Shader "Pez/Bar"
         _BackColor ("Track colour", Color) = (0.118, 0.106, 0.114, 0.9)
         _Size ("Width, height, lift, sideways shift (world units)", Vector) = (0.9, 0.11, 0, 0)
         _Hazard ("Hazard stripe", Float) = 0
+        _Ticks ("Segments (construction progress); 0 = a solid bar", Float) = 0
     }
     SubShader
     {
@@ -25,7 +26,7 @@ Shader "Pez/Bar"
             #pragma vertex vert
             #pragma fragment frag
             #include "UnityCG.cginc"
-            float _Fill; fixed4 _FillColor, _BackColor; float4 _Size; float _Hazard;
+            float _Fill; fixed4 _FillColor, _BackColor; float4 _Size; float _Hazard, _Ticks;
             struct appdata { float4 vertex : POSITION; float2 uv : TEXCOORD0; };
             struct v2f { float4 pos : SV_POSITION; float2 uv : TEXCOORD0; };
 
@@ -46,6 +47,12 @@ Shader "Pez/Bar"
                 if (i.uv.y < by || i.uv.y > 1 - by || i.uv.x < bx || i.uv.x > 1 - bx) return _BackColor;
                 float x = (i.uv.x - bx) / (1 - 2 * bx);
                 if (x > _Fill) return _BackColor;
+                // Construction: a ruler of segments with licorice gaps (about a fifth of a bar-height wide).
+                if (_Ticks > 0.5)
+                {
+                    float seg = x * _Ticks, gapW = 0.2 * _Size.y / _Size.x * _Ticks;
+                    if (frac(seg) < gapW && seg > 0.5) return _BackColor;
+                }
                 if (_Hazard > 0.5)
                 {
                     float s = frac((i.uv.x * _Size.x + i.uv.y * _Size.y) / (_Size.y * 1.6));
