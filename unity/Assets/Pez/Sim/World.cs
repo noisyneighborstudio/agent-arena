@@ -8,7 +8,7 @@ namespace Pez.Sim
     {
         public string Key;
         public float Progress;   // seconds of work done
-        public int StructureId;  // structures: the foundation entity being built
+        public int StructureId;  // structures: the foundation entity being built; units: the building chosen to train it (0 = the first)
     }
 
     /// <summary>A surveyor's flag on a deep deposit: the team's mining zone, with the same id as the deposit.</summary>
@@ -88,6 +88,11 @@ namespace Pez.Sim
         /// <summary>Mining zones: the flag a surveyor planted on each deep deposit it found (key = deposit id = zone id).</summary>
         public readonly Dictionary<int, ZoneFlag> Zones = new Dictionary<int, ZoneFlag>();
         public float SurfaceWarnedAt = -999;
+        /// <summary>Game time of this team's last command from its player (-1 = none yet); the lobby reports idle seats.</summary>
+        public float LastCommandAt = -1;
+        /// <summary>Items converters leave alone below this amount ('reserve' command), so raw-ore costs stay payable.</summary>
+        public readonly Dictionary<string, int> Reserve = new Dictionary<string, int>();
+        public int Reserved(string item) => Reserve.TryGetValue(item, out var n) ? n : 0;
         public readonly TeamStats Stats = new TeamStats();
         public bool LowPower => PowerUsed > PowerProduced;
     }
@@ -376,28 +381,55 @@ namespace Pez.Sim
                     o.KnownEnemyStructures.Remove(id);
         }
 
-        /// <summary>Spread ore values (per ore type) over these tiles as salvage anyone can mine. Returns the total.</summary>
+        /// <summary>
+        /// Spread ore values (per ore type) as salvage anyone can mine: on these tiles first, then on open ground around
+        /// them, as many tiles as it takes (a tile holds at most Map.MaxOrePerTile). Returns the amount actually placed.
+        /// </summary>
         float SpillSalvage(float[] value, List<Int2> tiles)
         {
+            if (value.Sum() <= 0 || tiles.Count == 0) return 0;
+            // Free ground, nearest the footprint first: the footprint itself, then open tiles with no ore on them.
+            var footprint = new HashSet<Int2>(tiles);
+            float cx = (float)tiles.Average(t => t.X) + 0.5f, cy = (float)tiles.Average(t => t.Y) + 0.5f;
+            var queue = new List<Int2>(tiles);
+            // Each ore type covers its share of the footprint, and more ground if that won't hold it all.
             float total = value.Sum();
-            if (total <= 0 || tiles.Count == 0) return 0;
-            // Each ore type gets its share of the footprint (biggest share first).
-            var order = Enumerable.Range(0, 4).Where(k => value[k] > 0).OrderByDescending(k => value[k]).ToList();
-            int ti = 0;
-            foreach (var k in order)
+            var share = new int[4];
+            for (int k = 0; k < 4; k++)
+                if (value[k] > 0) share[k] = Math.Max(Math.Max(1, (int)MathF.Round(tiles.Count * value[k] / total)), (int)MathF.Ceiling(value[k] / Map.MaxOrePerTile));
+            int tilesNeeded = share.Sum();
+            for (int r = 1; queue.Count < tilesNeeded && r <= 40; r++)
             {
-                int n = Math.Max(1, (int)MathF.Round(tiles.Count * value[k] / total));
-                for (int j = 0; j < n; j++, ti++)
+                var ring = new List<Int2>();
+                for (int y = (int)cy - r; y <= (int)cy + r; y++)
+                    for (int x = (int)cx - r; x <= (int)cx + r; x++)
+                    {
+                        if (Math.Max(Math.Abs(x - (int)cx), Math.Abs(y - (int)cy)) != r || !Map.InBounds(x, y)) continue;
+                        var p = new Int2(x, y);
+                        int i = Map.Idx(x, y);
+                        if (footprint.Contains(p) || !Map.TerrainPassable(x, y) || Map.Occupant[i] != 0 || Map.Ore[i] > 0) continue;
+                        ring.Add(p);
+                    }
+                queue.AddRange(ring.OrderBy(p => Vec2.DistSq(p.Center, new Vec2(cx, cy))));
+            }
+            // Each ore type takes the tiles it needs, biggest pile first.
+            float placed = 0;
+            int ti = 0;
+            foreach (var k in Enumerable.Range(0, 4).Where(k => value[k] > 0).OrderByDescending(k => value[k]))
+            {
+                int n = share[k];
+                int per = (int)(value[k] / n);
+                for (int j = 0; j < n && ti < queue.Count; j++, ti++)
                 {
-                    var p = tiles[ti % tiles.Count];
-                    int i = Map.Idx(p.X, p.Y);
+                    int i = Map.Idx(queue[ti].X, queue[ti].Y);
                     Map.Tiles[i] = Terrain.Dirt;
                     Map.OreType[i] = (byte)k;
-                    Map.Ore[i] = Math.Min(Map.MaxOrePerTile, Map.Ore[i] + (int)(value[k] / n));
+                    Map.Ore[i] = Math.Min(Map.MaxOrePerTile, per);
+                    placed += Map.Ore[i];
                 }
             }
             MapVersion++;
-            return total;
+            return placed;
         }
 
         /// <summary>
@@ -761,7 +793,11 @@ namespace Pez.Sim
                 {
                     if (e.IsMine) { MineTick(e); continue; }
                     if (!e.IsStructure) { CheckRetreat(e); UpdateUnit(e); if (e.Def.UsesFuel && !e.Dead) UpdateFuel(e); if (!e.Dead) CheckJam(e); }
-                    else if (e.IsArmed && e.IsComplete) UpdateTurret(e);
+                    else
+                    {
+                        if (e.IsComplete) Burn(e);
+                        if (!e.Dead && e.IsArmed && e.IsComplete) UpdateTurret(e);
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -819,7 +855,7 @@ namespace Pez.Sim
                     float frac = 1f;
                     foreach (var kv in r.Inputs)
                     {
-                        float have = team.Stock.TryGetValue(kv.Key, out var v) ? v : 0;
+                        float have = (team.Stock.TryGetValue(kv.Key, out var v) ? v : 0) - team.Reserved(kv.Key);
                         frac = MathF.Min(frac, have / (kv.Value * cycles));
                     // (Recipes with no inputs, like the command center's trickle, always run.)
                     }
@@ -879,9 +915,11 @@ namespace Pez.Sim
                 {
                     var q = kv.Value;
                     if (q.Count == 0) continue;
-                    var producer = FirstProducer(team.Id, kv.Key);
-                    if (producer == null) continue;
                     var item = q[0];
+                    // A unit trained at a chosen building comes out there while it stands; otherwise the first one.
+                    var chosen = item.StructureId != 0 ? Get(item.StructureId) : null;
+                    var producer = chosen != null && chosen.Team == team.Id && chosen.IsComplete && chosen.Def.Produces == kv.Key ? chosen : FirstProducer(team.Id, kv.Key);
+                    if (producer == null) continue;
                     var def = Def(item.Key);
                     item.Progress += Dt * rate;
                     if (item.Progress >= def.BuildTime)
@@ -1303,17 +1341,49 @@ namespace Pez.Sim
             }
         }
 
-        void Damage(Entity t, float amount, Entity src, int srcTeam = -1)
+        /// <summary>A finished building below this share of its health is on fire: it burns down unless repaired above it.</summary>
+        public const float BurnBelow = 0.3f;
+
+        /// <summary>
+        /// Fire: a finished building below BurnBelow loses health on its own, 0.3% of its max a second at the threshold
+        /// rising to 1.2% near the end (about a minute from catching fire to collapse). Repairing it above the threshold
+        /// puts it out. Its owner is alerted once when it catches; the kill goes to whoever set it alight.
+        /// </summary>
+        void Burn(Entity e)
+        {
+            float f = e.Hp / e.Def.MaxHp;
+            if (f >= BurnBelow || e.Hp <= 0f)
+            {
+                if (e.Burning) { e.Burning = false; Emit("fire_out", e.Team, e.Id, 0, e.Center, key: e.Def.Key, text: $"the fire at your {e.Def.Key} #{e.Id} is out"); }
+                return;
+            }
+            if (IsProtected(e.Team)) return;
+            if (!e.Burning)
+            {
+                e.Burning = true;
+                Emit("burning", e.Team, e.Id, 0, e.Center, key: e.Def.Key,
+                     text: $"your {e.Def.Key} #{e.Id} is on fire ({(int)(f * 100)}% health): repair it above {(int)(BurnBelow * 100)}% (repair truck) or it burns down within about a minute");
+                Alerts.Raise(this, e.Team, "building_burning", Priority.High, e.Center, e, hit: false);
+            }
+            float rate = e.Def.MaxHp * (0.003f + 0.009f * (1f - f / BurnBelow));
+            var setBy = e.LastAttackerId != 0 ? Get(e.LastAttackerId) : null;
+            Damage(e, rate * Dt, null, setBy != null && setBy.Team != e.Team ? setBy.Team : -1, burn: true);
+        }
+
+        void Damage(Entity t, float amount, Entity src, int srcTeam = -1, bool burn = false)
         {
             if (t.Dead) return;
             if (IsProtected(t.Team)) return; // newcomer protection
             int team = src?.Team ?? srcTeam;
             t.Hp -= amount;
             if (src != null) t.LastAttackerId = src.Id;
-            if (Time - t.LastHitTime > 10f && (t.IsStructure || t.IsHarvester))
-                Emit("under_attack", t.Team, t.Id, src?.Id ?? 0, t.Center, key: t.Def.Key);
-            t.LastHitTime = Time;
-            RaiseDamageAlert(t, src);
+            if (!burn)
+            {
+                if (Time - t.LastHitTime > 10f && (t.IsStructure || t.IsHarvester))
+                    Emit("under_attack", t.Team, t.Id, src?.Id ?? 0, t.Center, key: t.Def.Key);
+                t.LastHitTime = Time;
+                RaiseDamageAlert(t, src);
+            }
             if (src != null && !src.Dead && src.Team != t.Team && !src.IsMine)
             {
                 Teams[t.Team].Revealed[src.Id] = Time + 3f; // muzzle flash gives the shooter away
@@ -1793,11 +1863,21 @@ namespace Pez.Sim
             SetOrder(e, Order.Idle, e.Pos);
         }
 
+        /// <summary>Ore left at which a deep mine warns it's running low: two minutes of pumping.</summary>
+        public const float DeepMineWarnAmount = EntityDef.DeepMineRate * 120f;
+
+        /// <summary>Seconds of pumping left in a deposit at this team's current rate (low power halves it).</summary>
+        public static float DeepMineSecondsLeft(DeepDeposit d, Team team) => d.Amount / (EntityDef.DeepMineRate * (team.LowPower ? 0.5f : 1f));
+
         void DeepMineTick(Entity e, Team team)
         {
             var d = Map.DepositById(e.DepositId);
             if (d == null || d.Amount <= 0) { e.Working = false; return; }
             float take = MathF.Min(d.Amount, EntityDef.DeepMineRate * Dt * (team.LowPower ? 0.5f : 1f));
+            // Heads-up before it runs dry, so there's time to survey and drill the next one.
+            if (d.Amount > DeepMineWarnAmount && d.Amount - take <= DeepMineWarnAmount)
+                Alerts.Raise(this, e.Team, "deep_mine_running_low", Priority.Medium, e.Center, hit: false)
+                      .Lost.Add($"deep_mine #{e.Id}: {(int)(d.Amount - take)} {Defs.Ores[d.Type]} left, dry in about {DeepMineSecondsLeft(d, team):0}s; survey and send a drill_rig to the next deposit now");
             d.Amount -= take;
             team.Add(Defs.Ores[d.Type], take);
             e.WorkTimer += take;
@@ -1856,6 +1936,9 @@ namespace Pez.Sim
             if (u.Fuel > u.Def.Fuel * 0.3f) u.FuelWarned = false;
         }
 
+        /// <summary>An idle aircraft this close to a pad lands on it rather than hover.</summary>
+        public const float IdleLandingRange = 12f;
+
         /// <summary>Burn, refuel, head home on low fuel, and run dry: a stranded vehicle, or a crashed aircraft.</summary>
         void UpdateFuel(Entity e)
         {
@@ -1891,6 +1974,14 @@ namespace Pez.Sim
                          text: $"{e.Def.Key} #{e.Id} ran out of fuel at {(int)e.Pos.X},{(int)e.Pos.Y}. It can still shoot, but can't move until a repair truck refuels it.");
                 }
                 return;
+            }
+
+            // An aircraft left hovering at home lands on the pad instead of burning its tank in the air. (Far from a pad
+            // it keeps station: that's a spotter, and the bingo rule below still brings it home in time.)
+            if (e.IsAir && e.Order == Order.Idle && !refuelling && !e.Moving && (Tick + e.Id) % 20 == 0 && Time >= e.NoAutoRefuelUntil)
+            {
+                var pad = NearestFuelPoint(e);
+                if (pad != null && pad.DistFrom(e.Pos) <= IdleLandingRange) { BeginRefuel(e, pad); return; }
             }
 
             // Bingo fuel: head for the nearest pad or depot with enough left to get there, then carry on.
@@ -2192,14 +2283,17 @@ namespace Pez.Sim
                 {
                     if (e.Dead || e.Team != team.Id || e.IsCarried) continue;
                     var c = e.Center;
-                    int r = (int)MathF.Ceiling(e.Def.Sight + (e.IsStructure ? e.Def.SizeX / 2f : 0));
-                    float rr = (e.Def.Sight + (e.IsStructure ? e.Def.SizeX / 2f : 0));
-                    rr *= rr;
+                    float sight = e.Def.Sight + (e.IsStructure ? e.Def.SizeX / 2f : 0);
+                    int r = (int)MathF.Ceiling(sight) + 1;
+                    float rr = sight * sight;
+                    // A tile is in view when sight reaches any part of it (not just its centre). Structures' footprints
+                    // are whole tiles, so this keeps sight mutual: a unit sees a turret from as far as the turret sees it.
                     for (int y = (int)c.Y - r; y <= (int)c.Y + r; y++)
                         for (int x = (int)c.X - r; x <= (int)c.X + r; x++)
                         {
                             if (!Map.InBounds(x, y)) continue;
-                            if (Vec2.DistSq(new Vec2(x + 0.5f, y + 0.5f), c) <= rr) { int vi = Map.Idx(x, y); team.Visible[vi] = true; team.Explored[vi] = true; }
+                            float dx = MathF.Max(0, MathF.Max(x - c.X, c.X - (x + 1))), dy = MathF.Max(0, MathF.Max(y - c.Y, c.Y - (y + 1)));
+                            if (dx * dx + dy * dy <= rr) { int vi = Map.Idx(x, y); team.Visible[vi] = true; team.Explored[vi] = true; }
                         }
                 }
                 // Stealth units are only seen up close or inside one of this team's radar domes.

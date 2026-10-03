@@ -225,6 +225,8 @@ namespace Pez.View
             bool hasUv = uv.Length == v.Length, hasCol = col.Length == v.Length;
             // Carry the bevel data and tangents (Models.BevelData) so Pez/Model shades the pieces like the rest.
             var tan = src.tangents; bool hasTan = tan.Length == v.Length;
+            var nrm = src.normals; bool hasNrm = nrm.Length == v.Length; // smoothed by angle (Models.SmoothByAngle): keep them
+            var outNrm = new List<Vector3>();
             var extra = new List<Vector4>[3];
             for (int k = 0; k < 3; k++) { extra[k] = new List<Vector4>(); src.GetUVs(3 + k, extra[k]); if (extra[k].Count != v.Length) extra[k] = null; }
             var outTan = new List<Vector4>();
@@ -244,6 +246,7 @@ namespace Pez.View
                     if (hasUv) uvs.Add(uv[o]);
                     if (hasCol) cols.Add(col[o]);
                     if (hasTan) outTan.Add(tan[o]);
+                    if (hasNrm) outNrm.Add(nrm[o]);
                     for (int k = 0; k < 3; k++) if (extra[k] != null) outExtra[k].Add(extra[k][o]);
                 }
                 outTris[i] = n;
@@ -255,7 +258,7 @@ namespace Pez.View
             if (hasTan) m.SetTangents(outTan);
             for (int k = 0; k < 3; k++) if (extra[k] != null) m.SetUVs(3 + k, outExtra[k]);
             m.SetTriangles(outTris, 0);
-            m.RecalculateNormals();
+            if (hasNrm) m.SetNormals(outNrm); else m.RecalculateNormals();
             m.RecalculateBounds();
             return m;
         }

@@ -14,9 +14,11 @@ namespace Pez.Sim
 @"Commands (JSON objects with a ""type"" field):
   {""type"":""build"", ""structure"":KEY, ""x"":X, ""y"":Y}   place a structure (bottom-left tile). Omit x/y to auto-place near your base.
   {""type"":""train"", ""unit"":KEY, ""count"":N}            queue N units (1-10) at the barracks / war factory
+      add ""structure_id"":ID to have them come out of that building (e.g. a forward barracks); otherwise your first one
   {""type"":""move"", ""units"":[IDS], ""x"":X, ""y"":Y}     move, ignoring enemies
   {""type"":""attack_move"", ""units"":[IDS], ""x"":X, ""y"":Y}  move, engaging enemies on the way
       add ""together"":true to move or attack_move so the group keeps the slowest member's pace and arrives as one
+      add ""spread"":3 (tiles between units, 1-6; true = 3) to open the formation up against splash (artillery, heavy tanks)
       add ""waypoints"":[[x,y],...] to queue more points (x/y optional: the first waypoint is used), and ""loop"":true to patrol them
   {""type"":""set_retreat"", ""units"":[IDS], ""below_pct"":30}  units pull back to base on their own below that HP % (0 = off)
   {""type"":""attack"", ""units"":[IDS], ""target"":ID}     focus fire on a visible enemy
@@ -36,6 +38,7 @@ namespace Pez.Sim
   {""type"":""drill"", ""units"":[DRILL RIG IDS], ""zone"":ID}  a drill_rig drives to that mining zone and deploys into a Deep Mine on arrival (omit zone: each rig takes the nearest free zone)
   {""type"":""rally"", ""structure_id"":ID, ""x"":X, ""y"":Y} where new units from that building go
   {""type"":""sell"", ""structure_id"":ID}                 sell for 50% refund
+  {""type"":""reserve"", ""item"":""iron_ore"", ""amount"":300}  converters (refineries, plants) leave this much of an item alone, so raw-ore costs (power_plant, mining_refinery, mining_truck) stay payable; amount 0 clears it
   {""type"":""cancel"", ""unit"":KEY}                       cancel the last queued unit of that type (full refund)
   {""type"":""say"", ""text"":""...""}                      broadcast a chat message (shown on screen)
   {""type"":""propose_tech"", ""name"":""Lancer"", ""base"":""light_tank"", ""weapon_from"":""rocket_soldier"", ""hp"":360, ""damage"":70, ""dry_run"":true}
@@ -75,6 +78,7 @@ namespace Pez.Sim
                     case "prospect": return Prospect(w, team, c);
                     case "drill": return Drill(w, team, c);
                     case "sell": return Sell(w, team, c);
+                    case "reserve": return Reserve(w, team, c);
                     case "cancel": return Cancel(w, team, c);
                     case "propose_tech": return Tech.Propose(w, team, c);
                     case "say":
@@ -103,7 +107,7 @@ namespace Pez.Sim
             if (missing != null) return Err($"{key} {missing}");
             var t = w.Teams[team];
             var lacking = t.Missing(def.Cost);
-            if (lacking != null) return Err($"{key}: {lacking}");
+            if (lacking != null) return Err($"{key}: {lacking}{ReserveHint(w, team, def.Cost)}");
             float x = c.Num("x"), y = c.Num("y");
             Int2 origin;
             if (float.IsNaN(x) || float.IsNaN(y))
@@ -141,16 +145,24 @@ namespace Pez.Sim
             int count = (int)c.Num("count", 1);
             count = Math.Max(1, Math.Min(10, count));
             var t = w.Teams[team];
+            Entity at = null;
+            if (c.ContainsKey("structure_id"))
+            {
+                at = OwnStructure(w, team, c);
+                var producers = w.Owned(team).Where(s => s.IsStructure && s.IsComplete && s.Def.Produces == def.BuiltBy).Select(s => $"#{s.Id} at {s.Origin.X},{s.Origin.Y}").ToList();
+                if (at == null || at.Def.Produces != def.BuiltBy || !at.IsComplete)
+                    return Err($"structure_id must be one of your completed {Defs.ProducerKey(def.BuiltBy)} buildings to train {key}: {(producers.Count > 0 ? string.Join(", ", producers) : "you have none")}");
+            }
             int queued = 0;
             for (int i = 0; i < count; i++)
             {
                 if (t.Missing(def.Cost) != null) break;
                 t.Pay(def.Cost);
-                t.UnitQueues[def.BuiltBy].Add(new ProdItem { Key = key });
+                t.UnitQueues[def.BuiltBy].Add(new ProdItem { Key = key, StructureId = at?.Id ?? 0 });
                 queued++;
             }
-            if (queued == 0) return Err($"{key}: {t.Missing(def.Cost)}");
-            return Ok($"queued {queued}x {key}" + (queued < count ? $" (could only afford {queued})" : "") + $"; queue length {t.UnitQueues[def.BuiltBy].Count}");
+            if (queued == 0) return Err($"{key}: {t.Missing(def.Cost)}{ReserveHint(w, team, def.Cost)}");
+            return Ok($"queued {queued}x {key}" + (at != null ? $" at {at.Def.Key} #{at.Id}" : "") + (queued < count ? $" (could only afford {queued})" : "") + $"; queue length {t.UnitQueues[def.BuiltBy].Count}");
         }
 
         static List<Entity> ResolveUnits(World w, int team, Dictionary<string, object> c)
@@ -189,21 +201,34 @@ namespace Pez.Sim
                 var oreName = c.Str("ore");
                 int type = oreName == null || oreName == "any" ? -1 : Array.IndexOf(Defs.Ores, oreName);
                 if (oreName != null && oreName != "any" && type < 0) return Err($"unknown ore '{oreName}'. Valid: {string.Join(", ", Defs.Ores)}");
+                var none = new List<Entity>();
                 foreach (var h in hs)
                 {
                     var tile = float.IsNaN(x) ? w.Map.NearestOre(h.Pos, 80, null, type) : w.Map.NearestOre(dest, 12, null, type);
+                    if (tile == null) none.Add(h); // it stays on harvest and keeps looking (and raises SURFACE ORE RUNNING OUT)
                     w.SetOrder(h, Order.Harvest, tile?.Center ?? h.Pos);
                     if (oreName != null) h.HarvestType = type;
                 }
-                return Ok($"{hs.Count} truck(s) mining" + (type >= 0 ? $" {Defs.Ores[type]}" : ""));
+                string what = type >= 0 ? Defs.Ores[type] : "ore";
+                string where = float.IsNaN(x) ? "within 80 tiles of " + (none.Count == 1 ? "it" : "them") : $"within 12 tiles of {(int)x},{(int)y}";
+                string why = $"no surface {what} {where} (it may be mined out): scout for more, give x,y of a field you know, or survey for deep deposits and drill them";
+                if (none.Count == 0) return Ok($"{hs.Count} truck(s) mining" + (type >= 0 ? $" {Defs.Ores[type]}" : ""));
+                return Ok($"{hs.Count - none.Count} of {hs.Count} truck(s) found {what} to mine; {string.Join(", ", none.Select(h => "#" + h.Id))} found none and will sit idle: {why}");
             }
 
-            // Spread a group around the destination so they don't all fight for one tile.
+            // Spread a group around the destination so they don't all fight for one tile ("spread" opens the grid up).
+            float gap = 0.9f;
+            if (c.TryGetValue("spread", out var sp))
+            {
+                if (sp is bool sb) gap = sb ? 3f : 0.9f;
+                else if (sp is double sd && sd >= 1 && sd <= 6) gap = (float)sd;
+                else return Err("spread must be true or the tiles between units, 1-6");
+            }
             int n = units.Count, i = 0;
             int cols = (int)MathF.Ceiling(MathF.Sqrt(n));
             foreach (var u in units)
             {
-                var off = new Vec2((i % cols - (cols - 1) / 2f) * 0.9f, (i / cols - (cols - 1) / 2f) * 0.9f);
+                var off = new Vec2((i % cols - (cols - 1) / 2f) * gap, (i / cols - (cols - 1) / 2f) * gap);
                 i++;
                 var target = n > 1 && order != Order.Idle ? dest + off : dest;
                 if (u.IsHarvester && order == Order.AttackMove) { w.SetOrder(u, Order.Move, target); continue; }
@@ -219,10 +244,54 @@ namespace Pez.Sim
             float pace = together ? units.Min(u => u.Def.Speed) : 0;
             if (together) foreach (var u in units) u.SpeedCap = pace;
             var low = units.Where(u => u.Def.UsesFuel && u.FuelFraction < 0.35f).ToList();
+            var shortOfFuel = order == Order.Idle ? new List<string>() : FuelShortfalls(w, units, dest, waypoints);
             return Ok($"{n} unit(s) {(order == Order.Idle ? "stopped" : order == Order.AttackMove ? "attack-moving" : "moving")}" +
                       (together ? $" together at {pace:0.0} tiles/s" : "") +
                       (waypoints.Count > 0 ? $", then {waypoints.Count} more waypoint(s){(loop ? " on a loop" : "")}" : "") +
-                      (low.Count > 0 ? $"; low fuel: {string.Join(", ", low.Select(u => $"#{u.Id} {StateView.Pct(u.FuelFraction)}%"))} (they'll turn back to refuel when they must)" : ""));
+                      (shortOfFuel.Count > 0 ? $"; NOT ENOUGH FUEL for the trip: {string.Join("; ", shortOfFuel.Take(4))}{(shortOfFuel.Count > 4 ? $" (+{shortOfFuel.Count - 4} more)" : "")}. " +
+                                               "Units turn back to refuel when what's left only just gets them to a refuel point: deploy an outpost along the way, or send a repair truck with them"
+                       : low.Count > 0 ? $"; low fuel: {string.Join(", ", low.Select(u => $"#{u.Id} {StateView.Pct(u.FuelFraction)}%"))} (they'll turn back to refuel when they must)" : ""));
+        }
+
+        /// <summary>Roads wind: a ground route is about this much longer than the straight line (the bingo-fuel rule assumes the same).</summary>
+        const float RouteFactor = 1.4f;
+
+        /// <summary>
+        /// Units that can't drive the whole route and still get back to a refuel point from the far end: they'd turn
+        /// back partway. A repair truck travelling with them refuels them in the field, so it covers ground units.
+        /// </summary>
+        static List<string> FuelShortfalls(World w, List<Entity> units, Vec2 dest, List<Vec2> waypoints)
+        {
+            var result = new List<string>();
+            bool tankerAlong = units.Any(World.IsTanker);
+            foreach (var u in units.Where(u => u.Def.UsesFuel && !u.IsCarried))
+            {
+                if (tankerAlong && !u.IsAir && !World.IsTanker(u)) continue;
+                // Walk the route: the unit turns back where the fuel left only just reaches the nearest refuel point.
+                float factor = u.IsAir ? 1.15f : RouteFactor, reach = u.Fuel * u.Def.Speed / factor; // tiles of travel left
+                var pads = w.Entities.Where(s => World.IsFuelPoint(u, s) && !units.Contains(s)).Select(s => s.Center).ToList();
+                float PadDist(Vec2 p) => pads.Count == 0 ? 0 : pads.Min(q => Vec2.Dist(p, q));
+                var legs = new List<Vec2> { u.Pos, dest };
+                legs.AddRange(waypoints);
+                float route = 0, traveled = 0; Vec2? turn = null;
+                for (int k = 1; k < legs.Count; k++) route += Vec2.Dist(legs[k - 1], legs[k]);
+                for (int k = 1; k < legs.Count && turn == null; k++)
+                {
+                    float len = Vec2.Dist(legs[k - 1], legs[k]);
+                    for (float d = 0; d <= len; d += 2f)
+                    {
+                        var p = legs[k - 1] + (legs[k] - legs[k - 1]) * (len > 0 ? d / len : 0);
+                        if (reach - (traveled + d) <= PadDist(p) && traveled + d > 0) { turn = p; traveled += d; break; }
+                    }
+                    if (turn == null) traveled += len;
+                }
+                if (turn == null && reach - route > PadDist(legs[legs.Count - 1])) continue;
+                var at = turn ?? legs[legs.Count - 1];
+                result.Add(pads.Count == 0
+                    ? $"#{u.Id} {u.Def.Key} has ~{reach:0} tiles of fuel for a ~{route:0}-tile trip and nowhere to refuel"
+                    : $"#{u.Id} {u.Def.Key} has ~{reach:0} tiles of fuel for a ~{route:0}-tile trip; it turns back to refuel about {MathF.Min(traveled, route):0} tiles out, near {(int)at.X},{(int)at.Y}");
+            }
+            return result;
         }
 
         static JObj Attack(World w, int team, Dictionary<string, object> c)
@@ -254,7 +323,14 @@ namespace Pez.Sim
             if (float.IsNaN(x) || float.IsNaN(y)) return Err("x and y are required");
             // Rally applies to every producer of the same kind, which is what players expect.
             foreach (var o in w.Owned(team).Where(o => o.IsStructure && o.Def.Produces == s.Def.Produces)) o.Rally = new Vec2(x, y);
-            return Ok($"rally point for {s.Def.Key} set to ({x},{y})");
+            // New units drive there on their own tank: say what the trip costs the shortest-legged one this building makes.
+            float dist = Vec2.Dist(s.Center, new Vec2(x, y));
+            var worst = Defs.All.Values.Where(d => d.BuiltBy == s.Def.Produces && d.UsesFuel && !d.IsStructure)
+                                       .OrderByDescending(d => dist * (d.IsAir ? 1.15f : RouteFactor) / (d.Fuel * d.Speed)).FirstOrDefault();
+            float used = worst == null ? 0 : dist * (worst.IsAir ? 1.15f : RouteFactor) / (worst.Fuel * worst.Speed);
+            return Ok($"rally point for {s.Def.Key} set to ({x},{y})" +
+                      (used >= 0.25f ? $"; it's {dist:0} tiles away: a new {worst.Key} burns ~{StateView.Pct(MathF.Min(1, used))}% of its fuel getting there" +
+                                       (used >= 0.5f ? " and may turn back to refuel before it arrives; rally nearer, or at a refuel point (outpost)" : "") : ""));
         }
 
         static JObj Sell(World w, int team, Dictionary<string, object> c)
@@ -268,7 +344,32 @@ namespace Pez.Sim
             w.Emit("sold", team, s.Id, pos: s.Center, key: s.Def.Key);
             w.Emit("destroyed", team, s.Id, 0, s.Center, key: s.Def.Key);
             w.Remove(s);
-            return Ok($"sold {s.Def.Key} for {refund}");
+            if (refund.Length > 0) return Ok($"sold {s.Def.Key} for {refund}");
+            string power = s.Def.Power < 0 ? $"; {-s.Def.Power} power freed" : s.Def.Power > 0 ? $"; its {s.Def.Power} power output is gone" : "";
+            return Ok($"removed {s.Def.Key} #{s.Id}: it cost nothing, so there's no refund{power}");
+        }
+
+        static JObj Reserve(World w, int team, Dictionary<string, object> c)
+        {
+            var item = c.Str("item") ?? c.Str("ore");
+            if (item == null || !Defs.Items.Contains(item)) return Err($"item must be one of: {string.Join(", ", Defs.Items)}");
+            float amount = c.Num("amount");
+            if (float.IsNaN(amount) || amount < 0 || amount > 100000) return Err("amount must be 0-100000 (0 clears the reserve)");
+            var t = w.Teams[team];
+            if (amount < 1) t.Reserve.Remove(item); else t.Reserve[item] = (int)amount;
+            string now = t.Reserve.Count == 0 ? "no reserves" : "reserves: " + string.Join(", ", t.Reserve.Select(kv => $"{kv.Value} {kv.Key}"));
+            return Ok((amount < 1 ? $"{item} reserve cleared" : $"converters now leave {(int)amount} {item} alone ({item} {t.Amount(item)} in stock now)") + $"; {now}");
+        }
+
+        /// <summary>A raw cost the team can't pay because its own converters eat that item as it arrives: say how to keep some.</summary>
+        static string ReserveHint(World w, int team, Dictionary<string, int> cost)
+        {
+            var t = w.Teams[team];
+            var eaten = cost.Where(kv => t.Amount(kv.Key) < kv.Value && t.Reserved(kv.Key) < kv.Value &&
+                                         w.Owned(team).Any(s => s.IsStructure && s.IsComplete && s.Def.Recipes.Any(r => r.Inputs.ContainsKey(kv.Key)))).ToList();
+            if (eaten.Count == 0) return "";
+            var k = eaten[0];
+            return $". Your converters use {k.Key} up as it comes in; to bank some, set a reserve: {{\"type\":\"reserve\",\"item\":\"{k.Key}\",\"amount\":{k.Value}}}";
         }
 
         static JObj Load(World w, int team, Dictionary<string, object> c)
@@ -486,7 +587,9 @@ namespace Pez.Sim
             foreach (var u in units)
             {
                 var why = w.Deploy(u);
-                results.Add(why == null ? $"#{u.Id} deployed into {u.Def.DeploysInto}" : $"#{u.Id} {why}");
+                // Say where: a truck still rolling when the order lands deploys where it is now, not where it was last seen.
+                var built = why == null ? w.Owned(team).Where(s => s.IsStructure && s.Def.Key == u.Def.DeploysInto).OrderByDescending(s => s.Id).First() : null;
+                results.Add(why == null ? $"#{u.Id} deployed into {u.Def.DeploysInto} #{built.Id} at ({built.Origin.X},{built.Origin.Y})" : $"#{u.Id} {why}");
             }
             bool ok = results.Any(r => r.Contains("deployed"));
             return ok ? Ok(string.Join("; ", results)) : Err(string.Join("; ", results));

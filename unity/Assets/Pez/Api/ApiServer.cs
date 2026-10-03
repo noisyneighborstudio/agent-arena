@@ -123,7 +123,7 @@ namespace Pez.Api
                 var wt = waiters[i];
                 var w = game.World;
                 bool restarted = w != wt.World;
-                var fresh = restarted ? new List<Alert>() : w.Alerts.Since(wt.Team, wt.AlertSince, wt.Min).ToList();
+                var fresh = restarted ? new List<Alert>() : w.Alerts.Since(w, wt.Team, wt.AlertSince, wt.Min).ToList();
                 // Only news cuts a wait short: a new place or a worse kind of trouble, not the fight it already knows
                 // about (which otherwise turns every wait into 0s). And every wait runs at least a second.
                 bool news = fresh.Any(a => !w.Alerts.IsContinuation(w, a, wt.AlertSince));
@@ -248,7 +248,7 @@ namespace Pez.Api
                         var min = ParsePriority(req.QueryString["min"], Priority.Medium);
                         return Json.Write(new JObj().Set("last_alert_seq", w.Alerts.LastSeq)
                             .Set("orders_version", w.Teams[team].OrdersVersion).Set("standing_orders", w.Teams[team].StandingOrders)
-                            .Set("new_alerts", StateView.AlertsJson(w, w.Alerts.Since(team, since, min).OrderByDescending(a => a.Priority)))
+                            .Set("new_alerts", StateView.AlertsJson(w, w.Alerts.Since(w, team, since, min).OrderByDescending(a => a.Priority)))
                             .Set("active", StateView.AlertsJson(w, w.Alerts.Active(w, team))));
                     }
                 case "/api/wait":
@@ -286,6 +286,7 @@ namespace Pez.Api
                         var name = Text.Name(d?.Str("name"));
                         var team = w.AddTeam("llm", name, out var err);
                         if (team == null) { status = 409; return Json.Write(new JObj().Set("ok", false).Set("error", err)); }
+                        team.LastCommandAt = w.Time;
                         var token = NewToken(); var view = NewToken();
                         controlTokens[token] = (w, team.Id, team.Seat);
                         viewTokens[view] = (w, team.Id, team.Seat);
@@ -308,9 +309,12 @@ namespace Pez.Api
                     return Json.Write(new JObj()
                         .Set("open", w.Open).Set("rules_version", StateView.RulesVersion).Set("map", $"{w.Map.W}x{w.Map.H}").Set("max_map", w.MaxMapSize)
                         .Set("players", w.ActivePlayers).Set("max_players", w.MaxPlayers).Set("time_s", (float)Math.Round(w.Time, 1))
+                        .Set("champion", w.ArenaChampion) // set while one team has cleared the arena (null otherwise)
                         .Set("teams", w.Teams.Select(t => new JObj().Set("flavor", t.Name).Set("player", t.PlayerName ?? t.Controller)
                             .Set("status", t.Resigned ? "resigned" : t.Left ? "left" : t.Defeated ? "eliminated" : "playing").Set("house", t.House)
-                            .Set("structures", w.Owned(t.Id).Count(e => e.IsStructure)).Set("kills", t.Stats.Kills)).ToList()));
+                            .Set("structures", w.Owned(t.Id).Count(e => e.IsStructure)).Set("kills", t.Stats.Kills)
+                            // Seconds since this seat's player last sent a command (null: never); CI doesn't wait on idle seats.
+                            .Set("idle_s", t.LastCommandAt >= 0 ? (object)(int)(w.Time - t.LastCommandAt) : null)).ToList()));
                 case "/api/whoami":
                     {
                         int team = TeamParam(req, w);
@@ -359,6 +363,7 @@ namespace Pez.Api
                     {
                         if (method != "POST") { status = 405; return "{\"ok\":false,\"error\":\"POST required\"}"; }
                         int team = TeamParam(req, w);
+                        w.Teams[team].LastCommandAt = w.Time;
                         var parsed = Json.Parse(p.Body ?? "[]");
                         List<object> cmds = parsed is List<object> l ? l
                             : parsed is Dictionary<string, object> d && d.TryGetValue("commands", out var c) && c is List<object> cl ? cl

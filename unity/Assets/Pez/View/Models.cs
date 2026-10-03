@@ -221,7 +221,7 @@ namespace Pez.View
                         int ot = other / 3;
                         if (ot == t) continue;
                         var n2 = normals[ot];
-                        if (Vector3.Dot(n, n2) > 0.94f) continue; // coplanar (within ~20 degrees): no crease
+                        if (Vector3.Dot(n, n2) > SoftEdgeCos) continue; // a soft edge (a curved surface's facets): no crease
                         // Convex when the neighbour's far corner lies behind this face.
                         if (Vector3.Dot(v[tris[other]] - ea, n) < -1e-4f) { crease = true; bevel = (n + n2).normalized; }
                     }
@@ -281,9 +281,52 @@ namespace Pez.View
             if (hasCol) m.SetColors(cols);
             m.subMeshCount = subs.Count;
             for (int s = 0; s < subs.Count; s++) m.SetTriangles(subs[s], s);
-            m.RecalculateNormals();
+            m.SetNormals(SmoothByAngle(v, srcSubs));
             m.RecalculateBounds();
             return m;
+        }
+
+        /// <summary>
+        /// Edges between faces closer than this (cosine; about 35 degrees) are soft: curved surfaces modelled as facets
+        /// (cylinders, domes, tanks) shade smooth and get no bevel line, instead of stepping in bands. Sharper edges (box
+        /// corners, 45-degree chamfers) stay hard and flat-shaded, as the style wants.
+        /// </summary>
+        const float SoftEdgeCos = 0.82f;
+
+        /// <summary>
+        /// Per triangle corner: the face normal, averaged (area-weighted) with every face meeting at that point whose normal
+        /// is within the soft-edge angle of this face's. Same corner order as the unwelded mesh.
+        /// </summary>
+        static Vector3[] SmoothByAngle(Vector3[] v, List<int[]> subs)
+        {
+            var tris = new List<int>();
+            foreach (var t in subs) tris.AddRange(t);
+            int nt = tris.Count / 3;
+            var ids = new Dictionary<Vector3Int, int>();
+            int Id(Vector3 p) { var k = new Vector3Int(Mathf.RoundToInt(p.x * 2000f), Mathf.RoundToInt(p.y * 2000f), Mathf.RoundToInt(p.z * 2000f)); if (!ids.TryGetValue(k, out int i)) ids[k] = i = ids.Count; return i; }
+            var faceN = new Vector3[nt]; var faceA = new Vector3[nt]; // unit normal; area-weighted normal
+            var around = new Dictionary<int, List<int>>();             // welded point -> faces touching it
+            for (int t = 0; t < nt; t++)
+            {
+                var c = Vector3.Cross(v[tris[t * 3 + 1]] - v[tris[t * 3]], v[tris[t * 3 + 2]] - v[tris[t * 3]]);
+                faceA[t] = c; faceN[t] = c.normalized;
+                for (int k = 0; k < 3; k++)
+                {
+                    int id = Id(v[tris[t * 3 + k]]);
+                    if (!around.TryGetValue(id, out var l)) around[id] = l = new List<int>(6);
+                    l.Add(t);
+                }
+            }
+            var normals = new Vector3[tris.Count];
+            for (int t = 0; t < nt; t++)
+                for (int k = 0; k < 3; k++)
+                {
+                    var sum = Vector3.zero;
+                    foreach (int o in around[Id(v[tris[t * 3 + k]])])
+                        if (Vector3.Dot(faceN[t], faceN[o]) > SoftEdgeCos) sum += faceA[o];
+                    normals[t * 3 + k] = sum.sqrMagnitude > 1e-12f ? sum.normalized : faceN[t];
+                }
+            return normals;
         }
 
         static readonly Dictionary<(Material, int), Material> oreTinted = new Dictionary<(Material, int), Material>();
@@ -472,6 +515,7 @@ namespace Pez.View
                 go.name = key; // PezMotion reads its profile from the object name
                 FlatShade(go);
                 if (Pez.Sim.Defs.Get(key)?.IsStructure == true) rig.Plinth = Plinths.Apply(go, key);
+                if (key == "power_plant") PowerCores.Apply(go); // open stacks glowing from inside
                 TintTeam(go, team);
                 rig.Model = go;
                 rig.Turret = PezMotion.FindDeep(go.transform, "turret");

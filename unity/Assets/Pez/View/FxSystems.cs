@@ -18,9 +18,17 @@ namespace Pez.View
         static FxSystems inst;
         public static FxSystems I => inst != null ? inst : inst = Create();
 
-        public ParticleSystem Flash, Fire, Smoke, Dust, Sparks, Shards, Ring, Scorch, Pool;
+        public ParticleSystem Flash, Fire, Smoke, Dust, Sparks, Shards, Ring, Scorch, Pool, Flame;
         Transform ground;
-        public static readonly Vector3 Wind = new Vector3(0.22f, 0f, 0.1f);
+        /// <summary>
+        /// The prevailing wind (world units/s, horizontal): one wind over the whole map, so every plume nearby leans the
+        /// same way. It comes from the west-south-west at about half a tile a second, gusting slowly (plus or minus a
+        /// quarter) and wandering a few degrees over minutes. Smoke, steam and dust drift with it at its speed.
+        /// </summary>
+        public static Vector3 Wind { get; private set; } = new Vector3(0.44f, 0f, 0.2f);
+        const float WindSpeed = 0.5f, WindHeading = 24f; // heading in degrees from +x (east) toward +z (north)
+        // Wind-borne systems and their drag: each gets force = wind x drag, so its particles drift at the wind's speed.
+        readonly Dictionary<ParticleSystem, float> windBorne = new Dictionary<ParticleSystem, float>();
 
         static FxSystems Create()
         {
@@ -134,14 +142,29 @@ namespace Pez.View
             Smoke.GetComponent<ParticleSystemRenderer>().sortMode = ParticleSystemSortMode.Distance;
             SizeOverLife(Smoke, new Keyframe(0, 0.45f), new Keyframe(0.3f, 1f), new Keyframe(1, 1.75f));
             ColorOverLife(Smoke, Grad(new[] { (0f, Color.white), (1f, Color.white) }, new[] { (0f, 0f), (0.05f, 0.95f), (0.5f, 0.7f), (1f, 0f) }));
-            Turbulence(Smoke, 0.35f);
+            Turbulence(Smoke, 0.15f, 1.4f);
+
+            // Flame: a burning building's tongues of fire. Small, short-lived, buoyant glows stretched along their rise
+            // so they read as licks of flame, tapering and reddening as they climb, flickering in a fine noise and leaning
+            // with the wind (not the fireball's expanding blob, which reads as a shell landing).
+            Flame = Make("flame", Mat("PezFxGlow", 3015, ("_Shape", 0), ("_Opacity", 0.6f), ("_Boost", 1.45f), ("_Noise", 0.5f)), 4000, -0.9f, 1.6f, glowStreams,
+                ParticleSystemRenderMode.Stretch);
+            var fr = Flame.GetComponent<ParticleSystemRenderer>();
+            fr.velocityScale = 0.22f; fr.lengthScale = 1.35f; fr.sortMode = ParticleSystemSortMode.YoungestInFront;
+            SizeOverLife(Flame, new Keyframe(0, 0.7f), new Keyframe(0.2f, 1f), new Keyframe(1, 0f));
+            ColorOverLife(Flame, Grad(new[]
+            {
+                (0f, new Color(1f, 0.86f, 0.45f)), (0.25f, new Color(1f, 0.55f, 0.12f)), (0.6f, new Color(0.88f, 0.24f, 0.05f)), (1f, new Color(0.35f, 0.08f, 0.03f)),
+            }, new[] { (0f, 0f), (0.08f, 1f), (0.6f, 0.8f), (1f, 0f) }));
+            Turbulence(Flame, 0.3f, 1.6f);
+            var fn = Flame.noise; fn.frequency = 2.2f; fn.scrollSpeed = 1.2f; // fine, fast flicker
 
             // Dust: cool, heavier than smoke, kicked out along the ground and settling (no glow).
             Dust = Make("dust", Mat("PezFxSmoke", 3000, ("_Heat", 0f), ("_Noise", 0.7f)), 3000, -0.01f, 2.4f, smokeStreams);
             Dust.GetComponent<ParticleSystemRenderer>().sortMode = ParticleSystemSortMode.Distance;
             SizeOverLife(Dust, new Keyframe(0, 0.5f), new Keyframe(0.25f, 1f), new Keyframe(1, 1.9f));
             ColorOverLife(Dust, Grad(new[] { (0f, Color.white), (1f, Color.white) }, new[] { (0f, 0f), (0.04f, 0.9f), (0.4f, 0.6f), (1f, 0f) }));
-            Turbulence(Dust, 0.2f);
+            Turbulence(Dust, 0.1f, 2.4f);
 
             // Sparks and embers: ballistic under gravity with a little drag, stretched along their motion, bouncing off
             // the ground and cooling from yellow-white to red.
@@ -196,14 +219,30 @@ namespace Pez.View
             }
         }
 
-        static void Turbulence(ParticleSystem ps, float strength)
+        /// <summary>A little billow (noise) and the prevailing wind; `drag` is the system's drag, so it drifts at wind speed.</summary>
+        void Turbulence(ParticleSystem ps, float strength, float drag)
         {
             var n = ps.noise;
             n.enabled = true; n.strength = strength; n.frequency = 0.6f; n.scrollSpeed = 0.15f;
             n.quality = ParticleSystemNoiseQuality.Low; n.octaveCount = 1; n.damping = true;
             var f = ps.forceOverLifetime;
             f.enabled = true; f.space = ParticleSystemSimulationSpace.World;
-            f.x = Wind.x; f.y = 0f; f.z = Wind.z;
+            windBorne[ps] = drag;
+            ApplyWind(ps, drag);
+        }
+
+        static void ApplyWind(ParticleSystem ps, float drag)
+        {
+            var f = ps.forceOverLifetime;
+            f.x = Wind.x * drag; f.y = 0f; f.z = Wind.z * drag;
+        }
+
+        /// <summary>The wind now: slow gusts and a gently wandering heading (smooth, so plumes bend rather than snap).</summary>
+        static Vector3 WindAt(float t)
+        {
+            float gust = 1f + 0.18f * Mathf.Sin(t * 0.21f) + 0.08f * Mathf.Sin(t * 0.53f + 1.3f);
+            float heading = (WindHeading + 9f * Mathf.Sin(t * 0.017f) + 4f * Mathf.Sin(t * 0.061f + 0.7f)) * Mathf.Deg2Rad;
+            return new Vector3(Mathf.Cos(heading), 0f, Mathf.Sin(heading)) * WindSpeed * gust;
         }
 
         /// <summary>Faceted chips: jittered, flattened octahedra and a wedge, flat-shaded (split vertices per face).</summary>
@@ -263,6 +302,7 @@ namespace Pez.View
             Emit(Ring, at, Vector3.zero, 0.1f, 0.2f, clear);
             Emit(Scorch, at, Vector3.zero, 0.1f, 0.2f, clear);
             Emit(Pool, at, Vector3.zero, 0.1f, 0.2f, clear);
+            Emit(Flame, at, Vector3.up, 0.1f, 0.2f, clear);
             EmitShard(at + Vector3.down * 3f, Vector3.zero, 0.01f, 0.2f, clear);
         }
 
@@ -283,6 +323,7 @@ namespace Pez.View
             ps = go.GetComponent<ParticleSystem>();
             ps.Clear(true);
             ps.Play(true);
+            if (windBorne.TryGetValue(src, out var drag)) { windBorne[ps] = drag; ApplyWind(ps, drag); }
             audiences[(src, layer)] = ps;
             return ps;
         }
@@ -377,6 +418,13 @@ namespace Pez.View
         {
             float dt = Time.deltaTime, now = Time.time;
             if (dt <= 0f) return;
+
+            // Every wind-borne system (and its per-audience copies) follows the one prevailing wind.
+            if (Time.frameCount % 10 == 0)
+            {
+                Wind = WindAt(now);
+                foreach (var kv in windBorne) if (kv.Key != null) ApplyWind(kv.Key, kv.Value);
+            }
 
             for (int i = 0; i < LightCount; i++)
             {

@@ -17,13 +17,13 @@ log() { echo "$(date '+%F %T') $*"; }
 
 wait_until_empty() {
   while true; do
-    # Seats 0 and 1 are the in-app agents; anyone else still playing is an outside player.
-    outside=$(curl -s --max-time 5 http://127.0.0.1:7777/api/lobby | IGNORE="$IGNORE" python3 -c '
+    # Seats 0 and 1 are the in-app agents; anyone else still playing (and not idle for PEZZ_CI_IDLE_S) is an outside player.
+    outside=$(curl -s --max-time 5 http://127.0.0.1:7777/api/lobby | IGNORE="$IGNORE" IDLE="${PEZZ_CI_IDLE_S:-1800}" python3 -c '
 import sys, json, os
 ignore = set(json.loads(os.environ["IGNORE"]))
 try: teams = json.load(sys.stdin)["teams"]
 except Exception: print(-1); sys.exit()
-print(sum(1 for i, t in enumerate(teams) if i >= 2 and t["status"] == "playing" and not t.get("house") and t.get("player") not in ignore))')
+print(sum(1 for i, t in enumerate(teams) if i >= 2 and t["status"] == "playing" and not t.get("house") and t.get("player") not in ignore and t.get("idle_s", 0) < float(os.environ["IDLE"])))')
     [ "$outside" = "0" ] && return
     [ "$outside" = "-1" ] && log "room 1 isn't answering; swapping now" && return
     sleep 60

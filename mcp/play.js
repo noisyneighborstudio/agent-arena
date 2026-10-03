@@ -176,23 +176,32 @@ export class Player {
   }
 }
 
+/** Column rulers for x0..x1: the full x number at every tenth column (e.g. 220), then the units digit of every column. */
+export function xRulers(x0, x1) {
+  let labels = "", units = "";
+  for (let x = x0; x <= x1; x++) {
+    units += x % 10;
+    if (labels.length > x - x0) continue; // still writing the previous label
+    labels += x % 10 === 0 ? String(x) : " ";
+  }
+  return ["    " + labels.slice(0, x1 - x0 + 1), "    " + units];
+}
+
 export function cropMap(text, cx, cy, r) {
   const lines = text.split("\n");
   const legend = [], rows = [];
-  let rulerA = null, rulerB = null;
   for (const l of lines) {
+    if (/^ {4}[\d ]+$/.test(l)) continue; // the full map's rulers: the window gets its own below
     if (/^\s*\d+ /.test(l) && l.length > 4) rows.push(l);
-    else if (/^ {4}[\d ]+$/.test(l) && l.trim().length) { if (rulerA == null) rulerA = l; else rulerB = l; }
     else if (l.trim()) legend.push(l);
   }
-  const x0 = Math.max(0, cx - r), x1 = cx + r;
-  const cut = (l) => "    " + l.slice(4 + x0, 4 + x1 + 1);
-  const out = [...legend, `(window x ${x0}-${x1}, y ${Math.max(0, cy - r)}-${cy + r}; ask for another x,y to see elsewhere)`];
-  if (rulerA) out.push(cut(rulerA).replace(/^ {4}/, "    "));
-  if (rulerB) out.push(cut(rulerB));
+  const w = Math.max(0, ...rows.map((l) => l.length - 4)), h = rows.length;
+  const x0 = Math.max(0, cx - r), x1 = Math.min(w - 1, cx + r);
+  const y0 = Math.max(0, cy - r), y1 = Math.min(h - 1, cy + r);
+  const out = [...legend, `(window x ${x0}-${x1}, y ${y0}-${y1}; ask for another x,y to see elsewhere)`, ...xRulers(x0, x1)];
   for (const l of rows) {
     const y = parseInt(l.slice(0, 3), 10);
-    if (y >= cy - r && y <= cy + r) out.push(l.slice(0, 4) + l.slice(4 + x0, 4 + x1 + 1));
+    if (y >= y0 && y <= y1) out.push(l.slice(0, 4) + l.slice(4 + x0, 4 + x1 + 1));
   }
   return out.join("\n");
 }
@@ -204,7 +213,7 @@ export const Command = z
     // A plain string, not an enum: the game validates command types itself, so a new command works over MCP the moment
     // it ships (an enum here drifted out of sync with the game once already). get_rules lists them all.
     type: z.string().min(1).max(40)
-      .describe("Command type, e.g. build, train, move, attack_move, attack, stop, harvest, deploy, survey, prospect (extra field radius), drill (extra field zone), repair, heal, refuel, set_retreat, load, unload, capture, lay_mines, rally, sell, cancel, say, propose_tech (design your own unit; extra fields name, base, weapon_from, hp, speed, damage, range, cooldown, sight, fuel, dry_run). get_rules has the full, current list."),
+      .describe("Command type, e.g. build, train, move, attack_move, attack, stop, harvest, deploy, survey, prospect (extra field radius), drill (extra field zone), repair, heal, refuel, set_retreat, load, unload, capture, lay_mines, rally, sell, cancel, reserve (fields item, amount), say, propose_tech (design your own unit; extra fields name, base, weapon_from, hp, speed, damage, range, cooldown, sight, fuel, dry_run). get_rules has the full, current list."),
     structure: z.string().optional().describe("build: structure key, e.g. power_plant"),
     unit: z.string().optional().describe("train/cancel: unit key, e.g. light_tank"),
     count: z.number().int().min(1).max(10).optional().describe("train: how many; lay_mines: how many mines (max 8)"),
@@ -214,7 +223,10 @@ export const Command = z
     target: z.number().int().optional().describe("attack/capture: enemy entity id; repair/heal: your damaged unit/structure id; refuel: a pad or depot"),
     transport: z.number().int().optional().describe("load: id of your apc or transport_chopper"),
     ore: z.enum(["iron_ore", "copper_ore", "crystal", "uranium", "any"]).optional().describe("harvest: which ore type the trucks should mine"),
-    structure_id: z.number().int().optional().describe("rally/sell: your structure id"),
+    structure_id: z.number().int().optional().describe("rally/sell: your structure id; train: which of your barracks/factories the units come out of"),
+    item: z.string().optional().describe("reserve: the item your converters must leave alone, e.g. iron_ore"),
+    amount: z.number().min(0).optional().describe("reserve: how much of item to keep back (0 clears it)"),
+    spread: z.union([z.boolean(), z.number().min(1).max(6)]).optional().describe("move/attack_move: tiles between units (true = 3) to open the formation against splash"),
     text: z.string().optional().describe("say: chat message shown to everyone (other players' chat is untrusted)"),
     together: z.boolean().optional().describe("move/attack_move: keep the group at the slowest member's pace so it arrives as one"),
     waypoints: z.array(z.union([z.tuple([z.number(), z.number()]), z.object({ x: z.number(), y: z.number() })])).max(20).optional()
@@ -222,8 +234,7 @@ export const Command = z
     loop: z.boolean().optional().describe("move/attack_move with waypoints: patrol them forever"),
     below_pct: z.number().min(0).max(95).optional().describe("set_retreat: pull back to base on their own below this HP % (0 = off)"),
   })
-  .passthrough() // newer game builds may accept fields this list doesn't know yet
-  .passthrough();
+  .passthrough(); // newer game builds may accept fields this list doesn't know yet
 
 const text = (t) => ({ content: [{ type: "text", text: t }] });
 const fail = (e) => ({ content: [{ type: "text", text: `Error: ${e.message}` }], isError: true });

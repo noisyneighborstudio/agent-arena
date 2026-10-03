@@ -29,6 +29,7 @@ namespace Pez.Sim
                     .Set("protected_for_s", w.IsProtected(team) ? (int)(t.ProtectedUntil - w.Time) : 0)
                     .Set("stalled_for_s", t.StalledSince >= 0 ? (int)(w.Time - t.StalledSince) : 0)
                     .Set("stockpile", Stock(t))
+                    .Set("reserves", t.Reserve.Aggregate(new JObj(), (j, kv) => j.Set(kv.Key, kv.Value)))
                     .Set("power", new JObj().Set("produced", t.PowerProduced).Set("used", t.PowerUsed).Set("low", t.LowPower)))
                 .Set("map", new JObj().Set("w", w.Map.W).Set("h", w.Map.H).Set("sector_tiles", w.Map.W / 8));
 
@@ -42,18 +43,24 @@ namespace Pez.Sim
                 .Set("defeated", x.Defeated)).ToList());
             o.Set("explored_pct", t.Explored.Count(b => b) * 100 / t.Explored.Length);
 
-            o.Set("structures", mine.Where(e => e.IsStructure).Select(e => (object)new JObj()
-                .Set("id", e.Id).Set("type", e.Def.Key).Set("x", e.Origin.X).Set("y", e.Origin.Y).Set("w", e.Def.SizeX).Set("h", e.Def.SizeY)
-                .Set("hp", (int)e.Hp).Set("max_hp", e.Def.MaxHp).Set("complete", e.IsComplete).Set("progress_pct", StateView.Pct(e.BuildProgress))
-                .Set("working", e.Def.Recipes.Length > 0 || e.Def.Key == "fusion_reactor" ? (object)e.Working : null)
-                .Set("under_attack", w.Time - e.LastHitTime < 5)).ToList());
+            o.Set("structures", mine.Where(e => e.IsStructure).Select(e =>
+            {
+                var s = new JObj()
+                    .Set("id", e.Id).Set("type", e.Def.Key).Set("x", e.Origin.X).Set("y", e.Origin.Y).Set("w", e.Def.SizeX).Set("h", e.Def.SizeY)
+                    .Set("hp", (int)e.Hp).Set("max_hp", e.Def.MaxHp).Set("complete", e.IsComplete).Set("progress_pct", StateView.Pct(e.BuildProgress))
+                    .Set("working", e.Def.Recipes.Length > 0 || e.Def.Key == "fusion_reactor" ? (object)e.Working : null)
+                    .Set("under_attack", w.Time - e.LastHitTime < 5);
+                var d = e.Def.Key == "deep_mine" ? w.Map.DepositById(e.DepositId) : null;
+                if (d != null) s.Set("ore", Defs.Ores[d.Type]).Set("deposit_left", (int)d.Amount).Set("runs_dry_in_s", (int)World.DeepMineSecondsLeft(d, t));
+                return (object)s;
+            }).ToList());
 
             o.Set("units", mine.Where(e => !e.IsStructure && !e.IsMine).Select(e =>
             {
                 var u = new JObj().Set("id", e.Id).Set("type", e.Def.Key).Set("x", R1(e.Pos.X)).Set("y", R1(e.Pos.Y))
                     .Set("hp", (int)e.Hp).Set("max_hp", e.Def.MaxHp).Set("order", e.OrderName)
                     .Set("target_id", e.TargetId != 0 ? (object)e.TargetId : null).Set("air", e.IsAir)
-                    .Set("speed", e.Def.Speed);
+                    .Set("speed", e.Def.Speed).Set("sight", e.Def.Sight);
                 if (e.OrderName != "idle") u.Set("order_x", R1(e.OrderPos.X)).Set("order_y", R1(e.OrderPos.Y));
                 if (e.DockName != null) u.Set("dock", e.DockName);
                 if (e.Waypoints.Count > 0) u.Set("waypoints", e.Waypoints.Select(p => (object)Point(p)).ToList());
@@ -109,7 +116,8 @@ namespace Pez.Sim
             prod.Set("structures", t.StructureQueue.Select(p => { var s = w.Get(p.StructureId); return (object)new JObj().Set("type", p.Key).Set("id", p.StructureId).Set("progress_pct", StateView.Pct(s?.BuildProgress ?? 0)); }).ToList());
             foreach (var kv in t.UnitQueues)
                 prod.Set(Defs.ProducerKey(kv.Key), kv.Value.Select((p, i) => (object)new JObj().Set("type", p.Key)
-                    .Set("progress_pct", i == 0 ? StateView.Pct(p.Progress / w.Def(p.Key).BuildTime) : 0)).ToList());
+                    .Set("progress_pct", i == 0 ? StateView.Pct(p.Progress / w.Def(p.Key).BuildTime) : 0)
+                    .Set("at", p.StructureId != 0 ? (object)p.StructureId : null)).ToList());
             o.Set("production", prod);
             o.Set("build_options", BuildOptions(w, team));
             o.Set("inventions", Tech.OwnJson(w, team));
