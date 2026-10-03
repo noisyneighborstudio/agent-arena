@@ -104,7 +104,7 @@ namespace Pez.Sim
             var s = t.Stats;
             o.Set("stats", new JObj().Put("units_built", s.UnitsBuilt).Put("structures_built", s.StructuresBuilt).Put("units_lost", s.UnitsLost)
                 .Put("structures_lost", s.StructuresLost).Put("kills", s.Kills).Put("ore_mined", s.OreMined)
-                .Put("kill_value", s.KillValue).Put("salvage_left", s.SalvageLeft)
+                .Put("kill_value", s.KillValue).Put("salvage_left", s.SalvageLeft).Put("deep_mined", s.DeepMined)
                 .Set("built", s.Built.Aggregate(new JObj(), (j, kv) => j.Set(kv.Key, kv.Value))));
             return o;
         }
@@ -156,7 +156,7 @@ namespace Pez.Sim
                 var st = t.Stats;
                 s.Load("units_built", ref st.UnitsBuilt); s.Load("structures_built", ref st.StructuresBuilt); s.Load("units_lost", ref st.UnitsLost);
                 s.Load("structures_lost", ref st.StructuresLost); s.Load("kills", ref st.Kills); s.Load("ore_mined", ref st.OreMined);
-                s.Load("kill_value", ref st.KillValue); s.Load("salvage_left", ref st.SalvageLeft);
+                s.Load("kill_value", ref st.KillValue); s.Load("salvage_left", ref st.SalvageLeft); s.Load("deep_mined", ref st.DeepMined);
                 var b = s.Obj("built");
                 if (b != null) foreach (var kv in b) if (kv.Value is double n) st.Built[kv.Key] = (int)n;
             }
@@ -361,6 +361,7 @@ namespace Pez.Sim
                 // An older snapshot without AI state: give every scripted seat still playing a fresh controller.
                 foreach (var t in world.Teams.Where(t => t.Controller == "ai" && !t.Left && !t.Defeated)) ais.Add(new SimpleAI(t.Id, passive: cfg.Open));
             ResumedFrom = root.Str("saved_at");
+            if (world.Map.BaseMissing) world.Map.RebuildBase(cfg.Seed, cfg.MapSize, cfg.OreScale);
             World = world;
         }
     }
@@ -427,6 +428,7 @@ namespace Pez.Sim
             .Set("w", W).Set("h", H).Set("ore_scale", SnapIO.X(OreScale)).Set("next_deposit_id", nextDepositId)
             .Set("tiles", SnapIO.Pack(Tiles.Select(t => (byte)t).ToArray()))
             .Set("ore", SnapIO.PackInts(Ore)).Set("ore_type", SnapIO.Pack(OreType)).Set("occupant", SnapIO.PackInts(Occupant))
+            .Set("ore_base", SnapIO.PackInts(OreBase)).Set("ore_base_type", SnapIO.Pack(OreBaseType))
             .Set("spawns", SnapIO.Vs(Spawns))
             .Set("deep", Deep.Select(d => (object)new JObj().Set("id", d.Id).Set("pos", SnapIO.V(d.Pos)).Set("type", d.Type)
                 .Set("amount", SnapIO.X(d.Amount)).Set("initial", SnapIO.X(d.Initial)).Put("mine", d.MineId)).ToList());
@@ -444,6 +446,14 @@ namespace Pez.Sim
             var types = SnapIO.Unpack(d.Str("ore_type"));
             Array.Copy(types, m.OreType, Math.Min(types.Length, m.OreType.Length));
             SnapIO.UnpackInts(d.Str("occupant"), m.Occupant);
+            // From before regrowth: the fields' original amounts are rebuilt from the game's seed (Game.Restore).
+            if (d.Has("ore_base", out _))
+            {
+                SnapIO.UnpackInts(d.Str("ore_base"), m.OreBase);
+                var bt = SnapIO.Unpack(d.Str("ore_base_type"));
+                Array.Copy(bt, m.OreBaseType, Math.Min(bt.Length, m.OreBaseType.Length));
+            }
+            else m.BaseMissing = true;
             m.Spawns.AddRange(SnapIO.ToVecs(d.Arr("spawns")));
             foreach (var x in d.Objs("deep"))
             {
@@ -470,7 +480,7 @@ namespace Pez.Sim
                 .Put("open", Open).Set("max_players", MaxPlayers).Set("max_map_size", MaxMapSize).Set("grow_step", GrowStep)
                 .Set("safe_join_distance", SnapIO.X(SafeJoinDistance)).Set("protection_seconds", SnapIO.X(ProtectionSeconds)).Set("stall_grace", SnapIO.X(StallGrace))
                 .Set("next_id", nextId).Set("next_seq", nextSeq).Set("seat_counter", seatCounter).Set("rng", rng.State.ToString("x16"))
-                .Put("errors", Errors).Put("last_error", LastError).Put("arena_champion", ArenaChampion).Put("contested", contested)
+                .Put("errors", Errors).Put("last_error", LastError).Put("arena_champion", ArenaChampion).Put("contested", contested).Put("regrown", Regrown)
                 .Set("event_counts", EventCounts.Aggregate(new JObj(), (j, kv) => j.Set(kv.Key, kv.Value)))
                 .Set("rate_snapshot", rateSnapshot.Select(kv => (object)new JObj().Set("team", kv.Key).Set("stock", SnapIO.Floats(kv.Value))).ToList())
                 .Set("air_warned", airWarned.Select(kv => (object)new List<object> { kv.Key.team, kv.Key.id, SnapIO.X(kv.Value) }).ToList())
@@ -504,7 +514,7 @@ namespace Pez.Sim
             d.Load("open", ref w.Open); d.Load("max_players", ref w.MaxPlayers); d.Load("max_map_size", ref w.MaxMapSize); d.Load("grow_step", ref w.GrowStep);
             d.Load("safe_join_distance", ref w.SafeJoinDistance); d.Load("protection_seconds", ref w.ProtectionSeconds); d.Load("stall_grace", ref w.StallGrace);
             d.Load("errors", ref w.Errors); d.Load("last_error", ref w.LastError);
-            d.Load("arena_champion", ref w.ArenaChampion); d.Load("contested", ref w.contested);
+            d.Load("arena_champion", ref w.ArenaChampion); d.Load("contested", ref w.contested); d.Load("regrown", ref w.Regrown);
 
             foreach (var id in d.Objs("inventions")) { var inv = Snapshot.ReadInvention(id); if (inv != null) w.Inventions[inv.Key] = inv; }
 

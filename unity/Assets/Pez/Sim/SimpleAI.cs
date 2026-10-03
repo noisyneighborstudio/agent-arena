@@ -99,6 +99,9 @@ namespace Pez.Sim
             int wantTrucks = System.Math.Min(10, 3 + Count("mining_refinery") * 2 + Count("outpost") * 2);
             if (trucks.Count < wantTrucks && t.UnitQueues[Producer.CommandCenter].Count == 0 && t.Amount("iron_ore") >= 200 + (reserve.TryGetValue("iron_ore", out var ri) ? ri : 0))
                 Do(w, "type", "train", "unit", "mining_truck");
+            // Trucks cost raw iron ore, which the refineries eat as it arrives: short of trucks, keep enough back for one.
+            int keep = trucks.Count < wantTrucks ? 200 : 0;
+            if (t.Reserved("iron_ore") != keep) Do(w, "type", "reserve", "item", "iron_ore", "amount", keep);
             // Iron is the bulk resource: roughly 3 of every 5 trucks; one each on copper, then crystal/uranium as tech needs them.
             var plan = new List<int> { Map.Iron, Map.Iron, Map.Copper, Map.Iron };
             if (Count("optics_lab") > 0 || Count("composite_foundry") > 0) plan.Add(Map.Crystal);
@@ -109,7 +112,9 @@ namespace Pez.Sim
             {
                 int type = i < plan.Count ? plan[i] : Map.Iron;
                 var tr = trucks[i];
-                if (tr.HarvestType != type && tr.Cargo == 0 && tr.Order != Order.ReturnOre)
+                // Trucks that ran out of ore stand idle: every 20 s they look again (fields regrow, salvage lands).
+                bool retry = tr.Order == Order.Idle && (int)w.Time % 20 == 0;
+                if ((tr.HarvestType != type || retry) && tr.Cargo == 0 && tr.Order != Order.ReturnOre)
                     Do(w, "type", "harvest", "units", new[] { tr.Id }, "ore", Defs.Ores[type]);
             }
 

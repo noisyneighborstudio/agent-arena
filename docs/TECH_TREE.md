@@ -33,6 +33,8 @@ The surface runs out and deep deposits run dry, so a long game is decided by who
 
 - **Salvage from kills.** Anything an enemy destroys (with a unit, turret, mine, or a fire it set) leaves about 25% of its cost as ore on and around the spot: 10% for infantry, and a mining truck also spills its load. Costs convert as for any salvage (steel and iron ore to iron ore, circuits to two copper ore, plasma to two uranium; deployed structures count as the truck that made them). Nothing is left for selling, crashes, your own side's fire, or deaths with no enemy cause. Piles merge (a squad killed together leaves one pile), respect the 1,000-per-tile cap and never land on another ore. Anyone's trucks can collect it, so the winner has to hold the ground to profit. Both sides get one SALVAGE ON THE FIELD alert per area with the running total.
 
+- **Ore regrowth.** Mined surface fields slowly grow back toward their original amounts (the map remembers each field tile's original ore, `Map.OreBase`): from ore a field still has, spreading into its neighbouring tiles, and from the field's root (its richest tile) once it's mined to nothing. The rate per tile is 0.12 ore/s × √(ore richness) at the map's centre, falling steeply to 4% of that in the corners; nothing regrows under a structure, on a tile a truck is working or past the original amount. A mined-bare 96-tile map earns back about 7 ore/s (3.5 at richness 0.3), about 70% of it in the middle; a deep mine pumps 4/s, so deep mining stays the mid-game economy.
+
 ## Structures
 
 The Command Center builds every structure. A new structure must be placed within 6 tiles of one of your existing structures, so you take territory by building outward or by deploying Outposts.

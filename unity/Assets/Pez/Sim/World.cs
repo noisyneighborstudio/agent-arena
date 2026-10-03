@@ -24,6 +24,8 @@ namespace Pez.Sim
         public int UnitsBuilt, StructuresBuilt, UnitsLost, StructuresLost, Kills, OreMined;
         /// <summary>The ore value of everything this team destroyed (World.ValueOf), and the salvage its kills left on the ground.</summary>
         public int KillValue, SalvageLeft;
+        /// <summary>Of OreMined, what came from deep mines (the rest is surface ore and salvage, by truck).</summary>
+        public int DeepMined;
         public readonly Dictionary<string, int> Built = new Dictionary<string, int>();
         public void Count(string key) => Built[key] = (Built.TryGetValue(key, out var n) ? n : 0) + 1;
     }
@@ -823,6 +825,7 @@ namespace Pez.Sim
             Guard("cleanup", Cleanup);
             if (Tick % 4 == 0) Guard("visibility", UpdateVisibility);
             Guard("victory", CheckVictory);
+            Guard("regrowth", Regrow);
             TickOreVersion();
             if (Showcase != null) Guard("showcase", Showcase.Hold); // the kitchen sink room only (KitchenSink.cs)
         }
@@ -1906,7 +1909,7 @@ namespace Pez.Sim
             d.Amount -= take;
             team.Add(Defs.Ores[d.Type], take);
             e.WorkTimer += take;
-            if (e.WorkTimer >= 1f) { team.Stats.OreMined += (int)e.WorkTimer; e.WorkTimer -= (int)e.WorkTimer; }
+            if (e.WorkTimer >= 1f) { team.Stats.OreMined += (int)e.WorkTimer; team.Stats.DeepMined += (int)e.WorkTimer; e.WorkTimer -= (int)e.WorkTimer; }
             e.Working = true;
             if (d.Amount <= 0)
             {

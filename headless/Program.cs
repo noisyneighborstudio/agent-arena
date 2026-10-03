@@ -37,10 +37,12 @@ namespace Pez.Headless
                 Controllers = Arg("--controllers", "llm,ai").Split(','),
             };
             World.Profile = args.Contains("--profile");
+            World.RegrowthDisabled = args.Contains("--no-regrowth"); // balance baselines
             if (args.Contains("--selftest")) return SelfTest(cfg, int.Parse(Arg("--max-minutes", "30")));
             if (args.Contains("--test")) return Tests.Run();
             if (args.Contains("--test-kitchen-sink")) return Tests.RunKitchenSink();
             if (args.Contains("--test-economy")) return Tests.RunEconomy();
+            if (args.Contains("--resume-check")) return ResumeCheck(Arg("--resume-check", ""), float.Parse(Arg("--seconds", "600"), System.Globalization.CultureInfo.InvariantCulture));
             if (args.Contains("--trace")) return Trace(cfg, int.Parse(Arg("--trace", "1")), float.Parse(Arg("--seconds", "60")));
 
             var game = new Game(cfg);
@@ -91,6 +93,29 @@ namespace Pez.Headless
 
         static volatile bool stopRequested;
 
+        /// <summary>
+        /// Deploy rehearsal: load a saved game (a copy; the file is only read), run it on for a while with no server, and
+        /// report what the new rules make of it. Never binds a port.
+        /// </summary>
+        static int ResumeCheck(string file, float seconds)
+        {
+            var game = new Game(new GameConfig { Seed = 1, MapSize = 48, Controllers = new[] { "llm" } });
+            game.Restore(Snapshot.Parse(System.IO.File.ReadAllText(file)));
+            var w = game.World;
+            void Report(string when)
+            {
+                Console.WriteLine($"{when}: t={w.Time / 3600:0.00}h map {w.Map.W}x{w.Map.H}, field tiles {w.Map.OreBase.Count(x => x > 0)} (orig ore {w.Map.OreBase.Sum()}), surface ore {w.Map.Ore.Sum()}, regrown {w.Regrown}, " +
+                                  $"players {w.ActivePlayers}, game_over {w.GameOver}, errors {w.Errors} {w.LastError}");
+                foreach (var t in w.Teams.Where(t => !t.Left && !t.Defeated))
+                    Console.WriteLine($"   {t.Name} ({t.PlayerName}): structures {w.Owned(t.Id).Count(e => e.IsStructure)}, units {w.Owned(t.Id).Count(e => !e.IsStructure)}, steel {t.Amount("steel")}, kills {t.Stats.Kills}, ore {t.Stats.OreMined}");
+            }
+            Report("resumed");
+            for (int i = 0; i < seconds * World.TickRate && !w.GameOver; i++) game.Advance(World.Dt);
+            Report($"after {seconds:0}s");
+            foreach (var e in w.Events.Where(e => e.Type == "chat" && e.Team < 0).TakeLast(12)) Console.WriteLine($"   [{e.Tick * World.Dt / 60:0.0}m] {e.Text}");
+            return w.Errors == 0 ? 0 : 1;
+        }
+
         /// <summary>Debug aid: run AI vs AI and print one entity's state every second.</summary>
         static int Trace(GameConfig cfg, int id, float seconds)
         {
@@ -120,6 +145,13 @@ namespace Pez.Headless
                 game.Advance(World.Dt / cfg.Speed);
                 if (w.Tick % (60 * World.TickRate) == 0)
                     Console.WriteLine($"t={w.Time / 60:0}m " + string.Join(" | ", w.Teams.Select(t => $"{t.Name}: steel {t.Amount("steel")} circ {t.Amount("circuits")} plasma {t.Amount("plasma")} pow {t.PowerProduced}/{t.PowerUsed} S{w.Owned(t.Id).Count(e => e.IsStructure)} U{w.Owned(t.Id).Count(e => !e.IsStructure)} K{t.Stats.Kills} ore{t.Stats.OreMined}")));
+                // Economy line (balance runs): ore mined so far, how much of it deep, what's regrown and what's left on the surface.
+                if (w.Tick % (5 * 60 * World.TickRate) == 0)
+                {
+                    int mined = w.Teams.Sum(t => t.Stats.OreMined), deep = w.Teams.Sum(t => t.Stats.DeepMined), salvage = w.Teams.Sum(t => t.Stats.SalvageLeft);
+                    int share = mined > 0 ? 100 * deep / mined : 0;
+                    Console.WriteLine($"econ t={w.Time / 60:0}m mined {mined} surface {mined - deep} deep {deep} deep_share {share}% regrown {w.Regrown} salvage_left {salvage} surface_left {w.Map.Ore.Sum()} kills {w.Teams.Sum(t => t.Stats.Kills)}");
+                }
             }
             Console.WriteLine($"Simulated {w.Time / 60:0.0} game-minutes in {sw.Elapsed.TotalSeconds:0.0}s real.");
             int Count(string type) => w.EventCounts.TryGetValue(type, out var n) ? n : 0;
@@ -131,6 +163,9 @@ namespace Pez.Headless
             foreach (var t in w.Teams)
                 Console.WriteLine($"{t.Name} built: " + string.Join(", ", t.Stats.Built.Select(kv => $"{kv.Key} x{kv.Value}")));
             Console.WriteLine(Json.Write(ApiServer.Status(game)));
+            if (Environment.GetEnvironmentVariable("PEZZ_DUMP_TRUCKS") == "1")
+                foreach (var e in w.Entities.Where(e => !e.Dead && e.IsHarvester))
+                    Console.WriteLine($"truck #{e.Id} t{e.Team} at {e.Pos} {e.OrderName} dock {e.Dock} type {e.HarvestType} tile {e.HarvestTile} cargo {e.Cargo} fuel {e.Fuel:0} stranded {e.Stranded}");
             Console.WriteLine(StateView.AsciiMap(w, 0));
             return w.GameOver ? 0 : 2;
         }

@@ -22,6 +22,61 @@ namespace Pez.Sim
             if (oreDirty && Tick % (TickRate * 10) == 0) { OreVersion++; oreDirty = false; }
         }
 
+        // ------------------------------------------------------------------ ore regrowth
+
+        /// <summary>
+        /// Ore regrowth, per field tile, in ore a second at the map's centre, scaled by RegrowWeight (1 in the middle,
+        /// RegrowEdge in the corners) and the square root of the map's ore richness (a scarce map regrows less, but not
+        /// in proportion: its stalemates need the long tail most). A mined-bare 96-tile map earns back about 7 ore/s at
+        /// richness 1 and 3.5 at 0.3, about 70% of it in the middle: a deep mine pumps 4/s, so deep mining stays the
+        /// mid-game economy and regrowth is the long tail that makes the middle worth fighting for.
+        /// </summary>
+        public const float RegrowRate = 0.12f, RegrowEdge = 0.04f, RegrowFalloff = 2.5f;
+        public const int RegrowEvery = TickRate * 2;
+        /// <summary>Selftest baseline only: no regrowth at all.</summary>
+        public static bool RegrowthDisabled;
+        /// <summary>Ore regrown on the map this game (for balance reports).</summary>
+        public int Regrown;
+        /// <summary>Regrowth runs until sudden death (the match clock).</summary>
+        public bool RegrowthOn => !RegrowthDisabled;
+        readonly HashSet<int> beingMined = new HashSet<int>();
+        readonly List<(int i, int add)> regrowNow = new List<(int, int)>();
+
+        /// <summary>
+        /// Every 2 s each mined surface field tile grows back a little toward its original amount: from ore it still
+        /// has, from a neighbouring tile of its field that has ore, or (a field mined to nothing) from the field's root.
+        /// Never under a structure, never past the original amount, never on a tile a truck is mining, and never over
+        /// salvage of another ore. Fractions are dithered by a hash of tile and tick, so it's deterministic.
+        /// </summary>
+        void Regrow()
+        {
+            if (Tick % RegrowEvery != 0 || !RegrowthOn) return;
+            Map.FieldIndex(out var tiles, out var roots);
+            if (tiles.Length == 0) return;
+            beingMined.Clear();
+            foreach (var e in Entities)
+                if (!e.Dead && e.IsHarvester && e.Order == Order.Harvest && e.HarvestTile.HasValue) beingMined.Add(Map.Idx(e.HarvestTile.Value.X, e.HarvestTile.Value.Y));
+            regrowNow.Clear();
+            float scale = RegrowRate * MathF.Sqrt(Map.OreScale) * RegrowEvery * Dt;
+            foreach (int i in tiles)
+            {
+                int target = Map.OreBase[i], ore = Map.Ore[i];
+                if (ore >= target || Map.Occupant[i] != 0 || beingMined.Contains(i) || !Map.TerrainPassable(i % Map.W, i / Map.W)) continue;
+                if (ore > 0 && Map.OreType[i] != Map.OreBaseType[i]) continue; // salvage of another ore lies on it
+                if (ore == 0 && !roots[i] && !Map.FieldNeighbourHasOre(i)) continue;
+                float amount = scale * Map.RegrowWeight(i);
+                uint h = (uint)i * 2654435761u ^ (uint)Tick * 40503u;
+                int add = (int)(amount + ((h >> 8) & 0xFFFF) / 65536f);
+                if (add > 0) regrowNow.Add((i, Math.Min(add, target - ore)));
+            }
+            foreach (var (i, add) in regrowNow)
+            {
+                if (Map.Ore[i] == 0) { Map.OreType[i] = Map.OreBaseType[i]; oreDirty = true; }
+                Map.Ore[i] += add;
+                Regrown += add;
+            }
+        }
+
         // ------------------------------------------------------------------ salvage from kills
 
         /// <summary>Share of a destroyed thing's cost left as salvage ore when an enemy kills it (infantry leave less).</summary>
@@ -158,10 +213,147 @@ namespace Pez.Sim
 
     public partial class Map
     {
-        /// <summary>Salvage of ore type k may land on this (empty) tile. Every tile, until fields can regrow.</summary>
-        public bool SalvageMayLand(int i, int k) => true;
-        /// <summary>Whether ore can grow back on this tile, and how much it grows back to (none yet).</summary>
-        public bool Regrows(int i) => false;
-        public int RegrowTarget(int i) => 0;
+        /// <summary>Salvage of ore type k may land on this (empty) tile: anywhere but a field of another ore (which regrows there).</summary>
+        public bool SalvageMayLand(int i, int k) => OreBase[i] == 0 || OreBaseType[i] == k;
+        /// <summary>Whether ore grows back on this tile (it was part of a field), and how much it grows back to.</summary>
+        public bool Regrows(int i) => OreBase[i] > 0;
+        public int RegrowTarget(int i) => OreBase[i];
+
+        /// <summary>Loaded from a snapshot older than regrowth: Game.Restore rebuilds OreBase from the game's seed.</summary>
+        public bool BaseMissing;
+
+        /// <summary>
+        /// For a game saved before regrowth: the fields' original amounts, rebuilt. The map as first generated (same seed,
+        /// size and richness) gives the starting area's fields exactly, if its terrain still matches; each base site added
+        /// as the map grew gets the iron and copper fields (and the contested crystal and uranium) a join lays down,
+        /// placed the same way. Only where there's open, unclaimed ground. Ore on the ground now is left as it is.
+        /// </summary>
+        public void RebuildBase(int seed, int initialSize, float oreScale)
+        {
+            BaseMissing = false;
+            fieldsChanged = true;
+            int size = Math.Clamp(initialSize, MinSize, MaxSize);
+            if (size <= W && size <= H)
+            {
+                var g = Generate(size, size, seed, oreScale);
+                int same = 0, total = size * size;
+                for (int y = 0; y < size; y++)
+                    for (int x = 0; x < size; x++)
+                        if ((g.Tiles[g.Idx(x, y)] >= Terrain.Rock) == (Tiles[Idx(x, y)] >= Terrain.Rock)) same++;
+                if (same >= total * 0.9f)
+                    for (int y = 0; y < size; y++)
+                        for (int x = 0; x < size; x++)
+                        {
+                            int a = g.Idx(x, y), b = Idx(x, y);
+                            if (g.OreBase[a] > 0 && TerrainPassable(x, y)) { OreBase[b] = g.OreBase[a]; OreBaseType[b] = g.OreBaseType[a]; }
+                        }
+            }
+            // Base sites added by joins: the fields Grown lays around a new site (it sits 9 tiles in from the new edge).
+            for (int s = 4; s < Spawns.Count; s++)
+            {
+                var sp = Spawns[s];
+                int grownTo = (int)MathF.Round(MathF.Max(sp.X, sp.Y)) + 9;
+                var centre = new Vec2(grownTo / 2f, grownTo / 2f);
+                var dir = (centre - sp).Normalized; var side = new Vec2(-dir.Y, dir.X);
+                var rng = new Random(seed ^ (int)(sp.X * 7919 + sp.Y * 31));
+                void Field(Vec2 c, int r, int min, int max, byte type) => BaseField(rng, (int)c.X, (int)c.Y, r, min, max, type, oreScale);
+                Field(sp + dir * 9f, 3, 260, 460, Iron);
+                Field(sp + dir * 5f + side * 7f, 2, 200, 340, Copper);
+                Field(Vec2.Lerp(sp, centre, 0.45f) + side * 6f, 2, 90, 170, Crystal);
+                Field(Vec2.Lerp(sp, centre, 0.55f) - side * 5f, 1, 70, 130, Uranium);
+            }
+        }
+
+        /// <summary>A field's original amounts only (no ore now), on open ground no other field claims.</summary>
+        void BaseField(Random rng, int cx, int cy, int r, int min, int max, byte type, float oreScale)
+        {
+            for (int y = cy - r - 1; y <= cy + r + 1; y++)
+                for (int x = cx - r - 1; x <= cx + r + 1; x++)
+                {
+                    if (!InBounds(x, y)) continue;
+                    float d = MathF.Sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy));
+                    if (d > r + (float)rng.NextDouble() * 0.9f) continue;
+                    int i = Idx(x, y);
+                    if (!TerrainPassable(x, y) || OreBase[i] > 0 || (Ore[i] > 0 && OreType[i] != type)) continue;
+                    OreBase[i] = Math.Min(MaxOrePerTile, (int)(rng.Next(min, max) * (1.2f - d / (r + 1)) * oreScale));
+                    OreBaseType[i] = type;
+                }
+        }
+
+        // Caches over OreBase (rebuilt when the fields change; not state): every field tile, and each field's root.
+        bool fieldsChanged = true;
+        int[] fieldTiles;
+        bool[] fieldRoots;
+
+        /// <summary>
+        /// Every field tile, and each field's root: the tile that held the most ore when the map was made. A field
+        /// regrows from the ore it has left; a field mined to nothing starts again from its root.
+        /// </summary>
+        internal void FieldIndex(out int[] tiles, out bool[] roots)
+        {
+            if (fieldsChanged || fieldTiles == null)
+            {
+                var list = new List<int>();
+                fieldRoots = new bool[W * H];
+                var seen = new bool[W * H];
+                var stack = new Stack<int>();
+                for (int s = 0; s < OreBase.Length; s++)
+                {
+                    if (OreBase[s] <= 0 || seen[s]) continue;
+                    int best = s; seen[s] = true; stack.Push(s);
+                    while (stack.Count > 0)
+                    {
+                        int i = stack.Pop(); list.Add(i);
+                        if (OreBase[i] > OreBase[best] || (OreBase[i] == OreBase[best] && i < best)) best = i;
+                        int x = i % W, y = i / W;
+                        for (int dy = -1; dy <= 1; dy++)
+                            for (int dx = -1; dx <= 1; dx++)
+                            {
+                                int nx = x + dx, ny = y + dy;
+                                if (!InBounds(nx, ny)) continue;
+                                int j = Idx(nx, ny);
+                                if (seen[j] || OreBase[j] <= 0 || OreBaseType[j] != OreBaseType[s]) continue;
+                                seen[j] = true; stack.Push(j);
+                            }
+                    }
+                    fieldRoots[best] = true;
+                }
+                list.Sort();
+                fieldTiles = list.ToArray();
+                fieldsChanged = false;
+            }
+            tiles = fieldTiles; roots = fieldRoots;
+        }
+
+        /// <summary>OreBase was edited directly (the kitchen sink): rebuild the field index.</summary>
+        internal void FieldsChanged() => fieldsChanged = true;
+
+        /// <summary>A neighbouring tile of the same field still has ore: this one can grow back from it.</summary>
+        internal bool FieldNeighbourHasOre(int i)
+        {
+            int x = i % W, y = i / W;
+            byte type = OreBaseType[i];
+            for (int dy = -1; dy <= 1; dy++)
+                for (int dx = -1; dx <= 1; dx++)
+                {
+                    if (dx == 0 && dy == 0) continue;
+                    int nx = x + dx, ny = y + dy;
+                    if (!InBounds(nx, ny)) continue;
+                    int j = Idx(nx, ny);
+                    if (OreBase[j] > 0 && OreBaseType[j] == type && Ore[j] > 0 && OreType[j] == type) return true;
+                }
+            return false;
+        }
+
+        /// <summary>
+        /// How fast a tile regrows relative to the map's centre (1 there, RegrowEdge in the corners): falls off steeply
+        /// with distance, so the middle recovers and the edges barely do.
+        /// </summary>
+        public float RegrowWeight(int i)
+        {
+            float dx = i % W + 0.5f - W / 2f, dy = i / W + 0.5f - H / 2f;
+            float d = MathF.Min(1f, MathF.Sqrt(dx * dx + dy * dy) / (0.5f * MathF.Sqrt(W * W + H * H)));
+            return World.RegrowEdge + (1f - World.RegrowEdge) * MathF.Pow(1f - d, World.RegrowFalloff);
+        }
     }
 }

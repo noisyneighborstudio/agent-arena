@@ -794,7 +794,7 @@ namespace Pez.Sim
 
         void Ground()
         {
-            Begin("terrain", "Terrain and ore", "Each ground type and water; ore fields full, depleting and mined out.", 108, 0, 40, 22);
+            Begin("terrain", "Terrain and ore", "Each ground type and water; ore fields full, depleting, mined out and regrowing.", 108, 0, 46, 22);
             Patch(5, 15, 3.2f, Terrain.Dirt);
             Patch(13, 15, 3.2f, Terrain.Rock);
             Patch(22, 15, 3.6f, Terrain.Water);
@@ -821,6 +821,25 @@ namespace Pez.Sim
             var spent = OreField(34, 5, Map.Copper, 2.2f, 420);
             holds.Add(() => { foreach (var (idx, _) in spent) w.Map.Ore[idx] = 0; });
             Item("Mined-out field", "a spent copper field: the stain faded to a scar", 34, 5);
+            // Regrowing: a crystal field mined bare grows back from its root (the middle) outward, as fields do in a game
+            // (World.Regrow), sped up: bare for 4 s, regrowing ring by ring, full for a few seconds; every 40 s.
+            var grow = OreField(41, 5, Map.Crystal, 2.4f, 300);
+            var growAt = P(41, 5);
+            foreach (var (idx, amount) in grow) { w.Map.OreBase[idx] = amount; w.Map.OreBaseType[idx] = Map.Crystal; }
+            w.Map.FieldsChanged();
+            holds.Add(() =>
+            {
+                if (w.Tick % 5 != 0) return;
+                float c = T % 40f;
+                foreach (var (idx, amount) in grow)
+                {
+                    float d = Vec2.Dist(new Vec2(idx % w.Map.W + 0.5f, idx / w.Map.W + 0.5f), growAt);
+                    float k = Math.Clamp((c - 4f - d * 5f) / 14f, 0f, 1f);
+                    w.Map.Ore[idx] = (int)MathF.Ceiling(amount * k);
+                    w.Map.OreType[idx] = (byte)Map.Crystal;
+                }
+            });
+            Item("Regrowing field", "a mined-out crystal field growing back from its root outward: clusters rise out of the ground ring by ring; loops every 40 s", 41, 5);
         }
 
         static string Pretty(string key) => key.Contains(':') ? key : char.ToUpperInvariant(key[0]) + key.Substring(1).Replace('_', ' ');

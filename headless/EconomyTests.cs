@@ -19,6 +19,101 @@ namespace Pez.Headless
         static void EconomyAndEndgame()
         {
             SalvageFromKills();
+            OreRegrowth();
+        }
+
+        /// <summary>Mine a fresh map bare, let it regrow: how much comes back in 10 and 20 minutes, and where.</summary>
+        static (int total, int middle, int edges, int fieldOre) RegrowBare(int size, float oreScale, float minutes, int seed = 7)
+        {
+            var w = new World(2, seed, size, oreScale);
+            foreach (var e in w.Entities.Where(e => e.IsHarvester).ToList()) w.Remove(e);
+            int field = w.Map.OreBase.Sum();
+            Array.Clear(w.Map.Ore, 0, w.Map.Ore.Length);
+            Run(w, minutes * 60);
+            int mid = 0, edge = 0;
+            float half = 0.5f * MathF.Sqrt(2) * size;
+            for (int i = 0; i < w.Map.Ore.Length; i++)
+            {
+                float dx = i % size + 0.5f - size / 2f, dy = i / size + 0.5f - size / 2f;
+                if (MathF.Sqrt(dx * dx + dy * dy) < half * 0.4f) mid += w.Map.Ore[i]; else edge += w.Map.Ore[i];
+            }
+            return (w.Map.Ore.Sum(), mid, edge, field);
+        }
+
+        static void OreRegrowth()
+        {
+            foreach (var (size, scale) in new[] { (96, 1f), (96, 0.3f), (208, 0.3f) })
+            {
+                var r = RegrowBare(size, scale, 20);
+                Console.WriteLine($"      regrowth {size}x{size} ore x{scale}, 20 min after mined bare: {r.total} of {r.fieldOre} ({r.total / 1200f:0.0} ore/s), middle {r.middle}, edges {r.edges}");
+                Check(r.total / 1200f > 1.5f && r.total / 1200f < 10f && r.middle > r.edges * 1.4f,
+                      $"a mined-bare {size}x{size} map (ore x{scale}) earns back meaningful income in 20 minutes ({r.total / 1200f:0.0} ore/s, a deep mine pumps 4), mostly in the middle ({r.middle} vs {r.edges} at the edges)");
+            }
+
+            // Never past the original amount, from a field's root when it's mined to nothing, never under a structure or
+            // on a tile a truck is mining.
+            var w = new World(2, 7, 80);
+            foreach (var e in w.Entities.Where(e => e.IsHarvester).ToList()) w.Remove(e);
+            var m = w.Map;
+            m.FieldIndex(out var tiles, out var roots);
+            Array.Clear(m.Ore, 0, m.Ore.Length);
+            // The crystal field nearest the centre: its root, a tile next to the root, and a tile far from it.
+            var crystal = tiles.Where(i => m.OreBaseType[i] == Map.Crystal).OrderBy(i => Vec2.Dist(new Vec2(i % m.W, i / m.W), new Vec2(40, 40))).ToList();
+            int root = crystal.First(i => roots[i]);
+            int far = crystal.Where(i => !roots[i]).OrderByDescending(i => Vec2.Dist(new Vec2(i % m.W, i / m.W), new Vec2(root % m.W, root / m.W))).First();
+            Run(w, 2.1f);
+            bool rootsOnly = tiles.Where(i => m.Ore[i] > 0).All(i => roots[i]);
+            for (int k = 0; k < 120 && m.Ore[root] == 0; k++) w.Step();
+            Check(rootsOnly && m.Ore[root] > 0 && m.Ore[far] == 0,
+                  $"a field mined to nothing starts growing back from its root (the tile that held the most), not everywhere at once (first pass: only roots {rootsOnly}; root {m.Ore[root]}, far tile {m.Ore[far]})");
+            Run(w, 60);
+            Check(m.Ore[far] > 0, "and spreads from there into the rest of the field");
+            // A building on a mined tile, and a truck parked on another: neither regrows.
+            var mid = new Vec2(m.W / 2f, m.H / 2f);
+            int Spot(Func<int, bool> ok) => tiles.Where(i => !roots[i] && ok(i)).OrderBy(i => Vec2.Dist(new Vec2(i % m.W, i / m.W), mid)).First();
+            int built = Spot(i => true);
+            m.Ore[built] = 0;
+            var turret = w.SpawnStructure(0, "gun_turret", new Int2(built % m.W, built / m.W), 1f);
+            int mined = Spot(i => i != built && i != built + 1 && i != built - 1);
+            m.Ore[mined] = 1; m.OreType[mined] = m.OreBaseType[mined];
+            var truck = w.SpawnUnit(0, "mining_truck", w.Owned(0).First(e => e.Def.Key == "command_center"));
+            w.SetOrder(truck, Order.Harvest, new Vec2(mined % m.W + 0.5f, mined / m.W + 0.5f)); // assigned to that tile
+            truck.Stranded = true; truck.Fuel = 0; // and held off it, so it doesn't mine it out
+            var hq1 = w.Owned(1).First(e => e.Def.Key == "command_center");
+            int minedBefore = m.Ore[mined];
+            Run(w, 30);
+            Check(m.Ore[built] == 0 && !turret.Dead, $"nothing regrows under a structure ({m.Ore[built]})");
+            Check(m.Ore[mined] <= minedBefore, $"nor on a tile a truck is mining ({minedBefore} -> {m.Ore[mined]})");
+            // A long time later, nothing is past what the map started with, and the middle is full again.
+            w.Remove(turret); w.Remove(truck);
+            for (int k = 0; k < 6; k++) Run(w, 600);
+            int over = tiles.Count(i => m.Ore[i] > m.OreBase[i]);
+            int midFull = crystal.Count(i => m.Ore[i] >= m.OreBase[i]);
+            Check(over == 0 && m.Ore.Max() <= Map.MaxOrePerTile && midFull > crystal.Count / 2,
+                  $"an hour later no tile is past its original amount ({over} over), and the middle field is back ({midFull} of {crystal.Count} tiles full)");
+
+            // Salvage never lands on a field of another ore (it would block that field's regrowth), and a field tile under
+            // salvage of another ore waits for it to be mined.
+            int ironTile = tiles.First(i => m.OreBaseType[i] == Map.Iron);
+            m.Ore[ironTile] = 0;
+            Check(!m.SalvageMayLand(ironTile, Map.Copper) && m.SalvageMayLand(ironTile, Map.Iron), "salvage only lands on a field tile of its own ore");
+            m.Ore[ironTile] = 50; m.OreType[ironTile] = Map.Copper; // a copper pile from before this rule
+            Run(w, 60);
+            Check(m.Ore[ironTile] == 50 && m.OreType[ironTile] == Map.Copper, "a field tile under another ore's pile doesn't regrow until the pile is mined");
+
+            // Saved games: the original amounts are saved; a game from before regrowth rebuilds them from its seed.
+            var g = new Game(new GameConfig { Seed = 31, MapSize = 80, OreScale = 0.3f, Controllers = new[] { "ai", "ai" } });
+            Step(g, 60);
+            var root0 = (Dictionary<string, object>)Json.Parse(Json.Write(Snapshot.Write(g)));
+            var back = Resume(Json.Write(root0));
+            Check(back.World.Map.OreBase.SequenceEqual(g.World.Map.OreBase) && back.World.Map.OreBaseType.SequenceEqual(g.World.Map.OreBaseType), "the fields' original amounts are saved");
+            var mapD = (Dictionary<string, object>)((Dictionary<string, object>)root0["world"])["map"];
+            mapD.Remove("ore_base"); mapD.Remove("ore_base_type");
+            var old = Resume(Json.Write(root0));
+            Check(old.World.Map.OreBase.SequenceEqual(g.World.Map.OreBase) && !old.World.Map.BaseMissing,
+                  $"a game saved before regrowth gets its fields' original amounts back from its seed ({old.World.Map.OreBase.Count(x => x > 0)} field tiles, {g.World.Map.OreBase.Count(x => x > 0)} originally)");
+            Step(old, 10);
+            Check(old.World.Errors == 0, "and plays on");
         }
 
         /// <summary>Ore of each type within r tiles of p.</summary>

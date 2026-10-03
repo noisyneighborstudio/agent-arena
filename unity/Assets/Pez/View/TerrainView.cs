@@ -137,12 +137,16 @@ namespace Pez.View
             var seen = new bool[map.W * map.H];
             var field = new List<int>();
             var stack = new Stack<int>();
+            // A tile belongs to a field if it has ore, or had it and regrows (a mined-out field keeps its faint scar,
+            // and its stain comes back as it regrows). Its ore type: what's on it, else what grows back there.
+            bool Field(int i) => map.Ore[i] > 0 || map.Regrows(i);
+            int TypeAt(int i) => map.Ore[i] > 0 ? map.OreType[i] : map.OreBaseType[i];
             for (int start = 0; start < map.Ore.Length; start++)
             {
-                if (map.Ore[start] <= 0 || seen[start]) continue;
+                if (!Field(start) || seen[start]) continue;
                 // One field: ore tiles of the same type within two tiles of each other.
                 field.Clear();
-                int type = map.OreType[start];
+                int type = TypeAt(start);
                 stack.Push(start); seen[start] = true;
                 while (stack.Count > 0)
                 {
@@ -154,7 +158,7 @@ namespace Pez.View
                             int nx = x + dx, ny = y + dy;
                             if (!map.InBounds(nx, ny)) continue;
                             int j = map.Idx(nx, ny);
-                            if (seen[j] || map.Ore[j] <= 0 || map.OreType[j] != type) continue;
+                            if (seen[j] || !Field(j) || TypeAt(j) != type) continue;
                             seen[j] = true; stack.Push(j);
                         }
                 }
@@ -493,8 +497,10 @@ namespace Pez.View
             {
                 oreParent = new GameObject("Ore").transform;
                 oreParent.SetParent(transform, false);
+                // Field tiles mined out get their model too (no clusters showing), so regrowth can raise them again.
                 for (int i = 0; i < map.Ore.Length; i++)
-                    if (map.Ore[i] > 0) AddOreTile(i, map.OreType[i], map.Ore[i], false);
+                    if (map.Ore[i] > 0) AddOreTile(i, map.OreType[i], Mathf.Max(map.Ore[i], map.RegrowTarget(i)), false);
+                    else if (map.Regrows(i)) AddOreTile(i, map.OreBaseType[i], map.RegrowTarget(i), false);
                 return;
             }
             oreModels = null;

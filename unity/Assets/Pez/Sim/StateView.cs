@@ -399,8 +399,9 @@ namespace Pez.Sim
         ///     deep_mine_running_low, train structure_id, spread, unit sight in rules and state, mutual sight.
         /// 13: drones by mission: recon_drone (light, 1.5 map widths), long_range_drone (2), reaper_drone (high altitude, armed, 24).
         /// 14: salvage from kills (a quarter of what an enemy destroys is left as ore; SALVAGE ON THE FIELD alert).
+        /// 15: mined surface fields slowly regrow, fastest in the middle of the map.
         /// </summary>
-        public const int RulesVersion = 14;
+        public const int RulesVersion = 15;
 
         public static JObj Rules()
         {
@@ -417,6 +418,7 @@ namespace Pez.Sim
                 "Specialists: engineers capture enemy buildings below 50% HP; snipers delete infantry from range 9; commandos C4 buildings. APCs and transport choppers carry infantry (load/unload). Mine layers plant hidden mines. Flak tracks are mobile anti-air. Mammoth tanks are super-heavy and self-repair to 50%. Recon drones are cheap flying scouts.",
                 "Repair trucks (factory) fix vehicles, aircraft and structures for steel; medics (barracks) heal infantry for free. Both auto-tend anything damaged within 6 tiles when idle, so park them behind your army.",
                 "Aircraft ignore terrain. Only rockets, lasers, SAMs, gunships (and weakly, rifles/mg) can hit them. Stealth bombers are invisible except within 3 tiles of your units or inside your radar dome range.",
+                "Regrowth: mined surface fields slowly grow back toward what they started with: from ore a field still has (spreading to its neighbouring tiles), or from its root (the richest tile) once it's mined to nothing. Fastest in the middle of the map (a mined-bare map earns back a few ore/s, most of it in the middle), barely at all in the corners. Nothing regrows under a structure or on a tile a truck is working. Deep mines (4 ore/s each) remain the bigger income: regrowth is the long tail that makes holding the middle pay.",
                 "Salvage: anything an enemy destroys (with a unit, turret, mine, or a fire it set) leaves about a quarter of its cost as ore on and around the spot (infantry a tenth; a mining truck also spills its load; circuits, lenses and plasma count double, as their raw ore). Anyone's mining trucks can collect it, so the side that holds the ground after a fight profits. Selling, crashes, resignations and your own losses to nobody leave nothing. A SALVAGE ON THE FIELD alert (one per area, with the running total) tells both sides where it lies; stats show kill_value (what you destroyed) and salvage_left.",
                 "Protect your command center: when a team's LAST command center is destroyed, its entire stockpile spills out as salvage ore on the footprint, and anyone's trucks can mine it (first come, first served). The team plays on with whatever else it has.",
                 "Infantry walk (0.8-1.05 tiles/s); every vehicle is faster. Use APCs, transport choppers or together:true to keep mixed groups together.",
@@ -437,7 +439,7 @@ namespace Pez.Sim
                 "The map starts shrouded. Your base reveals a radius around it; units and harvesters reveal what they pass. Scout to find the enemy (bases start near corners). A radar_dome reveals 16 tiles around it.",
             });
             o.Set("structures", Defs.All.Values.Where(d => d.IsStructure).Select(DefJson).ToList());
-            o.Set("ores", "iron_ore and copper_ore near every corner (empty corners are expansion sites); crystal around the middle; uranium in small contested deposits at the centre");
+            o.Set("ores", "iron_ore and copper_ore near every corner (empty corners are expansion sites); crystal around the middle; uranium in small contested deposits at the centre. Mined fields slowly regrow, fastest in the middle");
             o.Set("units", Defs.All.Values.Where(d => !d.IsStructure).Select(DefJson).ToList());
             o.Set("inventions", Tech.RulesJson());
             o.Set("commands", Commands.Help);

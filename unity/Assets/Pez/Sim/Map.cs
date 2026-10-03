@@ -26,6 +26,12 @@ namespace Pez.Sim
         public readonly int[] Ore;         // units of ore left on the tile
         public readonly byte[] OreType;    // index into Defs.Ores (iron_ore, copper_ore, crystal, uranium)
         public readonly int[] Occupant;    // structure id occupying the tile, 0 = none
+        /// <summary>
+        /// Each surface field tile's original ore (and its type), as the map made it: mined fields slowly grow back toward
+        /// it (World.Regrow). 0 for ground that never had a field (salvage piles there never come back).
+        /// </summary>
+        public readonly int[] OreBase;
+        public readonly byte[] OreBaseType;
         public readonly List<Vec2> Spawns = new List<Vec2>();
         public readonly List<DeepDeposit> Deep = new List<DeepDeposit>();
         /// <summary>Scales every surface ore field (1 = normal; below 1 = a scarce map where deep mining matters early).</summary>
@@ -42,6 +48,8 @@ namespace Pez.Sim
             Ore = new int[w * h];
             OreType = new byte[w * h];
             Occupant = new int[w * h];
+            OreBase = new int[w * h];
+            OreBaseType = new byte[w * h];
         }
 
         public bool InBounds(int x, int y) => x >= 0 && y >= 0 && x < W && y < H;
@@ -164,6 +172,8 @@ namespace Pez.Sim
                 OreType[i] = type;
                 float d = MathF.Sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy));
                 Ore[i] = Math.Min(MaxOrePerTile, (int)(rng.Next(min, max) * (1.2f - d / (r + 1)) * OreScale));
+                OreBase[i] = Ore[i]; OreBaseType[i] = type; // what it grows back to
+                fieldsChanged = true;
             });
         }
 
@@ -181,6 +191,7 @@ namespace Pez.Sim
                 {
                     int a = Idx(x, y), b = m.Idx(x, y);
                     m.Tiles[b] = Tiles[a]; m.Ore[b] = Ore[a]; m.OreType[b] = OreType[a]; m.Occupant[b] = Occupant[a];
+                    m.OreBase[b] = OreBase[a]; m.OreBaseType[b] = OreBaseType[a];
                 }
             m.Spawns.AddRange(Spawns);
             m.OreScale = OreScale; // newcomers' fields are as scarce as everyone else's
