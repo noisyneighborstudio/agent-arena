@@ -927,7 +927,7 @@ namespace Pez.View
 
             // Power: cream when fine, amber near capacity, hazard stripe when out.
             float frac = t.PowerProduced == 0 ? (t.PowerUsed > 0 ? 1.2f : 0) : t.PowerUsed / (float)t.PowerProduced;
-            string plabel = t.LowPower ? "Out: production slowed, defences offline" : frac >= 0.9f ? "Low: near capacity" : "Power";
+            string plabel = t.LowPower ? "Out: production at half speed, radar offline" : frac >= 0.9f ? "Low: near capacity" : "Power";
             Text(new Rect(x, y, inner, 18), plabel, fSans, 14, t.LowPower ? Ink : frac >= 0.9f ? Amber : Ink);
             Text(new Rect(x, y, inner, 18), $"{t.PowerUsed} / {t.PowerProduced}", fMono, 14, Muted, TextAnchor.MiddleRight);
             y += 24;
