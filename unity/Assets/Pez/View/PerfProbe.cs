@@ -16,7 +16,7 @@ namespace Pez.View
         readonly List<double> gpu = new List<double>(4096);
         readonly FrameTiming[] timings = new FrameTiming[1];
         float windowStart;
-        int streamStart;
+        int streamStart, spectatorStart;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         static void Boot()
@@ -42,19 +42,19 @@ namespace Pez.View
             QualitySettings.vSyncCount = 0;
             FrameTimingManager.CaptureFrameTimings();
             if (FrameTimingManager.GetLatestTimings(1, timings) > 0 && timings[0].gpuFrameTime > 0) gpu.Add(timings[0].gpuFrameTime);
-            if (Time.frameCount < 30) { windowStart = Time.unscaledTime; streamStart = PlayerStreams.RenderCount; return; }
+            if (Time.frameCount < 30) { windowStart = Time.unscaledTime; streamStart = PlayerStreams.RenderCount; spectatorStart = PlayerStreams.SpectatorRenderCount; return; }
             ms.Add(Time.unscaledDeltaTime * 1000f);
             float span = Time.unscaledTime - windowStart;
             if (span < 5f) return;
             ms.Sort();
             float avg = 0; foreach (var m in ms) avg += m; avg /= ms.Count;
             double g = 0; foreach (var x in gpu) g += x; g = gpu.Count > 0 ? g / gpu.Count : 0;
-            int streams = PlayerStreams.RenderCount - streamStart;
+            int streams = PlayerStreams.RenderCount - streamStart, spectators = PlayerStreams.SpectatorRenderCount - spectatorStart;
             var line = string.Format(System.Globalization.CultureInfo.InvariantCulture,
-                "{0:yyyy-MM-ddTHH:mm:ss} frames={1} avg_ms={2:F2} p50_ms={3:F2} p95_ms={4:F2} max_ms={5:F2} fps={6:F1} gpu_ms={7:F2} stream_frames_per_s={8:F1} screen={9}x{10} mono_mb={11:F0} bars={12} fx_particles={13} gameobjects={14}",
+                "{0:yyyy-MM-ddTHH:mm:ss} frames={1} avg_ms={2:F2} p50_ms={3:F2} p95_ms={4:F2} max_ms={5:F2} fps={6:F1} gpu_ms={7:F2} stream_frames_per_s={8:F1} screen={9}x{10} mono_mb={11:F0} bars={12} fx_particles={13} gameobjects={14} spectator_frames_per_s={15:F1}",
                 System.DateTime.Now, ms.Count, avg, ms[ms.Count / 2], ms[(int)(ms.Count * 0.95f)], ms[ms.Count - 1], ms.Count / span, g, streams / span,
                 Screen.width, Screen.height, UnityEngine.Profiling.Profiler.GetMonoUsedSizeLong() / 1048576.0, Bars.Count, FxParticles(),
-                Object.FindObjectsByType<Transform>(FindObjectsSortMode.None).Length);
+                Object.FindObjectsByType<Transform>(FindObjectsSortMode.None).Length, spectators / span);
             if (System.Array.IndexOf(System.Environment.GetCommandLineArgs(), "-perfnames") >= 0)
             {
                 var names = new Dictionary<string, int>();
@@ -64,7 +64,7 @@ namespace Pez.View
             }
             try { System.IO.File.AppendAllText(path, line + "\n"); } catch { }
             ms.Clear(); gpu.Clear();
-            windowStart = Time.unscaledTime; streamStart = PlayerStreams.RenderCount;
+            windowStart = Time.unscaledTime; streamStart = PlayerStreams.RenderCount; spectatorStart = PlayerStreams.SpectatorRenderCount;
         }
     }
 }

@@ -21,6 +21,16 @@ namespace Pez.View
         // Live streams go out through the host's uplink (and Cloudflare) once per viewer: 30 fps of 1280x720 JPEG at
         // quality 70 keeps a viewer around 0.5-0.8 MB/s. Stills (frame.jpg, team/N.jpg) use the same frames.
         public const int StreamFps = 30, Quality = 70, MainView = -1;
+        /// <summary>The public spectator camera (whole map, no fog, its own director): a stream like a team's, keyed 8.
+        /// The gateway buffers it and serves it WATCH_DELAY_S late, so it renders at a modest rate (-spectatorfps N).</summary>
+        public const int SpectatorView = 8;
+        public static readonly int SpectatorFps = Arg("-spectatorfps", 12, 1, 30);
+        static int Arg(string name, int def, int min, int max)
+        {
+            var args = System.Environment.GetCommandLineArgs();
+            int i = System.Array.IndexOf(args, name);
+            return i >= 0 && i + 1 < args.Length && int.TryParse(args[i + 1], out var n) ? Mathf.Clamp(n, min, max) : def;
+        }
         TcpListener listener;
         Thread thread;
 
@@ -53,7 +63,7 @@ namespace Pez.View
 
         // Frames are read back from the GPU asynchronously and JPEG-encoded on worker threads, so a 60fps stream
         // doesn't stall the game. A stream with too many frames in flight skips rendering until they land.
-        static readonly int[] inFlight = new int[9]; // MainView and teams 0-7
+        static readonly int[] inFlight = new int[10]; // MainView, teams 0-7 and the spectator camera
         static readonly System.Collections.Concurrent.ConcurrentBag<byte[]> pixelPool = new System.Collections.Concurrent.ConcurrentBag<byte[]>();
         public static bool Busy(int team) => Volatile.Read(ref inFlight[team + 1]) >= 3;
 
@@ -239,6 +249,8 @@ img.onerror=()=>setTimeout(()=>img.src='stream?'+Date.now(),1000);img.src='strea
                     var tm = System.Text.RegularExpressions.Regex.Match(path, @"^/team/(\d+)\.jpg");
                     var sm = System.Text.RegularExpressions.Regex.Match(path, @"^/(?:team/(\d+)/)?stream(\?.*)?$");
                     var pm = System.Text.RegularExpressions.Regex.Match(path, @"^/team/(\d+)/pick(\?.*)?$");
+                    if (System.Text.RegularExpressions.Regex.IsMatch(path, @"^/spectator/stream(\?.*)?$")) { PushFrames(stream, SpectatorView); return; }
+                    if (System.Text.RegularExpressions.Regex.IsMatch(path, @"^/spectator\.jpg(\?.*)?$")) tm = System.Text.RegularExpressions.Regex.Match("/team/" + SpectatorView + ".jpg", @"^/team/(\d+)\.jpg");
                     if (pm.Success)
                     {
                         // u, v: 0..1 across and down the stream image.

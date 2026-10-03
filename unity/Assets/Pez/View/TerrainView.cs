@@ -595,6 +595,9 @@ namespace Pez.View
                 }
         }
 
+        /// <summary>The main view's fog overlay (only active when the host plays a team), for renders that must not show it.</summary>
+        public GameObject MainFog => fogMesh == null ? null : transform.Find("Fog")?.gameObject;
+
         public void UpdateFog(World w, int team)
         {
             var go = fogMesh == null ? null : transform.Find("Fog")?.gameObject;
