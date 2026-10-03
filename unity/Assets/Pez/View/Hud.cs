@@ -870,7 +870,7 @@ namespace Pez.View
         /// <summary>An entity's art-pack icon with rounded corners (dimmed when locked), or a placeholder with its initials.</summary>
         void IconBox(Rect r, string key, string name, float radius, bool grey = false, float alpha = 1f)
         {
-            var icon = UiIcon(key);
+            var icon = UiIcon(Defs.Get(key)?.ModelKey ?? key); // an invention shows its base unit's icon
             if (icon != null)
             {
                 if (!Repaint) return;
@@ -1259,7 +1259,12 @@ namespace Pez.View
             Round(new Rect(cx, y + 8, 10, 10), 3, Mats.Team(e.Team));
             string name = one ? e.Def.Name : $"{sel.Count} selected";
             Text(new Rect(cx + 18, y, cw, 26), name, fHead, 20, Ink);
-            if (one) Text(new Rect(cx + 18 + TextW(name, fHead, 20) + 8, y, 80, 26), $"#{e.Id}", fSans, 13, Muted);
+            if (one)
+            {
+                float nx = cx + 18 + TextW(name, fHead, 20) + 8;
+                Text(new Rect(nx, y, 80, 26), $"#{e.Id}", fSans, 13, Muted);
+                if (e.Def.OwnerTeam >= 0) Text(new Rect(nx + TextW($"#{e.Id}", fSans, 13) + 10, y, 120, 26), "INVENTED", fMono, 12, Amber);
+            }
             y += 26 + 8;
 
             // Health: cream, amber below 50%, hazard stripe below 25%.
@@ -1329,7 +1334,9 @@ namespace Pez.View
             {
                 var target = e.TargetId != 0 ? W.Get(e.TargetId) : null;
                 if (target != null && (e.Order == Order.Attack || e.Order == Order.Repair || e.Order == Order.Capture || e.Order == Order.Board || e.Order == Order.Refuel))
-                    parts.Add($"target {Pretty(target.Def.Key)} #{target.Id}");
+                    parts.Add($"target {(target.Def.OwnerTeam >= 0 ? target.Def.Name : Pretty(target.Def.Key))} #{target.Id}");
+                if (e.Def.OwnerTeam >= 0)
+                    parts.Add($"{Pretty(e.Def.Chassis)} variant" + (e.Def.Weapon != null && e.Def.Weapon.Name != Defs.Get(e.Def.Chassis)?.Weapon?.Name ? $" with a {e.Def.Weapon.Name}" : ""));
                 if (e.Def.Capacity > 0) parts.Add($"carrying {e.Passengers.Count}/{e.Def.Capacity}");
                 if (e.Waypoints.Count > 0) parts.Add($"{e.Waypoints.Count} more waypoint{(e.Waypoints.Count == 1 ? "" : "s")}{(e.WaypointLoop ? " (patrol)" : "")}");
                 if (e.RetreatBelow > 0) parts.Add(e.Retreating ? "retreating" : $"retreats below {(int)(e.RetreatBelow * 100)}%");

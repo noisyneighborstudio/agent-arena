@@ -6,7 +6,8 @@ namespace Pez.View
     /// <summary>
     /// World-space health and fuel bars (Pez/Bar shader). They live in the scene, not the IMGUI HUD, so the main window,
     /// every player's live stream and look stills all show them. Health shows when a unit or building is hurt (and a
-    /// building's progress while it's going up); fuel shows when a vehicle or aircraft is below full.
+    /// building's progress while it's going up); fuel shows when a vehicle or aircraft is below full. An agent-invented
+    /// unit also carries a small amber badge at the bar's left end, always on, so a design reads apart from its base unit.
     /// </summary>
     public class Bars
     {
@@ -16,7 +17,7 @@ namespace Pez.View
                             SizeId = Shader.PropertyToID("_Size"), HazardId = Shader.PropertyToID("_Hazard");
         static readonly Color Fuel = new Color(0.56f, 0.89f, 1f);
 
-        readonly MeshRenderer hp, fuel;
+        readonly MeshRenderer hp, fuel, badge;
         readonly MaterialPropertyBlock block = new MaterialPropertyBlock();
         float shownHp = -1, shownFuel = -1;
         bool hpHazard, building;
@@ -41,6 +42,14 @@ namespace Pez.View
             block.SetVector(SizeId, new Vector4(width, 0.08f, -0.11f, 0)); // a thinner strip just under the health bar
             fuel.SetPropertyBlock(block);
             hp.enabled = fuel.enabled = false;
+            if (e.Def.OwnerTeam >= 0)
+            {
+                badge = Make(root, "invented_badge", lift);
+                block.SetVector(SizeId, new Vector4(0.16f, 0.16f, 0f, -width * 0.5f - 0.13f));
+                block.SetFloat(FillId, 1f);
+                block.SetColor(FillColorId, Mats.Amber);
+                badge.SetPropertyBlock(block);
+            }
         }
 
         static MeshRenderer Make(Transform root, string name, float lift)

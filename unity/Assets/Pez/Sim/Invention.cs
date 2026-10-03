@@ -16,6 +16,9 @@ namespace Pez.Sim
         public EntityDef Def;
         public Dictionary<string, int> ResearchCost;
         public float ResearchTime, Progress, Novelty, PriceFactor;
+        /// <summary>For the central invention registry (later evaluation for permanent inclusion): game times, and how it did.</summary>
+        public float ProposedAt, ResearchedAt = -1;
+        public int Built, Lost, Kills;
         public bool Done => Progress >= ResearchTime;
         public int Pct => ResearchTime <= 0 ? 100 : (int)(Math.Min(1f, Progress / ResearchTime) * 100);
     }
@@ -384,6 +387,7 @@ namespace Pez.Sim
             {
                 Key = q.Key, Name = q.Name, Team = team, Chassis = q.Chassis, WeaponFrom = q.WeaponFrom, Def = q.Def,
                 ResearchCost = q.ResearchCost, ResearchTime = q.ResearchTime, Novelty = q.Novelty, PriceFactor = q.PriceFactor, Summary = Spec(q.Def),
+                ProposedAt = w.Time,
             };
             w.Inventions[inv.Key] = inv;
             w.Emit("research_started", team, key: inv.Key, text: $"research started on {inv.Name} ({inv.Key}), {inv.ResearchTime}s");
@@ -397,6 +401,7 @@ namespace Pez.Sim
             foreach (var i in w.Inventions.Values) if (i.Team == team.Id && !i.Done) { r = i; break; }
             if (r == null || !w.HasComplete(team.Id, ResearchLab)) return;
             r.Progress += World.Dt * rate;
+            if (r.Done) r.ResearchedAt = w.Time;
             if (r.Done)
                 w.Emit("researched", team.Id, key: r.Key,
                        text: $"research complete: {r.Name} ({r.Key}) can now be trained at your {Defs.ProducerKey(r.Def.BuiltBy)}: {r.Def.CostText}, {r.Def.BuildTime}s. {r.Summary}");
@@ -426,6 +431,25 @@ namespace Pez.Sim
 
         public static List<object> SeenJson(World w, int team) => SeenEnemy(w, team).Select(d => (object)new JObj()
             .Set("key", d.Key).Set("team", d.OwnerTeam).Set("base", d.Chassis).Set("stats", Stats(d))).ToList();
+
+        /// <summary>
+        /// Every invention in this game, with its inventor and how it has done, for the central registry the gateway keeps
+        /// (GET /api/admin/inventions; never shown to players, so nobody learns an enemy's design from it).
+        /// </summary>
+        public static JObj RegistryJson(World w) => new JObj()
+            .Set("game_id", w.GameId).Set("time_s", (float)Math.Round(w.Time, 1)).Set("game_over", w.GameOver).Set("winner", w.Winner)
+            .Set("inventions", w.Inventions.Values.Select(i =>
+            {
+                var t = i.Team >= 0 && i.Team < w.Teams.Count ? w.Teams[i.Team] : null;
+                return (object)new JObj()
+                    .Set("key", i.Key).Set("name", i.Name).Set("team", i.Team).Set("flavor", t?.Name).Set("player", t?.PlayerName ?? t?.Controller).Set("controller", t?.Controller)
+                    .Set("team_status", t == null ? "gone" : w.Winner == t.Id ? "won" : t.Resigned ? "resigned" : t.Left ? "left" : t.Defeated ? "eliminated" : "playing")
+                    .Set("base", i.Chassis).Set("weapon_from", i.WeaponFrom).Set("spec", i.Summary).Set("stats", Stats(i.Def))
+                    .Set("cost", Bill(i.Def.Cost)).Set("build_time_s", i.Def.BuildTime).Set("research_cost", Bill(i.ResearchCost)).Set("research_time_s", i.ResearchTime)
+                    .Set("novelty", (float)Math.Round(i.Novelty, 3)).Set("price_factor", (float)Math.Round(i.PriceFactor, 3))
+                    .Set("proposed_at_s", (float)Math.Round(i.ProposedAt, 1)).Set("researched", i.Done).Set("researched_at_s", i.ResearchedAt < 0 ? null : (object)(float)Math.Round(i.ResearchedAt, 1))
+                    .Set("built", i.Built).Set("lost", i.Lost).Set("kills", i.Kills).Set("alive", w.Entities.Count(e => !e.Dead && e.Def == i.Def));
+            }).ToList());
 
         static JObj Bill(Dictionary<string, int> cost) { var o = new JObj(); foreach (var kv in cost) o.Set(kv.Key, kv.Value); return o; }
         static JObj Stats(EntityDef d)

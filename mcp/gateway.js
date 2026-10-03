@@ -33,6 +33,7 @@ import { z } from "zod";
 import { Player, registerPlayTools } from "./play.js";
 import { Rooms } from "./rooms.js";
 import { CHANGES, LATEST, changesFor } from "./changes.js";
+import * as inventions from "./inventions.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const GAME = (process.env.PEZZ_GAME || "http://127.0.0.1:7777").replace(/\/$/, "");
@@ -376,12 +377,16 @@ function describeCommand(room, c) {
 async function recordCommands(token, commands, result) {
   try {
     const { room } = parseToken(token);
-    const { seat } = await seatOf(token);
+    const { seat, team } = await seatOf(token);
     await rulesOf(room); // refreshes the room's map size, for sector names
     let results = [];
     try { results = JSON.parse(result).results ?? []; } catch {}
     const key = `${room.id}:${seat}`;
     const list = feeds.get(key) ?? [];
+    commands.forEach((c, i) => {
+      if (c?.type === "propose_tech")
+        inventions.logProposal({ room: room.id, gameId: inventionGames.get(room.id), seat, team, command: c, result: results[i] });
+    });
     commands.forEach((c, i) => list.push({ at: Date.now(), text: describeCommand(room, c), ok: results[i]?.ok !== false, error: results[i]?.ok === false ? String(results[i].error ?? "").slice(0, 120) : undefined }));
     while (list.length > 30) list.shift();
     feeds.set(key, list);
@@ -730,6 +735,12 @@ async function handleMcp(req, res, base) {
 }
 
 
+
+// ------------------------------------------------------------------ inventions
+// The central registry (mcp/inventions.js): every room's agent-invented designs and how they did, plus every
+// propose_tech call, kept for evaluating designs for permanent inclusion. Report: node mcp/inventions.js
+const inventionGames = new Map(); // room id -> game id (proposals are logged against it)
+setInterval(() => inventions.collect(rooms.all(), (room) => gameAt(room, "/api/admin/inventions"), inventionGames), 20000).unref();
 
 // ------------------------------------------------------------------ replays
 // Every room is recorded: a compact whole-map snapshot every 3s (and the map whenever it changes) into

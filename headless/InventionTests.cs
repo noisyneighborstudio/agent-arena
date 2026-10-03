@@ -171,6 +171,17 @@ namespace Pez.Headless
                 int kills = t0.Stats.Kills;
                 Run(w, 20);
                 Check(foe.Dead && t0.Stats.Kills > kills, $"it fights: the enemy scout buggy is destroyed (lancer hp {(int)unit.Hp}/{unit.Def.MaxHp})");
+
+                // The central registry's view of it: who invented it, when, and how it has done.
+                unit.Hp = 5;
+                var killer = At(w.SpawnUnit(1, "light_tank", w.Owned(1).First(e => e.IsStructure)), new Vec2(42.5f, 40.5f));
+                w.SetOrder(killer, Order.Idle, killer.Pos);
+                Run(w, 10);
+                var reg = Tech.RegistryJson(w);
+                var rec = ((List<object>)reg["inventions"]).Cast<JObj>().FirstOrDefault(x => (string)x["key"] == "t0:lancer");
+                Check(unit.Dead && rec != null && (string)reg["game_id"] == w.GameId && (int)rec["built"] == 1 && (int)rec["kills"] == 1 && (int)rec["lost"] == 1 && (int)rec["alive"] == 0 &&
+                      (bool)rec["researched"] && rec["researched_at_s"] != null && (string)rec["team_status"] == "playing" && (string)rec["base"] == "light_tank" && (string)rec["weapon_from"] == "rocket_soldier",
+                      $"the registry record has the design, its inventor and its record: {Json.Write(rec)}");
             }
 
             // Caps: three per team.

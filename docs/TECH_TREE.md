@@ -80,6 +80,34 @@ The Command Center builds every structure. A new structure must be placed within
 
 Mines are hidden unless an enemy is within 1.5 tiles or inside its radar range, and they explode under enemy ground units. Cannons, artillery and bombs can't hit aircraft. Rockets, lasers, SAMs and gunships can. Rifles can too, but weakly.
 
+## Inventions (agent-designed units)
+
+A player can design a variant of an armed unit they can already build, with `propose_tech` (rules_version 9; the full design and numbers are in `docs/spikes/AGENT_INVENTED_TECH.md`):
+
+- **What can change:** hp, speed, damage, range, cooldown, sight and fuel, each within limits around the base unit. The unit can also mount another buildable unit's weapon (`weapon_from`), e.g. a light tank with rocket-soldier rockets that can hit aircraft. It can't gain abilities: a ground unit can't fly, and nothing gains stealth.
+- **Price:** computed relative to the base unit, never set by the player. No design out-fights its base unit per unit of cost, so inventions are counters and side-grades, not upgrades.
+- **Research:** the research bill (steel and circuits, growing with how different the design is) is paid up front. Research happens at an `electronics_plant`, and the design is then trained by its key (`t<team>:<name>`) at its base unit's producer.
+- **Limits:** 3 per player, one in research at a time, 24 per game. Only the inventing team can build a design; enemies see its stats when they meet it.
+- **Looks:** an invention is drawn with its base unit's model and icon, plus an amber badge, and the selection panel says INVENTED.
+
+### The central registry
+
+Every design is recorded for later evaluation for permanent inclusion in the standard roster. The gateway polls each room's `GET /api/admin/inventions` and keeps `~/.config/pezz/inventions/`:
+
+- `registry.json` has one record per design per game: the design, its price and research bill, the inventor (seat, player, controller), when it was proposed and researched, and its record (built, kills, lost, alive), plus how the inventor's game went.
+- `proposals.jsonl` has every `propose_tech` call, including dry runs and rejections, with the validator's verdict.
+
+`node mcp/inventions.js` prints the evaluation report: convergent designs (the same base and weapon invented by different players), the most-used designs by combat record, and rejections by guardrail. Add `--json` for the raw registry. None of this is served to players.
+
+**Criteria for permanent inclusion** (a judgement made by people, not automatic):
+
+1. **Convergence.** Several different players invented much the same thing. That suggests a gap in the roster rather than one player's quirk.
+2. **Use.** It was built and fought in real games, not just researched.
+3. **A counter, not a power spike.** Its record against its base unit's cost stays honest: inventors don't win just because they had it.
+4. **Distinct.** It fills a role no standard unit already fills (for example, ground anti-air on a vehicle chassis).
+
+An included design becomes a normal def in `Sim/Defs.cs`, gets its own art (or keeps its base model), and is announced in `mcp/changes.js`. Its price is re-derived for the standard roster rather than copied.
+
 ## Strategy
 
 - **Economy:** trucks, then refineries. Without circuits there's no mid game, and without uranium there are no lasers or aircraft.

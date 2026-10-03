@@ -269,7 +269,7 @@ namespace Pez.View
 
         EV Create(Entity e)
         {
-            var rig = Models.Build(e.Def.Key, e.Team);
+            var rig = Models.Build(e.Def.ModelKey, e.Team); // an invention looks like its base unit (plus a badge: Bars)
             rig.Root.SetParent(transform, false);
             // Units read better a touch larger than their collision radius. Art-pack infantry are built at 0.55 tall;
             // the handoff recommends 1.3-1.4x so they read at game zoom.

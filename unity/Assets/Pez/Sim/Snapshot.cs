@@ -256,7 +256,8 @@ namespace Pez.Sim
                 .Set("damage", SnapIO.X(d.Weapon.Damage)).Set("range", SnapIO.X(d.Weapon.Range)).Set("cooldown", SnapIO.X(d.Weapon.Cooldown))
                 .Set("cost", SnapIO.Ints(d.Cost)).Set("build_time", SnapIO.X(d.BuildTime)).Set("description", d.Description)
                 .Set("research_cost", SnapIO.Ints(i.ResearchCost)).Set("research_time", SnapIO.X(i.ResearchTime)).Put("progress", i.Progress)
-                .Set("novelty", SnapIO.X(i.Novelty)).Set("price_factor", SnapIO.X(i.PriceFactor)).Set("summary", i.Summary);
+                .Set("novelty", SnapIO.X(i.Novelty)).Set("price_factor", SnapIO.X(i.PriceFactor)).Set("summary", i.Summary)
+                .Put("proposed_at", i.ProposedAt).Put("researched_at", i.ResearchedAt, -1f).Put("built", i.Built).Put("lost", i.Lost).Put("kills", i.Kills);
         }
 
         /// <summary>Null if this build no longer has the unit it was based on (its units are then dropped like any unknown type).</summary>
@@ -283,6 +284,8 @@ namespace Pez.Sim
             d.Load("research_time", ref i.ResearchTime); d.Load("progress", ref i.Progress);
             d.Load("novelty", ref i.Novelty); d.Load("price_factor", ref i.PriceFactor);
             i.Summary = d.Str("summary") ?? Tech.Spec(def);
+            d.Load("proposed_at", ref i.ProposedAt); d.Load("researched_at", ref i.ResearchedAt);
+            d.Load("built", ref i.Built); d.Load("lost", ref i.Lost); d.Load("kills", ref i.Kills);
             return i;
         }
 
@@ -455,7 +458,7 @@ namespace Pez.Sim
         internal JObj SaveState()
         {
             var o = new JObj()
-                .Set("tick", Tick).Put("game_over", GameOver).Put("winner", Winner, -1).Set("map_version", MapVersion)
+                .Set("tick", Tick).Set("game_id", GameId).Put("game_over", GameOver).Put("winner", Winner, -1).Set("map_version", MapVersion)
                 .Put("open", Open).Set("max_players", MaxPlayers).Set("max_map_size", MaxMapSize).Set("grow_step", GrowStep)
                 .Set("safe_join_distance", SnapIO.X(SafeJoinDistance)).Set("protection_seconds", SnapIO.X(ProtectionSeconds)).Set("stall_grace", SnapIO.X(StallGrace))
                 .Set("next_id", nextId).Set("next_seq", nextSeq).Set("seat_counter", seatCounter).Set("rng", rng.State.ToString("x16"))
@@ -489,7 +492,7 @@ namespace Pez.Sim
         void LoadInto(D d)
         {
             var w = this;
-            d.Load("tick", ref w.Tick); d.Load("game_over", ref w.GameOver); d.Load("winner", ref w.Winner); d.Load("map_version", ref w.MapVersion);
+            d.Load("tick", ref w.Tick); d.Load("game_id", ref w.GameId); d.Load("game_over", ref w.GameOver); d.Load("winner", ref w.Winner); d.Load("map_version", ref w.MapVersion);
             d.Load("open", ref w.Open); d.Load("max_players", ref w.MaxPlayers); d.Load("max_map_size", ref w.MaxMapSize); d.Load("grow_step", ref w.GrowStep);
             d.Load("safe_join_distance", ref w.SafeJoinDistance); d.Load("protection_seconds", ref w.ProtectionSeconds); d.Load("stall_grace", ref w.StallGrace);
             d.Load("errors", ref w.Errors); d.Load("last_error", ref w.LastError);

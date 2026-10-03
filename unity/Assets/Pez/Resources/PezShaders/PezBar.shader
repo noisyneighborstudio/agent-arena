@@ -9,7 +9,7 @@ Shader "Pez/Bar"
         _Fill ("Fill", Range(0, 1)) = 1
         _FillColor ("Fill colour", Color) = (0.93, 0.89, 0.82, 1)
         _BackColor ("Track colour", Color) = (0.118, 0.106, 0.114, 0.9)
-        _Size ("Width, height, lift (world units)", Vector) = (0.9, 0.11, 0, 0)
+        _Size ("Width, height, lift, sideways shift (world units)", Vector) = (0.9, 0.11, 0, 0)
         _Hazard ("Hazard stripe", Float) = 0
     }
     SubShader
@@ -33,7 +33,7 @@ Shader "Pez/Bar"
             {
                 v2f o;
                 float3 c = UnityObjectToViewPos(float3(0, 0, 0));
-                c.xy += v.vertex.xy * _Size.xy + float2(0, _Size.z);
+                c.xy += v.vertex.xy * _Size.xy + float2(_Size.w, _Size.z);
                 o.pos = mul(UNITY_MATRIX_P, float4(c, 1));
                 o.uv = v.uv;
                 return o;

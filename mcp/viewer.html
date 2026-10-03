@@ -413,11 +413,12 @@ function selectionCard() {
   if (d?.deposit) facts.push(esc(d.deposit));
   if (d?.working != null) facts.push(d.working ? "working" : "idle: missing inputs");
   if (d?.stranded) facts.push("OUT OF FUEL");
+  if (d?.invention) facts.push(`${esc(pretty(d.invention.base))} variant designed by ${esc(d.invention.designed_by)}: ${esc(d.invention.spec)}`);
   const stats = d ? [d.speed != null ? `${d.speed} t/s` : null, d.weapon ? esc(d.weapon) : null, d.armor].filter(Boolean).join(" · ") : "";
   const mobile = size === 0;
   el.style.display = "flex";
   el.innerHTML = `<img src="/icons/${key}.png" alt="" onerror="this.style.visibility='hidden'"><div style="flex-grow:1;display:flex;flex-direction:column;gap:7px;min-width:0">` +
-    `<div style="display:flex;align-items:center;gap:8px"><span class="chip" style="background:${FLAVORS[team % 8]}"></span><span class="big">${esc(d?.name ?? pretty(key))}</span><span class="note">#${selected} · ${esc(owner?.flavor ?? "")} ${esc(owner?.player ?? "")}</span></div>` +
+    `<div style="display:flex;align-items:center;gap:8px"><span class="chip" style="background:${FLAVORS[team % 8]}"></span><span class="big">${esc(d?.name ?? e[10] ?? pretty(key))}</span>${e[10] ? `<span class="note" style="color:#FFA22E;font-weight:600">INVENTED</span>` : ""}<span class="note">#${selected} · ${esc(owner?.flavor ?? "")} ${esc(owner?.player ?? "")}</span></div>` +
     `<div style="display:flex;align-items:center;gap:10px"><div class="bar" style="flex-grow:1"><div style="width:${hp}%;background:${hpCol}"></div></div><span class="mono note">${d ? `${d.hp}/${d.max_hp}` : `${hp}%`}</span></div>` +
     (build >= 0 && build < 100 ? `<div class="note">Building: ${build}%</div>` : "") +
     (fuel >= 0 ? `<div style="display:flex;align-items:center;gap:10px"><span class="note" style="width:34px">fuel</span><div class="bar" style="flex-grow:1"><div style="width:${fuel}%;background:${fuel < 30 ? "#FFA22E" : "#8FE4FF"}"></div></div><span class="mono note">${d?.landed ? "pad" : fuel + "%"}</span></div>` : "") +
@@ -661,6 +662,8 @@ function drawUnit(e, s, air) {
   if (hp < 100 && s > 6) hpBar(px - r, py + r + 2, r * 2, hp);
   const fuel = e[9];
   if (fuel >= 0 && fuel < 100 && s > 6) bar(px - r, py + r + (hp < 100 ? 6 : 2), r * 2, fuel / 100, fuel < 30 ? "#FFA22E" : "#8FE4FF");
+  // An agent-invented unit (drawn as its base unit; e[10] is its name): a small amber badge.
+  if (e[10] && s > 4) { const b = Math.max(3, s * 0.16); ctx.fillStyle = "#FFA22E"; ctx.strokeStyle = "#1E1B1D"; ctx.lineWidth = 1; ctx.fillRect(px - r - b * 0.6, py - r - b * 0.6, b, b); ctx.strokeRect(px - r - b * 0.6, py - r - b * 0.6, b, b); }
 }
 
 // Health in the art pack's status colours: cream, amber below 50%, hazard stripe below 25% (never team colours).

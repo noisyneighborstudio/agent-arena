@@ -232,7 +232,7 @@ namespace Pez.Api
                 case "":
                 case "/api":
                     contentType = "text/plain";
-                    return "Pezz RTS control API\n\nGET  /api/rules\nGET  /api/state?team=N[&since=SEQ]\nGET  /api/map?team=N\nGET  /api/alerts?team=N[&since=SEQ&min=medium|high|critical]\nGET  /api/wait?team=N&seconds=S[&since=ALERT_SEQ&events_since=SEQ&min=high|critical|none]  (returns early on a new priority alert)\nPOST /api/command?team=N   body: {\"commands\":[...]} | [...] | {...}\nPOST /api/join?team=N      body: {\"name\":\"Claude\"}\nGET  /api/status\nPOST /api/admin/restart    body: {\"seed\":1,\"map_size\":112,\"controllers\":[\"llm\",\"llm\"],\"speed\":1}\nPOST /api/admin/speed      body: {\"speed\":0.5}\nPOST /api/admin/save       (saves the game now; a restarted host resumes it)\nPOST /api/admin/orders?team=N  body: {\"text\":\"standing orders for that team's commander\"}\n\n" + Commands.Help;
+                    return "Pezz RTS control API\n\nGET  /api/rules\nGET  /api/state?team=N[&since=SEQ]\nGET  /api/map?team=N\nGET  /api/alerts?team=N[&since=SEQ&min=medium|high|critical]\nGET  /api/wait?team=N&seconds=S[&since=ALERT_SEQ&events_since=SEQ&min=high|critical|none]  (returns early on a new priority alert)\nPOST /api/command?team=N   body: {\"commands\":[...]} | [...] | {...}\nPOST /api/join?team=N      body: {\"name\":\"Claude\"}\nGET  /api/status\nPOST /api/admin/restart    body: {\"seed\":1,\"map_size\":112,\"controllers\":[\"llm\",\"llm\"],\"speed\":1}\nPOST /api/admin/speed      body: {\"speed\":0.5}\nPOST /api/admin/save       (saves the game now; a restarted host resumes it)\nGET  /api/admin/inventions (every agent-invented unit in this game, with its record)\nPOST /api/admin/orders?team=N  body: {\"text\":\"standing orders for that team's commander\"}\n\n" + Commands.Help;
                 case "/api/rules":
                     return Json.Write(StateView.Rules());
                 case "/api/state":
@@ -393,6 +393,10 @@ namespace Pez.Api
                         OnRestart?.Invoke();
                         return Json.Write(new JObj().Set("ok", true).Set("seed", cfg.Seed).Set("map_size", game.World.Map.W).Set("ore_scale", cfg.OreScale).Set("controllers", cfg.Controllers.ToList()));
                     }
+                case "/api/admin/inventions":
+                    // Host-only: every invention in this game with its inventor and record, for the gateway's central
+                    // registry (designs evaluated later for permanent inclusion). Not a player endpoint.
+                    return Json.Write(Tech.RegistryJson(w));
                 case "/api/admin/save":
                     {
                         // Host-only: save the game now (e.g. right before stopping the host for a new build).
@@ -489,6 +493,7 @@ namespace Pez.Api
                 .Set("structure", e.IsStructure).Set("air", e.IsAir).Set("description", d.Description);
             if (!e.IsStructure) o.Set("speed", d.Speed);
             if (d.Weapon != null) o.Set("weapon", $"{d.Weapon.Name}: {d.Weapon.Damage} dmg, range {d.Weapon.Range}, every {d.Weapon.Cooldown}s");
+            if (d.OwnerTeam >= 0) o.Set("invention", new JObj().Set("base", d.Chassis).Set("spec", Tech.Spec(d)).Set("designed_by", w.Teams[d.OwnerTeam].Name));
             if (!full) return o;
             if (e.IsStructure)
             {
@@ -530,10 +535,13 @@ namespace Pez.Api
                 bool known = team < 0 || w.IsVisibleTo(team, e) || (e.IsStructure && w.Teams[team].KnownEnemyStructures.ContainsKey(e.Id));
                 if (!known) continue;
                 var c = e.Center;
-                ents.Add(new List<object> { e.Id, e.Def.Key, e.Team, Math.Round(c.X, 2), Math.Round(c.Y, 2), (int)(100 * e.Hp / e.Def.MaxHp),
+                // An invention is drawn as its base unit (ModelKey); its player-chosen name rides along at index 10.
+                var row = new List<object> { e.Id, e.Def.ModelKey, e.Team, Math.Round(c.X, 2), Math.Round(c.Y, 2), (int)(100 * e.Hp / e.Def.MaxHp),
                     Math.Round(e.Facing, 2), e.IsStructure ? StateView.Pct(e.BuildProgress) : -1, e.IsStructure ? e.Def.SizeX : 0,
                     // fuel %: your own units only (spectators see all); -1 = not shown
-                    e.Def.UsesFuel && (team < 0 || e.Team == team) ? StateView.Pct(e.FuelFraction) : -1 });
+                    e.Def.UsesFuel && (team < 0 || e.Team == team) ? StateView.Pct(e.FuelFraction) : -1 };
+                if (e.Def.OwnerTeam >= 0) row.Add(e.Def.Name);
+                ents.Add(row);
             }
             var shots = new List<object>();
             // Tracers matter for an instant; blasts, deaths, boarding and salvage stay listed long enough that a late poll

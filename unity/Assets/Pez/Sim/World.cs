@@ -133,6 +133,15 @@ namespace Pez.Sim
         public readonly AlertLog Alerts = new AlertLog();
         /// <summary>Agent-invented unit designs in this game, by key (t&lt;team&gt;:&lt;name&gt;). See Invention.cs.</summary>
         public readonly Dictionary<string, Invention> Inventions = new Dictionary<string, Invention>();
+        /// <summary>Identifies this game across saves and resumes (the invention registry keys designs by it). Not used by the sim.</summary>
+        public string GameId = Guid.NewGuid().ToString("N").Substring(0, 12);
+
+        /// <summary>Invention tallies for the registry: a unit of an invented type died (and who killed it).</summary>
+        void TallyDeath(Entity dead, Entity killer)
+        {
+            if (dead.Def.OwnerTeam >= 0 && Inventions.TryGetValue(dead.Def.Key, out var lost) && lost.Def == dead.Def) lost.Lost++;
+            if (killer != null && killer.Def.OwnerTeam >= 0 && killer.Team != dead.Team && Inventions.TryGetValue(killer.Def.Key, out var won) && won.Def == killer.Def) won.Kills++;
+        }
 
         /// <summary>Let key-only lookups (Defs.Get, used by the view and API) see this world's inventions. A new World does this itself.</summary>
         public void MakeCurrent() => Defs.Invented = key => Inventions.TryGetValue(key, out var i) ? i.Def : null;
@@ -566,6 +575,7 @@ namespace Pez.Sim
                 // Nobody gets out of a destroyed transport.
                 Emit("destroyed", p.Team, p.Id, 0, e.Center, key: p.Def.Key);
                 Teams[p.Team].Stats.UnitsLost++;
+                TallyDeath(p, null);
                 p.CarrierId = 0;
                 Remove(p);
             }
@@ -872,6 +882,7 @@ namespace Pez.Sim
                         var u = SpawnUnit(team.Id, item.Key, producer);
                         team.Stats.UnitsBuilt++;
                         team.Stats.Count(item.Key);
+                        if (u.Def.OwnerTeam >= 0 && Inventions.TryGetValue(item.Key, out var inv)) inv.Built++;
                         Emit("trained", team.Id, u.Id, pos: u.Pos, key: u.Def.Key);
                     }
                 }
@@ -1305,6 +1316,7 @@ namespace Pez.Sim
                 Emit("destroyed", t.Team, t.Id, src?.Id ?? 0, t.Center, key: t.Def.Key);
                 if (team >= 0 && team < Teams.Count) Teams[team].Stats.Kills++;
                 if (t.IsStructure) Teams[t.Team].Stats.StructuresLost++; else Teams[t.Team].Stats.UnitsLost++;
+                TallyDeath(t, src);
                 var lost = Alerts.Raise(this, t.Team, t.IsStructure ? "structure_lost" : "units_lost", t.IsStructure ? Priority.Critical : Priority.Medium, t.Center, attacker: src);
                 lost.Lost.Add($"{t.Def.Key} #{t.Id}");
                 bool lastHq = t.Def.Key == "command_center" && !Entities.Any(o => !o.Dead && o != t && o.Team == t.Team && o.Def.Key == "command_center");
@@ -1803,6 +1815,7 @@ namespace Pez.Sim
             Emit("destroyed", e.Team, e.Id, 0, e.Pos, key: e.Def.Key, text: $"{e.Def.Key} #{e.Id} ran out of fuel and crashed");
             Emit("crashed", e.Team, e.Id, 0, e.Pos, key: e.Def.Key);
             Teams[e.Team].Stats.UnitsLost++;
+            TallyDeath(e, null);
             var a = Alerts.Raise(this, e.Team, "aircraft_crashed", Priority.High, e.Pos);
             a.Lost.Add($"{e.Def.Key} #{e.Id} (out of fuel)" + (e.Passengers.Count > 0 ? $" with {e.Passengers.Count} passengers" : ""));
             Remove(e);
