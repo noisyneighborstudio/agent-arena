@@ -14,6 +14,10 @@ namespace Pez.View
         public PezEmerge Emerge;
         public bool HasModel => Model != null;
         public Vector3 BarrelRest;
+        /// <summary>Art-pack models: the barrel's far end (the middle of its +Z face) in barrel space. Shots, flashes and
+        /// tracers start here.</summary>
+        public Vector3 MuzzleLocal;
+        public bool HasMuzzle;
         public Gait Gait;            // infantry walk cycle (legs, hips) or null
         public Plinths.Spec Plinth;  // a structure's foundation (its pad turned into a plinth with driveway ramps) or null
     }
@@ -356,6 +360,30 @@ namespace Pez.View
             }
         }
 
+        /// <summary>
+        /// The muzzle of an art-pack barrel: the middle of the far (+Z) end of the barrel's meshes, in barrel space. Every
+        /// barrel in the pack points along its node's +Z (checked per model: light 0.525, heavy 0.69, artillery 0.85 on a
+        /// node pitched 60 degrees up, laser and SAM racks to their emitter faces), so the tip follows recoil and pitch.
+        /// </summary>
+        static bool BarrelTip(Transform barrel, out Vector3 tip)
+        {
+            var lo = new Vector3(float.MaxValue, float.MaxValue, float.MaxValue);
+            var hi = -lo;
+            foreach (var mf in barrel.GetComponentsInChildren<MeshFilter>(true))
+            {
+                if (mf.sharedMesh == null) continue;
+                var b = mf.sharedMesh.bounds;
+                for (int c = 0; c < 8; c++)
+                {
+                    var corner = new Vector3((c & 1) == 0 ? b.min.x : b.max.x, (c & 2) == 0 ? b.min.y : b.max.y, (c & 4) == 0 ? b.min.z : b.max.z);
+                    var p = barrel.InverseTransformPoint(mf.transform.TransformPoint(corner));
+                    lo = Vector3.Min(lo, p); hi = Vector3.Max(hi, p);
+                }
+            }
+            tip = new Vector3((lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, hi.z);
+            return hi.z > lo.z;
+        }
+
         public static Rig Build(string key, int team)
         {
             var root = new GameObject(key).transform;
@@ -381,7 +409,7 @@ namespace Pez.View
                 if (rig.Motion.profile.turretYawSpeed > 0) rig.Motion.profile.turretYawSpeed = Mathf.Max(rig.Motion.profile.turretYawSpeed, 240f);
                 rig.Emerge = go.AddComponent<PezEmerge>();
                 if (Altitudes.TryGetValue(key, out var alt)) rig.Altitude = alt;
-                if (rig.Barrel != null) rig.BarrelRest = rig.Barrel.localPosition;
+                if (rig.Barrel != null) { rig.BarrelRest = rig.Barrel.localPosition; rig.HasMuzzle = BarrelTip(rig.Barrel, out rig.MuzzleLocal); }
                 return rig;
             }
             var tc = Mats.Team(team);

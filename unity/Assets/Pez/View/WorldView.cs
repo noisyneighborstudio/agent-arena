@@ -36,7 +36,9 @@ namespace Pez.View
         public DeepDepositsView Deposits { get; private set; }
         public readonly Dictionary<int, EV> Views = new Dictionary<int, EV>();
         readonly Dictionary<int, Transform> projectiles = new Dictionary<int, Transform>();
-        readonly Dictionary<int, (Vector3 start, float total)> projectileStart = new Dictionary<int, (Vector3, float)>();
+        readonly Dictionary<int, (Vector3 start, Vec2 simStart, float total)> projectileStart = new Dictionary<int, (Vector3, Vec2, float)>();
+        /// <summary>How far (tiles) a shell flies from the barrel tip before it is exactly on the sim's path.</summary>
+        const float MuzzleBlend = 0.12f;
         public static readonly Color[] OreColors =
         {
             PezPalette.OreIronOre,   // cinnamon
@@ -421,8 +423,12 @@ namespace Pez.View
                 live.Add(p.Id);
                 if (!projectiles.TryGetValue(p.Id, out var t))
                 {
+                    // The shell leaves the real barrel tip (art-pack models), not the sim's 2D muzzle at a fixed height.
+                    Vector3 from;
+                    if (Views.TryGetValue(p.SourceId, out var sv) && sv.Rig.HasMuzzle && sv.Rig.Root.gameObject.activeInHierarchy) from = MuzzleOf(p.SourceId, p.PrevPos);
+                    else from = W(p.PrevPos, sv != null ? sv.Rig.Root.position.y + 0.3f : 0.4f);
                     var c = p.Weapon.Name == "rocket" ? new Color(1f, 0.55f, 0.2f) : new Color(1f, 0.9f, 0.5f);
-                    t = Models.Part(transform, PrimitiveType.Sphere, W(p.Pos, 0.4f), Vector3.one * (p.Weapon.Name == "heavy_cannon" ? 0.14f : 0.1f), Mats.Glow(c, 4f));
+                    t = Models.Part(transform, PrimitiveType.Sphere, from, Vector3.one * (p.Weapon.Name == "heavy_cannon" ? 0.14f : 0.1f), Mats.Glow(c, 4f));
                     t.GetComponent<Renderer>().shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
                     var trail = t.gameObject.AddComponent<TrailRenderer>();
                     trail.sharedMaterial = Mats.Unlit(new Color(c.r, c.g, c.b, 0.5f), true);
@@ -430,16 +436,19 @@ namespace Pez.View
                     trail.startWidth = 0.08f; trail.endWidth = 0f;
                     trail.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
                     projectiles[p.Id] = t;
-                    var src = Views.TryGetValue(p.SourceId, out var sv) ? sv.Rig.Root.position.y + 0.3f : 0.4f;
-                    projectileStart[p.Id] = (W(p.Pos, src), Mathf.Max(0.1f, Vec2.Dist(p.Pos, p.TargetPos)));
+                    projectileStart[p.Id] = (from, p.PrevPos, Mathf.Max(0.1f, Vec2.Dist(p.PrevPos, p.TargetPos)));
                 }
-                // Height: from the shooter's altitude to the target's, with a lob for artillery.
-                var (start, total) = projectileStart[p.Id];
+                // Height: from the barrel tip to the target's height, with a lob for artillery. Across the ground the shell
+                // starts at the tip and joins the sim's path within MuzzleBlend tiles of flight.
+                var (start, simStart, total) = projectileStart[p.Id];
                 var ground = Vec2.Lerp(p.PrevPos, p.Pos, alpha);
                 float k = Mathf.Clamp01(1f - Vec2.Dist(ground, p.TargetPos) / total);
                 float endY = Views.TryGetValue(p.TargetId, out var tv) ? tv.Rig.Root.position.y + 0.3f : 0.3f;
                 float arc = p.Weapon.Name == "artillery" ? 4f * k * (1 - k) * Mathf.Min(4f, total * 0.35f) : 0f;
-                t.position = W(ground, Mathf.Lerp(start.y, endY, k) + arc);
+                var pos = W(ground, Mathf.Lerp(start.y, endY, k) + arc);
+                float off = 1f - Mathf.SmoothStep(0f, 1f, Vec2.Dist(ground, simStart) / MuzzleBlend);
+                if (off > 0f) { pos.x += (start.x - simStart.X) * off; pos.z += (start.z - simStart.Y) * off; }
+                t.position = pos;
                 bool show = PovTeam < 0 || VisibleTile(p.Pos);
                 if (t.gameObject.activeSelf != show) t.gameObject.SetActive(show);
             }
@@ -558,10 +567,12 @@ namespace Pez.View
             }
         }
 
+        /// <summary>Where a shot leaves the shooter: the real barrel tip on art-pack models (it follows the turret's yaw,
+        /// the barrel's pitch and its recoil), a fixed reach on procedural placeholders.</summary>
         Vector3 MuzzleOf(int id, Vec2 fallback)
         {
             if (Views.TryGetValue(id, out var v) && v.Rig.Barrel != null)
-                return v.Rig.Barrel.position + v.Rig.Barrel.parent.forward * 0.35f;
+                return v.Rig.HasMuzzle ? v.Rig.Barrel.TransformPoint(v.Rig.MuzzleLocal) : v.Rig.Barrel.position + v.Rig.Barrel.parent.forward * 0.35f;
             return W(fallback, 0.4f);
         }
 
