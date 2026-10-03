@@ -58,6 +58,7 @@ namespace Pez
             if (twinL) twinRestL = twinL.localPosition;
             if (twinR) twinRestR = twinR.localPosition;
             if (bin) binRest = bin.localRotation;
+            if (spinner) spinnerRestPos = spinner.localPosition;
             if (lift) liftRestY = lift.localPosition.y;
             scanPhase = Random.value * 10f;
             if (binOre) binOre.localScale = new Vector3(1f, 0.001f, 1f);
@@ -172,6 +173,11 @@ namespace Pez
         /// The bed follows the sim's Dock steps (Unload raises it during the settle, PullOut lowers it).</summary>
         public void SetBinTipped(bool up) => tipGoal = up ? 1f : 0f;
         float tipK, tipGoal;
+        /// <summary>Mining truck with nothing to mine (economy review R6; fix 11): it parks and powers down, the bin
+        /// raised 12 deg ("empty and waiting") and the cutter lowered 0.04, easing in over 0.6 s.</summary>
+        public void SetParked(bool on) => parkGoal = on ? 1f : 0f;
+        float parkK, parkGoal;
+        Vector3 spinnerRestPos;
         /// <summary>Surveyor: thump `count` times, 1.2 s apart. OnThump fires on each slam.</summary>
         public void Survey(int count = 3) { thumpsLeft = thumpCount = count; thumpT = 0f; working = true; }
         public void CancelSurvey() { thumpsLeft = 0; thumpT = -1f; working = false; if (piston) piston.localPosition = pistonRest; }
@@ -260,10 +266,13 @@ namespace Pez
                 oreTube.localScale = new Vector3(1f, Mathf.Max(oreShown, 0.001f), 1f);
             }
 
-            if (bin && tipT < 0f && tipK != tipGoal)
+            if (bin && tipT < 0f && (tipK != tipGoal || parkK != parkGoal))
             {
                 tipK = Mathf.MoveTowards(tipK, tipGoal, dt / (tipGoal > tipK ? 0.3f : 0.25f));
-                bin.localRotation = binRest * Quaternion.Euler(-35f * Mathf.SmoothStep(0f, 1f, tipK), 0f, 0f);
+                parkK = Mathf.MoveTowards(parkK, parkGoal, dt / 0.6f);
+                float park = Mathf.SmoothStep(0f, 1f, parkK);
+                bin.localRotation = binRest * Quaternion.Euler(-35f * Mathf.SmoothStep(0f, 1f, tipK) - 12f * park, 0f, 0f);
+                if (spinner) spinner.localPosition = spinnerRestPos + Vector3.down * 0.04f * park;
             }
             if (bin && tipT >= 0f)
             {

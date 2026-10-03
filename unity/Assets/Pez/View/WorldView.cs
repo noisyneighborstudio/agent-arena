@@ -553,6 +553,8 @@ namespace Pez.View
                         rig.Motion.SetBinTipped(e.Order == Order.ReturnOre && e.Dock == DockStep.Unload);
                         ReportDock(e);
                         Dump(v);
+                        // Nothing left to mine (the sim idles it after warning the surface is exhausted): park, power down.
+                        rig.Motion.SetParked(e.Order == Order.Idle && e.Cargo == 0 && !e.Moving);
                         // Unloading beside a drop-off whose lane is built over: the old one-shot tip, on the first ore out
                         // (the drop-off's door, lamps and chute answer through ReportDock).
                         if (e.Order == Order.ReturnOre && e.Dock < DockStep.Align && e.Cargo < v.PrevCargo && !v.Tipped)
