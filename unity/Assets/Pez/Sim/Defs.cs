@@ -23,7 +23,9 @@ namespace Pez.Sim
             Armor.Aircraft => VsAir,
             _ => VsStructure,
         };
-        public bool CanHit(EntityDef d) => (d.IsAir ? HitsAir : HitsGround) && Multiplier(d.Armor) > 0;
+        /// <summary>Reaches high-altitude aircraft (the Reaper): SAM sites, flak and laser towers only.</summary>
+        public bool HitsHighAir;
+        public bool CanHit(EntityDef d) => (d.IsAir ? HitsAir && (!d.HighAltitude || HitsHighAir) : HitsGround) && Multiplier(d.Armor) > 0;
     }
 
     /// <summary>A converter recipe: consumes Inputs to make Outputs, Rate cycles per second.</summary>
@@ -60,6 +62,13 @@ namespace Pez.Sim
         public bool LaysMines;        // mine layers
         public bool IsMine;           // a mine: stationary, hidden, explodes under enemy ground units
         public float SelfRepairTo;    // regenerates up to this fraction of max HP
+        /// <summary>Drones: fuel for this many map widths of flight, set from the map when one is built (World.DroneFuel).</summary>
+        public float RangeMaps;
+        /// <summary>Flies high (the Reaper): only weapons that reach high altitude (WeaponDef.HitsHighAir) can hit it.</summary>
+        public bool HighAltitude;
+        /// <summary>Drawn with another unit's model (no art of its own yet), at this scale.</summary>
+        public string ModelAs;
+        public float ModelScale = 1f;
         public float SelfRepairRate;  // HP/s
         public const int MineCost = 30; // steel per mine laid
         public float RepairRange = 1.5f;
@@ -80,7 +89,7 @@ namespace Pez.Sim
         public string Chassis;
         public int OwnerTeam = -1;
         /// <summary>The standard def whose model, icon and animation profile to use (an invention looks like its chassis).</summary>
-        public string ModelKey => Chassis ?? Key;
+        public string ModelKey => Chassis ?? ModelAs ?? Key;
         public EntityDef Clone() => (EntityDef)MemberwiseClone();
 
         public bool IsArmor(Armor a) => Armor == a;
@@ -116,12 +125,13 @@ namespace Pez.Sim
         static readonly WeaponDef GunshipRockets = new WeaponDef { Name = "gunship_rockets", Damage = 45, Range = 5.5f, Cooldown = 1.2f, ProjectileSpeed = 12f, HitsAir = true, VsInfantry = 0.7f, VsVehicle = 1f, VsStructure = 0.6f, VsAir = 1f };
         static readonly WeaponDef Bombs = new WeaponDef { Name = "bombs", Damage = 260, Range = 0.9f, Cooldown = 4f, ProjectileSpeed = 6f, SplashRadius = 2f, VsInfantry = 0.6f, VsVehicle = 0.8f, VsStructure = 1.6f };
         static readonly WeaponDef TurretGun = new WeaponDef { Name = "turret_gun", Damage = 50, Range = 6.5f, Cooldown = 1.3f, ProjectileSpeed = 20f, VsInfantry = 0.7f, VsVehicle = 1f, VsStructure = 0.5f };
-        static readonly WeaponDef Sam = new WeaponDef { Name = "sam", Damage = 90, Range = 8f, Cooldown = 1.6f, ProjectileSpeed = 16f, HitsGround = false, HitsAir = true, VsAir = 1f };
+        static readonly WeaponDef Sam = new WeaponDef { Name = "sam", Damage = 90, Range = 8f, Cooldown = 1.6f, ProjectileSpeed = 16f, HitsGround = false, HitsAir = true, HitsHighAir = true, VsAir = 1f };
+        static readonly WeaponDef Hellfire = new WeaponDef { Name = "hellfire", Damage = 140, Range = 7f, Cooldown = 5f, ProjectileSpeed = 14f, SplashRadius = 0.6f, VsInfantry = 0.8f, VsVehicle = 1.2f, VsStructure = 0.8f };
         static readonly WeaponDef SniperRifle = new WeaponDef { Name = "sniper", Damage = 150, Range = 9f, Cooldown = 3f, VsInfantry = 1f, VsVehicle = 0.08f, VsStructure = 0.03f };
         static readonly WeaponDef C4 = new WeaponDef { Name = "c4", Damage = 900, Range = 1.0f, Cooldown = 5f, VsInfantry = 0f, VsVehicle = 0.6f, VsStructure = 1f };
-        static readonly WeaponDef Flak = new WeaponDef { Name = "flak", Damage = 35, Range = 8f, Cooldown = 0.8f, ProjectileSpeed = 22f, SplashRadius = 1.0f, HitsGround = false, HitsAir = true, VsAir = 1f };
+        static readonly WeaponDef Flak = new WeaponDef { Name = "flak", Damage = 35, Range = 8f, Cooldown = 0.8f, ProjectileSpeed = 22f, SplashRadius = 1.0f, HitsGround = false, HitsAir = true, HitsHighAir = true, VsAir = 1f };
         static readonly WeaponDef MammothCannon = new WeaponDef { Name = "mammoth_cannon", Damage = 120, Range = 6f, Cooldown = 2.2f, ProjectileSpeed = 16f, SplashRadius = 1.0f, HitsAir = true, VsInfantry = 0.7f, VsVehicle = 1f, VsStructure = 1f, VsAir = 0.6f };
-        static readonly WeaponDef TowerLaser = new WeaponDef { Name = "laser", Damage = 90, Range = 7.5f, Cooldown = 1.1f, HitsAir = true, VsInfantry = 1f, VsVehicle = 1.1f, VsStructure = 0.6f, VsAir = 1f };
+        static readonly WeaponDef TowerLaser = new WeaponDef { Name = "laser", Damage = 90, Range = 7.5f, Cooldown = 1.1f, HitsAir = true, HitsHighAir = true, VsInfantry = 1f, VsVehicle = 1.1f, VsStructure = 0.6f, VsAir = 1f };
 
         static Defs()
         {
@@ -176,8 +186,10 @@ namespace Pez.Sim
             Add(new EntityDef { Key = "minelayer", Name = "Mine Layer", Description = $"Unarmed. Lays hidden mines (each costs {EntityDef.MineCost} steel) with 'lay_mines'. Mines blow up under enemy ground units.", Cost = C("steel", 250, "copper", 50), BuildTime = 9, MaxHp = 450, Armor = Armor.Vehicle, Speed = 2.0f, Radius = 0.45f, Sight = 6, LaysMines = true, BuiltBy = Producer.Factory, Requires = new[] { "electronics_plant" } });
             Add(new EntityDef { Key = "mine", Name = "Mine", Description = "Hidden from enemies unless they're within 1.5 tiles or inside a radar dome's range. Explodes under enemy ground units.", BuildTime = 0, MaxHp = 60, Armor = Armor.Vehicle, Speed = 0, Radius = 0.25f, Sight = 1, Stealth = true, IsMine = true, BuiltBy = Producer.None });
             Add(new EntityDef { Key = "mammoth_tank", Name = "Mammoth Tank", Description = "Super-heavy twin-cannon tank. Hits ground and air, splash, and repairs itself up to 50% HP.", Cost = C("steel", 800, "circuits", 200, "plasma", 40), BuildTime = 24, MaxHp = 1800, Armor = Armor.Vehicle, Speed = 1.2f, Radius = 0.7f, Sight = 7, Weapon = MammothCannon, SelfRepairTo = 0.5f, SelfRepairRate = 6f, BuiltBy = Producer.Factory, Requires = new[] { "enrichment_plant" } });
-            Add(new EntityDef { Key = "recon_drone", Name = "Recon Drone", Description = "Cheap, fast, unarmed flying scout with sight 12.", Cost = C("steel", 120, "circuits", 30), BuildTime = 6, MaxHp = 120, Armor = Armor.Aircraft, Speed = 4.5f, Radius = 0.35f, Sight = 12, IsAir = true, BuiltBy = Producer.Factory, Requires = new[] { "electronics_plant" } });
+            Add(new EntityDef { Key = "recon_drone", Name = "Recon Drone", RangeMaps = 1.5f, Description = "Light drone: cheap, fast, unarmed flying scout with sight 12. Fuel for about 1.5 map widths: across the map and halfway back, so a run to the far side is one-way unless it can land on the way.", Cost = C("steel", 120, "circuits", 30), BuildTime = 6, MaxHp = 120, Armor = Armor.Aircraft, Speed = 4.5f, Radius = 0.35f, Sight = 12, IsAir = true, BuiltBy = Producer.Factory, Requires = new[] { "electronics_plant" } });
             Add(new EntityDef { Key = "transport_chopper", Name = "Transport Chopper", Description = "Flying transport for 6 infantry; ignores terrain. Use 'load' and 'unload'. Passengers die if it's shot down.", Cost = C("steel", 300, "circuits", 80), BuildTime = 12, MaxHp = 600, Armor = Armor.Aircraft, Speed = 3.5f, Radius = 0.7f, Sight = 7, Capacity = 6, IsAir = true, BuiltBy = Producer.Airfield });
+            Add(new EntityDef { Key = "long_range_drone", Name = "Long-Range Drone", RangeMaps = 2f, ModelAs = "recon_drone", ModelScale = 1.35f, Description = "Unarmed scout with fuel for about 2 map widths: across the map and back. Sight 12. Built at an airfield; lands on one to refuel.", Cost = C("steel", 220, "circuits", 80), BuildTime = 10, MaxHp = 180, Armor = Armor.Aircraft, Speed = 4f, Radius = 0.4f, Sight = 12, IsAir = true, BuiltBy = Producer.Airfield, Requires = new[] { "electronics_plant" } });
+            Add(new EntityDef { Key = "reaper_drone", Name = "Reaper Drone", RangeMaps = 24f, HighAltitude = true, ModelAs = "stealth_bomber", ModelScale = 0.7f, Description = "Ultra drone: flies high (only SAM sites, flak and laser towers can hit it), stays up for about 24 map widths of flight (recon all day: around half an hour on a big map), sight 12, and fires hellfire missiles at ground targets. Very expensive.", Cost = C("steel", 600, "circuits", 300, "plasma", 120, "lenses", 80), BuildTime = 30, MaxHp = 450, Armor = Armor.Aircraft, Speed = 2.8f, Radius = 0.6f, Sight = 12, Weapon = Hellfire, IsAir = true, BuiltBy = Producer.Airfield, Requires = new[] { "radar_dome", "enrichment_plant" } });
             Add(new EntityDef { Key = "gunship", Name = "Gunship", Description = "Aircraft. Flies over terrain; rockets vs ground and air.", Cost = C("steel", 300, "circuits", 120, "plasma", 30), BuildTime = 14, MaxHp = 500, Armor = Armor.Aircraft, Speed = 3.2f, Radius = 0.6f, Sight = 8, Weapon = GunshipRockets, IsAir = true, BuiltBy = Producer.Airfield });
             Add(new EntityDef { Key = "stealth_bomber", Name = "Stealth Bomber", Description = "Invisible unless within 3 tiles of an enemy or inside enemy radar range. Bombs wreck structures.", Cost = C("composite", 300, "circuits", 150, "plasma", 80), BuildTime = 20, MaxHp = 600, Armor = Armor.Aircraft, Speed = 3.8f, Radius = 0.7f, Sight = 7, Weapon = Bombs, IsAir = true, Stealth = true, BuiltBy = Producer.Airfield, Requires = new[] { "composite_foundry" } });
 

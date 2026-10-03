@@ -165,7 +165,7 @@ namespace Pez.Sim
                     s += $" fuel {Pct(e.FuelFraction)}%";
                     if (e.Stranded) s += " (OUT OF FUEL: can't move; send a repair truck)";
                     else if (e.Landed) s += " (landed, refuelling)";
-                    else if (e.AtDepot && e.Fuel < e.Def.Fuel) s += " (refuelling)";
+                    else if (e.AtDepot && e.Fuel < e.FuelMax) s += " (refuelling)";
                 }
                 if (e.IsCarried) s += $" (inside #{e.CarrierId})";
                 if (e.Def.Capacity > 0) s += $" carrying {e.Passengers.Count}/{e.Def.Capacity}" + (e.Passengers.Count > 0 ? ": " + string.Join(",", e.Passengers.Select(p => "#" + p)) : "");
@@ -397,8 +397,9 @@ namespace Pez.Sim
         /// 11: a building below 30% health is on fire and burns down unless repaired above 30% (building_burning alert).
         /// 12: from a playtest: fuel warnings on move, reserve (converters leave raw ore alone), runs_dry_in_s and
         ///     deep_mine_running_low, train structure_id, spread, unit sight in rules and state, mutual sight.
+        /// 13: drones by mission: recon_drone (light, 1.5 map widths), long_range_drone (2), reaper_drone (high altitude, armed, 24).
         /// </summary>
-        public const int RulesVersion = 12;
+        public const int RulesVersion = 13;
 
         public static JObj Rules()
         {
@@ -407,6 +408,7 @@ namespace Pez.Sim
             o.Set("chain", Defs.All.Values.Where(d => d.Recipes.Length > 0).SelectMany(d => d.Recipes.Select(r => $"{d.Key}: {r}")).Append("fusion_reactor: burns 0.1 plasma/s for +500 power").ToList());
             o.Set("tips", new List<string> {
                 "Typical opening: power_plant -> more mining_trucks -> mining_refinery -> barracks/factory -> electronics_plant. Raw ore pays for the first buildings; everything later needs refined materials.",
+                "Drones, by mission (fuel is measured in map widths, sized to the map): recon_drone (factory; cheap; 1.5 widths: across and halfway back, so a far-side run is one-way unless it lands on the way), long_range_drone (airfield; 2 widths: across and back), reaper_drone (airfield; very expensive; flies high so only sam_site, flak_track and laser_tower can hit it; about 24 widths, around half an hour on a big map, so it can watch a spot all game; fires hellfire missiles at ground targets). All have sight 12.",
                 "Fire: a finished building below 30% health is on fire and loses health on its own (faster as it weakens; about a minute to collapse). Repair it above 30% with a repair truck to put it out; a BUILDING ON FIRE alert tells you when one catches. Damaging an enemy building below 30% and keeping its repair trucks away finishes it for you.",
                 "Assign trucks to the ore you need with harvest + ore. Crystal and uranium sit in the contested middle.",
                 "Deliveries take time: a mining truck lines up 2 tiles out from a drop-off's bay (command_center, mining_refinery or outpost; the bay is on the south side unless terrain blocks it), turns, backs in and unloads, one truck per bay at a time; the others wait beside the lane (my_units shows each truck's dock status). A full cycle in the bay is about 5 s, so a big truck fleet needs more drop-offs. Nothing can be built on a truck lane.",
@@ -449,7 +451,9 @@ namespace Pez.Sim
             if (d.IsStructure) o.Set("size", $"{d.SizeX}x{d.SizeY}").Set("power", d.Power);
             else o.Set("speed", d.Speed);
             if (d.Sight > 0) o.Set("sight", d.IsStructure ? $"{d.Sight} tiles from its edge" : (object)d.Sight);
-            if (d.UsesFuel) o.Set("fuel", d.IsAir ? $"{d.Fuel:0}s airborne; refuels landed on an airfield{(d.BuiltBy == Producer.Factory ? " or factory" : "")}" : $"{d.Fuel:0}s of driving (~{d.Fuel * d.Speed:0} tiles); refuels next to a command center, outpost, refinery or factory, or from a repair truck");
+            if (d.RangeMaps > 0) o.Set("fuel", $"about {d.RangeMaps:0.#} map widths of flight (its tank is sized to the map when it's built, and grows with it); refuels landed on an airfield{(d.BuiltBy == Producer.Factory ? " or factory" : "")}");
+            else if (d.UsesFuel) o.Set("fuel", d.IsAir ? $"{d.Fuel:0}s airborne; refuels landed on an airfield{(d.BuiltBy == Producer.Factory ? " or factory" : "")}" : $"{d.Fuel:0}s of driving (~{d.Fuel * d.Speed:0} tiles); refuels next to a command center, outpost, refinery or factory, or from a repair truck");
+            if (d.HighAltitude) o.Set("altitude", "high: only sam_site, flak_track and laser_tower can hit it");
             if (d.FuelDepot) o.Set("refuels", "ground vehicles parked next to it");
             if (d.Helipad) o.Set("refuels", "aircraft that land on it");
             if (d.Weapon != null) o.Set("weapon", $"{d.Weapon.Name}: {d.Weapon.Damage} dmg, range {d.Weapon.Range}, every {d.Weapon.Cooldown}s; " +

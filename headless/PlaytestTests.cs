@@ -134,7 +134,7 @@ namespace Pez.Headless
                 var w = new World(2, 7, 80);
                 var factory = w.SpawnStructure(0, "factory", w.FindPlacement(0, "factory").Value, 1f);
                 var drone = At(w.SpawnUnit(0, "recon_drone", factory), factory.Center + new Vec2(6, 0));
-                drone.Fuel = drone.Def.Fuel * 0.8f;
+                drone.Fuel = drone.FuelMax * 0.8f;
                 Run(w, 10);
                 Check(drone.Landed && drone.Order == Order.Idle, $"an idle drone near a pad lands (landed {drone.Landed}, order {drone.OrderName}, fuel {drone.FuelFraction:P0})");
             }

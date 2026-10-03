@@ -92,6 +92,8 @@ namespace Pez.Sim
 
         // Fuel (vehicles and aircraft). A refuel trip remembers the order it interrupted and picks it up afterwards.
         public float Fuel;
+        public float FuelCap;         // drones: tank size set from the map's width (World.DroneFuel); 0 = the def's
+        public float FuelMax => FuelCap > 0 ? FuelCap : Def.Fuel;
         public bool Landed;          // aircraft parked on a pad (refuelling, not burning)
         public bool Stranded;        // ground vehicle out of fuel: can't move until a repair truck tops it up
         public bool AtDepot;         // ground vehicle next to a fuel depot (refuelling)
@@ -102,7 +104,7 @@ namespace Pez.Sim
         public int ResumeTarget;
         public readonly List<Vec2> ResumeWaypoints = new List<Vec2>();
         public float ResumeSpeedCap;
-        public float FuelFraction => Def.Fuel > 0 ? Fuel / Def.Fuel : 1f;
+        public float FuelFraction => FuelMax > 0 ? Fuel / FuelMax : 1f;
 
         // Mine layers: where to put the remaining mines
         public readonly List<Vec2> MineQueue = new List<Vec2>();

@@ -325,9 +325,10 @@ namespace Pez.Sim
             foreach (var o in w.Owned(team).Where(o => o.IsStructure && o.Def.Produces == s.Def.Produces)) o.Rally = new Vec2(x, y);
             // New units drive there on their own tank: say what the trip costs the shortest-legged one this building makes.
             float dist = Vec2.Dist(s.Center, new Vec2(x, y));
+            float Tank(EntityDef d) => d.RangeMaps > 0 ? w.DroneFuel(d) : d.Fuel; // drones' tanks are sized to the map
             var worst = Defs.All.Values.Where(d => d.BuiltBy == s.Def.Produces && d.UsesFuel && !d.IsStructure)
-                                       .OrderByDescending(d => dist * (d.IsAir ? 1.15f : RouteFactor) / (d.Fuel * d.Speed)).FirstOrDefault();
-            float used = worst == null ? 0 : dist * (worst.IsAir ? 1.15f : RouteFactor) / (worst.Fuel * worst.Speed);
+                                       .OrderByDescending(d => dist * (d.IsAir ? 1.15f : RouteFactor) / (Tank(d) * d.Speed)).FirstOrDefault();
+            float used = worst == null ? 0 : dist * (worst.IsAir ? 1.15f : RouteFactor) / (Tank(worst) * worst.Speed);
             return Ok($"rally point for {s.Def.Key} set to ({x},{y})" +
                       (used >= 0.25f ? $"; it's {dist:0} tiles away: a new {worst.Key} burns ~{StateView.Pct(MathF.Min(1, used))}% of its fuel getting there" +
                                        (used >= 0.5f ? " and may turn back to refuel before it arrives; rally nearer, or at a refuel point (outpost)" : "") : ""));
@@ -440,7 +441,7 @@ namespace Pez.Sim
             var target = w.Get((int)c.Num("target", 0));
             if (target == null || target.Team != team) return Err("target must be one of your own units or structures");
             if (!target.IsComplete) return Err("that structure is still under construction");
-            bool needsFuel = target.Def.UsesFuel && !target.IsAir && target.Fuel < target.Def.Fuel * 0.99f;
+            bool needsFuel = target.Def.UsesFuel && !target.IsAir && target.Fuel < target.FuelMax * 0.99f;
             if (target.Hp >= target.Def.MaxHp - 0.5f && !needsFuel) return Err($"{target.Def.Key} #{target.Id} is already at full health" + (target.Def.UsesFuel ? " and fuel" : ""));
             // Medics take infantry, repair trucks take machines; whoever can't help is left alone.
             var able = healers.Where(h => World.CanTend(h, target) || (needsFuel && !h.Def.Medic)).ToList();

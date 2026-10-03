@@ -184,7 +184,7 @@ namespace Pez.Sim
             o.PutEnum("dock", e.Dock, DockStep.None).Put("dock_at", e.DockAt).Put("burning", e.Burning);
             o.Put("work_timer", e.WorkTimer).Put("deposit", e.DepositId).Put("working", e.Working).Put("carrier", e.CarrierId);
             if (e.Passengers.Count > 0) o.Set("passengers", e.Passengers.Cast<object>().ToList());
-            o.Put("fuel", e.Fuel).Put("landed", e.Landed).Put("stranded", e.Stranded).Put("at_depot", e.AtDepot).Put("fuel_warned", e.FuelWarned)
+            o.Put("fuel", e.Fuel).Put("fuel_cap", e.FuelCap).Put("landed", e.Landed).Put("stranded", e.Stranded).Put("at_depot", e.AtDepot).Put("fuel_warned", e.FuelWarned)
              .Put("no_auto_refuel_until", e.NoAutoRefuelUntil).PutEnum("resume_order", e.ResumeOrder, Order.Idle)
              .PutV("resume_pos", e.ResumePos).PutV("resume_guard", e.ResumeGuard).Put("resume_target", e.ResumeTarget)
              .Put("resume_speed_cap", e.ResumeSpeedCap);
@@ -225,7 +225,7 @@ namespace Pez.Sim
             d.Load("work_timer", ref e.WorkTimer); d.Load("deposit", ref e.DepositId); d.Load("working", ref e.Working); d.Load("carrier", ref e.CarrierId);
             foreach (var x in d.Arr("passengers")) if (x is double pid) e.Passengers.Add((int)pid);
             // A snapshot from before fuel existed: start full rather than stranded.
-            e.Fuel = def.Fuel; d.Load("fuel", ref e.Fuel);
+            e.Fuel = def.Fuel; d.Load("fuel", ref e.Fuel); d.Load("fuel_cap", ref e.FuelCap);
             d.Load("landed", ref e.Landed); d.Load("stranded", ref e.Stranded); d.Load("at_depot", ref e.AtDepot); d.Load("fuel_warned", ref e.FuelWarned);
             d.Load("no_auto_refuel_until", ref e.NoAutoRefuelUntil); d.LoadEnum("resume_order", ref e.ResumeOrder);
             d.Load("resume_pos", ref e.ResumePos); d.Load("resume_guard", ref e.ResumeGuard); d.Load("resume_target", ref e.ResumeTarget);
@@ -525,6 +525,8 @@ namespace Pez.Sim
                 w.ById[e.Id] = e;
             }
             if (dropped > 0) w.LastError = $"resumed without {dropped} entities of types this build doesn't have";
+            // Drones from before map-relative tanks: size their tank for this map, keeping the fuel they had.
+            foreach (var e in w.Entities) if (e.Def.RangeMaps > 0 && e.FuelCap <= 0) e.FuelCap = w.DroneFuel(e.Def);
             foreach (var pd in d.Objs("projectiles")) { var p = Snapshot.ReadProjectile(pd); if (p != null) w.Projectiles.Add(p); }
             w.Alerts.LoadState(d.Obj("alerts"));
             foreach (var ev in d.Objs("events")) { var e = Snapshot.ReadEvent(ev); if (e != null) w.Events.Add(e); }

@@ -506,6 +506,10 @@ namespace Pez.View
         EV Create(Entity e)
         {
             var rig = Models.Build(e.Def.ModelKey, e.Team); // an invention looks like its base unit (plus a badge: Bars)
+            // Units drawn with another unit's model (new drones without art yet): their own size and flying height.
+            if (e.Def.ModelAs != null && rig.Model != null && e.Def.ModelScale != 1f) rig.Model.transform.localScale *= e.Def.ModelScale;
+            if (e.Def.HighAltitude) rig.Altitude = 5f;
+            else if (e.Def.IsAir && rig.Altitude <= 0f && e.Def.ModelAs != null) rig.Altitude = 2.2f;
             rig.Root.SetParent(transform, false);
             // Units read better a touch larger than their collision radius. Art-pack infantry are built at 0.55 tall;
             // the handoff recommends 1.3-1.4x so they read at game zoom.

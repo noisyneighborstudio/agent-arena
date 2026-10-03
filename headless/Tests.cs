@@ -60,6 +60,7 @@ namespace Pez.Headless
             RoundedPercents();
             NoGridlock();
             BuildingsBurn();
+            Drones();
             LastHqSpills();
             FieldRefuelling();
             ArenaCleared();
@@ -449,6 +450,29 @@ namespace Pez.Headless
             var freeDeps = w.Map.Deep.Where(d => t.Surveyed.Contains(d.Id) && d.Amount > 0 && d.MineId == 0).ToList();
             Check(w.Owned(0).Any(e => e.Def.Key == "deep_mine"), $"and puts a deep mine on what it finds ({rigs.Count} rigs: {string.Join("; ", rigs.Select(r => $"{r.Pos} {r.OrderName}"))}; free deposits {freeDeps.Count}: {string.Join(" ", freeDeps.Take(3).Select(d => d.Pos.ToString()))}; steel {t.Amount("steel")}, factory queue {string.Join(",", t.UnitQueues[Producer.Factory].Select(q => q.Key))}, built {(t.Stats.Built.TryGetValue("drill_rig", out var nb) ? nb : 0)})");
             Check(w.Errors == 0, $"no sim errors ({w.LastError})");
+        }
+
+        static void Drones()
+        {
+            Console.WriteLine("\n-- drones");
+            var w = new World(2, 7, 96);
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var light = w.SpawnUnit(0, "recon_drone", hq);
+            var lng = w.SpawnUnit(0, "long_range_drone", hq);
+            var reaper = w.SpawnUnit(0, "reaper_drone", hq);
+            float Widths(Entity e) => e.FuelMax * e.Def.Speed / w.Map.W;
+            Check(MathF.Abs(Widths(light) - 1.5f) < 0.01f && MathF.Abs(Widths(lng) - 2f) < 0.01f && MathF.Abs(Widths(reaper) - 24f) < 0.01f,
+                  $"drone tanks are sized in map widths: light {Widths(light):0.##}, long {Widths(lng):0.##}, reaper {Widths(reaper):0.##} ({light.FuelMax:0}s / {lng.FuelMax:0}s / {reaper.FuelMax:0}s on a {w.Map.W}-wide map)");
+            var rifle = Defs.Get("rifleman").Weapon; var sam = Defs.Get("sam_site").Weapon; var gun = Defs.Get("gunship").Weapon;
+            Check(!rifle.CanHit(reaper.Def) && !gun.CanHit(reaper.Def) && sam.CanHit(reaper.Def) && Defs.Get("flak_track").Weapon.CanHit(reaper.Def) && Defs.Get("laser_tower").Weapon.CanHit(reaper.Def)
+                  && rifle.CanHit(light.Def), "the reaper flies high: only SAM sites, flak and laser towers reach it (rifles still hit the light drone)");
+            Check(reaper.Def.Weapon != null && reaper.Def.Weapon.CanHit(Defs.Get("light_tank")) && !reaper.Def.Weapon.CanHit(light.Def), "the reaper's hellfires hit ground targets, not aircraft");
+            // The map grows: tanks grow with it and stay as full.
+            light.Fuel = light.FuelMax * 0.5f;
+            float before = light.FuelMax;
+            w.Open = true;
+            for (int k = 0; k < 4 && w.Map.W <= 96; k++) w.AddTeam("llm", "Grower" + k, out _);
+            Check(w.Map.W > 96 && light.FuelMax > before && MathF.Abs(light.FuelFraction - 0.5f) < 0.01f, $"when the map grows, drone tanks grow with it and stay as full ({before:0}s -> {light.FuelMax:0}s at {light.FuelFraction:P0})");
         }
 
         static void BuildingsBurn()
