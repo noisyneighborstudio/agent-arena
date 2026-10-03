@@ -36,7 +36,8 @@ namespace Pez.View
             public Renderer[] Glows;
             public float GlowK = -1f, GlowShown = -1f, RateShown = 1f;
             public float[] SteamNext;    // per tower: when it next puffs (each tower on its own irregular rhythm)
-            public bool GlowHidden;      // the neutral "last seen" glow is applied (a stream render of fogged enemy state)
+            public bool GlowHidden;
+            public Renderer[] Halos;     // power plant: the light rising out of its open stacks      // the neutral "last seen" glow is applied (a stream render of fogged enemy state)
             // Damage state on finished buildings: smoke and fire intensity (eased), emitters, and the roof they rise from.
             public float SmokeK, FireK;
             public Vector3[] FireSpots;  // where a burning building's flames rise from (fixed per building)
@@ -115,6 +116,7 @@ namespace Pez.View
         }
 
         readonly List<int> audience = new List<int>();
+        static MaterialPropertyBlock haloBlock;
 
         /// <summary>
         /// The cameras that may see a building's state effects right now: the main view (if its team sees the building,
@@ -309,7 +311,7 @@ namespace Pez.View
         }
 
         // Power plant tower tops in model space (the two M_E_Cyan cores; the pack's glTF x is mirrored on import).
-        static readonly Vector3[] Towers = { new Vector3(0.42f, 1.45f, -0.30f), new Vector3(-0.42f, 1.65f, 0.32f) };
+        static readonly Vector3[] Towers = { new Vector3(0.42f, 1.78f, -0.30f), new Vector3(-0.42f, 1.78f, 0.32f) }; // the mouths of the open stacks (PowerCores)
 
         /// <summary>
         /// Power you can see (MOTION.md power_plant; base-building review rec. 1). From the team's PowerUsed,
@@ -353,7 +355,19 @@ namespace Pez.View
             // The lamp body darkens with its light (a cyan core at 0.25 emission still read as lit from its albedo).
             glow *= v.Blink;
             if (!SeesState(e, PovTeam)) glow = 0.8f; // remembered under fog: no live state
-            if (v.GlowHidden || Mathf.Abs(glow - v.GlowShown) > 0.01f) { PezShade.Set(v.Glows, Mathf.Lerp(0.15f, 1f, Mathf.InverseLerp(0.25f, 1f, glow)), glow); v.GlowShown = glow; v.GlowHidden = false; }
+            if (v.GlowHidden || Mathf.Abs(glow - v.GlowShown) > 0.01f)
+            {
+                PezShade.Set(v.Glows, Mathf.Lerp(0.15f, 1f, Mathf.InverseLerp(0.25f, 1f, glow)), glow);
+                v.GlowShown = glow; v.GlowHidden = false;
+                // The light rising out of the power plant's open stacks follows the cores.
+                v.Halos ??= System.Array.FindAll(v.Rig.Model.GetComponentsInChildren<Renderer>(true), r => r.name == PowerCores.HaloName);
+                if (v.Halos.Length > 0)
+                {
+                    haloBlock ??= new MaterialPropertyBlock();
+                    haloBlock.SetColor("_Color", new Color(1f, 1f, 1f, Mathf.Clamp01(glow)));
+                    foreach (var h in v.Halos) h.SetPropertyBlock(haloBlock);
+                }
+            }
             if (rate != v.RateShown) { v.Rig.Motion.SetRate(rate); v.RateShown = rate; }
         }
 

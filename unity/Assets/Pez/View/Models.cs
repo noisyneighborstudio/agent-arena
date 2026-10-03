@@ -515,6 +515,7 @@ namespace Pez.View
                 go.name = key; // PezMotion reads its profile from the object name
                 FlatShade(go);
                 if (Pez.Sim.Defs.Get(key)?.IsStructure == true) rig.Plinth = Plinths.Apply(go, key);
+                if (key == "power_plant") PowerCores.Apply(go); // open stacks glowing from inside
                 TintTeam(go, team);
                 rig.Model = go;
                 rig.Turret = PezMotion.FindDeep(go.transform, "turret");
