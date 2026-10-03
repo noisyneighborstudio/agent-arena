@@ -46,7 +46,8 @@ namespace Pez.Sim
             var e = NewEntity(team, Def(key));
             e.Pos = e.PrevPos = e.GuardPos = e.OrderPos = pos;
             e.Facing = e.TurretFacing = facing;
-            e.Fuel = e.Def.Fuel;
+            e.FuelCap = DroneFuel(e.Def);
+            e.Fuel = e.FuelMax;
             return e;
         }
 
@@ -308,7 +309,7 @@ namespace Pez.Sim
                 e.Moving = false;
             }
             foreach (var e in w.Entities)
-                if (!e.Dead && !e.IsStructure && e.Def.UsesFuel && !fuelExempt.Contains(e.Id)) { e.Fuel = e.Def.Fuel; e.Stranded = false; }
+                if (!e.Dead && !e.IsStructure && e.Def.UsesFuel && !fuelExempt.Contains(e.Id)) { e.Fuel = e.FuelMax; e.Stranded = false; }
             if (failed != null) throw failed;
         }
 
@@ -383,7 +384,7 @@ namespace Pez.Sim
             Item("Factory roll-out", "lamps blink, vents puff, door rolls up, the unit eases out of the dark bay; looping", 4, 4);
             Produce(Bldg(Yellow, "barracks", 11, 4), Producer.Barracks, new[] { "rifleman", "rocket_soldier", "medic", "laser_trooper", "engineer", "sniper", "commando" });
             Item("Barracks roll-out", "lamps, vent and door as infantry march out; looping", 11, 4);
-            Produce(Bldg(Yellow, "airfield", 18, 4), Producer.Airfield, new[] { "gunship", "transport_chopper", "stealth_bomber" });
+            Produce(Bldg(Yellow, "airfield", 18, 4), Producer.Airfield, new[] { "gunship", "transport_chopper", "stealth_bomber", "long_range_drone", "reaper_drone" });
             Item("Airfield launch", "the lift raises each new aircraft; looping", 18, 4);
             Bldg(Yellow, "power_plant", 25, 4);
             Bldg(Yellow, "power_plant", 31, 4);
@@ -487,7 +488,7 @@ namespace Pez.Sim
         static readonly string[] Infantry = { "rifleman", "rocket_soldier", "medic", "laser_trooper", "engineer", "sniper", "commando", "mine" };
         static readonly string[] Vehicles = { "mining_truck", "scout_buggy", "light_tank", "apc", "flak_track", "repair_truck", "minelayer", "outpost_truck", "geological_surveyor", "drill_rig" };
         static readonly string[] Heavy = { "heavy_tank", "artillery", "laser_tank", "mammoth_tank" };
-        static readonly string[] Aircraft = { "recon_drone", "transport_chopper", "gunship", "stealth_bomber" };
+        static readonly string[] Aircraft = { "recon_drone", "long_range_drone", "reaper_drone", "transport_chopper", "gunship", "stealth_bomber" };
 
         void Units()
         {
@@ -561,6 +562,7 @@ namespace Pez.Sim
             Lane("gun_turret", "light_tank", a0, 26, 5f, "Gun turret");
             Lane("sam_site", "gunship", a0, 29, 6f, "SAM site");
             Lane("laser_tower", "heavy_tank", a0, 32, 6f, "Laser tower");
+            Lane("reaper_drone", "light_tank", a0 + 14, 2, 5.5f, "Reaper hellfire (flies high)");
         }
 
         /// <summary>A Blueberry shooter at (a, b) and a Cherry target `dist` to its right, fired on forever.</summary>
@@ -649,11 +651,12 @@ namespace Pez.Sim
             Begin("air", "Air and logistics", "Aircraft flying, landing and refuelling; transports loading; a stranded tank.", 0, 0, 46, 22);
             // A patrol circuit with four aircraft spaced around it.
             Vec2[] box = { P(3, 11), P(20, 11), P(20, 18), P(3, 18) };
-            string[] flyers = { "recon_drone", "gunship", "transport_chopper", "stealth_bomber" };
+            string[] flyers = { "recon_drone", "gunship", "transport_chopper", "stealth_bomber", "long_range_drone", "reaper_drone" };
             for (int i = 0; i < flyers.Length; i++)
             {
-                var a = w.PlaceUnit(Blue, flyers[i], box[i], AlongRight);
-                int start = i;
+                int start = i % 4;
+                // Six aircraft on four corners: the last two start halfway along the first two legs.
+                var a = w.PlaceUnit(Blue, flyers[i], i < 4 ? box[i] : Vec2.Lerp(box[start], box[(start + 1) % 4], 0.5f), AlongRight);
                 void Fly()
                 {
                     w.SetOrder(a, Order.Move, box[(start + 1) % 4]);
@@ -663,7 +666,7 @@ namespace Pez.Sim
                 Fly();
                 holds.Add(() => { if (!a.Dead && a.Order != Order.Move) Fly(); });
             }
-            Item("Aircraft flying", "drone, gunship, chopper and bomber on a circuit: banking into turns", 11.5f, 14.5f, 9);
+            Item("Aircraft flying", "drones (light, long-range, the high-flying Reaper), gunship, chopper and bomber on a circuit: banking into turns", 11.5f, 14.5f, 9);
 
             // An airfield and a gunship that flies a short beat, then lands on the pad, refuels and takes off again.
             var field = Bldg(Blue, "airfield", 32, 15);

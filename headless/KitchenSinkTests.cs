@@ -87,7 +87,7 @@ namespace Pez.Headless
                   $"Lime is on low power and everyone else is powered (blue {w.Teams[0].PowerUsed}/{w.Teams[0].PowerProduced}, red {w.Teams[1].PowerUsed}/{w.Teams[1].PowerProduced}, lime {w.Teams[2].PowerUsed}/{w.Teams[2].PowerProduced}, lemon {w.Teams[3].PowerUsed}/{w.Teams[3].PowerProduced})");
             var strandedTank = w.Entities.FirstOrDefault(e => !e.Dead && e.Stranded);
             Check(strandedTank != null && strandedTank.Fuel == 0, "the stranded tank stays stranded");
-            Check(w.Entities.Where(e => !e.Dead && !e.IsStructure && e.Def.UsesFuel && !e.Stranded && e.Order != Order.Refuel && !e.Landed).All(e => e.Fuel >= e.Def.Fuel * 0.59f), "everything else keeps its fuel");
+            Check(w.Entities.Where(e => !e.Dead && !e.IsStructure && e.Def.UsesFuel && !e.Stranded && e.Order != Order.Refuel && !e.Landed).All(e => e.Fuel >= e.FuelMax * 0.59f), "everything else keeps its fuel");
         }
     }
 }
