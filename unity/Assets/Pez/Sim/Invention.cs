@@ -133,7 +133,7 @@ namespace Pez.Sim
             rHp * rDps * MathF.Exp(2 * RangeK * dRange) * MathF.Exp(2 * SpeedK * dSpeed);
 
         public static bool IsChassis(EntityDef d) =>
-            d != null && !d.IsStructure && !d.IsMine && d.Weapon != null && d.Buildable && d.BuiltBy != Producer.None && d.OwnerTeam < 0;
+            d != null && !d.IsStructure && !d.IsMine && d.Weapon != null && d.Buildable && d.BuiltBy != Producer.None && d.OwnerTeam < 0 && !d.HighAltitude; // high altitude isn't priced
 
         /// <summary>Weapon weight class: 0 infantry-portable, 1 vehicle-mounted, 2 aircraft-only.</summary>
         static int MountClass(EntityDef donor) => donor.IsAir ? 2 : donor.Armor == Armor.Infantry ? 0 : 1;

@@ -345,6 +345,12 @@ namespace Pez.Sim
             }
         }
 
+        /// <summary>
+        /// A drone's tank in seconds of flight: its def's RangeMaps map widths at its speed, on this map (so "across and
+        /// halfway back" stays true as the arena grows). 0 for everything else (their tank is the def's Fuel).
+        /// </summary>
+        public float DroneFuel(EntityDef d) => d.RangeMaps > 0 ? d.RangeMaps * Map.W / MathF.Max(0.1f, d.Speed) : 0f;
+
         void ReplaceMap(Map m)
         {
             int oldW = Map.W, oldH = Map.H;
@@ -358,6 +364,9 @@ namespace Pez.Sim
             Map = m;
             Paths = new Pathfinder(m);
             cells = null; // spatial grid is sized to the map
+            // Drones' tanks grow with the map, keeping how full they are.
+            foreach (var e in Entities)
+                if (!e.Dead && e.Def.RangeMaps > 0) { float f = e.FuelFraction; e.FuelCap = DroneFuel(e.Def); e.Fuel = f * e.FuelMax; }
             MapVersion++;
         }
 
@@ -545,7 +554,8 @@ namespace Pez.Sim
             }
             e.Facing = e.TurretFacing = -MathF.PI / 2;
             e.GuardPos = e.Pos;
-            e.Fuel = def.Fuel;
+            e.FuelCap = DroneFuel(def);
+            e.Fuel = e.FuelMax;
             if (e.IsHarvester) SetOrder(e, Order.Harvest, e.Pos);
             else if (at.Rally.HasValue) SetOrder(e, Order.Move, at.Rally.Value);
             else if (!def.IsAir)
@@ -1223,7 +1233,7 @@ namespace Pez.Sim
             (healer.Def.Medic ? t.Def.Armor == Armor.Infantry : t.Def.Armor != Armor.Infantry);
 
         /// <summary>Repair trucks double as field tankers for ground vehicles (aircraft refuel on a pad).</summary>
-        public static bool NeedsTanker(Entity healer, Entity t) => !healer.Def.Medic && t.Def.UsesFuel && !t.IsAir && t.Fuel < t.Def.Fuel * 0.6f;
+        public static bool NeedsTanker(Entity healer, Entity t) => !healer.Def.Medic && t.Def.UsesFuel && !t.IsAir && t.Fuel < t.FuelMax * 0.6f;
 
         void IdleRepair(Entity e)
         {
@@ -1244,14 +1254,14 @@ namespace Pez.Sim
         {
             var t = Get(e.TargetId);
             // Keep going until it's whole and (for a vehicle being refuelled) the tank is full.
-            bool topping = t != null && !e.Def.Medic && t.Team == e.Team && t.Def.UsesFuel && !t.IsAir && t.Fuel < t.Def.Fuel * 0.99f;
+            bool topping = t != null && !e.Def.Medic && t.Team == e.Team && t.Def.UsesFuel && !t.IsAir && t.Fuel < t.FuelMax * 0.99f;
             if (t == null || !(CanTend(e, t) || topping)) { SetOrder(e, Order.Idle, e.Pos); return; }
             if (t.DistFrom(e.Pos) > e.Def.RepairRange) { Chase(e, t); return; }
             e.Moving = false;
             e.Path = null;
             e.TurretFacing = RotateToward(e.TurretFacing, (t.Center - e.Pos).Angle, 6f * Dt);
             var team = Teams[e.Team];
-            if (topping) Refill(t, t.Def.Fuel / (EntityDef.RefuelSeconds * 1.2f) * Dt);
+            if (topping) Refill(t, t.FuelMax / (EntityDef.RefuelSeconds * 1.2f) * Dt);
             float hp = MathF.Min(e.Def.RepairRate * Dt, t.Def.MaxHp - t.Hp);
             if (!e.Def.Medic)
             {
@@ -1930,10 +1940,10 @@ namespace Pez.Sim
 
         void Refill(Entity u, float amount)
         {
-            u.Fuel = MathF.Min(u.Def.Fuel, u.Fuel + amount);
+            u.Fuel = MathF.Min(u.FuelMax, u.Fuel + amount);
             // A stranded vehicle stays put until it has enough to be worth moving, so it doesn't drive off a drop at a time.
-            if (u.Stranded && u.Fuel >= u.Def.Fuel * 0.3f) u.Stranded = false;
-            if (u.Fuel > u.Def.Fuel * 0.3f) u.FuelWarned = false;
+            if (u.Stranded && u.Fuel >= u.FuelMax * 0.3f) u.Stranded = false;
+            if (u.Fuel > u.FuelMax * 0.3f) u.FuelWarned = false;
         }
 
         /// <summary>An idle aircraft this close to a pad lands on it rather than hover.</summary>
@@ -1942,7 +1952,7 @@ namespace Pez.Sim
         /// <summary>Burn, refuel, head home on low fuel, and run dry: a stranded vehicle, or a crashed aircraft.</summary>
         void UpdateFuel(Entity e)
         {
-            float max = e.Def.Fuel;
+            float max = e.FuelMax;
             bool refuelling;
             if (e.IsAir)
             {
@@ -2067,7 +2077,7 @@ namespace Pez.Sim
                 return;
             }
             e.Moving = false; e.Path = null;
-            if (e.Fuel >= e.Def.Fuel * 0.99f) FinishRefuel(e);
+            if (e.Fuel >= e.FuelMax * 0.99f) FinishRefuel(e);
         }
 
         void FinishRefuel(Entity e)
