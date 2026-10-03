@@ -149,6 +149,40 @@ namespace Pez.Sim
                 }
             }
 
+            // ---- Construction truck: rebuild a lost HQ; late in a rich game keep one in reserve as insurance.
+            var builders = mine.Where(e => e.Def.Key == "construction_truck").ToList();
+            bool haveHq = Count("command_center") > 0;
+            bool queuedBuilder = t.UnitQueues[Producer.Factory].Any(q => q.Key == "construction_truck");
+            if (builders.Count == 0 && !queuedBuilder && w.HasComplete(team, "factory") && w.HasComplete(team, "electronics_plant"))
+            {
+                var cost = Defs.Get("construction_truck").Cost;
+                // Insurance only when it's cheap next to the stockpile: under a third of the steel and circuits on hand.
+                bool reserveWorthIt = haveHq && w.Time > 20 * 60 && cost.All(kv => t.Amount(kv.Key) >= kv.Value * 3);
+                if ((!haveHq || reserveWorthIt) && t.Missing(cost) == null)
+                    Do(w, "type", "train", "unit", "construction_truck");
+            }
+            foreach (var ct in builders)
+            {
+                if (haveHq) { outpostTargets.Remove(ct.Id); continue; } // in reserve: it waits at the factory
+                if (!outpostTargets.TryGetValue(ct.Id, out var site))
+                {
+                    // Back where the base was if there's room, else beside whatever still stands, else where it is.
+                    var anchors = new List<Vec2> { t.StartPos };
+                    anchors.AddRange(structures.Select(s => s.Center));
+                    anchors.Add(ct.Pos);
+                    Int2? spot = null;
+                    foreach (var a in anchors) if ((spot = w.FindPlacement(team, "command_center", a, requireNear: false)).HasValue) break;
+                    site = spot.HasValue ? new Vec2(spot.Value.X + 1.5f, spot.Value.Y + 1.5f) : ct.Pos;
+                    outpostTargets[ct.Id] = site;
+                    Do(w, "type", "move", "units", new[] { ct.Id }, "x", site.X, "y", site.Y);
+                }
+                else if (ct.Order == Order.Idle)
+                {
+                    var r = Do(w, "type", "deploy", "units", new[] { ct.Id });
+                    if (!(r["ok"] is bool ok && ok)) outpostTargets.Remove(ct.Id); // somewhere else next time
+                }
+            }
+
             // ---- Keep a couple of repair trucks (they auto-repair whatever is damaged near them)
             if (w.HasComplete(team, "factory") && mine.Count(e => e.Def.Key == "repair_truck") < 2 &&
                 !t.UnitQueues[Producer.Factory].Any(p => p.Key == "repair_truck") && t.Amount("steel") > 300 && Affordable("repair_truck"))

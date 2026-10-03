@@ -462,7 +462,9 @@ namespace Pez.Sim
             var where = StateView.Sector(Map, cc.Center);
             string msg = $"{t.Name}'s last command center fell at sector {where}: its stockpile spilled out as about {(int)total} units of salvage ore. First come, first served.";
             Emit("chat", -1, text: msg);
-            Alerts.Raise(this, t.Id, "stockpile_lost", Priority.Critical, cc.Center, hit: false).Lost.Add($"your whole stockpile ({(int)total} units) spilled out as salvage at {where}; anyone can mine it, so get your trucks there first");
+            var truck = Entities.FirstOrDefault(e => !e.Dead && e.Team == t.Id && e.Def.DeploysInto == "command_center");
+            Alerts.Raise(this, t.Id, "stockpile_lost", Priority.Critical, cc.Center, hit: false).Lost.Add($"your whole stockpile ({(int)total} units) spilled out as salvage at {where}; anyone can mine it, so get your trucks there first" +
+                (truck != null ? $". Deploy your construction_truck #{truck.Id} into a new command center somewhere safe to rebuild" : ""));
             foreach (var other in Teams.Where(o => o.Id != t.Id && !o.Left && !o.Defeated))
                 Alerts.Raise(this, other.Id, "salvage_available", Priority.High, cc.Center, hit: false).Lost.Add($"{(int)total} units of salvage ore at {where}");
         }
@@ -734,7 +736,7 @@ namespace Pez.Sim
         }
 
         /// <summary>Finds a valid spot near the team's base, leaving a 1-tile walkway around it.</summary>
-        public Int2? FindPlacement(int team, string key, Vec2? near = null)
+        public Int2? FindPlacement(int team, string key, Vec2? near = null, bool requireNear = true)
         {
             var def = Defs.Get(key);
             var anchor = near ?? Teams[team].StartPos;
@@ -745,7 +747,7 @@ namespace Pez.Sim
                 for (int y = (int)anchor.Y - r; y <= (int)anchor.Y + r; y++)
                     for (int x = (int)anchor.X - r; x <= (int)anchor.X + r; x++)
                     {
-                        if (CanPlace(team, key, x, y, padding: 1) != null) continue;
+                        if (CanPlace(team, key, x, y, padding: 1, requireNear: requireNear) != null) continue;
                         var c = new Vec2(x + def.SizeX / 2f, y + def.SizeY / 2f);
                         // Turrets lean toward the map centre; everything else stays compact.
                         float score = Vec2.Dist(c, anchor) + (key == "gun_turret" ? Vec2.Dist(c, centre) * 0.6f : 0);
@@ -2503,6 +2505,10 @@ namespace Pez.Sim
             Alerts.Raise(this, champ.Id, "arena_cleared", Priority.High, champ.StartPos, hit: false).Lost.Add("every opponent is defeated; new challengers may join at any time, so keep your defences up");
         }
 
+        /// <summary>A team is still in the game while it has a structure, or a construction truck that could deploy into one.</summary>
+        public bool StillStanding(int team) =>
+            Entities.Any(e => !e.Dead && e.Team == team && (e.IsStructure || e.Def.DeploysInto == "command_center"));
+
         void CheckVictory()
         {
             CheckProtection();
@@ -2513,7 +2519,7 @@ namespace Pez.Sim
                 // An open arena never ends: teams that lose every structure are out, everyone else plays on.
                 foreach (var team in Teams)
                 {
-                    if (team.Defeated || Entities.Any(e => !e.Dead && e.Team == team.Id && e.IsStructure)) continue;
+                    if (team.Defeated || StillStanding(team.Id)) continue;
                     team.Defeated = true;
                     foreach (var e in Entities.Where(e => !e.Dead && e.Team == team.Id).ToList()) { Emit("destroyed", e.Team, e.Id, 0, e.Center, key: e.Def.Key); Remove(e); }
                     Emit("defeated", team.Id, text: $"{team.Name} ({team.PlayerName ?? team.Controller}) has been eliminated");
@@ -2525,8 +2531,7 @@ namespace Pez.Sim
             foreach (var team in Teams)
             {
                 if (team.Defeated) continue;
-                bool hasStructure = Entities.Any(e => !e.Dead && e.Team == team.Id && e.IsStructure);
-                if (!hasStructure)
+                if (!StillStanding(team.Id))
                 {
                     team.Defeated = true;
                     foreach (var e in Entities) if (!e.Dead && e.Team == team.Id) { Emit("destroyed", e.Team, e.Id, 0, e.Center, key: e.Def.Key); Remove(e); }

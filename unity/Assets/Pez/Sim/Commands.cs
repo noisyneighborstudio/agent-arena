@@ -32,7 +32,7 @@ namespace Pez.Sim
   {""type"":""unload"", ""units"":[TRANSPORT IDS]}          drop all passengers where the transport is
   {""type"":""capture"", ""units"":[ENGINEER IDS], ""target"":ID}  engineer takes over an enemy structure below 50% HP (engineer is used up)
   {""type"":""lay_mines"", ""units"":[MINELAYER IDS], ""x"":X, ""y"":Y, ""count"":N}  lay up to 8 hidden mines around x,y (30 steel each)
-  {""type"":""deploy"", ""units"":[IDS]}                   deploy an outpost_truck into an Outpost where it stands, or a drill_rig into a Deep Mine on a surveyed deep deposit within 3 tiles
+  {""type"":""deploy"", ""units"":[IDS]}                   deploy an outpost_truck into an Outpost or a construction_truck into a Command Center where it stands, or a drill_rig into a Deep Mine on a surveyed deep deposit within 3 tiles
   {""type"":""survey"", ""units"":[SURVEYOR IDS], ""x"":X, ""y"":Y}  survey one spot for deep ore deposits (8s, 12-tile radius), flag each one found as a mining zone (only your team sees them), then wait
   {""type"":""prospect"", ""units"":[SURVEYOR IDS], ""x"":X, ""y"":Y, ""radius"":R}  surveyors roam on their own: survey, flag what they find, move on to the nearest unsurveyed spot, until nothing is left within R tiles of x,y (all optional: default 40 tiles around each surveyor) or you give another order
   {""type"":""drill"", ""units"":[DRILL RIG IDS], ""zone"":ID}  a drill_rig drives to that mining zone and deploys into a Deep Mine on arrival (omit zone: each rig takes the nearest free zone)
@@ -583,7 +583,7 @@ namespace Pez.Sim
         static JObj Deploy(World w, int team, Dictionary<string, object> c)
         {
             var units = ResolveUnits(w, team, c).Where(u => u.Def.DeploysInto != null).ToList();
-            if (units.Count == 0) return Err("no deployable units given (outpost_truck, drill_rig)");
+            if (units.Count == 0) return Err("no deployable units given (outpost_truck, construction_truck, drill_rig)");
             var results = new List<string>();
             foreach (var u in units)
             {

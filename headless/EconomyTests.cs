@@ -20,6 +20,85 @@ namespace Pez.Headless
         {
             SalvageFromKills();
             OreRegrowth();
+            ConstructionTruck();
+        }
+
+        static void ConstructionTruck()
+        {
+            var w = new World(2, 7, 96);
+            var t0 = w.Teams[0];
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var r0 = Commands.Execute(w, 0, Cmd("type", "train", "unit", "construction_truck"));
+            Check(!Ok(r0) && Said(r0).Contains("factory"), $"a construction truck comes from a factory ({Said(r0)})");
+            var factory = w.SpawnStructure(0, "factory", w.FindPlacement(0, "factory").Value, 1f);
+            w.SpawnStructure(0, "electronics_plant", w.FindPlacement(0, "electronics_plant").Value, 1f);
+            w.SpawnStructure(0, "power_plant", w.FindPlacement(0, "power_plant").Value, 1f);
+            t0.Add("steel", 1000); t0.Add("circuits", 300);
+            var r1 = Commands.Execute(w, 0, Cmd("type", "train", "unit", "construction_truck"));
+            Check(!Ok(r1) && Said(r1).Contains("steel"), $"and costs real money ({Said(r1)})");
+            t0.Add("steel", 1000);
+            var r2 = Commands.Execute(w, 0, Cmd("type", "train", "unit", "construction_truck"));
+            Run(w, 31);
+            var truck = w.Owned(0).FirstOrDefault(e => e.Def.Key == "construction_truck");
+            Check(Ok(r2) && truck != null, $"1500 steel + 200 circuits and 30 s at the factory buys one ({Said(r2)})");
+
+            // Deploying: same placement rules as an outpost (open ground, no ore, the truck lanes).
+            var open = OpenGround(w);
+            At(truck, open);
+            var r3 = Commands.Execute(w, 0, Cmd("type", "deploy", "units", new[] { truck.Id }));
+            var cc2 = w.Owned(0).Where(e => e.Def.Key == "command_center" && e != hq).FirstOrDefault();
+            Check(Ok(r3) && cc2 != null && cc2.IsComplete && truck.Dead && Said(r3).Contains("command_center"), $"it deploys into a working command center where it stands ({Said(r3)})");
+            var lane = w.Bay(cc2).head;
+            var truck2 = At(w.SpawnUnit(0, "construction_truck", factory), lane + new Vec2(0, -1f));
+            var r4 = Commands.Execute(w, 0, Cmd("type", "deploy", "units", new[] { truck2.Id }));
+            Check(!Ok(r4) && Said(r4).Contains("lane"), $"but never on another drop-off's truck lane ({Said(r4)})");
+            var ore = w.Map.NearestOre(hq.Center, 40).Value;
+            At(truck2, ore.Center);
+            var r5 = Commands.Execute(w, 0, Cmd("type", "deploy", "units", new[] { truck2.Id }));
+            Check(!Ok(r5) && Said(r5).Contains("ore"), $"or on ore ({Said(r5)})");
+
+            // Alive while it has one: losing every structure with a construction truck left is not the end.
+            foreach (var open2 in new[] { false, true })
+            {
+                var w2 = new World(2, 7, 96) { Open = open2 };
+                var spare = At(w2.SpawnUnit(1, "construction_truck", w2.Owned(1).First(e => e.IsStructure)), OpenGround(w2));
+                var hunter = w2.SpawnUnit(0, "heavy_tank", w2.Owned(0).First(e => e.IsStructure));
+                foreach (var s in w2.Owned(1).Where(e => e.IsStructure).ToList()) w2.Hurt(s, 1e6f, hunter);
+                foreach (var u in w2.Owned(1).Where(e => !e.IsStructure && e != spare).ToList()) w2.Remove(u);
+                Run(w2, 2);
+                bool alive = !w2.Teams[1].Defeated && !w2.GameOver && w2.Stalled(w2.Teams[1]) == null;
+                var r6 = Commands.Execute(w2, 1, Cmd("type", "deploy", "units", new[] { spare.Id }));
+                Run(w2, 1);
+                Check(alive && Ok(r6) && !w2.Teams[1].Defeated && w2.Owned(1).Any(e => e.Def.Key == "command_center"),
+                      $"{(open2 ? "open arena" : "match")}: a team whose last structure falls but has a construction truck is still in (not stalled either), and rebuilds ({Said(r6)})");
+                // Without one, the same loss is the end.
+                foreach (var s in w2.Owned(1).ToList()) w2.Hurt(s, 1e6f, hunter);
+                Run(w2, 2);
+                Check(w2.Teams[1].Defeated, $"{(open2 ? "open arena" : "match")}: with no structure and no construction truck the team is out");
+            }
+            // A stranded construction truck and nothing else can't make progress: the stall rule still resigns it.
+            var w3 = new World(2, 7, 96);
+            var stuck = At(w3.SpawnUnit(1, "construction_truck", w3.Owned(1).First(e => e.IsStructure)), OpenGround(w3));
+            foreach (var e in w3.Owned(1).Where(e => e != stuck).ToList()) w3.Remove(e);
+            w3.Teams[1].Stock.Clear();
+            stuck.Fuel = 0; stuck.Stranded = true;
+            Check(w3.Stalled(w3.Teams[1]) != null, "a stranded construction truck alone can't make progress (stall rule applies)");
+
+            // The house AI rebuilds a lost HQ when it can afford a truck.
+            var g = new Game(new GameConfig { Seed = 5, MapSize = 96, Controllers = new[] { "ai", "ai" } });
+            var wg = g.World;
+            wg.Teams[0].ProtectedUntil = 1e9f; wg.Teams[1].ProtectedUntil = 1e9f; // just the AI's own logic, no war
+            Step(g, 8 * 60);
+            var ai = wg.Teams[0];
+            if (!wg.HasComplete(0, "factory")) wg.SpawnStructure(0, "factory", wg.FindPlacement(0, "factory").Value, 1f);
+            if (!wg.HasComplete(0, "electronics_plant")) wg.SpawnStructure(0, "electronics_plant", wg.FindPlacement(0, "electronics_plant").Value, 1f);
+            var lost = wg.Owned(0).First(e => e.Def.Key == "command_center");
+            wg.Remove(lost);
+            ai.Add("steel", 2500); ai.Add("circuits", 400);
+            Step(g, 120);
+            int built = wg.Teams[0].Stats.Built.TryGetValue("construction_truck", out var nb) ? nb : 0;
+            Check(wg.Owned(0).Count(e => e.Def.Key == "command_center") >= 1 && built >= 1,
+                  $"the house AI that loses its HQ builds a construction truck and deploys a new one ({wg.Owned(0).Count(e => e.Def.Key == "command_center")} command centers, {built} trucks built)");
         }
 
         /// <summary>Mine a fresh map bare, let it regrow: how much comes back in 10 and 20 minutes, and where.</summary>

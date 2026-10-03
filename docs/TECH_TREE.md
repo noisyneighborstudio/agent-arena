@@ -41,7 +41,7 @@ The Command Center builds every structure. A new structure must be placed within
 
 | Structure | Cost | Requires | Produces |
 |---|---|---|---|
-| Command Center | (start) | – | builds structures, trains Mining Trucks, ore drop-off, extracts 1 iron_ore/s, +20 power |
+| Command Center | (start), or deploy a Construction Truck | – | builds structures, trains Mining Trucks, ore drop-off, extracts 1 iron_ore/s, +20 power |
 | Power Plant | 250 iron_ore | – | +100 power |
 | Mining Refinery | 300 iron_ore, 100 copper_ore | power_plant | ore → steel and copper, ore drop-off, comes with a free Mining Truck |
 | Barracks | 150 steel | mining_refinery | infantry |
@@ -78,6 +78,7 @@ The Command Center builds every structure. A new structure must be placed within
 | Mine Layer | 250 steel, 50 copper | factory, electronics_plant | lays hidden mines (30 steel each) |
 | Repair Truck | 180 steel, 60 copper | factory | repairs vehicles, aircraft and structures (30 HP/s, 1 steel per 10 HP); auto-repairs nearby damage |
 | Outpost Truck | 400 steel, 100 copper, 50 circuits | factory, electronics_plant | deploys into an Outpost |
+| Construction Truck | 1500 steel, 200 circuits | factory, electronics_plant | deploys into a Command Center where it stands (outpost placement rules); a team that has one isn't out when its last structure falls |
 | Heavy Tank | 400 steel, 80 circuits | factory, electronics_plant | armor, splash |
 | Artillery | 300 steel, 100 circuits | factory, electronics_plant | range 11, splash, fragile |
 | Laser Tank | 350 steel, 60 lenses, 40 plasma, 60 circuits | factory, optics_lab, enrichment_plant | beam weapon, hits air |

@@ -162,6 +162,7 @@ namespace Pez.Sim
             Air();
             Wrecks();
             Ground();
+            Endgame();
         }
 
         // ------------------------------------------------------------------ building blocks
@@ -494,7 +495,7 @@ namespace Pez.Sim
         }
 
         static readonly string[] Infantry = { "rifleman", "rocket_soldier", "medic", "laser_trooper", "engineer", "sniper", "commando", "mine" };
-        static readonly string[] Vehicles = { "mining_truck", "scout_buggy", "light_tank", "apc", "flak_track", "repair_truck", "minelayer", "outpost_truck", "geological_surveyor", "drill_rig" };
+        static readonly string[] Vehicles = { "mining_truck", "scout_buggy", "light_tank", "apc", "flak_track", "repair_truck", "minelayer", "outpost_truck", "geological_surveyor", "drill_rig", "construction_truck" };
         static readonly string[] Heavy = { "heavy_tank", "artillery", "laser_tank", "mammoth_tank" };
         static readonly string[] Aircraft = { "recon_drone", "long_range_drone", "reaper_drone", "transport_chopper", "gunship", "stealth_bomber" };
 
@@ -840,6 +841,27 @@ namespace Pez.Sim
                 }
             });
             Item("Regrowing field", "a mined-out crystal field growing back from its root outward: clusters rise out of the ground ring by ring; loops every 40 s", 41, 5);
+        }
+
+        void Endgame()
+        {
+            Begin("endgame", "Endgame", "The long-game rules: the construction truck rebuilding a base.", 94, 62, 56, 14);
+            // The construction truck rolls a few tiles, stops and deploys into a command center; 14 s later the command
+            // center is cleared and a new truck rolls up.
+            var from = P(3, 4); var to = P(9, 4.5f);
+            Entity truck = null, cc = null; float ccAt = 0, again = 0;
+            holds.Add(() =>
+            {
+                if (truck != null && truck.Dead) { truck = null; cc = w.Entities.LastOrDefault(e => !e.Dead && e.Team == Blue && e.Def.Key == "command_center" && Vec2.Dist(e.Center, to) < 3f); ccAt = T; }
+                if (cc != null && (cc.Dead || T - ccAt > 14f)) { if (!cc.Dead) w.Remove(cc); cc = null; again = T + 2f; }
+                if (truck == null && cc == null && T >= again)
+                {
+                    truck = w.PlaceUnit(Blue, "construction_truck", from, AlongRight);
+                    w.SetOrder(truck, Order.Move, to);
+                }
+                else if (truck != null && !truck.Dead && truck.Order == Order.Idle && w.Deploy(truck) != null) { w.Remove(truck); truck = null; again = T + 2f; }
+            });
+            Item("Construction truck deploying", "drives up, stops and deploys into a command center (the truck sinks as the base rises); loops", 7, 4.5f, 9);
         }
 
         static string Pretty(string key) => key.Contains(':') ? key : char.ToUpperInvariant(key[0]) + key.Substring(1).Replace('_', ' ');

@@ -77,6 +77,8 @@ namespace Pez.Headless
                   "construction holds: one site building, a queued site and four stage sites");
             Check(Count("surveyed") >= 10, $"the surveyor keeps surveying ({Count("surveyed")} surveys)");
             Check(Count("drilled") >= 10, $"the drill rig keeps deploying ({Count("drilled")} deep mines)");
+            int ccs = w.Teams[KitchenSink.Blue].Stats.Built.TryGetValue("command_center", out var nc) ? nc : 0;
+            Check(ccs >= 10, $"the construction truck keeps deploying into a command center ({ccs} times)");
             Check(Count("boarded") >= 16 && Count("unloaded") >= 4, $"transports load and unload ({Count("boarded")} boardings, {Count("unloaded")} unloads)");
             Check(landed && Count("refuelled") >= 5, $"an aircraft lands and refuels ({Count("refuelled")} times)");
             Check(Count("destroyed") >= 100, $"wrecks and explosions keep coming ({Count("destroyed")} destroyed events)");
