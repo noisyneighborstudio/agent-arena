@@ -394,7 +394,11 @@ namespace Pez.View
             ring.gameObject.SetActive(false);
             var v = new EV { E = e, Rig = rig, Ring = ring, Born = Time.frameCount, Bars = e.IsMine ? null : new Bars(rig.Root, e, 0f) };
             if (e.IsStructure) { rig.Root.position = W(e.Center); Plinths.Register(e.Id, rig.Root.position, rig.Plinth); }
-            if (e.IsStructure && e.Def.DropOff && rig.HasModel) v.Dock = DockView.For(rig, e.Def.SizeY * 0.5f);
+            if (e.IsStructure && e.Def.DropOff && rig.HasModel)
+            {
+                var (bay, _, facing, _) = World.Bay(e);
+                v.Dock = DockView.For(rig, e.Def.SizeX * 0.5f, e.Def.SizeY * 0.5f, facing, bay);
+            }
             return v;
         }
 
@@ -417,7 +421,7 @@ namespace Pez.View
                     var phase = v.DockFrame >= Time.frameCount - 1 ? v.DockBest : DockView.Phase.Idle;
                     v.Dock.Tick(phase, Time.deltaTime);
                     // The door is up from Align until the truck has pulled out, and rolls down 0.5 s after.
-                    if (phase != DockView.Phase.Idle) { rig.Motion.SetDoorOpen(true); v.DoorTimer = Mathf.Max(v.DoorTimer, 0.5f); }
+                    if (phase != DockView.Phase.Idle && v.Dock.DoorSide) { rig.Motion.SetDoorOpen(true); v.DoorTimer = Mathf.Max(v.DoorTimer, 0.5f); }
                 }
             }
             else if (e.IsStructure)
@@ -533,7 +537,7 @@ namespace Pez.View
             if (e.Order != Order.ReturnOre || e.DockAt == 0 || !Views.TryGetValue(e.DockAt, out var dv) || dv.Dock == null) return;
             var ph = e.Dock >= DockStep.Align && e.Dock <= DockStep.Unload ? DockView.Phase.Active
                    : e.Dock == DockStep.PullOut ? DockView.Phase.Clear
-                   : !e.Moving && e.Cargo > 0 && Vec2.Dist(e.Pos, World.DockPoint(dv.E)) <= 0.7f ? DockView.Phase.Active
+                   : !e.Moving && e.Cargo > 0 && Vec2.Dist(e.Pos, dv.Dock.BayPoint) <= 0.7f ? DockView.Phase.Active
                    : DockView.Phase.Idle;
             if (dv.DockFrame != Time.frameCount) { dv.DockFrame = Time.frameCount; dv.DockBest = ph; }
             else if (ph > dv.DockBest) dv.DockBest = ph;

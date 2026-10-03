@@ -1,3 +1,4 @@
+using Pez.Sim;
 using UnityEngine;
 
 namespace Pez.View
@@ -30,16 +31,25 @@ namespace Pez.View
 
         static Material pipAmber, pipCream, kraft, licorice;
 
-        public static DockView For(Rig rig, float footprintHalf)
+        /// <summary>True when the bay is on the door side (south): the door rolls up for the truck.</summary>
+        public readonly bool DoorSide;
+        /// <summary>The bay point (sim coordinates), for trucks unloading beside a drop-off whose lane is built over.</summary>
+        public Vec2 BayPoint;
+
+        /// <param name="halfX">Half the footprint across X.</param>
+        /// <param name="halfY">Half the footprint across Y (the sim's Y is world Z).</param>
+        /// <param name="facing">The sim's bay facing (World.Bay: south unless terrain blocks that lane).</param>
+        public static DockView For(Rig rig, float halfX, float halfY, float facing, Vec2 bayPoint)
         {
             var m = rig.Model;
             var stage = PezMotion.FindDeep(m.transform, "stage_1");
             var lampT = stage != null ? PezMotion.FindDeep(stage, "stage_1__M_E_Amber") : null;
             if (lampT == null) return null;
-            return new DockView(m.transform, stage, lampT.GetComponent<Renderer>(), PezMotion.FindDeep(m.transform, "door"), footprintHalf);
+            var dir = new Vector3(Mathf.Cos(facing), 0f, Mathf.Sin(facing));
+            return new DockView(m.transform, stage, lampT.GetComponent<Renderer>(), PezMotion.FindDeep(m.transform, "door"), halfX, halfY, dir) { BayPoint = bayPoint };
         }
 
-        DockView(Transform model, Transform stage, Renderer lampR, Transform door, float footprintHalf)
+        DockView(Transform model, Transform stage, Renderer lampR, Transform door, float halfX, float halfY, Vector3 dir)
         {
             lamps = lampR;
             amber = lampR.sharedMaterial;
@@ -84,16 +94,18 @@ namespace Pez.View
 
             // The chute: a kraft trough sloping down into the building. Out, its lip is just over the backed-in truck's
             // tail (the bay point is half a tile outside the footprint; the bin's rear edge 0.4 in from the truck's
-            // centre); in, it's 0.5 back: parked in the refinery's bay, or behind the command center's door.
+            // centre); in, it's 0.5 back: parked in the refinery's bay, or behind the command center's door. Doors face
+            // -Z; when terrain moved the bay to another side, the chute comes out of that wall instead.
+            DoorSide = dir.z < -0.7f;
             if (door != null)
             {
-                float doorX = model.InverseTransformPoint(door.position).x;
-                float zOut = -footprintHalf - 0.15f;
+                float reach = (Mathf.Abs(dir.x) > 0.7f ? halfX : halfY) + 0.15f;
                 var c = new GameObject("chute").transform;
                 c.SetParent(stage, false);
-                chuteOut = new Vector3(doorX, 0f, zOut);
-                chuteIn = chuteOut + new Vector3(0f, 0f, 0.5f);      // doors face -Z
+                chuteOut = dir * reach + (DoorSide ? new Vector3(model.InverseTransformPoint(door.position).x, 0f, 0f) : Vector3.zero);
+                chuteIn = chuteOut - dir * 0.5f;
                 c.localPosition = chuteIn;
+                c.localRotation = Quaternion.LookRotation(-dir, Vector3.up); // the trough runs along local +Z, into the building
                 const float len = 0.62f, w = 0.42f, slope = 12f;
                 var tray = new GameObject("tray").transform;
                 tray.SetParent(c, false);
