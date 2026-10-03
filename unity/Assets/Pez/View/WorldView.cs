@@ -58,6 +58,7 @@ namespace Pez.View
         {
             World = w;
             PovTeam = povTeam;
+            Plinths.Clear(); // a new world: no foundations placed yet
             var tgo = new GameObject("Terrain");
             tgo.transform.SetParent(transform, false);
             Terrain = tgo.AddComponent<TerrainView>();
@@ -151,7 +152,7 @@ namespace Pez.View
             foreach (var kv in Views) if (!seen.Contains(kv.Key)) gone.Add(kv.Key);
             foreach (var id in gone)
             {
-                Retire(Views[id]); Views.Remove(id); Selected.Remove(id);
+                Retire(Views[id]); Views.Remove(id); Selected.Remove(id); Plinths.Unregister(id);
                 for (int t = 0; t < 8; t++) lastSeen.Remove((t, id));
             }
 
@@ -282,7 +283,7 @@ namespace Pez.View
             ring.localScale = new Vector3(r, 1f, r);
             ring.gameObject.SetActive(false);
             var v = new EV { E = e, Rig = rig, Ring = ring, Born = Time.frameCount, Bars = e.IsMine ? null : new Bars(rig.Root, e, 0f) };
-            if (e.IsStructure) rig.Root.position = W(e.Center);
+            if (e.IsStructure) { rig.Root.position = W(e.Center); Plinths.Register(e.Id, rig.Root.position, rig.Plinth); }
             return v;
         }
 
@@ -340,6 +341,8 @@ namespace Pez.View
                     rig.Root.position = Vector3.Lerp(v.SpawnFrom.Value, rig.Root.position, k);
                     if (v.SpawnT >= 1f) v.SpawnFrom = null;
                 }
+                // Ground units ride up onto a structure's plinth and down its driveway ramp (leaving a producer, docking).
+                if (!e.IsAir) { var rp = rig.Root.position; float py = Plinths.HeightAt(rp); if (py > 0f) { rp.y += py; rig.Root.position = rp; } }
                 var targetRot = Quaternion.Euler(0, Yaw(e.Facing), 0);
                 rig.Root.rotation = Quaternion.Slerp(rig.Root.rotation, targetRot, Time.deltaTime * 14f);
                 if (!e.IsAir && e.Def.Armor != Armor.Infantry) HullFeel(v);

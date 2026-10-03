@@ -27,8 +27,8 @@ namespace Pez.View
         // The look. Tuned against the art pack's renders (docs/art/boards); see docs/render/QUALITY_PASS.md.
         public static float AORadius = 0.55f, AOIntensity = 0.9f, AOPower = 1.4f, AOBias = 0.01f;
         public static Color AOTint = new Color(0.30f, 0.26f, 0.30f); // occlusion goes toward warm licorice, not grey
-        public static float BloomThreshold = 2.0f, BloomKnee = 0.5f, BloomClamp = 24f, BloomIntensity = 0.26f;
-        public static float Exposure = 1.06f, Contrast = 1.04f, Saturation = 1.0f, Vignette = 0.12f, Toe = 0.012f;
+        public static float BloomThreshold = 2.0f, BloomKnee = 0.5f, BloomClamp = 24f, BloomIntensity = 0.2f;
+        public static float Exposure = 1.06f, Contrast = 1.04f, Saturation = 1.0f, Vignette = 0.12f, Toe = 0.012f, HighlightDesat = 0.015f;
         /// <summary>Debug view (LookTune): 0 normal, 1 the AO buffer, 2 the bloom buffer.</summary>
         public static float Debug = 0f, AOBlur = 1f;
         /// <summary>Per-effect switches (LookTune), for measuring what each costs: 1 on, 0 off.</summary>
@@ -148,6 +148,7 @@ namespace Pez.View
             mat.SetColor(HighTintId, HighTint);
             mat.SetFloat("_PezDebug", Debug);
             mat.SetFloat("_PezToe", Toe);
+            mat.SetFloat("_PezDesat", HighlightDesat);
             Graphics.Blit(src, dst, mat, PassFinal);
 
             for (int i = 0; i < n; i++) RenderTexture.ReleaseTemporary(chain[i]);

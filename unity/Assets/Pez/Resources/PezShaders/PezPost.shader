@@ -17,7 +17,7 @@ Shader "Hidden/Pez/Post"
     float4 _PezGrade;   // exposure, contrast, saturation, vignette
     float4 _PezShadowTint, _PezHighTint, _PezAOTint;
     sampler2D _PezAOTex, _PezBloomTex;
-    float _PezUseAO, _PezDebug, _PezToe;
+    float _PezUseAO, _PezDebug, _PezToe, _PezDesat;
 
     struct v2f { float4 pos : SV_POSITION; float2 uv : TEXCOORD0; };
     v2f vert(appdata_img v) { v2f o; o.pos = UnityObjectToClipPos(v.vertex); o.uv = v.texcoord; return o; }
@@ -136,10 +136,12 @@ Shader "Hidden/Pez/Post"
     // ---- final: AO, bloom, tonemap, grade, vignette
     float3 PbrNeutral(float3 c)
     {
-        // Khronos PBR Neutral, with two knobs turned for this game: less highlight desaturation than the reference
-        // (0.15), so lit team paint stays vivid, and a gentler toe (the reference's 0.04 black offset pulls the blue out
-        // of the biscuit ground and turns it orange).
-        const float start = 0.76, desat = 0.08;
+        // Khronos PBR Neutral, with two knobs turned for this game: far less highlight desaturation than the reference
+        // (0.15, which adds the same white to every channel of a bright saturated colour, so sunlit team red went pink;
+        // PezPost.HighlightDesat), and a gentler toe (the reference's 0.04 black offset pulls the blue out of the
+        // biscuit ground and turns it orange; PezPost.Toe).
+        const float start = 0.76;
+        float desat = _PezDesat;
         float F = max(_PezToe, 1e-4);
         float x = min(c.r, min(c.g, c.b));
         float off = x < 2 * F ? x - x * x / (4 * F) : F;

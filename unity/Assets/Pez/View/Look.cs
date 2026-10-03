@@ -21,7 +21,7 @@ namespace Pez.View
         public static Color AmbientGround = new Color32(98, 80, 58, 255);  // warm bounce from the biscuit ground
         public static float ReflectionIntensity = 0.85f;
         /// <summary>The reflected sky (Look.SkyCube): kept near neutral so glossy team paint and metal don't go blue.</summary>
-        public static Color SkyZenith = new Color(0.52f, 0.60f, 0.74f), SkyUpper = new Color(0.74f, 0.77f, 0.83f),
+        public static Color SkyZenith = new Color(0.60f, 0.63f, 0.68f), SkyUpper = new Color(0.74f, 0.75f, 0.77f),
                             SkyHorizon = new Color(0.90f, 0.87f, 0.81f), SkyGround = new Color(0.34f, 0.29f, 0.22f);
         /// <summary>Global scales on Pez/Model's bevel highlight and grime (per-material values in the table below).</summary>
         public static float EdgeScale = 1.5f, GrimeScale = 1f;
@@ -120,13 +120,17 @@ namespace Pez.View
         // ---------------------------------------------------------------- materials
 
         /// <summary>Per material name: smoothness, metallic, emission boost (HDR, feeds the bloom), bevel highlight.</summary>
-        struct Pbr { public float Smooth, Metal, Glow, Edge; public Pbr(float s, float m, float g, float e) { Smooth = s; Metal = m; Glow = g; Edge = e; } }
+        struct Pbr
+        {
+            public float Smooth, Metal, Glow, Edge, Spec;
+            public Pbr(float s, float m, float g, float e, float spec = 1f) { Smooth = s; Metal = m; Glow = g; Edge = e; Spec = spec; }
+        }
 
         static readonly (string prefix, Pbr pbr)[] table =
         {
-            ("M_Team",         new Pbr(0.40f, 0.00f, 0f, 0.30f)), // satin candy paint: glossier washes the team colour out
+            ("M_Team",         new Pbr(0.55f, 0.00f, 0f, 0.30f, 0.3f)), // candy paint with a third of the usual reflectance: stays vivid
             ("M_CreamPlastic", new Pbr(0.45f, 0.00f, 0f, 0.28f)),
-            ("M_SmokePlastic", new Pbr(0.52f, 0.00f, 0f, 0.55f)),
+            ("M_SmokePlastic", new Pbr(0.40f, 0.00f, 0f, 0.55f, 0.7f)),
             ("M_SpringSteel",  new Pbr(0.58f, 0.85f, 0f, 0.45f)), // gunmetal
             ("M_Foil",         new Pbr(0.55f, 0.75f, 0f, 0.30f)),
             ("M_Licorice",     new Pbr(0.46f, 0.00f, 0f, 0.65f)),
@@ -188,6 +192,7 @@ namespace Pez.View
             var em = src.HasProperty(EmissiveId) ? src.GetColor(EmissiveId) : Color.black;
             m.SetColor("_EmissionColor", em * (pbr.Glow > 0 ? pbr.Glow : 1f));
             m.SetFloat("_Edge", known ? pbr.Edge : 0.3f);
+            m.SetFloat("_SpecK", known ? pbr.Spec : 1f);
             if (src.HasProperty(CullId)) m.SetFloat("_CullMode", src.GetFloat(CullId));
             m.globalIlluminationFlags = MaterialGlobalIlluminationFlags.None;
             return m;
