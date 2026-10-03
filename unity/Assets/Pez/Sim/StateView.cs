@@ -100,6 +100,7 @@ namespace Pez.Sim
                     .Set("team", team).Set("name", t.Name).Set("player", t.PlayerName)
                     .Set("status", t.Resigned ? "resigned as lost (no way left to make progress): call join again for a new seat" : t.Left ? "left" : t.Defeated ? "eliminated: call join again for a new seat" : "playing")
                     .Set("stockpile", Stockpile(t))
+                    .Set("reserves", t.Reserve.Count == 0 ? null : string.Join(", ", t.Reserve.Select(kv => $"{kv.Value} {kv.Key}")) + " kept back from converters")
                     .Set("power", $"{t.PowerProduced} produced / {t.PowerUsed} used" + (t.LowPower ? " (LOW POWER: production at half speed, build a power_plant)" : ""))
                     .Set("start", $"{R(t.StartPos.X)},{R(t.StartPos.Y)}")
                     .Set("protection", w.IsProtected(team) ? $"newcomer protection for {(int)(t.ProtectedUntil - w.Time)}s more: you can't be attacked, and you can't attack" : "none"))
@@ -146,6 +147,8 @@ namespace Pez.Sim
                 var s = $"#{e.Id} {e.Def.Key} at {e.Origin.X},{e.Origin.Y} ({e.Def.SizeX}x{e.Def.SizeY}) hp {(int)e.Hp}/{e.Def.MaxHp}";
                 if (!e.IsComplete) s += $" BUILDING {Pct(e.BuildProgress)}%";
                 if (w.Time - e.LastHitTime < 5) s += " UNDER ATTACK";
+                var d = e.Def.Key == "deep_mine" ? w.Map.DepositById(e.DepositId) : null;
+                if (d != null) s += d.Amount > 0 ? $" pumping {Defs.Ores[d.Type]}: {(int)d.Amount} left, dry in ~{World.DeepMineSecondsLeft(d, w.Teams[team]):0}s" : " DRY (sell it)";
                 return s;
             }).ToList());
 
@@ -365,9 +368,10 @@ namespace Pez.Sim
             sb.AppendLine("Legend: . open  # rock  ~ water  blank = unexplored | ore: $ iron_ore  % copper_ore  * crystal  ! uranium  + your mining zone (flagged deep deposit)");
             sb.AppendLine("YOUR structures: C command_center O outpost P power_plant R mining_refinery B barracks F factory T gun_turret E electronics_plant D radar_dome S sam_site L optics_lab N enrichment_plant Z laser_tower K composite_foundry U fusion_reactor A airfield Q deep_mine Y other (enemy: same letters lowercase)");
             sb.AppendLine("Units: yours i infantry v vehicle m mining_truck a aircraft ^ mine | enemy x infantry X vehicle M mining_truck W aircraft & mine | enemies outside your vision are hidden; enemy structures you've seen stay drawn");
-            sb.Append("    ");
-            for (int x = 0; x < m.W; x++) sb.Append(x % 10 == 0 ? (char)('0' + (x / 10) % 10) : ' ');
-            sb.AppendLine();
+            // Rulers: the full x number at every tenth column (0, 10, ... 220), then every column's units digit.
+            var labels = new StringBuilder();
+            for (int x = 0; x < m.W; x++) if (labels.Length <= x) labels.Append(x % 10 == 0 ? x.ToString() : " ");
+            sb.Append("    ").Append(labels.ToString(0, m.W)).AppendLine();
             sb.Append("    ");
             for (int x = 0; x < m.W; x++) sb.Append((char)('0' + x % 10));
             sb.AppendLine();
@@ -391,8 +395,10 @@ namespace Pez.Sim
         /// 9: agent-invented units (propose_tech, inventions, enemy_inventions_seen).
         /// 10: mining trucks back into a drop-off's bay one at a time (queue, line up, reverse in, unload, pull out); dock status in state.
         /// 11: a building below 30% health is on fire and burns down unless repaired above 30% (building_burning alert).
+        /// 12: from a playtest: fuel warnings on move, reserve (converters leave raw ore alone), runs_dry_in_s and
+        ///     deep_mine_running_low, train structure_id, spread, unit sight in rules and state, mutual sight.
         /// </summary>
-        public const int RulesVersion = 11;
+        public const int RulesVersion = 12;
 
         public static JObj Rules()
         {
@@ -412,11 +418,14 @@ namespace Pez.Sim
                 "Infantry walk (0.8-1.05 tiles/s); every vehicle is faster. Use APCs, transport choppers or together:true to keep mixed groups together.",
                 "Deep mining: surface ore runs out. A geological_surveyor (factory) surveys for deep deposits: wherever it finds one (within 12 tiles of where it stops for 8s) it plants a flag, and that deposit becomes one of your mining zones (mining_zones in state: id, ore, position, amount left, status free/yours/taken/exhausted, who flagged it and when; only your team sees them). 'survey' checks one spot; 'prospect' sets surveyors roaming on their own: survey, flag, move on to the nearest unsurveyed spot, until nothing is left in the area (x, y, radius) or you give another order. They refuel by themselves and steer clear of enemy bases you know about. Each surveyor shows its survey phase in my_units (traveling with distance and ETA, surveying with seconds left, refuelling, stranded, failed) and, when a survey can't be done, why (unreachable site, out of fuel, off the map). Then 'drill' sends a drill_rig to a zone ({\"type\":\"drill\",\"units\":[RIG],\"zone\":ID}, or omit zone for the nearest free one): it drives there and deploys into a deep_mine on arrival, which pumps 4 ore/s of that zone's ore straight into your stockpile (no trucks needed) until it runs dry (it needs 50 power). One mine per zone. A rig parked within 3 tiles of a zone can also just 'deploy'.",
                 "Radar: a radar_dome lists enemy aircraft within 28 tiles as radar_contacts (even beyond its sight) and raises an 'enemy aircraft on radar' alert, high priority when they're near your base.",
-                "Orders: move and attack_move take \"waypoints\" (and \"loop\":true to patrol) and \"together\":true (keep the slowest unit's pace). set_retreat makes units pull back to base on their own below an HP %.",
+                "Orders: move and attack_move take \"waypoints\" (and \"loop\":true to patrol), \"together\":true (keep the slowest unit's pace) and \"spread\":3 (tiles between units, against splash). set_retreat makes units pull back to base on their own below an HP %. train takes \"structure_id\" to pick which barracks or factory the units come out of.",
                 "Newcomer protection also reserves the newcomer's starting ore (16 tiles around their base): nobody else's trucks can mine it until protection ends.",
                 "Add format=json to state and wait for plain structured data (numbers, ids, objects) instead of display strings; build_options says what you can build now and exactly what blocks the rest.",
                 "Field logistics: a repair truck is a mobile fuel point: vehicles low on fuel pull up to the nearest one (if it's closer than a depot), and any ground vehicle within 2 tiles of one tops up, even on the move. A unit in a firefight keeps a thinner fuel reserve and fights on, heading off when the shooting stops (it can strand if you cut it too fine). Escort your armies with a tanker.",
                 "Fuel: vehicles burn fuel while driving (parked ones burn none) and aircraft burn it the whole time they're airborne (less while hovering). Vehicles refuel next to a command center, outpost, refinery or factory, or from a repair truck; aircraft land on an airfield (drones also at a factory). On low fuel a unit heads to the nearest one by itself and then resumes its order. A vehicle that runs dry is stranded until a repair truck reaches it; an aircraft that runs dry crashes. Each unit's fuel % is in my_units; use 'refuel' to send units early.",
+                "Long marches: a unit turns back to refuel once its fuel only just reaches the nearest refuel point, so a vehicle's real one-way reach is about half its tank. move and attack_move warn (NOT ENOUGH FUEL) when units won't make it and say where they'd turn back; chain outposts every ~100 tiles toward a distant enemy, or send a repair truck along. rally says what the trip costs new units.",
+                "Sight: every unit and structure has a sight range (in this list). Artillery outranges its own sight (range 11, sight 7): give it a spotter (a forward unit, a scout_buggy, a recon_drone or a radar_dome) to fire at full range.",
+                "Raw-ore costs: refineries convert ore as fast as it arrives, so once surface ore is gone iron_ore and copper_ore never pile up for a power_plant or mining_refinery. {\"type\":\"reserve\",\"item\":\"iron_ore\",\"amount\":300} makes your converters leave that much alone (any item works, e.g. steel your electronics_plant would eat); amount 0 clears it. Deep mines show runs_dry_in_s and warn 2 minutes before they run dry.",
                 "Keep power produced >= power used or production and refining halve.",
                 "Rockets beat vehicles, rifles beat infantry, tanks are all-round. Heavy tanks splash.",
                 "Use attack_move to send armies; units fight what they meet. Use 'all' or 'idle' for units.",
@@ -439,12 +448,14 @@ namespace Pez.Sim
             if (d.Stealth) o.Set("stealth", true);
             if (d.IsStructure) o.Set("size", $"{d.SizeX}x{d.SizeY}").Set("power", d.Power);
             else o.Set("speed", d.Speed);
+            if (d.Sight > 0) o.Set("sight", d.IsStructure ? $"{d.Sight} tiles from its edge" : (object)d.Sight);
             if (d.UsesFuel) o.Set("fuel", d.IsAir ? $"{d.Fuel:0}s airborne; refuels landed on an airfield{(d.BuiltBy == Producer.Factory ? " or factory" : "")}" : $"{d.Fuel:0}s of driving (~{d.Fuel * d.Speed:0} tiles); refuels next to a command center, outpost, refinery or factory, or from a repair truck");
             if (d.FuelDepot) o.Set("refuels", "ground vehicles parked next to it");
             if (d.Helipad) o.Set("refuels", "aircraft that land on it");
             if (d.Weapon != null) o.Set("weapon", $"{d.Weapon.Name}: {d.Weapon.Damage} dmg, range {d.Weapon.Range}, every {d.Weapon.Cooldown}s; " +
                 (d.Weapon.HitsGround ? $"x{d.Weapon.VsInfantry} vs infantry, x{d.Weapon.VsVehicle} vs vehicles, x{d.Weapon.VsStructure} vs structures" : "air only") +
-                (d.Weapon.HitsAir ? $", x{d.Weapon.VsAir} vs aircraft" : ", can't hit aircraft"));
+                (d.Weapon.HitsAir ? $", x{d.Weapon.VsAir} vs aircraft" : ", can't hit aircraft") +
+                (d.Weapon.Range > d.Sight ? $"; outranges its own sight ({d.Sight}): needs a spotter to fire at full range" : ""));
             var req = new List<string>();
             var pk = Defs.ProducerKey(d.BuiltBy);
             if (pk != null) req.Add(pk);

@@ -59,7 +59,7 @@ namespace Pez.Headless
                 "Prospecting ProspectCenter ProspectRadius SkipSites SurveyFailure SurveyFailedAt ZoneId",
             [typeof(Team)] = "Id Name Controller PlayerName StandingOrders OrdersVersion Stock Rates PowerProduced PowerUsed Detected Revealed Defeated StartPos " +
                 "Visible Explored Left Resigned StalledSince House Seat ProtectedUntil StructureQueue UnitQueues KnownEnemyStructures Surveyed SurveySites Zones " +
-                "SurfaceWarnedAt Stats",
+                "SurfaceWarnedAt LastCommandAt Reserve Stats",
             [typeof(World)] = "Map Paths MapVersion Open MaxPlayers MaxMapSize GrowStep SafeJoinDistance ProtectionSeconds Teams ById Entities Projectiles Events " +
                 "EventCounts Alerts Tick GameOver Winner Errors LastError nextId nextSeq seatCounter rng rateSnapshot airWarned StallGrace ArenaChampion contested Inventions GameId " +
                 "| ErrorLog loggedErrors cells cellsW cellsH nearTarget nearHelp nearMine nearSep nearVis",

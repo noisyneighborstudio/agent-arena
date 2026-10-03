@@ -85,7 +85,7 @@ namespace Pez.Sim
                 .Set("power_produced", t.PowerProduced).Set("power_used", t.PowerUsed)
                 .Set("start", SnapIO.V(t.StartPos)).Put("defeated", t.Defeated).Put("left", t.Left).Put("resigned", t.Resigned)
                 .Put("stalled_since", t.StalledSince, -1f).Put("house", t.House).Set("seat", t.Seat).Put("protected_until", t.ProtectedUntil)
-                .Put("surface_warned_at", t.SurfaceWarnedAt, -999f);
+                .Put("surface_warned_at", t.SurfaceWarnedAt, -999f).Put("last_command_at", t.LastCommandAt, -1f);
             if (t.Visible != null) o.Set("visible", SnapIO.PackBits(t.Visible));
             if (t.Explored != null) o.Set("explored", SnapIO.PackBits(t.Explored));
             if (t.Detected.Count > 0) o.Set("detected", t.Detected.Cast<object>().ToList());
@@ -98,6 +98,7 @@ namespace Pez.Sim
                 o.Set("known_enemy_structures", t.KnownEnemyStructures.Select(kv => (object)new List<object> { kv.Key, kv.Value.key, kv.Value.origin.X, kv.Value.origin.Y, kv.Value.team }).ToList());
             if (t.Surveyed.Count > 0) o.Set("surveyed", t.Surveyed.Cast<object>().ToList());
             if (t.SurveySites.Count > 0) o.Set("survey_sites", SnapIO.Vs(t.SurveySites));
+            if (t.Reserve.Count > 0) o.Set("reserve", t.Reserve.Aggregate(new JObj(), (j, kv) => j.Set(kv.Key, kv.Value)));
             if (t.Zones.Count > 0) o.Set("zones", t.Zones.Values.Select(z => (object)new List<object> { z.ZoneId, z.FlaggedBy, SnapIO.X(z.FlaggedAt) }).ToList());
             var s = t.Stats;
             o.Set("stats", new JObj().Put("units_built", s.UnitsBuilt).Put("structures_built", s.StructuresBuilt).Put("units_lost", s.UnitsLost)
@@ -124,7 +125,7 @@ namespace Pez.Sim
             d.Load("power_produced", ref t.PowerProduced); d.Load("power_used", ref t.PowerUsed);
             d.Load("start", ref t.StartPos); d.Load("defeated", ref t.Defeated); d.Load("left", ref t.Left); d.Load("resigned", ref t.Resigned);
             d.Load("stalled_since", ref t.StalledSince); d.Load("house", ref t.House); d.Load("seat", ref t.Seat);
-            d.Load("protected_until", ref t.ProtectedUntil); d.Load("surface_warned_at", ref t.SurfaceWarnedAt);
+            d.Load("protected_until", ref t.ProtectedUntil); d.Load("surface_warned_at", ref t.SurfaceWarnedAt); d.Load("last_command_at", ref t.LastCommandAt);
             t.Visible = SnapIO.UnpackBits(d.Str("visible"), map.W * map.H);
             t.Explored = SnapIO.UnpackBits(d.Str("explored"), map.W * map.H);
             foreach (var x in d.Arr("detected")) if (x is double id) t.Detected.Add((int)id);
@@ -143,6 +144,8 @@ namespace Pez.Sim
                     t.KnownEnemyStructures[(int)id] = (l[1]?.ToString(), new Int2(SnapIO.ToI(l[2]), SnapIO.ToI(l[3])), SnapIO.ToI(l[4]));
             foreach (var x in d.Arr("surveyed")) if (x is double id) t.Surveyed.Add((int)id);
             t.SurveySites.AddRange(SnapIO.ToVecs(d.Arr("survey_sites")));
+            var rv = d.Obj("reserve");
+            if (rv != null) foreach (var kv in rv) t.Reserve[kv.Key] = SnapIO.ToI(kv.Value);
             foreach (var x in d.Arr("zones"))
                 if (x is List<object> l && l.Count >= 3) t.Zones[SnapIO.ToI(l[0])] = new ZoneFlag { ZoneId = SnapIO.ToI(l[0]), FlaggedBy = SnapIO.ToI(l[1]), FlaggedAt = SnapIO.ToF(l[2]) };
             var s = d.Obj("stats");

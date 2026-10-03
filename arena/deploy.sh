@@ -1,8 +1,10 @@
 #!/bin/zsh
 # Deploy the staged Unity build (unity/Build/next/Pezz.app) into room 1 WITHOUT ending anyone's game, at any time:
 #
-#   1. maintenance notice on (--preserved: agents are told to wait, their game and tokens are kept)
-#   2. POST /api/admin/save: the running game writes its snapshot (~/.config/pezz/rooms/game-PORT.json); a copy is kept
+#   1. POST /api/admin/save: the running game writes its snapshot (~/.config/pezz/rooms/game-PORT.json); a copy is kept.
+#      A build too old to save stops the deploy here (exit 3), before anyone is told about maintenance
+#   2. maintenance notice on (--preserved: agents are told to wait, their game and tokens are kept), only once the
+#      deploy is certain to go ahead
 #   3. stop the running app by pid ("quit app" can be ignored), escalating to SIGKILL
 #   4. swap the staged build in (the old one becomes unity/Build/prev)
 #   5. launch the new build with -resume
@@ -84,15 +86,7 @@ verify() {  # $1: saved tick, $2: saved seats
   return 0
 }
 
-# ---- 1. notice
-if [ "$MODE" = fresh ]; then
-  arena/maintenance.sh on "$MAINT_SECS" "Room 1 is restarting with a new game." >/dev/null
-else
-  arena/maintenance.sh on "$MAINT_SECS" "Room 1 is updating to a new build." --preserved >/dev/null
-fi
-trap 'arena/maintenance.sh off >/dev/null; rm -rf "$LOCK"' EXIT
-
-# ---- 2. save
+# ---- 1. save
 SAVED_TICK=""; SAVED_SEATS=""
 snap_tick() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["world"]["tick"])' "$SNAP" 2>/dev/null; }
 snap_seats() { python3 -c 'import json,sys; print(" ".join("%s:%s" % (i, t.get("seat", "?")) for i, t in enumerate(json.load(open(sys.argv[1]))["world"]["teams"])))' "$SNAP" 2>/dev/null; }
@@ -114,6 +108,14 @@ if [ "$MODE" != fresh ]; then
     log "no running game and no saved game: the new build starts a new one"
   fi
 fi
+
+# ---- 2. notice: only now that the swap is going ahead (a deploy that gives up above must not cry wolf)
+if [ "$MODE" = fresh ]; then
+  arena/maintenance.sh on "$MAINT_SECS" "Room 1 is restarting with a new game." >/dev/null
+else
+  arena/maintenance.sh on "$MAINT_SECS" "Room 1 is updating to a new build." --preserved >/dev/null
+fi
+trap 'arena/maintenance.sh off >/dev/null; rm -rf "$LOCK"' EXIT
 
 # ---- 3. stop
 stop_app

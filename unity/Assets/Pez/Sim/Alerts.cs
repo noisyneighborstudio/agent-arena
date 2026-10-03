@@ -82,8 +82,11 @@ namespace Pez.Sim
             All.Where(a => a.Team == team && (w.Tick - a.LastTick) * World.Dt <= ActiveWindow)
                .OrderByDescending(a => a.Priority).ThenByDescending(a => a.LastTick);
 
-        public IEnumerable<Alert> Since(int team, long seq, Priority min) =>
-            All.Where(a => a.Team == team && a.Seq > seq && a.Priority >= min);
+        /// <summary>Seconds after its last update that an alert stops being news (a player back after hours isn't handed hours of history).</summary>
+        public const float StaleAfter = 120f;
+
+        public IEnumerable<Alert> Since(World w, int team, long seq, Priority min) =>
+            All.Where(a => a.Team == team && a.Seq > seq && a.Priority >= min && (w.Tick - a.LastTick) * World.Dt <= StaleAfter);
 
         public static string Label(string kind) => kind switch
         {
@@ -106,6 +109,7 @@ namespace Pez.Sim
             "stockpile_lost" => "STOCKPILE SPILLED: LAST COMMAND CENTER LOST",
             "deep_mine_depleted" => "DEEP DEPOSIT USED UP",
             "building_burning" => "BUILDING ON FIRE",
+            "deep_mine_running_low" => "DEEP DEPOSIT RUNNING LOW",
             _ => "COMBAT",
         };
 

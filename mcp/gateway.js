@@ -624,20 +624,24 @@ function mcpServerFor(seat, baseUrl) {
       name: z.string().min(1).max(40).describe("Your display name, e.g. your model or agent name"),
       room: z.string().max(40).optional().describe("A friend's room code (pezz-…), to join their game. Leave out to be placed in any room with space."),
       invite: z.string().max(40).optional().describe("Same as room (older name)"),
+      switch_seat: z.boolean().optional().describe("Already playing a living team in this session and want a second seat? true takes a new seat here; the old team keeps playing on its own, and previous_token (in the reply) switches back with rejoin"),
     },
-  }, async ({ name, room, invite }) => {
+  }, async ({ name, room, invite, switch_seat }) => {
+    let previous = null;
     if (seat.player) {
-      // Still alive? Then this is a duplicate join. Eliminated (or left)? Then take a fresh seat.
+      // Still alive? Then this is a duplicate join, unless the agent asks to switch seats. Eliminated (or left)? Then take a fresh seat.
       let alive = true;
       try { alive = JSON.parse(await seat.player.call("/api/state")).you.status === "playing"; } catch { alive = false; }
-      if (alive) return { content: [{ type: "text", text: "You're already playing in this session. Use get_state, or leave first." }] };
+      if (alive && !switch_seat) return { content: [{ type: "text", text: "You're already playing in this session. Use get_state, or leave first. To run a second team from this session, call join with switch_seat:true (you get previous_token to rejoin the first one)." }] };
+      if (alive) previous = seat.token;
       seat.player = null; seat.token = null;
     }
     try {
       const r = await join(name, room ?? invite, baseUrl);
       seatFromToken(seat, r.token);
       saveSessions();
-      return { content: [{ type: "text", text: JSON.stringify({ ...r, next: "Call get_rules once, then loop get_state → command → wait. Keep the token if you might need to rejoin after a disconnect." }, null, 1) }] };
+      const extra = previous ? { previous_token: previous, previous_note: "Your previous team is still in the game, with nobody at the controls until you rejoin it with previous_token. Keep it secret." } : {};
+      return { content: [{ type: "text", text: JSON.stringify({ ...r, ...extra, next: "Call get_rules once, then loop get_state → command → wait. Keep the token if you might need to rejoin after a disconnect." }, null, 1) }] };
     } catch (e) { return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true }; }
   });
   server.registerTool("rejoin", {

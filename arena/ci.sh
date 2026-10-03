@@ -40,11 +40,14 @@ setup() {
   mkdir -p "$WT/arena/logs"
 }
 
+# Outside players still at it. A seat that hasn't sent a command for PEZZ_CI_IDLE_S (lobby idle_s, builds that report it)
+# is abandoned and doesn't count: an AFK seat must not hold a deploy forever.
 outside_players() {
-  curl -s -m 5 http://127.0.0.1:7777/api/lobby | python3 -c 'import json,sys
+  curl -s -m 5 http://127.0.0.1:7777/api/lobby | IDLE="${PEZZ_CI_IDLE_S:-1800}" python3 -c 'import json,os,sys
 try: t=json.load(sys.stdin)["teams"]
 except Exception: print(-1); sys.exit()
-print(sum(1 for i,x in enumerate(t) if i>=2 and x["status"]=="playing" and not x.get("house")))'
+idle=float(os.environ["IDLE"])
+print(sum(1 for i,x in enumerate(t) if i>=2 and x["status"]=="playing" and not x.get("house") and x.get("idle_s", 0) < idle))'
 }
 
 pass() {
@@ -95,12 +98,16 @@ pass() {
     if [ $rc = 3 ]; then
       # The running build predates saved games: this one time a resume isn't possible. Wait until nobody outside
       # is playing, then start fresh; every deploy after this one keeps the game.
-      if [ "${PEZZ_CI_FORCE_FRESH:-}" = 1 ] || [ "$(outside_players)" = "0" ]; then
-        log "running build can't save; $([ "${PEZZ_CI_FORCE_FRESH:-}" = 1 ] && echo "the owner asked for a restart" || echo "room 1 has no outside players"): starting fresh on the new build"
-        [ "${PEZZ_CI_FORCE_FRESH:-}" = 1 ] && { curl -s -m 5 -X POST http://127.0.0.1:7777/api/admin/announce -d '{"text":"Room 1 restarts with a new game in 60 seconds for a major update (new rendering, trucks back into bays, agent-invented units). Your seat ends; join again afterwards (call join, or rerun your loop)."}' >/dev/null; sleep 60; }
+      # Room 1 never empties on its own (bots rejoin the moment they lose), so after PEZZ_CI_MAX_WAIT_S of waiting the
+      # new game starts anyway; deploy.sh --fresh warns everyone first. PEZZ_CI_FORCE_FRESH=1 (the owner's call) does it now.
+      [ "$(cat "$CI/waiting_for" 2>/dev/null)" = "$target" ] || { echo "$target" > "$CI/waiting_for"; date +%s > "$CI/waiting_since"; }
+      local waited=$(( $(date +%s) - $(cat "$CI/waiting_since") )) max_wait=${PEZZ_CI_MAX_WAIT_S:-10800}
+      if [ "${PEZZ_CI_FORCE_FRESH:-}" = 1 ] || [ "$(outside_players)" = "0" ] || [ $waited -ge $max_wait ]; then
+        log "running build can't save; $([ "${PEZZ_CI_FORCE_FRESH:-}" = 1 ] && echo "the owner asked for a restart" || { [ $waited -ge $max_wait ] && echo "waited ${waited}s for room 1 to empty" || echo "room 1 has no active outside players"; }): starting fresh on the new build"
         (cd "$WT" && RESTART_JSON="$FRESH_JSON" arena/deploy.sh --fresh); rc=$?
       else
-        log "running build can't save and room 1 has players: waiting for it to empty"; status waiting "$target" "first resumable deploy waits for room 1 to empty"; return 0
+        log "running build can't save and room 1 has players: waiting for it to empty (${waited}s of ${max_wait}s)"
+        status waiting "$target" "first resumable deploy waits for room 1 to empty, or starts fresh in $(( (max_wait - waited) / 60 )) min"; return 0
       fi
     fi
     if [ $rc != 0 ]; then
@@ -116,7 +123,7 @@ pass() {
     (cd "$LIVE/mcp" && [ package.json -nt node_modules ] && npm install --silent >/dev/null 2>&1)
     launchctl kickstart -k "gui/$(id -u)/com.sethwebster.pezz-gateway" && log "gateway restarted on ${target[1,7]}"
   fi
-  echo "$target" > "$CI/deployed"; rm -f "$CI/failed"
+  echo "$target" > "$CI/deployed"; rm -f "$CI/failed" "$CI/waiting_for" "$CI/waiting_since"
   log "live: ${target[1,7]} $(git -C "$REPO" log -1 --format=%s "$target")"
   status live "$target" "$(git -C "$REPO" log -1 --format=%s "$target" | tr '"' "'")"
 }
