@@ -14,7 +14,7 @@
 # Ports: game API 7947, frames 7948, the page 7949, tailnet https 8456 (tailscale serve, never funnel). The live arena is
 # 7777/7778 with its gateway on 7790; the preview is 7957-7959; test copies use 7967/7977/7987.
 set -u
-REPO=${0:A:h:h}
+REPO=${0:A:h:h}; SELF=${0:A}
 SRC_APP=${PEZZ_SINK_APP:-$REPO/unity/Build/Pezz.app}
 HOME_DIR=$HOME/pezz-kitchen-sink
 APP=$HOME_DIR/app/Pezz.app          # never under a "Build/" folder: deploy.sh finds the live game by "Build/Pezz.app"
@@ -52,16 +52,32 @@ stop_game() {
   kill -9 "$pid" 2>/dev/null; sleep 0.5
 }
 
-copy_build() {
+# Does a build have the kitchen sink in it? (Older builds would ignore -kitchensink and start an ordinary game.)
+supports() { LC_ALL=C grep -a -q KitchenSinkView "$1/Contents/Resources/Data/Managed/Assembly-CSharp.dll" 2>/dev/null; }
+
+# Stage a copy of the source build in app.new (the running copy is untouched); install_build swaps it in once stopped.
+stage_build() {
+  rm -rf "$HOME_DIR/app.new"
   [ -d "$SRC_APP" ] || { log "no build at $SRC_APP"; return 1; }
+  if ! supports "$SRC_APP"; then
+    log "$SRC_APP predates the kitchen sink: keeping the room's current build (PEZZ_SINK_APP=<a newer Pezz.app> $SELF restart to change it)"
+    stamp "$SRC_APP" > "$HOME_DIR/skipped-stamp"
+    return 1
+  fi
   # An APFS clone of the live app (instant); the live app itself is only read.
   rm -rf "$HOME_DIR/app.new"; mkdir -p "$HOME_DIR/app.new"
-  cp -c -R "$SRC_APP" "$HOME_DIR/app.new/Pezz.app" 2>/dev/null || cp -R "$SRC_APP" "$HOME_DIR/app.new/Pezz.app" || return 1
-  rm -rf "$HOME_DIR/app"; mv "$HOME_DIR/app.new" "$HOME_DIR/app"
-  stamp "$SRC_APP" > "$HOME_DIR/source-stamp"
+  cp -c -R "$SRC_APP" "$HOME_DIR/app.new/Pezz.app" 2>/dev/null || cp -R "$SRC_APP" "$HOME_DIR/app.new/Pezz.app" || { rm -rf "$HOME_DIR/app.new"; return 1; }
+  stamp "$SRC_APP" > "$HOME_DIR/app.new/source-stamp"
   local commit=$(cat "$REPO/ci-work/deployed" 2>/dev/null)
+  [ "$SRC_APP" != "$REPO/unity/Build/Pezz.app" ] && commit=""   # a hand-picked build, not the deployed one
   local built=$(date -r "$(stamp "$SRC_APP" | cut -d' ' -f1)" '+%b %d %H:%M')
-  echo "${commit[1,7]:-local} · built $built" > "$HOME_DIR/build.txt"
+  echo "${commit[1,7]:-local} · built $built" > "$HOME_DIR/app.new/build.txt"
+}
+
+install_build() {
+  [ -d "$HOME_DIR/app.new/Pezz.app" ] || return 0
+  rm -rf "$HOME_DIR/app"; mv "$HOME_DIR/app.new" "$HOME_DIR/app"
+  cp "$HOME_DIR/app/source-stamp" "$HOME_DIR/source-stamp"; cp "$HOME_DIR/app/build.txt" "$HOME_DIR/build.txt"
 }
 
 start_game() {
@@ -69,7 +85,7 @@ start_game() {
   if lsof -iTCP:$PORT -sTCP:LISTEN >/dev/null 2>&1 || lsof -iTCP:$FRAMES -sTCP:LISTEN >/dev/null 2>&1; then
     log "port $PORT or $FRAMES is in use by something else; not starting"; return 1
   fi
-  [ -x "$BIN" ] || copy_build || return 1
+  [ -x "$BIN" ] || { stage_build && install_build; } || return 1
   # Windowed 1280x720 (the stream's size), the showcase scenario, its own log; nice so the live arena wins any contest.
   open -n "$APP" --args -kitchensink -autostart -port $PORT -screen-width 1280 -screen-height 720 -screen-fullscreen 0 -logFile "$HOME_DIR/player.log"
   local pid=""
@@ -120,8 +136,10 @@ cmd_open() {
 cmd_restart() {
   rm -f "$HOME_DIR/off"
   lock || return 1
+  stage_build || [ -x "$BIN" ] || { unlock; return 1; }   # a build without the kitchen sink keeps the current copy
   stop_game
-  copy_build && start_game; local rc=$?
+  install_build
+  start_game; local rc=$?
   unlock
   [ $rc = 0 ] || return 1
   start_web; check_url >/dev/null && log "restarted: $(url)"
@@ -131,13 +149,16 @@ cmd_ensure() {
   [ -f "$HOME_DIR/off" ] && return 0
   if [ -n "$(game_pid)" ] && answers; then
     # Still on the build it was copied from? A deploy swaps the live app: follow it.
-    [ "$(stamp "$SRC_APP")" = "$(cat "$HOME_DIR/source-stamp" 2>/dev/null)" ] && { start_web; return 0; }
+    local now=$(stamp "$SRC_APP")
+    if [ -z "$now" ] || [ "$now" = "$(cat "$HOME_DIR/source-stamp" 2>/dev/null)" ] || [ "$now" = "$(cat "$HOME_DIR/skipped-stamp" 2>/dev/null)" ]; then start_web; return 0; fi
+    supports "$SRC_APP" || { stamp "$SRC_APP" > "$HOME_DIR/skipped-stamp"; log "the live build predates the kitchen sink: staying on $(cat "$HOME_DIR/build.txt")"; start_web; return 0; }
     log "the live build changed: restarting on it"
     cmd_restart; return
   fi
   log "not running: starting"
   lock || return 1
-  copy_build && start_game; local rc=$?
+  # On the live build if it has the kitchen sink, else on the copy it last ran.
+  { stage_build && install_build || [ -x "$BIN" ]; } && start_game; local rc=$?
   unlock
   [ $rc = 0 ] && start_web
 }
@@ -157,7 +178,12 @@ cmd_status() {
   if [ -n "$pid" ] && answers; then
     local s=$(curl -s -m 3 "$API/api/status")
     echo "running (pid $pid): $(echo "$s" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("%d:%02d in, %.0f fps, speed %s%s, %s sim errors" % (d["time_s"]//60, d["time_s"]%60, d.get("render_fps") or 0, d["speed"], " (paused)" if d["paused"] else "", d.get("sim_errors", 0)))')"
-    echo "  build: $(cat "$HOME_DIR/build.txt" 2>/dev/null)$([ "$(stamp "$SRC_APP")" != "$(cat "$HOME_DIR/source-stamp" 2>/dev/null)" ] && echo " (the live build has changed since; 'restart' or CI's 'ensure' picks it up)")"
+    local note=""
+    if [ "$(stamp "$SRC_APP")" != "$(cat "$HOME_DIR/source-stamp" 2>/dev/null)" ]; then
+      supports "$SRC_APP" && note=" (the live build has changed since; 'restart' or CI's 'ensure' picks it up)" \
+                          || note=" (the live build predates the kitchen sink, so the room stays on this one)"
+    fi
+    echo "  build: $(cat "$HOME_DIR/build.txt" 2>/dev/null)$note"
     echo "  page:  $(url)  (local http://127.0.0.1:$WEB/, $([ -n "$(web_pid)" ] && echo up || echo down))"
   else
     echo "not running$([ -f "$HOME_DIR/off" ] && echo " (stopped by hand; 'open' starts it)")"

@@ -10,7 +10,7 @@
   /* The HUD kit, as in mcp/viewer.html: panels rgba(16,19,23,.9), border #2A3138, radius 12, cream for "on", amber for attention. */
   :root { --bg:#2A2420; --panel:rgba(16,19,23,.9); --border:#2A3138; --line:#3A4047; --btn:#22282E; --ink:#E8EBEE; --cream:#ECE4D2; --muted:#9BA5AE; --soft:#C5CCD2; --amber:#FFA22E; }
   html,body { margin:0; height:100%; background:var(--bg); color:var(--ink); font:14px/1.45 "IBM Plex Sans",-apple-system,"Segoe UI",sans-serif; overflow:hidden; }
-  #live { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; user-select:none; -webkit-user-drag:none; cursor:grab; touch-action:none; background:var(--bg); }
+  #live { position:fixed; inset:0; width:100%; height:100%; object-fit:contain; user-select:none; -webkit-user-drag:none; cursor:grab; touch-action:none; background:var(--bg); }
   #live:active { cursor:grabbing; }
   .panel { background:var(--panel); border:1px solid var(--border); border-radius:12px; box-sizing:border-box; }
   .head { font-family:"Chakra Petch",sans-serif; font-weight:600; font-size:12px; letter-spacing:.14em; color:var(--muted); text-transform:uppercase; }
@@ -18,20 +18,21 @@
   button { font:inherit; color:var(--ink); background:var(--btn); border:0; border-radius:8px; cursor:pointer; }
   button.on { background:var(--cream); color:#101317; font-weight:500; }
 
-  #top { position:absolute; left:16px; right:16px; top:16px; height:56px; display:flex; align-items:center; gap:14px; padding:0 8px 0 18px; }
+  #top { position:fixed; left:16px; right:16px; top:16px; height:56px; display:flex; align-items:center; gap:14px; padding:0 8px 0 18px; }
   #top .word { font-family:"Chakra Petch",sans-serif; font-weight:700; font-size:22px; letter-spacing:.04em; }
   #top .rule { width:1px; height:26px; background:var(--border); flex:none; }
   #top .sub { font-family:"Chakra Petch",sans-serif; font-weight:600; font-size:14px; letter-spacing:.14em; color:var(--muted); white-space:nowrap; }
   #now { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-weight:600; font-size:15px; }
   #speed { display:flex; gap:5px; }
+  @media (max-width: 420px) { #speed button[data-s="0.5"] { display:none; } }
   #speed button { min-width:44px; height:40px; font-family:"IBM Plex Mono",monospace; font-size:14px; }
   #stat { color:var(--muted); font-size:12px; white-space:nowrap; }
 
-  #index { position:absolute; left:16px; top:88px; bottom:16px; width:340px; display:flex; flex-direction:column; overflow:hidden; }
+  #index { position:fixed; left:16px; top:88px; bottom:16px; width:340px; display:flex; flex-direction:column; overflow:hidden; }
   #index .find { padding:12px 12px 8px; display:flex; gap:8px; }
   #q { flex:1; height:36px; border-radius:8px; border:1px solid var(--line); background:#101317; color:var(--ink); padding:0 10px; font:14px "IBM Plex Sans",sans-serif; outline:none; min-width:0; }
   #q:focus { border-color:var(--cream); }
-  #list { overflow-y:auto; padding:0 6px 12px 12px; flex:1; -webkit-overflow-scrolling:touch; }
+  #list { position:relative; overflow-y:auto; padding:0 6px 12px 12px; flex:1; -webkit-overflow-scrolling:touch; }
   .dist { margin-top:10px; }
   .dist > .dh { display:flex; align-items:baseline; gap:8px; cursor:pointer; padding:6px 8px; border-radius:8px; }
   .dist > .dh:hover, .it:hover { background:#1B2026; }
@@ -42,7 +43,7 @@
   .it b { font-weight:500; font-size:13.5px; } .it div { color:var(--muted); font-size:12px; line-height:1.35; }
   .it.cur, .dh.cur { background:#1F252B; border-left-color:var(--cream); }
 
-  #caption { position:absolute; left:372px; right:16px; bottom:16px; margin:0 auto; max-width:760px; padding:12px 16px; display:flex; gap:12px; align-items:center; }
+  #caption { position:fixed; left:372px; right:16px; bottom:16px; margin:0 auto; max-width:760px; padding:12px 16px; display:flex; gap:12px; align-items:center; }
   #caption .txt { flex:1; min-width:0; }
   #caption b { font-family:"Chakra Petch",sans-serif; font-size:17px; font-weight:600; }
   #caption .st { color:var(--soft); font-size:13.5px; }
@@ -50,12 +51,12 @@
   #caption .nav button { height:40px; min-width:44px; padding:0 12px; }
   #help { color:var(--muted); font-size:12px; margin-top:2px; }
 
-  #legend { position:absolute; right:16px; top:88px; width:380px; max-height:calc(100% - 200px); overflow-y:auto; padding:14px 16px; display:none; }
+  #legend { position:fixed; right:16px; top:88px; width:380px; max-height:calc(100% - 200px); overflow-y:auto; padding:14px 16px; display:none; }
   #legend.open { display:block; }
   #legend dl { margin:8px 0 0; } #legend dt { font-weight:600; font-size:13.5px; margin-top:8px; } #legend dd { margin:1px 0 0; color:var(--soft); font-size:13px; }
   .sw { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:6px; vertical-align:-1px; }
 
-  #down { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); padding:18px 22px; display:none; text-align:center; max-width:420px; }
+  #down { position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); padding:18px 22px; display:none; text-align:center; max-width:420px; }
   #bIndex { display:none; }
 
   /* Phones and narrow windows: the index is a sheet that slides up; the caption sits at the bottom. */
@@ -65,8 +66,10 @@
     #speed button { min-width:38px; height:36px; font-size:13px; }
     #index { left:8px; right:8px; width:auto; top:auto; bottom:8px; height:62%; transform:translateY(calc(100% + 16px)); transition:transform .25s ease; z-index:5; }
     #index.open { transform:none; }
-    #caption { left:8px; right:8px; bottom:8px; padding:10px 12px; }
-    #caption .nav button { min-width:40px; padding:0 10px; height:38px; }
+    #live { object-fit:cover; }
+    #caption { left:8px; right:8px; bottom:8px; padding:10px 12px; flex-direction:column; align-items:stretch; gap:8px; }
+    #caption .nav { justify-content:space-between; }
+    #caption .nav button { flex:1; padding:0 6px; height:38px; }
     #help { display:none; }
     #bIndex { display:inline-block; }
     #legend { left:8px; right:8px; width:auto; top:66px; max-height:60%; z-index:6; }
@@ -116,14 +119,21 @@ function flush() {
   acc = {dx:0, dy:0, zoom:1, yaw:0}; sending = true;
   fetch(`cam?dx=${a.dx.toFixed(4)}&dy=${a.dy.toFixed(4)}&zoom=${a.zoom.toFixed(3)}&yaw=${a.yaw.toFixed(1)}`).finally(() => { sending = false; setTimeout(flush, 30); });
 }
+// The picture's size on screen: letterboxed on a desktop (contain), filling a phone (cover).
+function shown() {
+  const r = img.getBoundingClientRect(), ar = (img.naturalWidth || 16) / (img.naturalHeight || 9);
+  const cover = getComputedStyle(img).objectFit === 'cover';
+  const w = cover ? Math.max(r.width, r.height * ar) : Math.min(r.width, r.height * ar);
+  return {w, h: w / ar};
+}
 const pts = new Map(); let pinch = 0;
 img.addEventListener('pointerdown', e => { img.setPointerCapture(e.pointerId); pts.set(e.pointerId, {x:e.clientX, y:e.clientY}); stopTour(); });
 img.addEventListener('pointerup', e => { pts.delete(e.pointerId); pinch = 0; });
 img.addEventListener('pointercancel', e => { pts.delete(e.pointerId); pinch = 0; });
 img.addEventListener('pointermove', e => {
   const p = pts.get(e.pointerId); if (!p) return;
-  const r = img.getBoundingClientRect();
-  if (pts.size === 1) { acc.dx -= (e.clientX - p.x) / r.width; acc.dy += (e.clientY - p.y) / r.height; }
+  const r = shown();
+  if (pts.size === 1) { acc.dx -= (e.clientX - p.x) / r.w; acc.dy += (e.clientY - p.y) / r.h; }
   p.x = e.clientX; p.y = e.clientY;
   if (pts.size === 2) {
     const [a, b] = [...pts.values()], d = Math.hypot(a.x - b.x, a.y - b.y);
@@ -150,7 +160,9 @@ function render() {
     html += '</div>';
   });
   $('list').innerHTML = html || '<div style="color:var(--muted);padding:12px">Nothing matches.</div>';
-  const c = $('list').querySelector('.cur'); if (c && !q) c.scrollIntoView({block:'nearest'});
+  // Keep the current entry in view by scrolling the list itself (scrollIntoView would also scroll the page to a hidden sheet).
+  const L = $('list'), c = L.querySelector('.cur');
+  if (c && !q && (c.offsetTop < L.scrollTop || c.offsetTop + c.offsetHeight > L.scrollTop + L.clientHeight)) L.scrollTop = c.offsetTop - 60;
 }
 $('list').addEventListener('click', e => { const el = e.target.closest('[data-i]'); if (!el) return; stopTour(); go(+el.dataset.i); if (innerWidth <= 900) $('index').classList.remove('open'); });
 $('q').addEventListener('input', render);

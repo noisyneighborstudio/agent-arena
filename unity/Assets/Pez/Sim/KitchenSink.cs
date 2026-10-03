@@ -480,7 +480,7 @@ namespace Pez.Sim
                     float f = hp[c];
                     holds.Add(() => e.Hp = e.Def.MaxHp * f);
                 }
-            for (int c = 0; c < hp.Length; c++) Item($"{state[c][0].ToString().ToUpperInvariant()}{state[c].Substring(1)}", $"power plant, barracks and factory at {(int)(hp[c] * 100)}% health", 4 + 7 * c, 11, 11);
+            for (int c = 0; c < hp.Length; c++) Item($"{state[c][0].ToString().ToUpperInvariant()}{state[c].Substring(1)}", $"power plant, barracks and factory at {MathF.Round(hp[c] * 100)}% health", 4 + 7 * c, 11, 11);
             Item("Wind", "smoke columns and embers lean and drift downwind", 14, 18, 14);
         }
 

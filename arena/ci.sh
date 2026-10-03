@@ -128,8 +128,17 @@ pass() {
   status live "$target" "$(git -C "$REPO" log -1 --format=%s "$target" | tr '"' "'")"
 }
 
+# The kitchen sink (arena/kitchen-sink.sh, docs/art/KITCHEN_SINK.md): a private showcase room running a copy of the live
+# build. After every pass it's started if it's down and restarted if the live build changed, so right after a deploy it
+# comes back on the new build. Detached, niced and logged: it can't block, slow or fail a deploy.
+kitchen_sink() {
+  [ -x "$REPO/arena/kitchen-sink.sh" ] || return 0
+  (nice -n 10 "$REPO/arena/kitchen-sink.sh" ensure >> "$REPO/arena/logs/kitchen-sink.log" 2>&1 &)
+  return 0
+}
+
 case "${1:-once}" in
-  once) pass ;;
-  loop) while true; do pass; sleep "${PEZZ_CI_EVERY:-180}"; done ;;
+  once) pass; rc=$?; kitchen_sink; exit $rc ;;
+  loop) while true; do pass; kitchen_sink; sleep "${PEZZ_CI_EVERY:-180}"; done ;;
   *) echo "usage: $0 once|loop"; exit 2 ;;
 esac
