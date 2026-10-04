@@ -459,6 +459,15 @@ namespace Pez.Api
                         w.Emit("chat", -1, text: text);
                         return Json.Write(new JObj().Set("ok", true));
                     }
+                case "/api/admin/viewlink":
+                    {
+                        // Host-only: a read-only view token for any seat (the sessions dashboard's "watch any player"). Seats
+                        // that joined without one (the host's own llm seats) get one minted; it's saved with the others.
+                        int team = TeamParam(req, w);
+                        var vt = viewTokens.FirstOrDefault(kv => kv.Value.world == w && kv.Value.team == team && kv.Value.seat == w.Teams[team].Seat).Key;
+                        if (vt == null) { vt = NewToken(); viewTokens[vt] = (w, team, w.Teams[team].Seat); TokensVersion++; }
+                        return Json.Write(new JObj().Set("ok", true).Set("team", team).Set("view_token", vt));
+                    }
                 case "/api/admin/kick":
                     {
                         // Host-only (the gateway never forwards /api/admin): remove a seat as if it had left.
