@@ -489,7 +489,8 @@ namespace Pez.Headless
             var r = Commands.Execute(w, 0, Cmd("type", "capture", "units", new[] { eng.Id }, "target", ds[0].Id));
             Check(Ok(r) && Said(r).Contains("out of sight"), $"under newcomer protection, an engineer can still set out for an unseen neutral derrick: {Said(r)}");
             var st = Json.Write(StateView.TeamState(w, 0));
-            Check(st.Contains("\"capturable_now\":true") || StateView.DerrickInfo(w, 0).Any(x => x.d == ds[0] && x.capturable), "and the state says it's capturable");
+            Check(StateView.DerrickInfo(w, 0).Any(x => x.d == ds[0] && !x.capturable && x.owner == -2) && Json.Write(StateData.Team(w, 0)).Contains("unknown: never seen"),
+                  "a derrick never seen isn't promised as capturable: its owner shows as unknown (someone may hold it by now)");
             Run(w, 90);
             Check(ds[0].Team == 0 && eng.Dead, $"it walks there and takes it (derrick team {ds[0].Team}, engineer at {eng.Pos.X:0},{eng.Pos.Y:0})");
 

@@ -83,7 +83,7 @@ namespace Pez.Sim
             o.Set("mines", mine.Where(e => e.IsMine).Select(m => (object)Point(m.Pos)).ToList());
 
             o.Set("derricks", StateView.DerrickInfo(w, team).Select(x => (object)new JObj().Set("id", x.d.Id).Set("x", x.d.Origin.X).Set("y", x.d.Origin.Y).Set("w", 2).Set("h", 2)
-                .Set("owner_team", x.owner >= -1 ? (object)x.owner : null).Set("owner", x.owner == -1 ? "neutral" : x.owner >= 0 ? w.Teams[x.owner].Name : null)
+                .Set("owner_team", x.owner >= -1 ? (object)x.owner : null).Set("owner", x.owner == -1 ? (x.seen ? "neutral" : "neutral when last seen") : x.owner >= 0 ? w.Teams[x.owner].Name : "unknown: never seen")
                 .Set("yours", x.owner == team).Set("in_sight", x.seen).Set("hp", x.seen ? (object)(int)x.d.Hp : null).Set("max_hp", x.d.Def.MaxHp)
                 .Set("capturable_now", x.capturable).Set("income_steel_per_s", World.DerrickSteel))
                 .Concat(w.DerrickRespawns.Select(r => (object)new JObj().Set("id", null).Set("x", r.origin.X).Set("y", r.origin.Y).Set("w", 2).Set("h", 2)

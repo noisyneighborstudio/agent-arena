@@ -626,7 +626,19 @@ namespace Pez.Sim
             {
                 origin = new Int2(t.X - (def.SizeX - 1) / 2, t.Y - (def.SizeY - 1) / 2);
                 var why = CanPlace(u.Team, key, origin.X, origin.Y, requireNear: false);
-                if (why != null) return $"can't deploy here: {why}";
+                if (why != null)
+                {
+                    // Like build: name the nearest clear spot, so the next move-then-deploy lands first time.
+                    Int2? alt = null; float ad = float.MaxValue;
+                    for (int dy = -6; dy <= 6; dy++)
+                        for (int dx = -6; dx <= 6; dx++)
+                        {
+                            var o = new Int2(origin.X + dx, origin.Y + dy);
+                            if (dx * dx + dy * dy >= ad || CanPlace(u.Team, key, o.X, o.Y, requireNear: false) != null) continue;
+                            ad = dx * dx + dy * dy; alt = o;
+                        }
+                    return $"can't deploy here: {why}" + (alt.HasValue ? $". Nearest clear spot: move it to {alt.Value.X + def.SizeX / 2},{alt.Value.Y + def.SizeY / 2} and deploy there" : "");
+                }
             }
             Remove(u);
             var s = SpawnStructure(u.Team, key, origin, 1f);

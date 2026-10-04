@@ -339,11 +339,13 @@ namespace Pez.Sim
                 bool seen = d.Team == team || w.IsVisibleTo(team, d);
                 bool known = seen || memory.ContainsKey(d.Id);
                 int owner = seen ? d.Team : known ? memory[d.Id].team : -2;
-                bool capturable = d.Team != team && (seen ? World.Capturable(d) : owner < 0); // unseen: worth an engineer if last known neutral
+                // Unseen: worth an engineer only if it was neutral when last seen. Never seen: unknown (test player Nettle sent five
+                // engineers to "capturable" derricks the house AI had long since taken).
+                bool capturable = d.Team != team && (seen ? World.Capturable(d) : owner == -1);
                 string whose = owner == team ? $"YOURS: +{World.DerrickSteel} steel/s, hp {(int)d.Hp}/{d.Def.MaxHp}" + (d.Hp <= d.Def.MaxHp * World.CaptureThreshold ? " (below 50%: enemy engineers can take it; repair it)" : "")
                              : owner == -1 ? $"neutral{(seen ? "" : " when last seen")}: any engineer captures it ('capture'), then it pays {World.DerrickSteel} steel/s"
                              : owner >= 0 ? $"{w.Teams[owner].Name}'s (team{owner}){(seen ? $", hp {(int)d.Hp}/{d.Def.MaxHp}{(capturable ? ": below 50%, your engineers can take it" : ": damage it below 50% to capture it")}" : " when last seen")}"
-                             : "never seen: every derrick starts neutral, and any engineer captures a neutral one ('capture' works without sight)";
+                             : "never seen: it started neutral but may well be someone's by now; scout it, or send an engineer with an escort ('capture' works without sight and says on arrival)";
                 list.Add((d, owner, seen, known, capturable, $"#{d.Id} derrick at {d.Origin.X},{d.Origin.Y} (2x2): {whose}"));
             }
             return list;
