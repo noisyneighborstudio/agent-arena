@@ -671,6 +671,17 @@ namespace Pez.Headless
             Run(rt, 1.05f);
             float spike = rt.Teams[0].Rates["iron_ore"];
             Check(spike < 20f, $"a sudden 150-ore delivery shows as a modest rate, not +150/s ({spike:0.0}/s)");
+
+            // Hazel: a build that will tip you into low power says so; a reserve above your stock says what it stops.
+            var hz = new World(2, 7, 96);
+            hz.Teams[0].Add("steel", 5000); hz.Teams[0].Add("copper", 2000);
+            hz.SpawnStructure(0, "barracks", hz.FindPlacement(0, "barracks").Value, 1f);
+            string last = "";
+            for (int i = 0; i < 12 && !last.Contains("Power warning"); i++)
+                last = Said(Commands.Execute(hz, 0, Cmd("type", "build", "structure", "gun_turret")));
+            Check(last.Contains("Power warning"), $"placing a turret that will push you into low power warns at once: {last}");
+            var rz = Commands.Execute(hz, 0, Cmd("type", "reserve", "item", "iron_ore", "amount", hz.Teams[0].Amount("iron_ore") + 500));
+            Check(Ok(rz) && Said(rz).Contains("nothing that uses iron_ore will run"), $"a reserve above your stock says what it stalls: {Said(rz)}");
         }
 
         static void Drones()

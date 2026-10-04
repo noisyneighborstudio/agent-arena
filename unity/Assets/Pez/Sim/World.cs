@@ -2031,7 +2031,7 @@ namespace Pez.Sim
         }
 
         /// <summary>Ore left at which a deep mine warns it's running low: two minutes of pumping.</summary>
-        public const float DeepMineWarnAmount = EntityDef.DeepMineRate * 120f;
+        public const float DeepMineWarnAmount = EntityDef.DeepMineRate * 300f; // 5 minutes: time to survey, build a rig and drive it
 
         /// <summary>Seconds of pumping left in a deposit at this team's current rate (low power halves it).</summary>
         public static float DeepMineSecondsLeft(DeepDeposit d, Team team) => d.Amount / (EntityDef.DeepMineRate * (team.LowPower ? 0.5f : 1f));

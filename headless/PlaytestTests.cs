@@ -101,7 +101,7 @@ namespace Pez.Headless
                 var js = StateData.Team(w, 0);
                 bool eta = Json.Write(js).Contains("runs_dry_in_s");
                 Check(mine != null && eta && w.Alerts.Active(w, 0).Any(a => a.Kind == "deep_mine_running_low"),
-                      $"a deep mine shows runs_dry_in_s ({eta}) and warns DEEP DEPOSIT RUNNING LOW at 2 minutes left");
+                      $"a deep mine shows runs_dry_in_s ({eta}) and warns DEEP DEPOSIT RUNNING LOW at 5 minutes left");
             }
 
             // Harvest with no surface ore left says which trucks found none and why.

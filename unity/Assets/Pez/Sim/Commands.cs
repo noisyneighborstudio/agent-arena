@@ -132,7 +132,15 @@ namespace Pez.Sim
             t.StructureQueue.Add(new ProdItem { Key = key, StructureId = s.Id });
             w.Emit("placed", team, s.Id, pos: s.Center, key: key);
             int ahead = t.StructureQueue.Count - 1;
-            return Ok($"{key} #{s.Id} placed at ({origin.X},{origin.Y}), size {def.SizeX}x{def.SizeY}, build time {def.BuildTime}s" + (ahead > 0 ? $", {ahead} structure(s) ahead in queue" : ""))
+            // Power, counting everything placed (finished or not): say now if this tips you into low power when it's done.
+            string power = "";
+            if (def.Power < 0)
+            {
+                int made = 0, drawn = 0;
+                foreach (var o in w.Owned(team).Where(o => o.IsStructure)) { if (o.Def.Power > 0) made += o.Def.Power; else drawn -= o.Def.Power; }
+                if (drawn > made) power = $". Power warning: with everything placed you'll draw {drawn} against {made} produced, which is LOW POWER (half speed); add a power_plant";
+            }
+            return Ok($"{key} #{s.Id} placed at ({origin.X},{origin.Y}), size {def.SizeX}x{def.SizeY}, build time {def.BuildTime}s" + (ahead > 0 ? $", {ahead} structure(s) ahead in queue" : "") + power)
                 .Set("id", s.Id);
         }
 
@@ -395,7 +403,8 @@ namespace Pez.Sim
             var t = w.Teams[team];
             if (amount < 1) t.Reserve.Remove(item); else t.Reserve[item] = (int)amount;
             string now = t.Reserve.Count == 0 ? "no reserves" : "reserves: " + string.Join(", ", t.Reserve.Select(kv => $"{kv.Value} {kv.Key}"));
-            return Ok((amount < 1 ? $"{item} reserve cleared" : $"converters now leave {(int)amount} {item} alone ({item} {t.Amount(item)} in stock now)") + $"; {now}");
+            string stall = amount >= 1 && t.Amount(item) <= amount ? $". Note: you have only {t.Amount(item)}, so nothing that uses {item} will run until you have more than {(int)amount}" : "";
+            return Ok((amount < 1 ? $"{item} reserve cleared" : $"converters now leave {(int)amount} {item} alone ({item} {t.Amount(item)} in stock now)") + stall + $"; {now}");
         }
 
         /// <summary>A raw cost the team can't pay because its own converters eat that item as it arrives: say how to keep some.</summary>
