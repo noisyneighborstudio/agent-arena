@@ -731,6 +731,38 @@ namespace Pez.Headless
             Check(why == null && d.MineId != 0, $"a deposit with rock on its tile is still drillable: the mine stands beside it ({why ?? "deployed"})");
         }
 
+        /// <summary>#28: equal-cost open-field fights, heavy tanks against buggy swarms and rocket blobs.</summary>
+        public static int BenchSwarm()
+        {
+            int Cost(string k) => Defs.Get(k).Cost.Values.Sum();
+            Console.WriteLine($"costs (all resources summed): heavy_tank {Cost("heavy_tank")}, scout_buggy {Cost("scout_buggy")}, rocket_soldier {Cost("rocket_soldier")}, rifleman {Cost("rifleman")}, light_tank {Cost("light_tank")}, gun_turret {Cost("gun_turret")}");
+            foreach (var (a, na, b) in new[] { ("heavy_tank", 10, "scout_buggy"), ("heavy_tank", 10, "rocket_soldier"), ("heavy_tank", 10, "rifleman"), ("light_tank", 10, "scout_buggy"), ("rocket_soldier", 20, "scout_buggy") })
+                foreach (bool clump in new[] { true, false })
+                {
+                    int nb = (int)Math.Round(na * Cost(a) / (double)Cost(b));
+                    int aw = 0, bw = 0; float aLeft = 0, bLeft = 0;
+                    for (int seed = 1; seed <= 5; seed++)
+                    {
+                        var w = new World(2, seed, 96);
+                        foreach (var t in w.Teams) t.ProtectedUntil = 0;
+                        foreach (var e in w.Entities.Where(e => !e.IsStructure).ToList()) w.Remove(e);
+                        var h0 = w.Owned(0).First(e => e.IsStructure); var h1 = w.Owned(1).First(e => e.IsStructure);
+                        var A = new List<Entity>(); var B = new List<Entity>();
+                        float gap = clump ? 0.9f : 2.5f;
+                        for (int i = 0; i < na; i++) A.Add(At(w.SpawnUnit(0, a, h0), new Vec2(40 + (i % 4) * 1.2f, 40 + (i / 4) * 1.2f)));
+                        for (int i = 0; i < nb; i++) B.Add(At(w.SpawnUnit(1, b, h1), new Vec2(56 + (i % 6) * gap, 40 + (i / 6) * gap)));
+                        Commands.Execute(w, 0, Cmd("type", "attack_move", "units", A.Select(u => u.Id).ToArray(), "x", 60, "y", 42));
+                        Commands.Execute(w, 1, Cmd("type", "attack_move", "units", B.Select(u => u.Id).ToArray(), "x", 40, "y", 42));
+                        for (int s = 0; s < 120 && A.Any(u => !u.Dead) && B.Any(u => !u.Dead); s++) Run(w, 1);
+                        int la = A.Count(u => !u.Dead), lb = B.Count(u => !u.Dead);
+                        if (la > 0 && lb == 0) aw++; else if (lb > 0 && la == 0) bw++;
+                        aLeft += la / (float)na; bLeft += lb / (float)nb;
+                    }
+                    Console.WriteLine($"{na} {a} vs {nb} {b} ({(clump ? "clumped" : "spread")}): {a} wins {aw}/5, {b} wins {bw}/5; survivors {a} {aLeft / 5:P0}, {b} {bLeft / 5:P0}");
+                }
+            return 0;
+        }
+
         static void Drones()
         {
             Console.WriteLine("\n-- drones");
