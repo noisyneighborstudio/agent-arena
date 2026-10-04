@@ -115,6 +115,7 @@ namespace Pez.Sim
             "salvage_dropped" => "SALVAGE ON THE FIELD",
             "match_clock" => "MATCH CLOCK",
             "defences_offline" => "DEFENCES OFFLINE: UPKEEP UNPAID",
+            "low_power" => "LOW POWER: PRODUCTION AND MINING AT HALF SPEED",
             _ => "COMBAT",
         };
 

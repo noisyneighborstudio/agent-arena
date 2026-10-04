@@ -526,6 +526,12 @@ namespace Pez.Headless
             float start = slow.Pos.X;
             Run(g, 12);
             Check(slow.Pos.X - start > tail.Def.Speed * 12 + 2f, $"a member left behind catches up at its own speed ({slow.Pos.X - start:0.0} tiles in 12 s; the group's pace is {tail.Def.Speed:0.0}/s)");
+            // Fern: a slow member starting far behind (35+ tiles) is still waited for.
+            var lead = At(g.SpawnUnit(0, "light_tank", h), new Vec2(50, 60));
+            var lag = At(g.SpawnUnit(0, "engineer", h), new Vec2(14, 60));
+            Commands.Execute(g, 0, Cmd("type", "move", "units", new[] { lead.Id, lag.Id }, "x", 90, "y", 60, "together", true));
+            Run(g, 40);
+            Check(lead.Pos.X < 62f, $"leaders wait even for a slow member 36 tiles behind (tank at x {lead.Pos.X:0}, engineer at x {lag.Pos.X:0})");
             var drone = g.SpawnUnit(0, "recon_drone", h);
             var rd = Commands.Execute(g, 0, Cmd("type", "move", "units", new[] { drone.Id, slow.Id, quick.Id }, "x", 60, "y", 60, "together", true));
             Check(drone.SpeedCap == 0 && drone.Group == 0 && Said(rd).Contains("aircraft at their own speed"), $"aircraft fly their own pace (they burn fuel by the second): {Said(rd)}");
@@ -575,6 +581,33 @@ namespace Pez.Headless
             Run(w, 90);
             var why = w.Events.LastOrDefault(e => e.Type == "capture_stopped" && e.A == eng2.Id);
             Check(eng2.Order == Order.Idle && why != null && why.Text.Contains("below 50%"), $"an engineer that gives up says why: {why?.Text}");
+            Check(StateView.EventList(w, 0, 0, 200).Any(e => e.Item3 == "capture_stopped"), "and the player sees it in their events");
+            // Ember: capture by x,y counts as taking a neutral derrick, so it's allowed during protection too.
+            w.Teams[0].ProtectedUntil = w.Time + 100;
+            var neutral = w.Derricks.FirstOrDefault(x => x.Team < 0) ?? w.Derricks.First();
+            var wasTeam = neutral.Team; neutral.Team = -1;
+            var eng4 = At(w.SpawnUnit(0, "engineer", hq0), hq0.Center + new Vec2(3, 3));
+            var rp = Commands.Execute(w, 0, Cmd("type", "capture", "units", new[] { eng4.Id }, "x", neutral.Center.X, "y", neutral.Center.Y));
+            Check(Ok(rp), $"capture by x,y works during newcomer protection: {Said(rp)}");
+            neutral.Team = wasTeam; w.Teams[0].ProtectedUntil = 0; w.Remove(eng4);
+
+            // Fern: capture by x,y of a site whose derrick is being rebuilt; the engineer waits and takes it.
+            var d2 = w.Derricks.First(x => x.Team != 0);
+            d2.Team = 1; var site2 = d2.Center;
+            w.Hurt(d2, 1e5f, At(w.SpawnUnit(0, "heavy_tank", hq0), site2 + new Vec2(3, 3)));
+            w.Step();
+            var eng3 = At(w.SpawnUnit(0, "engineer", hq0), hq0.Center + new Vec2(3, 2));
+            var rs = Commands.Execute(w, 0, Cmd("type", "capture", "units", new[] { eng3.Id }, "x", site2.X, "y", site2.Y));
+            Run(w, 150);
+            var risen = w.Derricks.FirstOrDefault(x => Vec2.Dist(x.Center, site2) < 1.5f);
+            Check(Ok(rs) && risen != null && risen.Team == 0, $"capture x,y on a destroyed derrick's site waits and takes the rebuilt one: {Said(rs)}");
+            // Attack-moving units leave a held derrick alone (it's worth capturing); an explicit attack still shoots it.
+            var held = risen; held.Team = 1;
+            var tank2 = At(w.SpawnUnit(0, "light_tank", hq0), held.Center + new Vec2(4, 0));
+            Commands.Execute(w, 0, Cmd("type", "attack_move", "units", new[] { tank2.Id }, "x", held.Center.X + 6, "y", held.Center.Y));
+            Run(w, 4);
+            Check(held.Hp == held.Def.MaxHp, $"attack_move doesn't shoot a held derrick on its own (hp {held.Hp:0}/{held.Def.MaxHp})");
+            foreach (var u in w.Owned(0).Where(u => !u.IsStructure).ToList()) w.Remove(u);
 
             // Fire from out of sight: what, from where, roughly how far.
             foreach (var u in w.Owned(0).Concat(w.Owned(1)).Where(u => !u.IsStructure).ToList()) w.Remove(u);
@@ -605,6 +638,15 @@ namespace Pez.Headless
             Run(o, 11);
             var home = o.Alerts.All.FirstOrDefault(a => a.Team == 0 && a.Kind == "surface_ore_exhausted");
             Check(home != null && home.Lost.Any(l => l.Contains("of what was there")), $"surface ore near home down to a fifth raises SURFACE ORE RUNNING OUT early: {home?.Lost.FirstOrDefault()}");
+
+            // Ember: tipping into low power raises an alert and an event.
+            var lp = new World(2, 7, 96);
+            var lph = lp.Owned(0).First(e => e.Def.Key == "command_center");
+            for (int i = 0; i < 4; i++) { var at = lp.FindPlacement(0, "electronics_plant"); if (at.HasValue) lp.SpawnStructure(0, "electronics_plant", at.Value, 1f); }
+            Run(lp, 1);
+            Check(!lp.Teams[0].LowPower || lp.Alerts.All.Any(a => a.Team == 0 && a.Kind == "low_power") && StateView.EventList(lp, 0, 0, 200).Any(e => e.Item3 == "low_power"),
+                  $"going into low power alerts the player (produced {lp.Teams[0].PowerProduced}, used {lp.Teams[0].PowerUsed})");
+            Check(lp.Teams[0].LowPower, "(the setup does tip it into low power)");
 
             // Rates are averaged: one truck's 150-ore drop isn't +150/s.
             var rt = new World(2, 7, 96);

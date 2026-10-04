@@ -851,6 +851,7 @@ namespace Pez.Sim
 
         void UpdatePower()
         {
+            var wasLow = Teams.Select(t => t.LowPower).ToList();
             foreach (var t in Teams) { t.PowerProduced = 0; t.PowerUsed = 0; }
             foreach (var e in Entities)
             {
@@ -858,6 +859,20 @@ namespace Pez.Sim
                 var t = Teams[e.Team];
                 if (e.Def.Key == "fusion_reactor" && !e.Working) continue; // out of plasma
                 if (e.Def.Power > 0) t.PowerProduced += e.Def.Power; else t.PowerUsed -= e.Def.Power;
+            }
+            // Say when a team tips into low power (and out of it): otherwise half-speed production goes unnoticed.
+            for (int i = 0; i < Teams.Count; i++)
+            {
+                var t = Teams[i];
+                if (t.Defeated || t.LowPower == wasLow[i]) continue;
+                var at = t.StartPos;
+                if (t.LowPower)
+                {
+                    Alerts.Raise(this, t.Id, "low_power", Priority.Medium, at, hit: false)
+                          .Lost.Add($"power {t.PowerProduced} produced, {t.PowerUsed} used: building, training and refining run at half speed until you build a power_plant or sell something that draws power");
+                    Emit("low_power", t.Id, 0, 0, at, text: $"low power ({t.PowerProduced} produced, {t.PowerUsed} used): everything runs at half speed until you add a power_plant");
+                }
+                else Emit("power_restored", t.Id, 0, 0, at, text: $"power restored ({t.PowerProduced} produced, {t.PowerUsed} used): full speed again");
             }
         }
 
@@ -1067,7 +1082,7 @@ namespace Pez.Sim
         /// <summary>How far apart (in tiles of route left) a group moving together lets its members get.</summary>
         public const float GroupSlack = 3f;
         /// <summary>A member this far behind the group's front is left to catch up rather than held for.</summary>
-        const float GroupGiveUp = 25f;
+        const float GroupGiveUp = 80f;
         readonly Dictionary<int, (float front, float rear)> groupSpan = new Dictionary<int, (float, float)>();
 
         /// <summary>Tiles of route a moving unit has left: to its current goal, then through its waypoints. (Formation
@@ -1082,6 +1097,8 @@ namespace Pez.Sim
         }
 
         static bool GroupMoving(Entity e) => !e.Dead && e.Group != 0 && !e.IsCarried && !e.Stranded && (e.Order == Order.Move || e.Order == Order.AttackMove);
+        // The rear the group waits for: members still on the move (one held up in a fight or jammed isn't waited on).
+        static bool GroupPacing(Entity e) => GroupMoving(e) && (e.Moving || e.Order == Order.Move);
 
         /// <summary>Each group's front (least route left) and rear (most, among members not hopelessly behind).</summary>
         void MeasureGroups()
@@ -1094,6 +1111,7 @@ namespace Pez.Sim
             {
                 if (!GroupMoving(e)) continue;
                 float r = RouteLeft(e), f = front[e.Group];
+                if (!GroupPacing(e)) r = f;
                 if (r - f > GroupGiveUp) r = f;
                 groupSpan[e.Group] = groupSpan.TryGetValue(e.Group, out var s) ? (f, MathF.Max(s.rear, r)) : (f, r);
             }
@@ -1107,7 +1125,9 @@ namespace Pez.Sim
             foreach (var s in Owned(e.Team))
             {
                 if (!s.IsStructure || !s.IsComplete) continue;
-                float d = Vec2.DistSq(s.Center, e.Pos) - (s.Def.FuelDepot ? 100f : 0f); // prefer real bases over a lone turret
+                // Pull back to a real base (production, drop-off or depot), not a lone turret, derrick or deep mine out in the field.
+                bool baseLike = s.Def.FuelDepot || s.Def.DropOff || s.Def.Produces != Producer.None;
+                float d = Vec2.DistSq(s.Center, e.Pos) * (baseLike ? 1f : 9f);
                 if (d < bd) { bd = d; home = s; }
             }
             if (home == null || home.DistFrom(e.Pos) < 4f) return;
@@ -1387,6 +1407,7 @@ namespace Pez.Sim
             foreach (var o in nearTarget)
             {
                 if (o.Dead || o.Team == e.Team || o.IsCarried || o.Team < 0) continue; // neutral derricks aren't enemies
+                if (o.Def.Key == "derrick") continue; // nor are held ones a threat: worth capturing, so only shot when ordered (attack)
                 if (IsProtected(o.Team) || IsProtected(e.Team)) continue; // newcomer protection: no fighting either way
                 if (e.Def.Weapon != null && !e.Def.Weapon.CanHit(o.Def)) continue;
                 float d = o.DistFrom(e.Pos);
@@ -2062,7 +2083,8 @@ namespace Pez.Sim
                 var drops = Entities.Where(s => !s.Dead && s.Team == team.Id && s.IsStructure && s.IsComplete && s.Def.DropOff).ToList();
                 if (drops.Count == 0) continue;
                 var seen = new HashSet<int>();
-                long left = 0, was = 0;
+                // Iron and copper, each on its own: untouched crystal and uranium nearby mustn't mask a dry iron field.
+                var left = new long[2]; var was = new long[2];
                 int r = (int)HomeOreRadius;
                 foreach (var d in drops)
                 {
@@ -2071,14 +2093,15 @@ namespace Pez.Sim
                         for (int x = Math.Max(0, cx - r); x <= Math.Min(Map.W - 1, cx + r); x++)
                         {
                             int i = Map.Idx(x, y);
-                            if (Map.OreBase[i] <= 0 || !seen.Add(i)) continue;
-                            left += Map.Ore[i]; was += Map.OreBase[i];
+                            if (Map.OreBase[i] <= 0 || Map.OreBaseType[i] > 1 || !seen.Add(i)) continue;
+                            left[Map.OreBaseType[i]] += Map.Ore[i]; was[Map.OreBaseType[i]] += Map.OreBase[i];
                         }
                 }
-                if (was < 1000 || left > was / 4) continue;
+                int k = Enumerable.Range(0, 2).Where(j => was[j] >= 1000 && left[j] <= was[j] / 4).Select(j => (int?)j).FirstOrDefault() ?? -1;
+                if (k < 0) continue;
                 team.SurfaceWarnedAt = Time;
                 Alerts.Raise(this, team.Id, "surface_ore_exhausted", Priority.Medium, drops[0].Center, hit: false)
-                      .Lost.Add($"the surface ore within {(int)HomeOreRadius} tiles of your drop-offs is down to {left} ({100 * left / was}% of what was there). " +
+                      .Lost.Add($"the surface {Defs.Ores[k]} within {(int)HomeOreRadius} tiles of your drop-offs is down to {left[k]} ({100 * left[k] / was[k]}% of what was there). " +
                                 "Plan the next step now: survey for deep deposits (geological_surveyor, then drill_rig), hold a derrick, or put a refinery or outpost by a new field and guard it; trucks left to choose will start driving far for ore");
             }
         }

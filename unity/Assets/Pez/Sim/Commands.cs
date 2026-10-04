@@ -144,7 +144,7 @@ namespace Pez.Sim
             var missing = w.MissingPrereq(team, def);
             if (missing != null) return Err($"{key} {missing}");
             float asked = c.Num("count", 1);
-            if (float.IsNaN(asked) || asked < 1) return Err("count must be 1 to 10");
+            if (float.IsNaN(asked) || asked < 1 || asked > 10) return Err("count must be 1 to 10 (queue more with another train)");
             int count = Math.Min(10, (int)asked);
             var t = w.Teams[team];
             Entity at = null;
@@ -164,7 +164,7 @@ namespace Pez.Sim
                 queued++;
             }
             if (queued == 0) return Err($"{key}: {t.Missing(def.Cost)}{ReserveHint(w, team, def.Cost)}");
-            return Ok($"queued {queued}x {key}" + (at != null ? $" at {at.Def.Key} #{at.Id}" : "") + (queued < count ? $" (could only afford {queued})" : "") + $"; queue length {t.UnitQueues[def.BuiltBy].Count}");
+            return Ok($"queued {queued}x {key}" + (at != null ? $" at {at.Def.Key} #{at.Id}" : "") + (queued < count ? $" (could only afford {queued})" : "") + $"; {t.UnitQueues[def.BuiltBy].Count} in the queue shared by your {Defs.ProducerKey(def.BuiltBy)} buildings");
         }
 
         static List<Entity> ResolveUnits(World w, int team, Dictionary<string, object> c)
@@ -438,7 +438,19 @@ namespace Pez.Sim
             // Derricks get a new id each time one is rebuilt: x,y names the site instead.
             float cx = c.Num("x"), cy = c.Num("y");
             if (t == null && !float.IsNaN(cx) && !float.IsNaN(cy))
-                t = w.Derricks.Where(d => Vec2.Dist(d.Center, new Vec2(cx, cy)) <= 3f).OrderBy(d => Vec2.Dist(d.Center, new Vec2(cx, cy))).FirstOrDefault();
+            {
+                var at = new Vec2(cx, cy);
+                t = w.Derricks.Where(d => Vec2.Dist(d.Center, at) <= 3f).OrderBy(d => Vec2.Dist(d.Center, at)).FirstOrDefault();
+                // A destroyed derrick's site: go and wait there, and take the new one when it rises.
+                var pending = w.DerrickRespawns.Where(r => Vec2.Dist(new Vec2(r.origin.X + 1, r.origin.Y + 1), at) <= 3f).Select(r => (Int2?)r.origin).FirstOrDefault();
+                if (t == null && pending is Int2 o)
+                {
+                    var site = new Vec2(o.X + 1, o.Y + 1);
+                    float due = w.DerrickRespawns.First(r => r.origin.Equals(o)).at - w.Time;
+                    foreach (var u in eng) w.SetOrder(u, Order.Capture, site, 0);
+                    return Ok($"{eng.Count} engineer(s) heading for the derrick site at {o.X},{o.Y}: it's rebuilt neutral in about {MathF.Max(0, due):0}s, and they take it then (it pays {World.DerrickSteel} steel/s while you hold it)");
+                }
+            }
             if (t == null) return Err("target must be an enemy structure or a derrick: give its id, or x,y of a derrick (ids change when one is destroyed and rebuilt; see 'derricks' in state)");
             if (!t.IsStructure || t.Team == team) return Err("target must be an enemy structure, or a neutral derrick");
             // Derricks are landmarks everyone knows about: an engineer can set out for one unseen. Whether it's still neutral,
@@ -464,7 +476,9 @@ namespace Pez.Sim
         static bool CapturesNeutral(World w, Dictionary<string, object> c)
         {
             var t = w.Get((int)c.Num("target", 0));
-            return t != null && t.Def.Key == "derrick";
+            if (t != null) return t.Def.Key == "derrick";
+            float x = c.Num("x"), y = c.Num("y"); // a derrick's site by x,y (standing or being rebuilt)
+            return !float.IsNaN(x) && !float.IsNaN(y);
         }
 
         static readonly Vec2[] MinePattern =
