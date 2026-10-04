@@ -24,6 +24,9 @@ namespace Pez.Sim
         public int UnitsBuilt, StructuresBuilt, UnitsLost, StructuresLost, Kills, OreMined;
         /// <summary>The ore value of everything this team destroyed (World.ValueOf), and the salvage its kills left on the ground.</summary>
         public int KillValue, SalvageLeft;
+        /// <summary>How many of Kills are counted in KillValue. Kills from before kill value was tracked (a game resumed
+        /// across that upgrade) are backfilled at a typical unit's value (World.BackfillKillValue).</summary>
+        public int KillsValued;
         /// <summary>Of OreMined, what came from deep mines (the rest is surface ore and salvage, by truck).</summary>
         public int DeepMined;
         /// <summary>Derricks this team has captured, and the steel they've paid it.</summary>
@@ -1431,7 +1434,7 @@ namespace Pez.Sim
             if (t.Hp <= 0)
             {
                 Emit("destroyed", t.Team, t.Id, src?.Id ?? 0, t.Center, key: t.Def.Key);
-                if (team >= 0 && team < Teams.Count) Teams[team].Stats.Kills++;
+                if (team >= 0 && team < Teams.Count) { Teams[team].Stats.Kills++; Teams[team].Stats.KillsValued++; }
                 if (t.IsStructure) Teams[t.Team].Stats.StructuresLost++; else Teams[t.Team].Stats.UnitsLost++;
                 TallyDeath(t, src);
                 var lost = Alerts.Raise(this, t.Team, t.IsStructure ? "structure_lost" : "units_lost", t.IsStructure ? Priority.Critical : Priority.Medium, t.Center, attacker: src);

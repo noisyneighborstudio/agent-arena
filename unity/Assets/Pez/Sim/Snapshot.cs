@@ -104,7 +104,7 @@ namespace Pez.Sim
             var s = t.Stats;
             o.Set("stats", new JObj().Put("units_built", s.UnitsBuilt).Put("structures_built", s.StructuresBuilt).Put("units_lost", s.UnitsLost)
                 .Put("structures_lost", s.StructuresLost).Put("kills", s.Kills).Put("ore_mined", s.OreMined)
-                .Put("kill_value", s.KillValue).Put("salvage_left", s.SalvageLeft).Put("deep_mined", s.DeepMined)
+                .Put("kill_value", s.KillValue).Put("kills_valued", s.KillsValued).Put("salvage_left", s.SalvageLeft).Put("deep_mined", s.DeepMined)
                 .Put("derricks_captured", s.DerricksCaptured).Put("derrick_steel", s.DerrickSteel).Put("salvage_mined", s.SalvageMined).Put("upkeep_paid", s.UpkeepPaid)
                 .Set("built", s.Built.Aggregate(new JObj(), (j, kv) => j.Set(kv.Key, kv.Value))));
             return o;
@@ -157,7 +157,7 @@ namespace Pez.Sim
                 var st = t.Stats;
                 s.Load("units_built", ref st.UnitsBuilt); s.Load("structures_built", ref st.StructuresBuilt); s.Load("units_lost", ref st.UnitsLost);
                 s.Load("structures_lost", ref st.StructuresLost); s.Load("kills", ref st.Kills); s.Load("ore_mined", ref st.OreMined);
-                s.Load("kill_value", ref st.KillValue); s.Load("salvage_left", ref st.SalvageLeft); s.Load("deep_mined", ref st.DeepMined);
+                s.Load("kill_value", ref st.KillValue); s.Load("kills_valued", ref st.KillsValued); s.Load("salvage_left", ref st.SalvageLeft); s.Load("deep_mined", ref st.DeepMined);
                 s.Load("derricks_captured", ref st.DerricksCaptured); s.Load("derrick_steel", ref st.DerrickSteel); s.Load("salvage_mined", ref st.SalvageMined); s.Load("upkeep_paid", ref st.UpkeepPaid);
                 var b = s.Obj("built");
                 if (b != null) foreach (var kv in b) if (kv.Value is double n) st.Built[kv.Key] = (int)n;
@@ -549,6 +549,7 @@ namespace Pez.Sim
                 w.ById[e.Id] = e;
             }
             if (dropped > 0) w.LastError = $"resumed without {dropped} entities of types this build doesn't have";
+            w.BackfillKillValue(); // kills from before kill value was tracked count at a typical unit's value
             // Drones from before map-relative tanks: size their tank for this map, keeping the fuel they had.
             foreach (var e in w.Entities) if (e.Def.RangeMaps > 0 && e.FuelCap <= 0) e.FuelCap = w.DroneFuel(e.Def);
             foreach (var pd in d.Objs("projectiles")) { var p = Snapshot.ReadProjectile(pd); if (p != null) w.Projectiles.Add(p); }

@@ -74,7 +74,7 @@ namespace Pez.Headless
             [typeof(DeepDeposit)] = "Id Pos Type Amount Initial MineId",
             [typeof(ProdItem)] = "Key Progress StructureId",
             [typeof(ZoneFlag)] = "ZoneId FlaggedBy FlaggedAt",
-            [typeof(TeamStats)] = "UnitsBuilt StructuresBuilt UnitsLost StructuresLost Kills OreMined Built KillValue SalvageLeft DeepMined DerricksCaptured DerrickSteel SalvageMined UpkeepPaid",
+            [typeof(TeamStats)] = "UnitsBuilt StructuresBuilt UnitsLost StructuresLost Kills OreMined Built KillValue KillsValued SalvageLeft DeepMined DerricksCaptured DerrickSteel SalvageMined UpkeepPaid",
             [typeof(GameConfig)] = "Seed MapSize Speed Controllers Orders Open MaxPlayers MaxMapSize OreScale HouseAIs HouseResignAbove MatchHours | KitchenSink",
         };
 

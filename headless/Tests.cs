@@ -61,6 +61,7 @@ namespace Pez.Headless
             NoGridlock();
             BuildingsBurn();
             Drones();
+            KillValueBackfill();
             LastHqSpills();
             FieldRefuelling();
             ArenaCleared();
@@ -452,6 +453,19 @@ namespace Pez.Headless
             var freeDeps = w.Map.Deep.Where(d => t.Surveyed.Contains(d.Id) && d.Amount > 0 && d.MineId == 0).ToList();
             Check(w.Owned(0).Any(e => e.Def.Key == "deep_mine"), $"and puts a deep mine on what it finds ({rigs.Count} rigs: {string.Join("; ", rigs.Select(r => $"{r.Pos} {r.OrderName}"))}; free deposits {freeDeps.Count}: {string.Join(" ", freeDeps.Take(3).Select(d => d.Pos.ToString()))}; steel {t.Amount("steel")}, factory queue {string.Join(",", t.UnitQueues[Producer.Factory].Select(q => q.Key))}, built {(t.Stats.Built.TryGetValue("drill_rig", out var nb) ? nb : 0)})");
             Check(w.Errors == 0, $"no sim errors ({w.LastError})");
+        }
+
+        static void KillValueBackfill()
+        {
+            Console.WriteLine("\n-- kill value backfill");
+            var w = new World(2, 7, 80);
+            var s = w.Teams[0].Stats;
+            s.Kills = 149; s.KillsValued = 0; s.KillValue = 300; // a game resumed across the upgrade: 149 kills, little of it valued
+            w.BackfillKillValue();
+            Check(s.KillsValued == 149 && s.KillValue == 300 + 149 * World.TypicalKillValue && World.TypicalKillValue > 50,
+                  $"kills from before kill value was tracked count at a typical unit's value ({World.TypicalKillValue} each: {s.KillValue})");
+            w.BackfillKillValue();
+            Check(s.KillValue == 300 + 149 * World.TypicalKillValue, "and only once");
         }
 
         static void Drones()

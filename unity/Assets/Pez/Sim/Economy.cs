@@ -272,6 +272,37 @@ namespace Pez.Sim
         /// What a thing is worth in materials: its cost, or for things that aren't bought (deployed structures), the cost of
         /// the unit that deploys into it (an outpost is an outpost truck, a deep mine a drill rig).
         /// </summary>
+        /// <summary>
+        /// Value counted for each kill that predates kill-value tracking: the median ore value of the standard armed units
+        /// (a fair stand-in when we know how many things a team destroyed but not what).
+        /// </summary>
+        public static int TypicalKillValue
+        {
+            get
+            {
+                if (typicalKill > 0) return typicalKill;
+                var vals = new List<float>();
+                foreach (var d in Defs.All.Values)
+                    if (!d.IsStructure && !d.IsMine && d.Weapon != null && d.Buildable && d.OwnerTeam < 0 && d.Cost.Count > 0)
+                    { var v = new float[4]; AddValue(v, d.Cost, 1f); vals.Add(v.Sum()); }
+                vals.Sort();
+                return typicalKill = vals.Count == 0 ? 200 : (int)vals[vals.Count / 2];
+            }
+        }
+        static int typicalKill;
+
+        /// <summary>Count kills that were never valued (they predate kill-value tracking) at TypicalKillValue each.</summary>
+        public void BackfillKillValue()
+        {
+            foreach (var t in Teams)
+            {
+                var s = t.Stats;
+                if (s.Kills <= s.KillsValued) continue;
+                s.KillValue += (s.Kills - s.KillsValued) * TypicalKillValue;
+                s.KillsValued = s.Kills;
+            }
+        }
+
         public Dictionary<string, int> ValueOf(EntityDef d)
         {
             if (d.Cost.Count > 0) return d.Cost;
