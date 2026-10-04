@@ -40,9 +40,15 @@ namespace Pez.Sim
         public const float DecayPerSecond = 0.0003f;
         /// <summary>Territory: the ground within this many tiles of a team's finished structures (the build-reach rule).</summary>
         public const int TerritoryReach = 6;
-        /// <summary>A 1x1 structure (a turret or tower) claims only this much: chaining cheap turrets across the map isn't holding it.</summary>
+        /// <summary>
+        /// Every other structure claims only this much. Territory is ground you hold economically: command centers,
+        /// refineries and outposts (drop-offs), derricks and deep mines claim TerritoryReach around them. Chains of cheap
+        /// turrets, then of cheap barracks, across the map (test players Hazel, Iris, Juniper) were the cheapest points on
+        /// the board and pulled players away from fighting and mining.
+        /// </summary>
         public const int SmallTerritoryReach = 2;
-        public static int ReachOf(EntityDef d) => d.SizeX * d.SizeY <= 1 ? SmallTerritoryReach : TerritoryReach;
+        public static bool Holds(EntityDef d) => d.DropOff || d.Key == "derrick" || d.Key == "deep_mine";
+        public static int ReachOf(EntityDef d) => Holds(d) ? TerritoryReach : SmallTerritoryReach;
 
         public float DecayAt => SuddenDeathAt + DecayAfter;
         public float MatchEndsAt => SuddenDeathAt + EndAfter;
@@ -133,7 +139,7 @@ namespace Pez.Sim
             return scoreCache;
         }
 
-        public const string HowScored = "each team's share of what all players still in hold between them, 100 points each: territory (tiles within 6 of your finished buildings; 2 for 1x1 turrets and towers), economy (ore mined all game) and kills (the ore value of everything you destroyed); the most points wins";
+        public const string HowScored = "each team's share of what all players still in hold between them, 100 points each: territory (tiles within 6 of your finished command centers, refineries, outposts, derricks and deep mines; 2 around any other structure), economy (ore mined all game) and kills (the ore value of everything you destroyed); the most points wins";
 
         public string ScoreLine() => string.Join(", ", Scores().Select(s => $"{s.Name} {s.Score}"));
 

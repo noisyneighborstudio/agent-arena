@@ -643,6 +643,11 @@ namespace Pez.Headless
             Check(!Ok(s1) && !bk.Dead && Said(s1).Contains("confirm"), $"selling your only barracks asks for confirm first: {Said(s1)}");
             var s2 = Commands.Execute(w, 0, Cmd("type", "sell", "structure_id", bk.Id, "confirm", true));
             Check(Ok(s2) && bk.Dead, $"and sells with it: {Said(s2)}");
+            var dz = new World(2, 7, 96);
+            var dfac = dz.SpawnStructure(0, "factory", dz.FindPlacement(0, "factory").Value, 1f);
+            var drn = dz.SpawnUnit(0, "recon_drone", dfac);
+            var sd = Commands.Execute(dz, 0, Cmd("type", "sell", "structure_id", dfac.Id, "confirm", true));
+            Check(Ok(sd) && Said(sd).Contains($"recon_drone #{drn.Id} now has nowhere to refuel"), $"selling a drone's only pad warns it will crash: {Said(sd)}");
             var t0 = Commands.Execute(w, 0, Cmd("type", "train", "unit", "mining_truck", "count", 0));
             Check(!Ok(t0), $"train count 0 is refused, not taken as 1: {Said(t0)}");
 
@@ -654,6 +659,8 @@ namespace Pez.Headless
             Run(o, 11);
             var home = o.Alerts.All.FirstOrDefault(a => a.Team == 0 && a.Kind == "surface_ore_exhausted");
             Check(home != null && home.Lost.Any(l => l.Contains("of what was there")), $"surface ore near home down to a fifth raises SURFACE ORE RUNNING OUT early: {home?.Lost.FirstOrDefault()}");
+            Run(o, 90);
+            Check(o.Alerts.Active(o, 0).Any(x => x.Kind == "surface_ore_exhausted"), "and it stays in the state for minutes, not seconds, so a player polling now and then sees it");
 
             // Ember: tipping into low power raises an alert and an event.
             var lp = new World(2, 7, 96);
@@ -686,8 +693,17 @@ namespace Pez.Headless
             Run(hz, 1.1f);
             int turretTiles = hz.Scores().First(x => x.Team == 0).Territory - before;
             Check(turretTiles == 25, $"a lone 1x1 turret claims 25 tiles of territory (2 around it), not 169 ({turretTiles})");
+            int b0 = hz.Scores().First(x => x.Team == 0).Territory;
+            hz.SpawnStructure(0, "barracks", new Int2(70, 40), 1f);
+            Run(hz, 1.1f);
+            int barracksTiles = hz.Scores().First(x => x.Team == 0).Territory - b0;
+            int o0 = hz.Scores().First(x => x.Team == 0).Territory;
+            hz.SpawnStructure(0, "outpost", new Int2(40, 75), 1f);
+            Run(hz, 1.1f);
+            int outpostTiles = hz.Scores().First(x => x.Team == 0).Territory - o0;
+            Check(barracksTiles == 36 && outpostTiles == 196, $"a lone barracks claims 2 around it (36 tiles), an outpost, a holding, claims 6 (196): {barracksTiles} / {outpostTiles}");
             var rz = Commands.Execute(hz, 0, Cmd("type", "reserve", "item", "iron_ore", "amount", hz.Teams[0].Amount("iron_ore") + 500));
-            Check(Ok(rz) && Said(rz).Contains("nothing that uses iron_ore will run"), $"a reserve above your stock says what it stalls: {Said(rz)}");
+            Check(Ok(rz) && Said(rz).Contains("converters won't use any iron_ore"), $"a reserve above your stock says what it stalls: {Said(rz)}");
         }
 
         static void Drones()

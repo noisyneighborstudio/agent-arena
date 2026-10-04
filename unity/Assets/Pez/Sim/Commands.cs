@@ -389,6 +389,9 @@ namespace Pez.Sim
             w.Emit("destroyed", team, s.Id, 0, s.Center, key: s.Def.Key);
             w.Remove(s);
             string locked = lost.Count > 0 ? $". That was your only {s.Def.Key}: {lockout}" : "";
+            // Aircraft that just lost their last place to land: say so now, not when they crash.
+            var grounded = w.Owned(team).Where(u => u.IsAir && u.Def.UsesFuel && !w.Owned(team).Any(p => World.IsFuelPoint(u, p))).ToList();
+            if (grounded.Count > 0) locked += $". Warning: {string.Join(", ", grounded.Take(6).Select(u => $"{u.Def.Key} #{u.Id}"))} now {(grounded.Count == 1 ? "has" : "have")} nowhere to refuel and will crash when the fuel runs out: build an airfield (or a factory, for drones)";
             if (refund.Length > 0) return Ok($"sold {s.Def.Key} for {refund}{locked}");
             string power = s.Def.Power < 0 ? $"; {-s.Def.Power} power freed" : s.Def.Power > 0 ? $"; its {s.Def.Power} power output is gone" : "";
             return Ok($"removed {s.Def.Key} #{s.Id}: it cost nothing, so there's no refund{power}{locked}");
@@ -403,7 +406,7 @@ namespace Pez.Sim
             var t = w.Teams[team];
             if (amount < 1) t.Reserve.Remove(item); else t.Reserve[item] = (int)amount;
             string now = t.Reserve.Count == 0 ? "no reserves" : "reserves: " + string.Join(", ", t.Reserve.Select(kv => $"{kv.Value} {kv.Key}"));
-            string stall = amount >= 1 && t.Amount(item) <= amount ? $". Note: you have only {t.Amount(item)}, so nothing that uses {item} will run until you have more than {(int)amount}" : "";
+            string stall = amount >= 1 && t.Amount(item) <= amount ? $". Note: you have only {t.Amount(item)}, so your converters won't use any {item} until you have more than {(int)amount} (building and training still spend it)" : "";
             return Ok((amount < 1 ? $"{item} reserve cleared" : $"converters now leave {(int)amount} {item} alone ({item} {t.Amount(item)} in stock now)") + stall + $"; {now}");
         }
 
@@ -585,6 +588,13 @@ namespace Pez.Sim
             string FreeList() => open.Count == 0 ? "you have no free mining zones: survey or prospect with a geological_surveyor to flag some"
                                                  : "free zones: " + string.Join(", ", open.OrderBy(d => Vec2.Dist(d.Pos, rigs[0].Pos)).Take(6).Select(d => $"#{d.Id} {Defs.Ores[d.Type]}"));
             void Send(Entity rig, DeepDeposit d) { w.SetOrder(rig, Order.Drill, d.Pos); rig.ZoneId = d.Id; }
+            // Like harvest: say so when a zone sits by an enemy base you know of (a rig is 800 steel).
+            string Danger(DeepDeposit d)
+            {
+                var foe = t.KnownEnemyStructures.Values.Where(k => k.team >= 0 && k.key != "derrick" && Vec2.Dist(k.origin.Center, d.Pos) < World.HostileOreRadius)
+                           .Select(k => $"{w.Teams[k.team].Name}'s {k.key}").FirstOrDefault();
+                return foe == null ? "" : $" (careful: by {foe}, which you know of: escort it)";
+            }
 
             if (c.ContainsKey("zone"))
             {
@@ -598,7 +608,7 @@ namespace Pez.Sim
                 var rig = rigs.OrderBy(r => Vec2.Dist(r.Pos, d.Pos)).First();
                 Send(rig, d);
                 foreach (var other in rigs.Where(r => r != rig && r.ZoneId == id && r.Order == Order.Drill)) w.SetOrder(other, Order.Idle, other.Pos);
-                return Ok($"drill_rig #{rig.Id} heading to {Desc(d)}, {Vec2.Dist(rig.Pos, d.Pos):0} tiles away; it deploys into a deep_mine on arrival" +
+                return Ok($"drill_rig #{rig.Id} heading to {Desc(d)}, {Vec2.Dist(rig.Pos, d.Pos):0} tiles away{Danger(d)}; it deploys into a deep_mine on arrival" +
                           (rigs.Count > 1 ? $". One mine per zone: {string.Join(", ", rigs.Where(r => r != rig).Select(r => "#" + r.Id))} not sent" : ""));
             }
 
@@ -610,7 +620,7 @@ namespace Pez.Sim
                 if (d == null) { results.Add($"#{rig.Id}: no free zone left for it"); continue; }
                 open.Remove(d);
                 Send(rig, d);
-                results.Add($"#{rig.Id} heading to {Desc(d)}");
+                results.Add($"#{rig.Id} heading to {Desc(d)}{Danger(d)}");
             }
             if (!results.Any(r => r.Contains("heading"))) return Err(FreeList());
             return Ok(string.Join("; ", results) + "; each deploys into a deep_mine on arrival");

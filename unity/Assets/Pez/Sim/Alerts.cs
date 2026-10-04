@@ -80,8 +80,15 @@ namespace Pez.Sim
             open.RemoveAll(a => a.Team == team);
         }
 
+        /// <summary>Strategic alerts (the economy, power, the match clock) stay in the state for 5 minutes, not 20 s: they're
+        /// about what to do next, and a player who polls now and then shouldn't miss them.</summary>
+        public const float StrategicWindow = 300f;
+        public static bool Strategic(string kind) => kind is "surface_ore_exhausted" or "deep_mine_running_low" or "deep_mine_depleted" or "low_power"
+            or "defences_offline" or "match_clock" or "protection_ended" or "stalled" or "low_fuel";
+        static float WindowFor(string kind) => Strategic(kind) ? StrategicWindow : ActiveWindow;
+
         public IEnumerable<Alert> Active(World w, int team) =>
-            All.Where(a => a.Team == team && (w.Tick - a.LastTick) * World.Dt <= ActiveWindow)
+            All.Where(a => a.Team == team && (w.Tick - a.LastTick) * World.Dt <= WindowFor(a.Kind))
                .OrderByDescending(a => a.Priority).ThenByDescending(a => a.LastTick);
 
         /// <summary>Seconds after its last update that an alert stops being news (a player back after hours isn't handed hours of history).</summary>
