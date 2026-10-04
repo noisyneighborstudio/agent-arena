@@ -86,7 +86,7 @@ namespace Pez.Sim
                 .Set("power_produced", t.PowerProduced).Set("power_used", t.PowerUsed)
                 .Set("start", SnapIO.V(t.StartPos)).Put("defeated", t.Defeated).Put("left", t.Left).Put("resigned", t.Resigned)
                 .Put("stalled_since", t.StalledSince, -1f).Put("house", t.House).Set("seat", t.Seat).Put("protected_until", t.ProtectedUntil)
-                .Put("surface_warned_at", t.SurfaceWarnedAt, -999f).Put("last_command_at", t.LastCommandAt, -1f);
+                .Put("surface_warned_at", t.SurfaceWarnedAt, -999f).Put("home_ore_warned", t.HomeOreWarned, 0).Put("last_command_at", t.LastCommandAt, -1f);
             if (t.Visible != null) o.Set("visible", SnapIO.PackBits(t.Visible));
             if (t.Explored != null) o.Set("explored", SnapIO.PackBits(t.Explored));
             if (t.Detected.Count > 0) o.Set("detected", t.Detected.Cast<object>().ToList());
@@ -128,7 +128,7 @@ namespace Pez.Sim
             d.Load("power_produced", ref t.PowerProduced); d.Load("power_used", ref t.PowerUsed);
             d.Load("start", ref t.StartPos); d.Load("defeated", ref t.Defeated); d.Load("left", ref t.Left); d.Load("resigned", ref t.Resigned);
             d.Load("stalled_since", ref t.StalledSince); d.Load("house", ref t.House); d.Load("seat", ref t.Seat);
-            d.Load("protected_until", ref t.ProtectedUntil); d.Load("surface_warned_at", ref t.SurfaceWarnedAt); d.Load("last_command_at", ref t.LastCommandAt);
+            d.Load("protected_until", ref t.ProtectedUntil); d.Load("surface_warned_at", ref t.SurfaceWarnedAt); d.Load("home_ore_warned", ref t.HomeOreWarned); d.Load("last_command_at", ref t.LastCommandAt);
             t.Visible = SnapIO.UnpackBits(d.Str("visible"), map.W * map.H);
             t.Explored = SnapIO.UnpackBits(d.Str("explored"), map.W * map.H);
             foreach (var x in d.Arr("detected")) if (x is double id) t.Detected.Add((int)id);

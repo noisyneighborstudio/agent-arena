@@ -102,6 +102,8 @@ namespace Pez.Sim
         /// <summary>Mining zones: the flag a surveyor planted on each deep deposit it found (key = deposit id = zone id).</summary>
         public readonly Dictionary<int, ZoneFlag> Zones = new Dictionary<int, ZoneFlag>();
         public float SurfaceWarnedAt = -999;
+        /// <summary>Home ores already warned about at half left (bit per ore type): each gets its own warning.</summary>
+        public int HomeOreWarned;
         /// <summary>Game time of this team's last command from its player (-1 = none yet); the lobby reports idle seats.</summary>
         public float LastCommandAt = -1;
         /// <summary>Items converters leave alone below this amount ('reserve' command), so raw-ore costs stay payable.</summary>
@@ -2132,7 +2134,7 @@ namespace Pez.Sim
         {
             foreach (var team in Teams)
             {
-                if (team.Defeated || Time - team.SurfaceWarnedAt < 300f) continue;
+                if (team.Defeated) continue;
                 var drops = Entities.Where(s => !s.Dead && s.Team == team.Id && s.IsStructure && s.IsComplete && s.Def.DropOff).ToList();
                 if (drops.Count == 0) continue;
                 var seen = new HashSet<int>();
@@ -2151,8 +2153,10 @@ namespace Pez.Sim
                         }
                 }
                 // At half: the second half goes much faster than the first (more trucks by then), so a quarter left is too late.
-                int k = Enumerable.Range(0, 2).Where(j => was[j] >= 1000 && left[j] <= was[j] / 2).Select(j => (int?)j).FirstOrDefault() ?? -1;
+                // Each ore once, when it reaches half (test player Reed's copper warning hid that his iron was going too).
+                int k = Enumerable.Range(0, 2).Where(j => (team.HomeOreWarned & (1 << j)) == 0 && was[j] >= 1000 && left[j] <= was[j] / 2).Select(j => (int?)j).FirstOrDefault() ?? -1;
                 if (k < 0) continue;
+                team.HomeOreWarned |= 1 << k;
                 team.SurfaceWarnedAt = Time;
                 Alerts.Raise(this, team.Id, "surface_ore_exhausted", Priority.Medium, drops[0].Center, hit: false)
                       .Lost.Add($"the surface {Defs.Ores[k]} within {(int)HomeOreRadius} tiles of your drop-offs is down to {left[k]} ({100 * left[k] / was[k]}% of what was there). " +

@@ -665,6 +665,8 @@ namespace Pez.Headless
             Check(home != null && home.Lost.Any(l => l.Contains("of what was there")), $"surface ore near home down to a fifth raises SURFACE ORE RUNNING OUT early: {home?.Lost.FirstOrDefault()}");
             Run(o, 90);
             Check(o.Alerts.Active(o, 0).Any(x => x.Kind == "surface_ore_exhausted"), "and it stays in the state for minutes, not seconds, so a player polling now and then sees it");
+            var oreSaid = o.Alerts.All.Where(x => x.Team == 0 && x.Kind == "surface_ore_exhausted").SelectMany(x => x.Lost).ToList();
+            Check(oreSaid.Any(l => l.Contains("surface iron_ore")) && oreSaid.Any(l => l.Contains("surface copper_ore")), $"iron and copper each get their own warning (one doesn't hide the other): {string.Join(" | ", oreSaid.Select(l => l.Substring(0, Math.Min(40, l.Length))))}");
 
             // Ember: tipping into low power raises an alert and an event.
             var lp = new World(2, 7, 96);
