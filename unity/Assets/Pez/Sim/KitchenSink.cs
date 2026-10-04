@@ -561,6 +561,9 @@ namespace Pez.Sim
                 float range = Defs.Get(sk).Weapon.Range * 0.8f;
                 Lane(sk, tk, 2, b, range, name);
             }
+            // The long-range gun under column one, its own spotter drone beside it (sight 7, range 12).
+            Lane("long_range_artillery", "power_plant", 2, 30.5f, 10.5f, "Long-range artillery (range 12)", 13);
+            Unit(Blue, "recon_drone", 7, 32.5f);
             // Column two: indirect fire, specialists, anti-air, aircraft and defences.
             float a0 = 18;
             Lane("artillery", "power_plant", a0, 2, 9.5f, "Artillery (range 11, lobbed shells)", 13);

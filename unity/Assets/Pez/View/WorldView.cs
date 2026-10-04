@@ -673,7 +673,7 @@ namespace Pez.View
                 var targetRot = Quaternion.Euler(0, Yaw(e.Facing), 0);
                 rig.Root.rotation = Quaternion.Slerp(rig.Root.rotation, targetRot, Time.deltaTime * 14f);
                 if (!e.IsAir && e.Def.Armor != Armor.Infantry) HullFeel(v);
-                if (e.Def.Key == "artillery" && rig.HasModel) Artillery(v);
+                if (Models.IsArtillery(e.Def.Key) && rig.HasModel) Artillery(v);
                 if (rig.HasModel)
                 {
                     if (rig.Turret != null) Aim(v);
@@ -884,7 +884,7 @@ namespace Pez.View
         {
             "light_tank" or "laser_tank" or "scout_buggy" => LightHull,
             "heavy_tank" or "mammoth_tank" => HeavyHull,
-            "artillery" => ArtyHull,
+            "artillery" or "long_range_artillery" => ArtyHull,
             _ => OtherHull,
         };
 
@@ -911,7 +911,7 @@ namespace Pez.View
             v.HullPitch = Mathf.Clamp(v.HullPitch + v.HullPitchVel * dt, -hc.Up * 1.6f, hc.Down * 1.6f);
             v.Rig.Body.localRotation = Quaternion.Euler(v.HullPitch, 0, 0);
             if (e.Def.Key == "heavy_tank") v.StartSquat = Mathf.MoveTowards(v.StartSquat, accel > 0.4f ? 1f : 0f, dt / 0.25f);
-            if (e.Def.Key == "heavy_tank" || e.Def.Key == "artillery")
+            if (e.Def.Key == "heavy_tank" || Models.IsArtillery(e.Def.Key))
             {
                 var bp = v.Rig.Body.localPosition; bp.y = -0.015f * v.StartSquat - 0.04f * v.Deploy; v.Rig.Body.localPosition = bp;
             }
@@ -943,11 +943,24 @@ namespace Pez.View
             bool deploy = !e.Moving && engaged;
             float was = v.Deploy;
             v.Deploy = Mathf.MoveTowards(v.Deploy, deploy ? 1f : 0f, Time.deltaTime / (deploy ? 0.4f : 0.25f));
+            var rig = v.Rig;
+            // The spades swing up for travel and plant as it deploys (the model's rest pose is planted).
+            float up = 32f * (1f - Mathf.SmoothStep(0f, 1f, v.Deploy));
+            if (rig.SpadeL != null) rig.SpadeL.localRotation = rig.SpadeRestL * Quaternion.Euler(up, 0f, 0f);
+            if (rig.SpadeR != null) rig.SpadeR.localRotation = rig.SpadeRestR * Quaternion.Euler(up, 0f, 0f);
             if (was < 0.9f && v.Deploy >= 0.9f)
             {
-                var r = v.Rig.Root;
-                Fx.SpadeDust(r.position - r.forward * 0.42f + r.right * 0.26f, -r.forward);
-                Fx.SpadeDust(r.position - r.forward * 0.42f - r.right * 0.26f, -r.forward);
+                var r = rig.Root;
+                if (rig.SpadeL != null && rig.SpadeR != null)
+                {
+                    Fx.SpadeDust(rig.SpadeL.TransformPoint(rig.SpadeTipL), -r.forward);
+                    Fx.SpadeDust(rig.SpadeR.TransformPoint(rig.SpadeTipR), -r.forward);
+                }
+                else
+                {
+                    Fx.SpadeDust(r.position - r.forward * 0.42f + r.right * 0.26f, -r.forward);
+                    Fx.SpadeDust(r.position - r.forward * 0.42f - r.right * 0.26f, -r.forward);
+                }
             }
             if (engaged && e.Cooldown > 0.2f && e.Cooldown < 0.6f && !v.Rammed) { v.Rig.Motion.Ram(); v.Rammed = true; }
         }

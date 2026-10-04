@@ -1,0 +1,101 @@
+[
+ {
+  "key": "artillery",
+  "file": "unity/Assets/Pez/Resources/PezModels/artillery.glb",
+  "tris": 3100,
+  "team_share_area": 0.132,
+  "team_share_visible": 0.226,
+  "material_share": {
+   "M_SmokePlastic": 0.321,
+   "M_Licorice": 0.208,
+   "M_SpringSteel": 0.175,
+   "M_Dark": 0.132,
+   "M_Team": 0.132,
+   "M_Kraft": 0.032
+  },
+  "nodes": [
+   "spade_l",
+   "spade_r",
+   "turret",
+   "barrel"
+  ],
+  "bounds": [
+   [
+    -0.363,
+    0.0,
+    -0.85
+   ],
+   [
+    0.363,
+    1.658,
+    0.673
+   ]
+  ]
+ },
+ {
+  "key": "long_range_artillery",
+  "file": "unity/Assets/Pez/Resources/PezModels/long_range_artillery.glb",
+  "tris": 3640,
+  "team_share_area": 0.126,
+  "team_share_visible": 0.21,
+  "material_share": {
+   "M_SmokePlastic": 0.318,
+   "M_Licorice": 0.21,
+   "M_SpringSteel": 0.185,
+   "M_Dark": 0.128,
+   "M_Team": 0.126,
+   "M_Kraft": 0.033
+  },
+  "nodes": [
+   "spade_l",
+   "spade_r",
+   "turret",
+   "barrel"
+  ],
+  "bounds": [
+   [
+    -0.385,
+    0.0,
+    -0.973
+   ],
+   [
+    0.385,
+    2.082,
+    0.878
+   ]
+  ]
+ },
+ {
+  "key": "mining_truck",
+  "file": "unity/Assets/Pez/Resources/PezModels/mining_truck.glb",
+  "tris": 2932,
+  "team_share_area": 0.104,
+  "team_share_visible": 0.163,
+  "material_share": {
+   "M_Dark": 0.277,
+   "M_SmokePlastic": 0.221,
+   "M_Licorice": 0.153,
+   "M_SpringSteel": 0.108,
+   "M_Team": 0.104,
+   "M_Ore_Cinnamon": 0.092,
+   "M_CreamPlastic": 0.046
+  },
+  "nodes": [
+   "spinner",
+   "bin",
+   "bin_ore"
+  ],
+  "bounds": [
+   [
+    -0.373,
+    0.0,
+    -0.515
+   ],
+   [
+    0.373,
+    0.715,
+    0.727
+   ]
+  ]
+ }
+]
