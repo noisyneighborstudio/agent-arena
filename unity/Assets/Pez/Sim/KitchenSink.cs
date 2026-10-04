@@ -498,7 +498,7 @@ namespace Pez.Sim
 
         static readonly string[] Infantry = { "rifleman", "rocket_soldier", "medic", "laser_trooper", "engineer", "sniper", "commando", "mine" };
         static readonly string[] Vehicles = { "mining_truck", "scout_buggy", "light_tank", "apc", "flak_track", "repair_truck", "minelayer", "outpost_truck", "geological_surveyor", "drill_rig", "construction_truck" };
-        static readonly string[] Heavy = { "heavy_tank", "artillery", "laser_tank", "mammoth_tank" };
+        static readonly string[] Heavy = { "heavy_tank", "artillery", "long_range_artillery", "laser_tank", "mammoth_tank" };
         static readonly string[] Aircraft = { "recon_drone", "long_range_drone", "reaper_drone", "transport_chopper", "gunship", "stealth_bomber" };
 
         void Units()

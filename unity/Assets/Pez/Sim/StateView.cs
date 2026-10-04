@@ -501,8 +501,9 @@ namespace Pez.Sim
         /// 17: the match clock: sudden death at hour 4 (regrowth stops), decay 30 min later, the match ends on points at hour 5.
         /// 18: neutral derricks near the middle: an engineer captures one at any health; it pays its holder 1.5 steel/s.
         /// 19: defence upkeep: armed defences past the first 4 cost 3 steel/min each; unpaid ones go offline, newest first.
+        /// 20: long_range_artillery joins the roster (the first adopted agent invention).
         /// </summary>
-        public const int RulesVersion = 19;
+        public const int RulesVersion = 20;
 
         public static JObj Rules()
         {
