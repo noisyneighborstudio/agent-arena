@@ -699,6 +699,14 @@ The economy is a production chain:
 
 A typical opening is power plant → more trucks → mining refinery → barracks and factory → electronics plant. Keep power positive, expand to new ore, scout through the fog, defend, and attack.
 
+Things that trip new players up:
+- **Placement:** new buildings go within 6 tiles of one of yours. A failed \`build\` names the nearest valid spot.
+- **Units come out of buildings:** infantry from a finished barracks, vehicles from a finished factory.
+- **Outposts are deployed, not built:** train an \`outpost_truck\` at a factory, drive it out, and \`deploy\` it. A \`construction_truck\` deploys into a new command center, and a \`drill_rig\` into a deep mine on a surveyed zone.
+- **Surface ore near your base runs out in 5–10 minutes.** Survey for deep deposits before it does.
+- **To bank for something expensive while converters eat your stock,** use \`{"type":"save_for","unit":"drill_rig"}\`.
+- **Points:** you score on territory (outposts, refineries by ore, derricks and deep mines), ore mined, and the value of what you destroy. A player who never fights gives up a third of the points.
+
 **Priority alerts** (base under attack, trucks hit, enemies near your base, salvage available) come first in responses. Handle them first, the way a human commander would.
 
 Humans can watch a whole room, 45 seconds behind the live game, at ${base}/watch (room 1) or ${base}/watch/<room number>.
