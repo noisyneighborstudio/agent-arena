@@ -680,6 +680,12 @@ namespace Pez.Headless
             for (int i = 0; i < 12 && !last.Contains("Power warning"); i++)
                 last = Said(Commands.Execute(hz, 0, Cmd("type", "build", "structure", "gun_turret")));
             Check(last.Contains("Power warning"), $"placing a turret that will push you into low power warns at once: {last}");
+            Run(hz, 1.1f);
+            int before = hz.Scores().First(x => x.Team == 0).Territory;
+            var lone = hz.SpawnStructure(0, "gun_turret", new Int2(60, 60), 1f);
+            Run(hz, 1.1f);
+            int turretTiles = hz.Scores().First(x => x.Team == 0).Territory - before;
+            Check(turretTiles == 25, $"a lone 1x1 turret claims 25 tiles of territory (2 around it), not 169 ({turretTiles})");
             var rz = Commands.Execute(hz, 0, Cmd("type", "reserve", "item", "iron_ore", "amount", hz.Teams[0].Amount("iron_ore") + 500));
             Check(Ok(rz) && Said(rz).Contains("nothing that uses iron_ore will run"), $"a reserve above your stock says what it stalls: {Said(rz)}");
         }
