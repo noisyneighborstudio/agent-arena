@@ -222,8 +222,9 @@ namespace Pez.Sim
         static void Add(EntityDef d)
         {
             // A unit should see at least as far as it shoots, or it gets picked apart by things it can't see.
-            // Artillery is the deliberate exception: it needs spotters.
-            if (d.Weapon != null && d.Key != "artillery") d.Sight = System.Math.Max(d.Sight, d.Weapon.Range + 1f);
+            // Artillery (anything firing artillery shells, long-range artillery included) is the deliberate exception: it
+            // needs spotters.
+            if (d.Weapon != null && d.Weapon.Name != "artillery") d.Sight = System.Math.Max(d.Sight, d.Weapon.Range + 1f);
             All[d.Key] = d;
         }
 

@@ -346,9 +346,17 @@ namespace Pez.Sim
             w.Emit("sold", team, s.Id, pos: s.Center, key: s.Def.Key);
             w.Emit("destroyed", team, s.Id, 0, s.Center, key: s.Def.Key);
             w.Remove(s);
-            if (refund.Length > 0) return Ok($"sold {s.Def.Key} for {refund}");
+            // Selling the last of a tech building locks out what needs it: say so (it's easy to sell your own tech gate).
+            string locked = "";
+            if (!w.Owned(team).Any(o => o.IsStructure && o.Def.Key == s.Def.Key))
+            {
+                var lost = Defs.All.Values.Where(d => d.Buildable && d.OwnerTeam < 0 && (d.Requires.Contains(s.Def.Key) || Defs.ProducerKey(d.BuiltBy) == s.Def.Key))
+                                          .Select(d => d.Key).ToList();
+                if (lost.Count > 0) locked = $". That was your only {s.Def.Key}: {string.Join(", ", lost.Take(8))}{(lost.Count > 8 ? $" and {lost.Count - 8} more" : "")} can't be built until you have one again";
+            }
+            if (refund.Length > 0) return Ok($"sold {s.Def.Key} for {refund}{locked}");
             string power = s.Def.Power < 0 ? $"; {-s.Def.Power} power freed" : s.Def.Power > 0 ? $"; its {s.Def.Power} power output is gone" : "";
-            return Ok($"removed {s.Def.Key} #{s.Id}: it cost nothing, so there's no refund{power}");
+            return Ok($"removed {s.Def.Key} #{s.Id}: it cost nothing, so there's no refund{power}{locked}");
         }
 
         static JObj Reserve(World w, int team, Dictionary<string, object> c)
