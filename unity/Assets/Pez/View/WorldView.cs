@@ -25,6 +25,7 @@ namespace Pez.View
             public float HullSpeed, HullPitch, HullPitchVel;
             // Mass in motion: the heavy's start squat, artillery deployed (0..1) and whether it has rammed this cycle.
             public float StartSquat, Deploy;
+            public float Elev;           // artillery: the gun's elevation, 0 stowed on the bow lock .. 1 raised to fire
             public bool Rammed;
             public int OreTint = -1;     // deep mine: the ore its tube is tinted to; mining truck: the ore its load shows
             public float DustNext;       // decaying structure: when its next grit falls
@@ -673,7 +674,7 @@ namespace Pez.View
                 var targetRot = Quaternion.Euler(0, Yaw(e.Facing), 0);
                 rig.Root.rotation = Quaternion.Slerp(rig.Root.rotation, targetRot, Time.deltaTime * 14f);
                 if (!e.IsAir && e.Def.Armor != Armor.Infantry) HullFeel(v);
-                if (e.Def.Key == "artillery" && rig.HasModel) Artillery(v);
+                if (Models.IsArtillery(e.Def.Key) && rig.HasModel) Artillery(v);
                 if (rig.HasModel)
                 {
                     if (rig.Turret != null) Aim(v);
@@ -884,7 +885,7 @@ namespace Pez.View
         {
             "light_tank" or "laser_tank" or "scout_buggy" => LightHull,
             "heavy_tank" or "mammoth_tank" => HeavyHull,
-            "artillery" => ArtyHull,
+            "artillery" or "long_range_artillery" => ArtyHull,
             _ => OtherHull,
         };
 
@@ -911,7 +912,7 @@ namespace Pez.View
             v.HullPitch = Mathf.Clamp(v.HullPitch + v.HullPitchVel * dt, -hc.Up * 1.6f, hc.Down * 1.6f);
             v.Rig.Body.localRotation = Quaternion.Euler(v.HullPitch, 0, 0);
             if (e.Def.Key == "heavy_tank") v.StartSquat = Mathf.MoveTowards(v.StartSquat, accel > 0.4f ? 1f : 0f, dt / 0.25f);
-            if (e.Def.Key == "heavy_tank" || e.Def.Key == "artillery")
+            if (e.Def.Key == "heavy_tank" || Models.IsArtillery(e.Def.Key))
             {
                 var bp = v.Rig.Body.localPosition; bp.y = -0.015f * v.StartSquat - 0.04f * v.Deploy; v.Rig.Body.localPosition = bp;
             }
@@ -932,24 +933,69 @@ namespace Pez.View
         }
 
         /// <summary>
-        /// Artillery's cycle inside its 3.5 s cooldown: it deploys when it stops to fight (body squats 0.04 over 0.4 s,
-        /// spade dust at the rear corners), loads (the barrel rams back and returns, 0.4 s, ending well before the earliest
-        /// shot) and undeploys in 0.25 s when the sim moves it.
+        /// Artillery's cycle inside its 3.5 s cooldown. Parked or moving it travels: the gun stowed on the bow's travel
+        /// lock (cradle and barrel pitched down 57 deg from the -60 deg firing pose, once the turret faces forward) and the
+        /// spades folded up behind (105 deg). When it is about to stop to fire (attack target within Speed x 0.6 tiles of
+        /// firing range) the gun rises (0.6 s); stopped and engaged, it deploys: the spades slam down in the first 0.25 s
+        /// (ease-in) and bite (dust at each blade), the body squats 0.04 over 0.4 s, then it loads (the barrel rams back
+        /// and returns, 0.4 s, ending before the earliest shot). Moving again, the spades fold (0.25 s) and the gun stows
+        /// (0.8 s). A shot never waits on this: MuzzleOf snaps the gun up before working out where the shell leaves.
         /// </summary>
         void Artillery(EV v)
         {
             var e = v.E;
-            bool engaged = Time.time - v.LastFire < 3f || e.Order == Order.Attack;
+            var rig = v.Rig;
+            bool attacking = e.Order == Order.Attack || (e.Order == Order.AttackMove && e.TargetId != 0);
+            bool engaged = Time.time - v.LastFire < 3f || attacking;
             bool deploy = !e.Moving && engaged;
             float was = v.Deploy;
             v.Deploy = Mathf.MoveTowards(v.Deploy, deploy ? 1f : 0f, Time.deltaTime / (deploy ? 0.4f : 0.25f));
-            if (was < 0.9f && v.Deploy >= 0.9f)
+            // Spades: planted (the model's rest pose) when deployed, folded up 105 deg for travel; they slam down.
+            float k0 = Mathf.Clamp01(was / 0.6f), k = Mathf.Clamp01(v.Deploy / 0.6f);
+            float planted = deploy ? k * k : Mathf.SmoothStep(0f, 1f, k);
+            float up = 105f * (1f - planted);
+            if (rig.SpadeL != null) rig.SpadeL.localRotation = rig.SpadeRestL * Quaternion.Euler(up, 0f, 0f);
+            if (rig.SpadeR != null) rig.SpadeR.localRotation = rig.SpadeRestR * Quaternion.Euler(up, 0f, 0f);
+            if (deploy && k0 < 1f && k >= 1f) SpadesBite(rig);
+            // The gun: up when deployed or about to stop to fire, stowed otherwise (waiting for the turret to face forward).
+            bool raise = deploy;
+            if (!raise && e.Moving && attacking && e.Def.Weapon != null && World.Get(e.TargetId) is Entity t)
             {
-                var r = v.Rig.Root;
+                float rem = Vec2.Dist(e.Pos, t.Center) - e.Def.Weapon.Range * 0.95f;
+                raise = rem < e.Def.Speed * 0.6f;
+            }
+            bool forward = rig.Turret == null || Quaternion.Angle(rig.Turret.localRotation, rig.TurretRest) < 10f;
+            float goal = raise ? 1f : forward ? 0f : v.Elev;
+            v.Elev = Mathf.MoveTowards(v.Elev, goal, Time.deltaTime / (goal > v.Elev ? 0.6f : 0.8f));
+            ApplyElevation(v);
+            if (engaged && e.Cooldown > 0.2f && e.Cooldown < 0.6f && !v.Rammed) { v.Rig.Motion.Ram(); v.Rammed = true; }
+        }
+
+        /// <summary>Artillery's spades bite: dust kicked back from each blade.</summary>
+        static void SpadesBite(Rig rig)
+        {
+            var r = rig.Root;
+            if (rig.SpadeL != null && rig.SpadeR != null)
+            {
+                Fx.SpadeDust(rig.SpadeL.TransformPoint(rig.SpadeTipL), -r.forward);
+                Fx.SpadeDust(rig.SpadeR.TransformPoint(rig.SpadeTipR), -r.forward);
+            }
+            else
+            {
                 Fx.SpadeDust(r.position - r.forward * 0.42f + r.right * 0.26f, -r.forward);
                 Fx.SpadeDust(r.position - r.forward * 0.42f - r.right * 0.26f, -r.forward);
             }
-            if (engaged && e.Cooldown > 0.2f && e.Cooldown < 0.6f && !v.Rammed) { v.Rig.Motion.Ram(); v.Rammed = true; }
+        }
+
+        /// <summary>Artillery: pitch the cradle and barrel from their firing rest pose down toward the travel lock.</summary>
+        static void ApplyElevation(EV v)
+        {
+            var rig = v.Rig;
+            if (rig.Cradle == null || rig.Barrel == null) return;
+            float down = 57f * (1f - Mathf.SmoothStep(0f, 1f, v.Elev));
+            var q = Quaternion.Euler(down, 0f, 0f);
+            rig.Cradle.localRotation = rig.CradleRest * q;
+            rig.Barrel.localRotation = rig.BarrelRestRot * q;
         }
 
         void SyncProjectiles(float alpha)
@@ -1163,8 +1209,20 @@ namespace Pez.View
         Vector3 MuzzleOf(int id, Vec2 fallback)
         {
             if (Views.TryGetValue(id, out var v) && v.Rig.Barrel != null)
+            {
+                // A stowed (or still rising) artillery gun snaps up to fire: the shot never waits on the view.
+                if (v.Rig.Cradle != null && v.Elev < 1f) { v.Elev = 1f; ApplyElevation(v); }
+                // ...and if it hadn't dug in yet, the spades plant in the same frame, so their dust lands with the flash.
+                if (v.Rig.Cradle != null && v.Deploy < 0.6f && !v.E.Moving)
+                {
+                    v.Deploy = 1f;
+                    if (v.Rig.SpadeL != null) v.Rig.SpadeL.localRotation = v.Rig.SpadeRestL;
+                    if (v.Rig.SpadeR != null) v.Rig.SpadeR.localRotation = v.Rig.SpadeRestR;
+                    SpadesBite(v.Rig);
+                }
                 return v.Rig.Twin ? v.Rig.Barrel.TransformPoint((v.Rig.Motion.NextTwin & 1) == 0 ? v.Rig.MuzzleL : v.Rig.MuzzleR)
                      : v.Rig.HasMuzzle ? v.Rig.Barrel.TransformPoint(v.Rig.MuzzleLocal) : v.Rig.Barrel.position + v.Rig.Barrel.parent.forward * 0.35f;
+            }
             return W(fallback, 0.4f);
         }
 

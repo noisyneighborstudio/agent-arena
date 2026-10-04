@@ -483,7 +483,7 @@
   },
   "emerge": "Spawns inside the factory, 0.6 behind its door node. The door rolls up (localScale.y 1\u21920.05, 0.35 s), the unit drives out along \u2212Z at 60% speed to a point 1.5 tiles south, then takes its rally order. The door rolls down 0.5 s after the unit clears.",
   "remove": "Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540\u00b0/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then sinks into the ground over 2 s.",
-  "mechanics": "Tracked: pivot-turns in place at 80\u00b0/s. When it has to turn more than 60\u00b0 it stops and turns first, then drives. Accelerating pitches the hull nose-up 2\u00b0 and braking pitches it nose-down 3\u00b0 (spring, 0.25 s). On slopes the hull follows the ground normal (lerp 8/s). Fire cycle: stop and deploy 0.6 s (hull lowers 0.04, spades plant). The turret yaws toward the target and the barrel stays at a fixed 60\u00b0 elevation. On firing, the barrel recoils 0.2 along its own axis over 0.05 s and returns over 0.6 s, and the hull pitches back 3\u00b0. It must undeploy (0.4 s) before moving. Shells fly a ballistic arc with an apex at 0.35 \u00d7 range.",
+  "mechanics": "Tracked: pivot-turns in place at 80\u00b0/s. When it has to turn more than 60\u00b0 it stops and turns first, then drives. Accelerating pitches the hull nose-up 2\u00b0 and braking pitches it nose-down 3\u00b0 (spring, 0.25 s). On slopes the hull follows the ground normal (lerp 8/s). Fire cycle: stop and deploy 0.6 s (hull lowers 0.04; spade_l and spade_r, folded up 105\u00b0 for travel, slam down in 0.25 s and bite, kicking dust at their blades; the gun, stowed for travel on the bow's travel lock at about \u22123\u00b0, rises to its fixed \u221260\u00b0 over 0.6 s as it nears firing range and snaps up if a shot comes first; moving again, the spades fold and the gun stows once the turret faces forward). The turret yaws toward the target and the barrel stays at a fixed 60\u00b0 elevation. On firing, the barrel recoils 0.2 along its own axis over 0.05 s and returns over 0.6 s, and the hull pitches back 3\u00b0. It must undeploy (0.4 s) before moving. Shells fly a ballistic arc with an apex at 0.35 \u00d7 range.",
   "nodes": {
    "turret": {
     "yaw_speed_deg": 60,
@@ -494,6 +494,37 @@
     "recoil": 0.2,
     "recoil_out_s": 0.05,
     "return_s": 0.6,
+    "pitch_deg": -60
+   }
+  },
+  "idle": "Barrel stays elevated; no idle scan."
+ },
+ {
+  "key": "long_range_artillery",
+  "kind": "unit",
+  "role": "Range-12 indirect fire. Needs a spotter. Must stop to fire.",
+  "built_at": "factory",
+  "locomotion": {
+   "type": "tracked",
+   "max_speed": 1.3,
+   "accel": 0.9,
+   "decel": 1.35,
+   "turn_rate_deg": 70,
+   "turn_in_place": true
+  },
+  "emerge": "Spawns inside the factory, 0.6 behind its door node. The door rolls up (localScale.y 1\u21920.05, 0.35 s), the unit drives out along \u2212Z at 60% speed to a point 1.5 tiles south, then takes its rally order. The door rolls down 0.5 s after the unit clears.",
+  "remove": "Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540\u00b0/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then sinks into the ground over 2 s.",
+  "mechanics": "Tracked: pivot-turns in place at 70\u00b0/s. When it has to turn more than 60\u00b0 it stops and turns first, then drives. Accelerating pitches the hull nose-up 2\u00b0 and braking pitches it nose-down 3\u00b0 (spring, 0.25 s). On slopes the hull follows the ground normal (lerp 8/s). Same family as artillery with a longer hull and a far longer gun (range 12). Fire cycle as artillery: stop and deploy (hull lowers 0.04; spade_l and spade_r, folded up 105\u00b0 for travel, slam down in 0.25 s and bite, kicking dust at their blades; the gun, stowed for travel on the bow's travel lock at about \u22123\u00b0, rises to its fixed \u221260\u00b0 over 0.6 s as it nears firing range and snaps up if a shot comes first; moving again, the spades fold and the gun stows once the turret faces forward). On firing, the barrel recoils 0.24 along its own axis over 0.05 s and returns over 0.7 s, and the hull pitches back 3\u00b0.",
+  "nodes": {
+   "turret": {
+    "yaw_speed_deg": 50,
+    "yaw_limit_deg": 360,
+    "idle_scan": true
+   },
+   "barrel": {
+    "recoil": 0.24,
+    "recoil_out_s": 0.05,
+    "return_s": 0.7,
     "pitch_deg": -60
    }
   },

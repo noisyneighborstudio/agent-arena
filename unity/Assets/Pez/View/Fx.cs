@@ -406,10 +406,10 @@ namespace Pez.View
                     Random.Range(0.22f, 0.32f), Random.Range(1.8f, 2.6f), Alpha(GunSmoke, 0.55f));
         }
 
-        /// <summary>Artillery deploys: its spades bite, kicking dust back from a rear corner.</summary>
+        /// <summary>Artillery deploys: its spades bite, kicking dust back from a blade.</summary>
         public static void SpadeDust(Vector3 at, Vector3 back)
         {
-            for (int i = 0; i < 2; i++)
+            for (int i = 0; i < 3; i++)
                 Emit(S.Dust, Ground(at) + Up * 0.08f, back * Random.Range(0.4f, 0.8f) + Flat(0.2f) + Up * Random.Range(0.15f, 0.35f),
                     Random.Range(0.25f, 0.38f), Random.Range(1f, 1.5f), Vary(DustBiscuit, 0.06f, 200));
         }
