@@ -648,7 +648,8 @@ namespace Pez.Sim
                             if (dx * dx + dy * dy >= ad || CanPlace(u.Team, key, o.X, o.Y, requireNear: false) != null) continue;
                             ad = dx * dx + dy * dy; alt = o;
                         }
-                    return $"can't deploy here: {why}" + (alt.HasValue ? $". Nearest clear spot: move it to {alt.Value.X + def.SizeX / 2},{alt.Value.Y + def.SizeY / 2} and deploy there" : "");
+                    // Deploying builds with the truck's own tile at the footprint's (SizeX-1)/2 offset: name that tile's centre.
+                    return $"can't deploy here: {why}" + (alt.HasValue ? $". Nearest clear spot: move it to {alt.Value.X + (def.SizeX - 1) / 2}.5,{alt.Value.Y + (def.SizeY - 1) / 2}.5 and deploy there" : "");
                 }
             }
             Remove(u);
@@ -1081,6 +1082,8 @@ namespace Pez.Sim
                     {
                         var t = Get(e.TargetId);
                         if (t == null || t.Team == e.Team || !e.Def.Weapon.CanHit(t.Def)) { FinishOrder(e); break; }
+                        // A derrick is a landmark: march on it unseen, and open fire once it's in sight.
+                        if (t.Def.Key == "derrick" && !IsVisibleTo(e.Team, t)) { e.OrderPos = t.Center; Chase(e, t); break; }
                         if (!IsVisibleTo(e.Team, t))
                         {
                             // Lost sight of it: push to where it was last seen and fight whatever is there.

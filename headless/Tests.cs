@@ -65,6 +65,7 @@ namespace Pez.Headless
             BriarFixes();
             CedarDuneFixes();
             DrillBesideRock();
+            DeploySpotWorks();
             LastHqSpills();
             FieldRefuelling();
             ArenaCleared();
@@ -796,6 +797,23 @@ namespace Pez.Headless
                     Console.WriteLine($"{na} {a} vs {nb} {b} ({(clump ? "clumped" : "spread")}): {a} wins {aw}/5, {b} wins {bw}/5; survivors {a} {aLeft / 5:P0}, {b} {bLeft / 5:P0}");
                 }
             return 0;
+        }
+
+        /// <summary>Yarrow: a failed deploy's "nearest clear spot", followed exactly, deploys.</summary>
+        static void DeploySpotWorks()
+        {
+            var w = new World(2, 7, 96);
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var spot = new Vec2(48.5f, 30.5f);
+            var c = Int2.Of(spot);
+            w.Map.Tiles[w.Map.Idx(c.X, c.Y)] = Terrain.Rock;
+            var truck = At(w.SpawnUnit(0, "outpost_truck", hq), spot);
+            var why = w.Deploy(truck);
+            var m = System.Text.RegularExpressions.Regex.Match(why ?? "", @"move it to ([0-9.]+),([0-9.]+)");
+            if (!m.Success) { Check(false, $"a blocked deploy names a clear spot: {why}"); return; }
+            At(truck, new Vec2(float.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture), float.Parse(m.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture)));
+            var again = w.Deploy(truck);
+            Check(again == null, $"following the suggested spot exactly deploys ({why} -> {again ?? "deployed"})");
         }
 
         static void Drones()

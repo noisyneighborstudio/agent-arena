@@ -347,7 +347,7 @@ namespace Pez.Sim
             if (target.Team == team) return Err("that is your own unit");
             if (target.Team < 0) return Err($"{target.Def.Key} #{target.Id} is neutral: it can't be hurt; capture it with an engineer instead");
             if (w.IsProtected(target.Team)) return Err($"that player is under newcomer protection for {(int)(w.Teams[target.Team].ProtectedUntil - w.Time)}s more");
-            if (!w.IsVisibleTo(team, target)) return Err("target is not currently visible; use attack_move toward its last known position");
+            if (!w.IsVisibleTo(team, target) && target.Def.Key != "derrick") return Err("target is not currently visible; use attack_move toward its last known position");
             var able = units.Where(u => u.Def.Weapon.CanHit(target.Def)).ToList();
             if (able.Count == 0) return Err($"none of those units can hit a {(target.IsAir ? "flying" : "ground")} {target.Def.Key}");
             foreach (var u in able) w.SetOrder(u, Order.Attack, target.Center, target.Id);
