@@ -281,7 +281,10 @@ namespace Pez.Sim
                     case "built": if (e.Team == team) s = $"{e.Key} #{e.A} completed"; break;
                     case "trained": if (e.Team == team) s = $"{e.Key} #{e.A} ready"; break;
                     case "under_attack": if (e.Team == team) s = $"your {e.Key} #{e.A} is under attack"; break;
+                    case "sold": if (e.Team == team) s = $"sold your {e.Key} #{e.A}"; break;
                     case "destroyed":
+                        // A building you sold is "destroyed" for the view; it isn't a loss (test player Pine read it as an attack).
+                        if (i > 0 && w.Events[i - 1].Type == "sold" && w.Events[i - 1].A == e.A) break;
                         if (e.Team == team) s = e.Text != null ? $"LOST your {e.Text}" : $"LOST your {e.Key} #{e.A}";
                         else if (w.Teams[team].Visible[w.Map.Idx((int)e.Pos.X, (int)e.Pos.Y)]) s = $"destroyed enemy {e.Key} #{e.A}";
                         break;
@@ -519,8 +522,9 @@ namespace Pez.Sim
         ///     the home-ore warning fires at half left; territory: 6 tiles around holdings (drop-offs, derricks, deep mines),
         ///     2 around anything else; strategic alerts stay in state for 5 minutes.
         /// 25: a refinery holds ground only by an ore field; deep mines stand beside a blocked deposit tile.
+        /// 26: aircraft bingo margin 5% + 6 s (was 15% + 8 s); loss alerts stay 2 minutes; counters tip.
         /// </summary>
-        public const int RulesVersion = 25;
+        public const int RulesVersion = 26;
 
         public static JObj Rules()
         {

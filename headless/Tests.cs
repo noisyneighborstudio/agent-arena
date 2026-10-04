@@ -645,6 +645,8 @@ namespace Pez.Headless
             Check(!Ok(s1) && !bk.Dead && Said(s1).Contains("confirm"), $"selling your only barracks asks for confirm first: {Said(s1)}");
             var s2 = Commands.Execute(w, 0, Cmd("type", "sell", "structure_id", bk.Id, "confirm", true));
             Check(Ok(s2) && bk.Dead, $"and sells with it: {Said(s2)}");
+            var evs = StateView.EventList(w, 0, 0, 400);
+            Check(evs.Any(e => e.type == "sold" && e.text.Contains($"#{bk.Id}")) && !evs.Any(e => e.text.Contains($"LOST your barracks #{bk.Id}")), "selling shows as sold in your events, not as a loss");
             var dz = new World(2, 7, 96);
             var dfac = dz.SpawnStructure(0, "factory", dz.FindPlacement(0, "factory").Value, 1f);
             var drn = dz.SpawnUnit(0, "recon_drone", dfac);

@@ -2363,7 +2363,7 @@ namespace Pez.Sim
         /// <summary>The bingo rule, in tiles of fuel: enough to get padDist back to fuel (with a margin) plus a reserve.
         /// The sim turns units back on it and the move planner predicts with it, so the two agree.</summary>
         public static float BingoTiles(Entity u, float padDist) =>
-            u.IsAir ? padDist * 1.15f + 8f * MathF.Max(0.1f, u.Def.Speed) : padDist * 1.4f + 10f * MathF.Max(0.1f, u.Def.Speed);
+            u.IsAir ? padDist * 1.05f + 6f * MathF.Max(0.1f, u.Def.Speed) : padDist * 1.4f + 10f * MathF.Max(0.1f, u.Def.Speed); // aircraft fly straight: a thin margin
 
         /// <summary>Whether a full tank from here gets to `to` and back to fuel: a resumed trip that can't is dropped, not
         /// yo-yoed (out, turn back, refuel, out again) forever.</summary>
@@ -2394,8 +2394,10 @@ namespace Pez.Sim
                     var goal = e.OrderPos;
                     SetOrder(e, Order.Idle, e.Pos);
                     e.ResumeOrder = Order.Idle;
+                    float there = Vec2.Dist(e.Pos, goal) * BurnPerTile(e), back = BingoTiles(e, Entities.Where(s => IsFuelPoint(e, s)).Select(s => Vec2.Dist(s.Center, goal)).DefaultIfEmpty(0f).Min());
                     Emit("out_of_range", e.Team, e.Id, 0, e.Pos, key: e.Def.Key,
-                         text: $"{e.Def.Key} #{e.Id} refuelled and is staying put: {(int)goal.X},{(int)goal.Y} is out of its range there and back. " +
+                         text: $"{e.Def.Key} #{e.Id} refuelled and is staying put: {(int)goal.X},{(int)goal.Y} is out of its range there and back " +
+                               $"(~{there:0} tiles there, ~{back:0} back to fuel with its reserve, and a full tank is ~{FuelTiles(e, e.FuelMax):0}). " +
                                (e.IsAir ? "Build an airfield nearer, or use a longer-range aircraft" : "Deploy an outpost along the way, or send a repair truck with it"));
                     return;
                 }
