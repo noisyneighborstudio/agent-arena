@@ -85,7 +85,9 @@ namespace Pez.Sim
         public const float StrategicWindow = 300f;
         public static bool Strategic(string kind) => kind is "surface_ore_exhausted" or "deep_mine_running_low" or "deep_mine_depleted" or "low_power"
             or "defences_offline" or "match_clock" or "protection_ended" or "stalled" or "low_fuel";
-        static float WindowFor(string kind) => Strategic(kind) ? StrategicWindow : ActiveWindow;
+        /// <summary>Losses stay 2 minutes: a player polling now and then must still learn an army died (test player Oak didn't).</summary>
+        public const float LossWindow = 120f;
+        static float WindowFor(string kind) => Strategic(kind) ? StrategicWindow : kind is "units_lost" or "structure_lost" ? LossWindow : ActiveWindow;
 
         public IEnumerable<Alert> Active(World w, int team) =>
             All.Where(a => a.Team == team && (w.Tick - a.LastTick) * World.Dt <= WindowFor(a.Kind))
