@@ -418,6 +418,11 @@ def quat(R):
     return (x, y, z, w)
 
 
+# The artillery's travel elevation (deg, view-only): WorldView pitches the cradle and barrel nodes from the -60 deg
+# firing rest pose down by 57 deg to this, onto the bow's travel lock.
+STOW_PITCH = -3.0
+
+
 # ---------------------------------------------------------------- shared running gear
 def track_pod(a, L, x0, x1, h=0.19, wheels=5, wr=0.058, node=None, grousers=True):
     """A licorice track pod (side profile with raked ends), road wheels on the outer face, grousers on the top run."""
@@ -447,11 +452,13 @@ def artillery(key, L, W, barrel_len, lra):
     """
     Hero idea: a gun that happens to have a hull. A long, low tracked chassis whose rear is two splayed spades digging
     into the ground; on it, a squat turntable carrying an oversized recoil cradle (recuperators, buffer, trunnion cheeks)
-    and a long gun with a muzzle brake. The team mask is the turret's two roof wings either side of the gun, the cradle's
-    jacket and a band (two on the long-range gun) near the muzzle, so the colour sits where a high camera sees it and
-    the barrel reads as a team-coloured line. Ammunition rides on the rear deck; a travel lock waits empty on the bow.
-    long_range_artillery: same family, longer hull, a far longer gun (bore evacuator, double-baffle brake, two bands),
-    bigger spades and a second ammo rack.
+    and a long gun with a muzzle brake. The team mask is the gun house, the cradle's jacket, a band (two on the
+    long-range gun) near the muzzle and a full-length stripe on each fender, so the colour sits where a high camera sees
+    it. Ammunition rides on the rear deck. The rest pose is the firing pose (gun at -60 deg, spades planted); the view
+    stows the gun (the cradle and barrel nodes pitch down 57 deg, onto the bow's travel lock) and folds the spades up
+    for travel, so parked, moving and dug-in read apart on the stream.
+    long_range_artillery: a sibling, not a scale-up: a longer hull on seven road wheels, a far longer gun (bore
+    evacuator, triple-baffle brake, two bands), bigger spades and a second ammo rack.
     """
     a = Model(key)
     hl = L / 2
@@ -459,35 +466,43 @@ def artillery(key, L, W, barrel_len, lra):
     xo = W / 2                         # track outer face
     xi = xo - tw
     for s in (-1, 1):
-        track_pod(a, L, s * xi, s * xo, h=0.18, wheels=5 if not lra else 6)
+        track_pod(a, L, s * xi, s * xo, h=0.18, wheels=5 if not lra else 7)
     # Lower hull between the tracks, then the upper deck over them (fenders), with a raked bow glacis.
     a.add("smoke", span(-xi, xi, 0.05, 0.2, -hl + 0.05, hl - 0.06))
     deck_y0, deck_y1 = 0.19, 0.25
     fx = xo + 0.012
     a.add("smoke", hexa([(-fx, deck_y0, -hl + 0.02), (fx, deck_y0, -hl + 0.02), (fx, deck_y0, hl - 0.01), (-fx, deck_y0, hl - 0.01),
                          (-fx, deck_y1, -hl + 0.03), (fx, deck_y1, -hl + 0.03), (fx, deck_y1, hl - 0.13), (-fx, deck_y1, hl - 0.13)]))
-    # Team stripes along both fenders' outer edges: the hull's outline carries the colour at stream scale.
+    # Team stripes the full length of both fenders: the hull's outline carries the colour at stream scale.
     for s in (-1, 1):
-        x0, x1 = s * (fx - 0.085), s * (fx + 0.004)
-        a.add("team", span(min(x0, x1), max(x0, x1), deck_y1, deck_y1 + 0.012, -hl + 0.2, hl - 0.15))
-    # Bow: engine deck grille slats and the exhaust; the travel lock (an empty crutch: the gun lives elevated).
-    for k in range(4):
-        z = hl - 0.17 - k * 0.055
-        a.add("dark", span(-0.17, 0.17, deck_y1, deck_y1 + 0.012, z - 0.017, z + 0.017))
+        x0, x1 = s * (fx - 0.12), s * (fx + 0.004)
+        a.add("team", span(min(x0, x1), max(x0, x1), deck_y1, deck_y1 + 0.012, -hl + 0.05, hl - 0.14))
+    # The gun's geometry, needed by the bow's travel lock: turret ring, trunnion, tube radii.
+    tz = -0.1 if not lra else -0.05            # turret ring centre
+    tr = np.array([0.0, 0.205, 0.05])          # trunnion (barrel pivot) in turret space
+    Lb = barrel_len
+    rb0, rb1 = (0.052, 0.04) if not lra else (0.055, 0.041)   # a fat tube: it has to read as a line at 45 px a tile
+
+    def r_at(z):
+        return rb0 + (rb1 - rb0) * z / (Lb - 0.1)
+    # Bow: the exhaust, and the travel lock the stowed gun (STOW_PITCH) rests in: two struts and a U cradle.
+    lock_z = hl - 0.1
+    dz = lock_z - (tz + tr[2])
+    axis_y = deck_y1 + tr[1] + dz * math.tan(math.radians(-STOW_PITCH))
+    rr = r_at(dz)
+    seat = axis_y - rr - 0.003
     for s in (-1, 1):
-        a.add("steel", beam((s * 0.1, deck_y1, hl - 0.06), (s * 0.035, deck_y1 + 0.2, hl - 0.1), 0.022, 0.022))
-    a.add("steel", span(-0.06, 0.06, deck_y1 + 0.19, deck_y1 + 0.215, hl - 0.12, hl - 0.08))
-    a.add("dark", span(-0.035, 0.035, deck_y1 + 0.2, deck_y1 + 0.225, hl - 0.115, hl - 0.085))
+        a.add("steel", beam((s * 0.1, deck_y1, lock_z + 0.04), (s * 0.04, seat - 0.02, lock_z), 0.024, 0.024))
+    a.add("steel", span(-rr - 0.035, rr + 0.035, seat - 0.028, seat, lock_z - 0.02, lock_z + 0.02))
+    for s in (-1, 1):
+        x0, x1 = s * (rr + 0.006), s * (rr + 0.034)
+        a.add("steel", span(min(x0, x1), max(x0, x1), seat - 0.005, axis_y + 0.01, lock_z - 0.02, lock_z + 0.02))
     a.add("steel", cyl(0.028, 0.12, -xo + 0.07, deck_y1 + 0.06, hl - 0.33, axis="y", seg=10))
     a.add("dark", cyl(0.032, 0.02, -xo + 0.07, deck_y1 + 0.125, hl - 0.33, axis="y", seg=10))
-    # Fender toolboxes, one each side (asymmetric: a spare track link on the right).
+    # One fender toolbox, on the right (restraint: the hull is the quiet part).
     a.add("smoke", span(xo - 0.12, xo - 0.01, deck_y1, deck_y1 + 0.05, hl - 0.42, hl - 0.24))
-    for k in range(3):
-        z = -0.05 - k * 0.07
-        a.add("licorice", span(-xo + 0.015, -xo + 0.125, deck_y1, deck_y1 + 0.018, z - 0.028, z + 0.028))
     # Rear deck: the ammunition rack(s), shells lying across, kraft cases with steel noses.
-    tz = -0.1 if not lra else -0.14            # turret ring centre
-    racks = [(-hl + 0.05, -hl + 0.19)] if not lra else [(-hl + 0.05, -hl + 0.19)]
+    racks = [(-hl + 0.05, -hl + 0.19)] if not lra else [(-hl + 0.05, -hl + 0.19), (-hl + 0.21, -hl + 0.33)]
     for z0, z1 in racks:
         a.add("kraft", span(-0.21, 0.21, deck_y1, deck_y1 + 0.05, z0, z1))
         n = 4
@@ -495,18 +510,13 @@ def artillery(key, L, W, barrel_len, lra):
             z = z0 + 0.025 + k * (z1 - z0 - 0.05) / (n - 1)
             a.add("kraft", cyl(0.02, 0.24, -0.02, deck_y1 + 0.072, z, axis="x", seg=8))
             a.add("steel", cyl(0.02, 0.07, 0.135, deck_y1 + 0.072, z, axis="x", seg=8, centered=False, r1=0.004))
-    if lra:
-        # A second rack of charges along the left fender.
-        for k in range(3):
-            z = hl - 0.5 - k * 0.06
-            a.add("kraft", cyl(0.022, 0.12, xo - 0.065, deck_y1 + 0.024, z, axis="z", seg=8))
     # Rear plate with the spade hinges.
     a.add("dark", span(-xi + 0.02, xi - 0.02, 0.08, deck_y1, -hl - 0.005, -hl + 0.04))
 
     # Spades: hinged at the rear plate, splayed outward, the blade's toothed lower edge on the ground at rest
     # (deployed); WorldView raises them for travel.
-    sp_len = 0.27 if not lra else 0.33
-    blade_w = 0.2 if not lra else 0.24
+    sp_len = 0.27 if not lra else 0.40
+    blade_w = 0.2 if not lra else 0.28
     hinge_y = 0.17
     for s, name in ((1, "spade_l"), (-1, "spade_r")):
         n = a.node(name, None, (s * 0.15, hinge_y, -hl - 0.01), ry(-s * 22))
@@ -534,7 +544,7 @@ def artillery(key, L, W, barrel_len, lra):
     tu = a.node("turret", None, (0, deck_y1, tz))
     a.add("steel", cyl(0.2, 0.03, 0, 0.015, 0, axis="y", seg=20), tu)
     gw0, gw1, gl0, gl1, gh = 0.44, 0.38, 0.46, 0.38, 0.12
-    a.add("team", hexa([(-gw0 / 2, 0.02, -gl0 / 2), (gw0 / 2, 0.02, -gl0 / 2), (gw0 / 2, 0.02, gl0 / 2 - 0.04), (-gw0 / 2, 0.02, gl0 / 2 - 0.04),
+    a.add("smoke", hexa([(-gw0 / 2, 0.02, -gl0 / 2), (gw0 / 2, 0.02, -gl0 / 2), (gw0 / 2, 0.02, gl0 / 2 - 0.04), (-gw0 / 2, 0.02, gl0 / 2 - 0.04),
                          (-gw1 / 2, gh, -gl1 / 2), (gw1 / 2, gh, -gl1 / 2), (gw1 / 2, gh, gl1 / 2 - 0.08), (-gw1 / 2, gh, gl1 / 2 - 0.08)]), tu)
     slot = 0.075
     for s in (-1, 1):
@@ -545,37 +555,30 @@ def artillery(key, L, W, barrel_len, lra):
     a.add("smoke", span(-0.15, 0.15, 0.03, gh - 0.015, -gl0 / 2 - 0.07, -gl0 / 2 + 0.01), tu)
     a.add("dark", cyl(0.045, 0.012, 0.11, gh + 0.026, -0.08, axis="y", seg=10), tu)
     # Trunnion: cheeks either side of the gun, a pin through them.
-    tr = np.array([0.0, 0.205, 0.05])   # trunnion (barrel pivot) in turret space
     for s in (-1, 1):
         a.add("steel", hexa([(s * 0.07, gh, -0.1), (s * 0.115, gh, -0.1), (s * 0.115, gh, 0.12), (s * 0.07, gh, 0.12),
                              (s * 0.07, tr[1] + 0.05, tr[2] - 0.04), (s * 0.115, tr[1] + 0.05, tr[2] - 0.04),
                              (s * 0.115, tr[1] + 0.05, tr[2] + 0.06), (s * 0.07, tr[1] + 0.05, tr[2] + 0.06)]), tu)
     a.add("dark", cyl(0.035, 0.27, *tr, axis="x", seg=12), tu)
-    # The cradle (static on the turret, pitched with the gun): the jacket the barrel slides in, two recuperators above
-    # it and a buffer below, end caps. The barrel recoils 0.2 into it.
+    # The cradle (its own node on the trunnion, pitched with the gun; the view stows it with the barrel): the jacket
+    # the barrel slides in, two recuperators above it and a buffer below, end caps. The barrel recoils 0.2 into it.
     pitch = rx(-60)
-
-    def cr(mesh):
-        return mesh.xf(pitch, tr)
+    cn = a.node("cradle", tu, tuple(tr), pitch)
     cl = 0.42 if not lra else 0.5
-    a.add("team", cr(span(-0.062, 0.062, -0.055, 0.055, -0.1, cl - 0.12)), tu)
-    a.add("dark", cr(span(-0.07, 0.07, -0.062, 0.062, cl - 0.12, cl - 0.07)), tu)
+    a.add("team", span(-0.062, 0.062, -0.055, 0.055, -0.1, cl - 0.12), cn)
+    a.add("dark", span(-0.07, 0.07, -0.062, 0.062, cl - 0.12, cl - 0.07), cn)
     for ox in (-0.04, 0.04):
-        a.add("steel", cr(cyl(0.028, cl, ox, 0.085, cl / 2 - 0.08, axis="z", seg=12)), tu)
-        a.add("dark", cr(cyl(0.032, 0.03, ox, 0.085, cl - 0.08, axis="z", seg=12)), tu)
-    a.add("steel", cr(cyl(0.03, cl * 0.8, 0, -0.085, cl * 0.4 - 0.08, axis="z", seg=12)), tu)
-    a.add("dark", cr(span(-0.03, 0.03, -0.12, -0.055, -0.06, 0.02)), tu)
+        a.add("steel", cyl(0.028, cl, ox, 0.085, cl / 2 - 0.08, axis="z", seg=12), cn)
+        a.add("dark", cyl(0.032, 0.03, ox, 0.085, cl - 0.08, axis="z", seg=12), cn)
+    a.add("steel", cyl(0.03, cl * 0.8, 0, -0.085, cl * 0.4 - 0.08, axis="z", seg=12), cn)
+    a.add("dark", span(-0.03, 0.03, -0.12, -0.055, -0.06, 0.02), cn)
 
     # The gun: breech block behind the trunnion, a tapering tube, team band(s), a muzzle brake. Symmetric about its
     # axis, so Models.BarrelTip finds the muzzle at the middle of its far end.
     br = a.node("barrel", tu, tuple(tr), pitch)
     a.add("dark", span(-0.058, 0.058, -0.052, 0.052, -0.12, 0.0), br)
     a.add("steel", span(-0.045, 0.045, -0.045, 0.045, -0.15, -0.12), br)
-    Lb = barrel_len
-    rb0, rb1 = (0.052, 0.04) if not lra else (0.055, 0.041)   # a fat tube: it has to read as a line at 45 px a tile
     a.add("steel", cyl(rb0, Lb - 0.1, 0, 0, 0, axis="z", seg=14, centered=False, r1=rb1), br)
-    def r_at(z):
-        return rb0 + (rb1 - rb0) * z / (Lb - 0.1)
     bands = [Lb * 0.72] if not lra else [Lb * 0.66, Lb * 0.78]
     for z in bands:
         a.add("team", cyl(r_at(z) + 0.012, 0.075, 0, 0, z, axis="z", seg=14), br)
@@ -591,7 +594,7 @@ def artillery(key, L, W, barrel_len, lra):
     bl = 0.03
     for k in range(nb):
         z1 = Lb - k * (mb - bl) / (nb - 1)
-        a.add("licorice", span(-0.066, 0.066, -0.05, 0.05, z1 - bl, z1), br)
+        a.add("steel", span(-0.066, 0.066, -0.05, 0.05, z1 - bl, z1), br)
     a.add("dark", cyl(0.024, 0.004, 0, 0, Lb + 0.001, axis="z", seg=10), br)
     return a
 
@@ -621,6 +624,9 @@ def mining_truck():
     # Fender over each track behind the bow deck (the hopper overhangs them).
     for s in (-1, 1):
         a.add("smoke", span(min(s * xi, s * (xo + 0.01)), max(s * xi, s * (xo + 0.01)), 0.2, 0.218, -hl + 0.02, hl - 0.3))
+        # A team stripe on each fender's outer edge (the same hull-outline stripe as the artillery's: world DNA).
+        x0, x1 = s * (xo - 0.05), s * (xo + 0.014)
+        a.add("team", span(min(x0, x1), max(x0, x1), 0.218, 0.226, -hl + 0.02, hl - 0.04))
 
     # Cab: small, forward-left (+X is the model's left), cream like the refinery, team roof, dark glazing.
     cx0, cx1, cz0, cz1 = 0.07, xo + 0.005, hl - 0.27, hl - 0.04
@@ -638,7 +644,7 @@ def mining_truck():
     a.add("dark", span(cx0 + 0.04, cx0 + 0.07, cy1 + 0.025, cy1 + 0.06, cz0 + 0.04, cz0 + 0.07))   # beacon housing
     # Engine on the right: a smoke block, dark grille, a tall exhaust stack (it reads in silhouette).
     ex0, ex1 = -xo - 0.005, 0.03
-    a.add("smoke", span(ex0, ex1, 0.225, 0.37, hl - 0.28, hl - 0.03))
+    a.add("team", span(ex0, ex1, 0.225, 0.37, hl - 0.28, hl - 0.03))
     for k in range(3):
         y = 0.25 + k * 0.04
         a.add("dark", span(ex0 + 0.03, ex1 - 0.03, y, y + 0.022, hl - 0.03, hl - 0.018))
@@ -708,19 +714,22 @@ def mining_truck():
             r = [wall_pt(0.0, z - 0.016, 0.0), wall_pt(0.0, z - 0.016, 0.026), wall_pt(0.0, z + 0.016, 0.026), wall_pt(0.0, z + 0.016, 0.0),
                  wall_pt(H, z - 0.016, 0.0), wall_pt(H, z - 0.016, 0.026), wall_pt(H, z + 0.016, 0.026), wall_pt(H, z + 0.016, 0.0)]
             a.add("steel", hexa(r), bn)
+        # The top rail is a licorice keyline, so the load never merges with the team colour below it.
         rail = [wall_pt(H - 0.02, -0.11, -th - 0.006), wall_pt(H - 0.02, -0.11, 0.03), wall_pt(H - 0.02, blen + 0.04, 0.03), wall_pt(H - 0.02, blen + 0.04, -th - 0.006),
-                wall_pt(H + 0.018, -0.115, -th - 0.006), wall_pt(H + 0.018, -0.115, 0.03), wall_pt(H + 0.018, blen + 0.045, 0.03), wall_pt(H + 0.018, blen + 0.045, -th - 0.006)]
-        a.add("team", hexa(rail), bn)
+                wall_pt(H + 0.028, -0.115, -th - 0.006), wall_pt(H + 0.028, -0.115, 0.03), wall_pt(H + 0.028, blen + 0.045, 0.03), wall_pt(H + 0.028, blen + 0.045, -th - 0.006)]
+        a.add("licorice", hexa(rail), bn)
     # Front wall (raked forward) with a short canopy lip, and its outer face's rib.
     fz0, fz1 = blen, blen + 0.03
     a.add("dark", hexa([(-fw, 0.0, fz0 - th), (fw, 0.0, fz0 - th), (fw, 0.0, fz0), (-fw, 0.0, fz0),
                         (-tw2, H, fz1 - th), (tw2, H, fz1 - th), (tw2, H, fz1), (-tw2, H, fz1)]), bn)
-    a.add("smoke", hexa([(-fw, 0.02, fz0), (fw, 0.02, fz0), (fw, 0.02, fz0 + 0.01), (-fw, 0.02, fz0 + 0.01),
+    a.add("team", hexa([(-fw, 0.02, fz0), (fw, 0.02, fz0), (fw, 0.02, fz0 + 0.01), (-fw, 0.02, fz0 + 0.01),
                          (-tw2, H - 0.02, fz1), (tw2, H - 0.02, fz1), (tw2, H - 0.02, fz1 + 0.01), (-tw2, H - 0.02, fz1 + 0.01)]), bn)
-    a.add("cream", hexa([(-tw2 - 0.02, H - 0.01, fz1 - th - 0.005), (tw2 + 0.02, H - 0.01, fz1 - th - 0.005),
-                         (tw2 + 0.02, H - 0.01, fz1 + 0.09), (-tw2 - 0.02, H - 0.01, fz1 + 0.09),
-                         (-tw2 - 0.02, H + 0.018, fz1 - th - 0.005), (tw2 + 0.02, H + 0.018, fz1 - th - 0.005),
-                         (tw2 + 0.02, H + 0.024, fz1 + 0.1), (-tw2 - 0.02, H + 0.024, fz1 + 0.1)]), bn)
+    # A short canopy lip over the cab (team), its front edge a cream strip (the refinery's cream).
+    a.add("team", hexa([(-tw2 - 0.02, H - 0.01, fz1 - th - 0.005), (tw2 + 0.02, H - 0.01, fz1 - th - 0.005),
+                        (tw2 + 0.02, H - 0.01, fz1 + 0.02), (-tw2 - 0.02, H - 0.01, fz1 + 0.02),
+                        (-tw2 - 0.02, H + 0.022, fz1 - th - 0.005), (tw2 + 0.02, H + 0.022, fz1 - th - 0.005),
+                        (tw2 + 0.02, H + 0.024, fz1 + 0.02), (-tw2 - 0.02, H + 0.024, fz1 + 0.02)]), bn)
+    a.add("cream", span(-tw2 - 0.02, tw2 + 0.02, H - 0.01, H + 0.024, fz1 + 0.02, fz1 + 0.04), bn)
     # Hinge pins and a crossmember under the floor.
     a.add("steel", cyl(0.026, 2 * fw - 0.06, 0, 0.0, 0.0, axis="x", seg=10), bn)
     a.add("smoke", span(-fw + 0.03, fw - 0.03, -0.02, 0.0, blen * 0.55, blen * 0.62), bn)
@@ -742,7 +751,7 @@ def mining_truck():
 
 BUILDERS = {
     "artillery": lambda: artillery("artillery", L=1.1, W=0.66, barrel_len=1.36, lra=False),
-    "long_range_artillery": lambda: artillery("long_range_artillery", L=1.22, W=0.7, barrel_len=1.85, lra=True),
+    "long_range_artillery": lambda: artillery("long_range_artillery", L=1.4, W=0.7, barrel_len=1.85, lra=True),
     "mining_truck": mining_truck,
 }
 

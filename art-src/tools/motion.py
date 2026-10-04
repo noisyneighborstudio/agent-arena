@@ -74,7 +74,7 @@ UNITS = [
    "It must undeploy (0.4 s) before moving. Shells fly a ballistic arc with an apex at 0.35 × range.",
    dict(**TURRET(60), **BARREL(.2, .05, .6, pitch=-60)), "Barrel stays elevated; no idle scan."),
  U('long_range_artillery', 'Range-12 indirect fire. Needs a spotter. Must stop to fire.', 'factory', 'tracked', 1.3, 0.9, 70, True,
-   TRACKED.format(t=70) + " Same family as artillery with a longer hull and a far longer gun (range 12). Fire cycle as artillery: stop and deploy (hull lowers 0.04; spade_l and spade_r swing down 32° and plant, kicking dust at their blades; they swing up for travel). On firing, the barrel recoils 0.24 along its own axis over 0.05 s and returns over 0.7 s, and the hull pitches back 3°.",
+   TRACKED.format(t=70) + " Same family as artillery with a longer hull and a far longer gun (range 12). Fire cycle as artillery: stop and deploy (hull lowers 0.04; spade_l and spade_r, folded up 105° for travel, slam down in 0.25 s and bite, kicking dust at their blades; the gun, stowed for travel on the bow's travel lock at about −3°, rises to its fixed −60° over 0.6 s as it nears firing range and snaps up if a shot comes first; moving again, the spades fold and the gun stows once the turret faces forward). On firing, the barrel recoils 0.24 along its own axis over 0.05 s and returns over 0.7 s, and the hull pitches back 3°.",
    dict(**TURRET(50), **BARREL(.24, .05, .7, pitch=-60)), "Barrel stays elevated; no idle scan."),
  U('laser_tank', 'Beam tank that keeps a continuous lock on its target.', 'factory', 'tracked', 1.8, 1.4, 100, True,
    TRACKED.format(t=100) + " Laser: no recoil. Charge 0.4 s (the cyan coils brighten one after another, back to front), then a beam lasts 0.8 s while the turret keeps tracking. "

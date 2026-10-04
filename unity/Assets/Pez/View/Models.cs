@@ -28,6 +28,10 @@ namespace Pez.View
         public Transform SpadeL, SpadeR;
         public Quaternion SpadeRestL, SpadeRestR;
         public Vector3 SpadeTipL, SpadeTipR;
+        /// <summary>Artillery: the gun's cradle (pitched with the barrel), the rest (firing) rotations of the cradle and
+        /// barrel, and the turret's rest rotation (the gun only stows onto the bow lock with the turret facing forward).</summary>
+        public Transform Cradle;
+        public Quaternion CradleRest, BarrelRestRot, TurretRest;
     }
 
     /// <summary>
@@ -562,6 +566,10 @@ namespace Pez.View
                 rig.SpadeR = PezMotion.FindDeep(go.transform, "spade_r");
                 if (rig.SpadeL != null) { rig.SpadeRestL = rig.SpadeL.localRotation; rig.SpadeTipL = SpadeTip(rig.SpadeL); }
                 if (rig.SpadeR != null) { rig.SpadeRestR = rig.SpadeR.localRotation; rig.SpadeTipR = SpadeTip(rig.SpadeR); }
+                rig.Cradle = PezMotion.FindDeep(go.transform, "cradle");
+                if (rig.Cradle != null) rig.CradleRest = rig.Cradle.localRotation;
+                if (rig.Barrel != null) rig.BarrelRestRot = rig.Barrel.localRotation;
+                if (rig.Turret != null) rig.TurretRest = rig.Turret.localRotation;
                 rig.Emerge = go.AddComponent<PezEmerge>();
                 if (Altitudes.TryGetValue(key, out var alt)) rig.Altitude = alt;
                 if (rig.Barrel != null) { rig.BarrelRest = rig.Barrel.localPosition; rig.HasMuzzle = BarrelTip(rig.Barrel, out rig.MuzzleLocal); }

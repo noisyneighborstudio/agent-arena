@@ -27,6 +27,8 @@ These are blockout assets, built to the brief's exact technical contract (footpr
 - **Functional nodes:**
   - `turret` yaws about local Y.
   - `barrel` is a child of `turret` and recoils along its own local −Z. The artillery barrel is pitched −60° and the SAM rack −25°; recoil follows that axis.
+  - Artillery (`artillery`, `long_range_artillery`): −60° is the rest and firing pose. `cradle` (a child of `turret` on the same trunnion, pitched with the barrel) carries the recoil cradle. The view stows the gun for travel by pitching `cradle` and `barrel` +57° (to about −3°, onto the bow's travel lock); that pose is view-only.
+  - `spade_l` / `spade_r` are the artillery's stabilisers, hinged at the hull's rear. Their rest pose is planted (deployed); the view folds them up 105° about local X for travel.
   - `spinner` is the cutter, crane, rotor, prism, core or dish. Its axis is listed in MOTION.md.
   - `bin` tips about its rear edge. Its child `bin_ore` scales Y with the load.
   - `door` is a roll-up door with its pivot at the top edge. Animate scale Y from 1 to 0.05 to open it.
