@@ -49,7 +49,7 @@ def read(path):
 def known(ts):
     """The fixed sessions: (id, title, game API port, frames port, gateway base or None, room id, extra links, camera ok)."""
     s = [
-        ("room1", "Room 1 · live arena", 7777, 7778, PUBLIC, 1, [("site", PUBLIC + "/")], False),
+        ("room1", "Room 1 · live arena", 7777, 7778, PUBLIC, 1, [("site", PUBLIC + "/")], False),  # gateway 7790
         ("test", "Test room", 7927, 7928, f"https://{ts}:8457", 1, [], True),
         ("sink", "Kitchen sink (asset library)", 7947, 7948, None, 0, [("asset library page", f"https://{ts}:8456/")], True),
         ("preview", "Preview copy", 7957, 7958, None, 0, [], True),
@@ -86,7 +86,10 @@ def session(entry):
                 pass
         # With a renderer, "watch" opens an observer camera seeing what this team sees (its own camera, so the player's
         # view never moves); without one, the gateway's tactical view of the seat.
-        watch = f"/observe?frames={frames}&api={api}&pov={t['team']}" if frames else view
+        # The player's own page (HUD, alerts, their agent's feed, stats) on an observer camera of our own.
+        gw_local = GATEWAYS.get(api)
+        watch = (f"/pv/start?frames={frames}&api={api}&team={t['team']}&gw={gw_local}&room={room}" if frames and gw_local
+                 else f"/observe?frames={frames}&api={api}&pov={t['team']}" if frames else view)
         seats.append({"name": t.get("name"), "player": t.get("player"), "controller": t.get("controller"),
                       "out": bool(t.get("defeated")), "structures": t.get("structures"), "units": t.get("units"),
                       "kills": t.get("kills"), "view": watch, "team": t["team"]})
@@ -211,6 +214,9 @@ lease();
 
 # Observer camera leases: (frames port, slot) -> expiry. A viewer renews every 10 s; a slot is free 30 s after its last renewal.
 LEASES = {}
+# Game API port -> its gateway's local port (where the player's own viewer page and its data live).
+GATEWAYS = {7777: 7790, 7927: 7929}
+FRAME_PORTS = {7778, 7928, 7948, 7958, 7968, 7978, 7988}
 OBSERVER_SLOTS = range(10, 14)
 
 
@@ -264,7 +270,99 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, json.dumps({"ok": slot is not None, "slot": slot, "error": None if slot is not None else "all 4 observer cameras on this session are in use: close another viewer"}), "application/json")
         if path.startswith("/frames/"):
             return self.frames(path)
+        if path == "/pv/start":
+            return self.pv_start()
+        if path.startswith("/pv/"):
+            return self.pv(path)
         self.send(404, "not found", "text/plain")
+
+    def do_POST(self):
+        self.send(403, "look, don't touch: the dashboard can't send orders", "text/plain")
+
+    def relay(self, url):
+        try:
+            up = urllib.request.urlopen(url, timeout=10)
+        except urllib.error.HTTPError as e:
+            return self.send(e.code, e.read() or b"", e.headers.get("Content-Type", "text/plain"))
+        except Exception as e:
+            return self.send(502, f"not answering: {e}", "text/plain")
+        self.send_response(up.status)
+        for k in ("Content-Type", "Content-Length"):
+            if up.headers.get(k):
+                self.send_header(k, up.headers[k])
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        try:
+            while True:  # MJPEG streams never end: relay chunk by chunk until the viewer closes
+                chunk = up.read1(65536) if hasattr(up, "read1") else up.read(65536)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        finally:
+            up.close()
+
+    def pv_start(self):
+        """A player's own viewer page, as their human sees it, but on an observer camera: lease a camera, aim its
+        point of view at that team, and open the page."""
+        from urllib.parse import parse_qs
+        q = parse_qs(urlparse(self.path).query)
+        try:
+            frames, api, team, gw, room = (int(q[k][0]) for k in ("frames", "api", "team", "gw", "room"))
+        except (KeyError, ValueError):
+            return self.send(400, "frames, api, team, gw and room are required", "text/plain")
+        if frames not in FRAME_PORTS or GATEWAYS.get(api) != gw:
+            return self.send(403, "not a Pezz session", "text/plain")
+        slot = lease(frames, None)
+        if slot is None:
+            return self.send(503, "all 4 observer cameras on this session are in use: close another viewer", "text/plain")
+        try:
+            vt = get(f"http://127.0.0.1:{api}/api/admin/viewlink?team={team}")["view_token"]
+            urllib.request.urlopen(f"http://127.0.0.1:{frames}/team/{slot}/cam?pov={team}&follow=0", timeout=3).read()
+        except Exception as e:
+            return self.send(502, f"couldn't open that seat's view: {e}", "text/plain")
+        self.send_response(302)
+        self.send_header("Location", f"/pv/{frames}/{slot}/{gw}/r{room}-{vt}/")
+        self.end_headers()
+
+    def pv(self, path):
+        # /pv/<frames>/<slot>/<gateway>/<room token>/<rest>
+        import re
+        m = re.match(r"^/pv/(\d+)/(\d+)/(\d+)/(r\d+-[0-9a-f]+)/?(.*)$", path)
+        if not m:
+            return self.send(404, "not found", "text/plain")
+        frames, slot, gw, tok, rest = int(m.group(1)), int(m.group(2)), int(m.group(3)), m.group(4), m.group(5)
+        if frames not in FRAME_PORTS or slot not in OBSERVER_SLOTS or gw not in GATEWAYS.values():
+            return self.send(403, "not a Pezz session", "text/plain")
+        query = urlparse(self.path).query
+        qs = f"?{query}" if query else ""
+        base = f"/pv/{frames}/{slot}/{gw}/{tok}"
+        if rest == "":
+            # The gateway's own viewer page, pointed at us. No ?c= (commander) ever reaches it: no orders box.
+            try:
+                html = urllib.request.urlopen(f"http://127.0.0.1:{gw}/view/{tok}", timeout=5).read().decode()
+            except Exception as e:
+                return self.send(502, f"gateway not answering: {e}", "text/plain")
+            html = html.replace(f'const BASE = "/view/{tok}"', f'const BASE = "{base}"')
+            badge = (f'<div style="position:fixed;left:50%;transform:translateX(-50%);bottom:8px;z-index:99;background:rgba(20,17,19,.85);'
+                     f'color:#e8a33d;border:1px solid #3a343b;border-radius:8px;padding:4px 10px;font:12px system-ui">👁 observer: '
+                     f'everything this player sees, on your own camera · look only</div>'
+                     f'<script>setInterval(()=>fetch("/api/observe?frames={frames}&slot={slot}"),10000)</script>')
+            html = html.replace("</body>", badge + "</body>")
+            return self.send(200, html)
+        # Video and camera: our observer camera, never the player's own.
+        if rest == "live.mjpg":
+            return self.relay(f"http://127.0.0.1:{frames}/team/{slot}/stream")
+        if rest == "live.jpg":
+            return self.relay(f"http://127.0.0.1:{frames}/team/{slot}.jpg")
+        if rest in ("cam", "pick"):
+            return self.relay(f"http://127.0.0.1:{frames}/team/{slot}/{rest}{qs}")
+        if rest == "orders":
+            return self.send(403, "look, don't touch", "text/plain")
+        # Everything else the page reads (its map, its HUD frame, the agent's feed, unit details, replays): read-only.
+        return self.relay(f"http://127.0.0.1:{gw}/view/{tok}/{rest}{qs}")
 
     def frames(self, path):
         # /frames/<port>/<rest>: only the renderers' frame ports, and never room 1's camera control.
