@@ -16,6 +16,7 @@ namespace Pez.View
             // Art-pack model state
             public float LastFire = -99f, DoorTimer;
             public bool Destroyed, Tipped;
+            public bool Sold; // sold by its owner: taken down, not blown up
             public int PrevCargo;
             public float BuiltShown = -1f;
             public Vector3? SpawnFrom;
@@ -1180,11 +1181,21 @@ namespace Pez.View
                     case "hit":
                         Fx.Hit(ev.Key, W(ev.Pos, HeightOf(ev.B, 0.2f))); // scale and character by weapon
                         break;
+                    case "sold":
+                        if (Views.TryGetValue(ev.A, out var sold)) sold.Sold = true;
+                        break;
                     case "destroyed":
                         {
                             Views.TryGetValue(ev.A, out var dead);
-                            if (dead != null) dead.Destroyed = true;
                             var def = Defs.Get(ev.Key);
+                            if (dead != null && dead.Sold)
+                            {
+                                // A sale is a dismantling: dust at the corners and the building sinks away, no blast and no
+                                // wreck (a spectator saw a sold deep mine "explode on its own").
+                                Fx.StageDust(W(ev.Pos), def.SizeX, def.SizeY);
+                                break;
+                            }
+                            if (dead != null) dead.Destroyed = true;
                             var team = Mats.Team(ev.Team);
                             if (def.Armor == Armor.Infantry) Fx.InfantryDeath(W(ev.Pos), team);
                             else if (def.IsStructure) Fx.BuildingDestroyed(W(ev.Pos), def.SizeX, team);
