@@ -333,7 +333,7 @@ namespace Pez.Sim
                 }
                 result.Add(pads.Count == 0
                     ? $"#{u.Id} {u.Def.Key} has ~{reach:0} tiles of fuel for a ~{route:0}-tile trip and nowhere to refuel"
-                    : $"#{u.Id} {u.Def.Key} has ~{reach:0} tiles of fuel for a ~{route:0}-tile trip; it turns back to refuel about {MathF.Min(traveled, route):0} tiles out, near {(int)at.X},{(int)at.Y}");
+                    : $"#{u.Id} {u.Def.Key} has ~{reach:0} tiles of fuel for a ~{route:0}-tile trip; it turns back to refuel about {MathF.Min(traveled, route):0} tiles out, near {(int)at.X},{(int)at.Y}, ~{MathF.Max(0, route - traveled):0} tiles short of the end");
             }
             return result;
         }

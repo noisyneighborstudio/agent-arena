@@ -692,6 +692,14 @@ namespace Pez.Headless
             float spike = rt.Teams[0].Rates["iron_ore"];
             Check(spike < 20f, $"a sudden 150-ore delivery shows as a modest rate, not +150/s ({spike:0.0}/s)");
 
+            // Thorn: raw ore piling up behind busy refineries is called out.
+            var bn = new World(2, 7, 96);
+            bn.SpawnStructure(0, "mining_refinery", bn.FindPlacement(0, "mining_refinery").Value, 1f);
+            bn.Teams[0].Add("iron_ore", 3000);
+            Run(bn, 2);
+            string neck = StateView.Bottleneck(bn, 0);
+            Check(neck != null && neck.Contains("flat out"), $"3,000 iron_ore behind one busy refinery is called a bottleneck: {neck}");
+
             // Hazel: a build that will tip you into low power says so; a reserve above your stock says what it stops.
             var hz = new World(2, 7, 96);
             hz.Teams[0].Add("steel", 5000); hz.Teams[0].Add("copper", 2000);

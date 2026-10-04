@@ -228,6 +228,7 @@ namespace Pez.Sim
 
             o.Set("derricks", DerrickInfo(w, team).Select(d => d.line).Concat(DerrickSites(w)).ToList());
             o.Set("upkeep", UpkeepText(w, team));
+            o.Set("bottleneck", Bottleneck(w, team));
 
             o.Set("visible_enemies", w.Entities.Where(e => !e.Dead && e.Team != team && e.Team >= 0 && w.IsVisibleTo(team, e)).Select(e =>
                 e.IsStructure
@@ -330,6 +331,25 @@ namespace Pez.Sim
         /// it's in sight or yours, else whose it was when last seen (or unknown), whether an engineer could take it now,
         /// and what it pays.
         /// </summary>
+        /// <summary>Raw ore piling up because every converter for it is already running flat out (test player Thorn: 3,000
+        /// iron_ore waiting while steel crawled, and nothing said why).</summary>
+        public static string Bottleneck(World w, int team)
+        {
+            var t = w.Teams[team];
+            foreach (var ore in new[] { "iron_ore", "copper_ore" })
+            {
+                if (t.Amount(ore) - t.Reserved(ore) < 800) continue;
+                var conv = w.Owned(team).Where(s => s.IsStructure && s.IsComplete && s.Def.Recipes.Any(r => r.Inputs.ContainsKey(ore))).ToList();
+                if (conv.Count == 0) return $"{t.Amount(ore)} {ore} waiting and nothing to refine it: build a mining_refinery";
+                if (conv.All(s => s.Working))
+                {
+                    float rate = conv.Sum(s => s.Def.Recipes.Where(r => r.Inputs.ContainsKey(ore)).Sum(r => r.Rate));
+                    return $"{t.Amount(ore)} {ore} waiting: your {conv.Count} refiner{(conv.Count == 1 ? "y converts" : "ies convert")} it flat out (~{rate:0}/s{(t.LowPower ? ", halved by low power" : "")}); another mining_refinery turns the pile into product faster";
+                }
+            }
+            return null;
+        }
+
         /// <summary>Derrick sites waiting to be rebuilt (everyone knows where derricks stand).</summary>
         public static IEnumerable<string> DerrickSites(World w) => w.DerrickRespawns.Select(r =>
             $"derrick site at {r.origin.X},{r.origin.Y} (2x2): destroyed; rebuilt neutral in about {MathF.Max(0, r.at - w.Time):0}s (an engineer sent there with capture x,y waits for it)");

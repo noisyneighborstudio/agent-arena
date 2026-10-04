@@ -32,7 +32,7 @@ namespace Pez.Sim
                     .Set("reserves", t.Reserve.Aggregate(new JObj(), (j, kv) => j.Set(kv.Key, kv.Value)))
                     .Set("power", new JObj().Set("produced", t.PowerProduced).Set("used", t.PowerUsed).Set("low", t.LowPower)))
                 .Set("map", new JObj().Set("w", w.Map.W).Set("h", w.Map.H).Set("sector_tiles", w.Map.W / 8))
-                .Set("upkeep", StateView.UpkeepJson(w, team))
+                .Set("upkeep", StateView.UpkeepJson(w, team)).Set("bottleneck", StateView.Bottleneck(w, team))
                 .Set("match", StateView.MatchJson(w));
 
             o.Set("alerts", w.Alerts.Active(w, team).Select(a => (object)Alert(w, a)).ToList());
