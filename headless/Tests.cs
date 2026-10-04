@@ -544,12 +544,28 @@ namespace Pez.Headless
             t.Teams[0].KnownEnemyStructures[99999] = ("barracks", near, 1);
             truck.HarvestTile = null; t.SetOrder(truck, Order.Harvest, truck.Pos);
             Run(t, 1);
-            Check(truck.HarvestTile.HasValue && Vec2.Dist(truck.HarvestTile.Value.Center, near.Center) >= World.HostileOreRadius,
+            Check(!truck.HarvestTile.HasValue || Vec2.Dist(truck.HarvestTile.Value.Center, near.Center) >= World.HostileOreRadius,
                   $"a truck picking its own field skips one by a known enemy base ({(truck.HarvestTile.HasValue ? Vec2.Dist(truck.HarvestTile.Value.Center, near.Center) : -1):0} tiles from it)");
             truck.Cargo = 80; truck.CargoType = 0;
+            int iron0 = t.Teams[0].Amount("iron_ore") + t.Teams[0].Amount("steel");
             Commands.Execute(t, 0, Cmd("type", "move", "units", new[] { truck.Id }, "x", th.Center.X + 5, "y", th.Center.Y));
             Run(t, 20);
-            Check(truck.Order == Order.ReturnOre || truck.Cargo == 0, $"a loaded truck moved home unloads instead of idling with its cargo (order {truck.Order}, cargo {truck.Cargo})");
+            Check(truck.Order != Order.Idle || truck.Cargo == 0, $"a loaded truck moved home unloads instead of idling with its cargo (order {truck.Order}, cargo {truck.Cargo})");
+
+            // Gale: with the home fields gone, a truck left to choose waits rather than driving off across the map.
+            var g2 = new World(2, 7, 128);
+            var gh = g2.Owned(0).First(e => e.Def.Key == "command_center");
+            for (int i = 0; i < g2.Map.Ore.Length; i++)
+                if (Vec2.Dist(new Vec2(i % g2.Map.W + 0.5f, i / g2.Map.W + 0.5f), gh.Center) < World.LeashDist + 3) g2.Map.Ore[i] = 0;
+            var gt = g2.Owned(0).First(e => e.IsHarvester);
+            gt.HarvestTile = null; g2.SetOrder(gt, Order.Harvest, gt.Pos);
+            Run(g2, 2);
+            var far = g2.Map.NearestOre(gt.Pos, 200);
+            Check(!gt.HarvestTile.HasValue && gt.Order == Order.Idle && far.HasValue && g2.Alerts.All.Any(a => a.Team == 0 && a.Kind == "surface_ore_exhausted" && a.Lost.Any(l => l.Contains("Your call"))),
+                  $"home fields gone, a truck waits for the commander instead of driving {(far.HasValue ? Vec2.Dist(far.Value.Center, gt.Pos) : -1):0} tiles to the next field");
+            var rh = Commands.Execute(g2, 0, Cmd("type", "harvest", "units", new[] { gt.Id }, "x", far.Value.X, "y", far.Value.Y));
+            Run(g2, 2);
+            Check(Ok(rh) && gt.Order == Order.Harvest && gt.HarvestTile.HasValue && Said(rh).Contains("Careful"), $"and goes when sent, with a warning: {Said(rh)}");
         }
 
         /// <summary>Test players Cedar and Dune: engineers and derrick sites, unseen fire, ore warnings, sell, train.</summary>

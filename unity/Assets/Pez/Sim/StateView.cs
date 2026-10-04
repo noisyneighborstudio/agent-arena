@@ -513,8 +513,10 @@ namespace Pez.Sim
         ///     early home-ore warning; selling your only tech building needs confirm; averaged rates.
         /// 23: capture x,y on a site being rebuilt (and during protection); attack_move leaves held derricks alone;
         ///     together waits for far-behind members; retreat to a real base; low-power alert; per-ore home warning.
+        /// 24: trucks choosing their own field stay within 35 tiles of a drop-off (far fields are the commander's call);
+        ///     the home-ore warning fires at half left.
         /// </summary>
-        public const int RulesVersion = 23;
+        public const int RulesVersion = 24;
 
         public static JObj Rules()
         {

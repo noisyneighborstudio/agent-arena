@@ -1591,8 +1591,14 @@ namespace Pez.Sim
                     var useful = new bool[Defs.Ores.Length];
                     for (int k = 0; k < useful.Length; k++) useful[k] = want >= 0 || OreUseful(e.Team, k);
                     bool Wanted(Int2 t) => useful[Map.OreType[Map.Idx(t.X, t.Y)]];
+                    // On a leash: a truck choosing for itself keeps to its own field (within 12 tiles of where it was mining)
+                    // or within LeashDist of one of your drop-offs. It doesn't drive off across the map into who knows what:
+                    // sending trucks to a far field is the commander's call (harvest x,y), and so is building a refinery there.
+                    var drops = Entities.Where(s => !s.Dead && s.Team == e.Team && s.IsStructure && s.IsComplete && s.Def.DropOff).Select(s => s.Center).ToList();
+                    bool hasField = e.HarvestTile.HasValue;
+                    bool Leashed(Int2 t) => (hasField && Vec2.DistSq(t.Center, from) <= 144f) || drops.Any(dp => Vec2.DistSq(dp, t.Center) <= LeashDist * LeashDist);
                     // Spread trucks out: avoid tiles another truck is already working.
-                    bool Free(Int2 t) => !OreReserved(t, e.Team) && Safe(t);
+                    bool Free(Int2 t) => !OreReserved(t, e.Team) && Safe(t) && Leashed(t);
                     e.HarvestTile = Map.NearestOre(from, 40, t => Free(t) && Wanted(t) && !Entities.Any(o => o != e && !o.Dead && o.IsHarvester && o.HarvestTile.HasValue && o.HarvestTile.Value.Equals(t)), want)
                                     ?? Map.NearestOre(from, 80, t => Free(t) && Wanted(t), want)
                                     ?? Map.NearestOre(from, 80, Free, want);
@@ -2068,11 +2074,13 @@ namespace Pez.Sim
             return Entities.Any(s => !s.Dead && s.Team == team && s.IsStructure && s.IsComplete && s.Def.Recipes.Any(r => r.Inputs.ContainsKey(ore)));
         }
 
+        /// <summary>How far from a drop-off a truck will pick a new field on its own.</summary>
+        public const float LeashDist = 35f;
         /// <summary>Within this many tiles of a drop-off counts as "home" ore.</summary>
         public const float HomeOreRadius = 20f;
 
         /// <summary>
-        /// Warn while there's still time to act: when the surface ore around a team's drop-offs is down to a quarter of what
+        /// Warn while there's still time to act: when the surface ore around a team's drop-offs is down to half of what
         /// was there, before the trucks start wandering off to far fields (or the economy simply stops).
         /// </summary>
         void CheckHomeOre()
@@ -2097,12 +2105,13 @@ namespace Pez.Sim
                             left[Map.OreBaseType[i]] += Map.Ore[i]; was[Map.OreBaseType[i]] += Map.OreBase[i];
                         }
                 }
-                int k = Enumerable.Range(0, 2).Where(j => was[j] >= 1000 && left[j] <= was[j] / 4).Select(j => (int?)j).FirstOrDefault() ?? -1;
+                // At half: the second half goes much faster than the first (more trucks by then), so a quarter left is too late.
+                int k = Enumerable.Range(0, 2).Where(j => was[j] >= 1000 && left[j] <= was[j] / 2).Select(j => (int?)j).FirstOrDefault() ?? -1;
                 if (k < 0) continue;
                 team.SurfaceWarnedAt = Time;
                 Alerts.Raise(this, team.Id, "surface_ore_exhausted", Priority.Medium, drops[0].Center, hit: false)
                       .Lost.Add($"the surface {Defs.Ores[k]} within {(int)HomeOreRadius} tiles of your drop-offs is down to {left[k]} ({100 * left[k] / was[k]}% of what was there). " +
-                                "Plan the next step now: survey for deep deposits (geological_surveyor, then drill_rig), hold a derrick, or put a refinery or outpost by a new field and guard it; trucks left to choose will start driving far for ore");
+                                "Plan the next step now: survey for deep deposits (geological_surveyor, then drill_rig), hold a derrick, or put a refinery or outpost by a new field and guard it. When it's gone, trucks stop and wait for your call rather than driving off to far fields");
             }
         }
 
@@ -2129,7 +2138,8 @@ namespace Pez.Sim
             team.SurfaceWarnedAt = Time;
             string what = type >= 0 ? Defs.Ores[type] : "surface ore";
             Alerts.Raise(this, truck.Team, "surface_ore_exhausted", Priority.Medium, truck.Pos, hit: false)
-                  .Lost.Add($"mining truck #{truck.Id} can't find any {what} within reach. Train a geological_surveyor at a factory and survey for deep deposits, then deploy a drill_rig on one");
+                  .Lost.Add($"mining truck #{truck.Id} can't find any {what} near your drop-offs and is waiting (trucks don't drive off to far fields on their own). " +
+                            $"Your call: send it to a field you know with harvest x,y (escort it), build a refinery or outpost by a field so it's near a drop-off, or go deep: a geological_surveyor finds deposits and a drill_rig mines one with no trucks");
         }
 
         // ------------------------------------------------------------------ fuel
