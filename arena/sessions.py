@@ -132,8 +132,8 @@ main{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:
 table{width:100%;border-collapse:collapse;font-size:12px}td{padding:3px 4px;border-top:1px solid #2a262b}
 td.n{text-align:right;color:var(--dim)}.out{opacity:.45}.err{color:var(--bad)}.okc{color:var(--ok)}
 #viewer{position:fixed;inset:0;background:rgba(0,0,0,.92);display:none;flex-direction:column}
-#viewer.on{display:flex}#viewer .bar{display:flex;gap:10px;align-items:center;padding:8px 12px;color:var(--ink)}
-#viewer iframe{flex:1;border:0;width:100%;background:#000}#viewer button{background:#2a262b;color:var(--ink);border:0;border-radius:6px;padding:5px 10px;cursor:pointer}
+#viewer.on{display:flex}body:has(#viewer.on){overflow:hidden;overscroll-behavior:none}#viewer .bar{display:flex;gap:10px;align-items:center;padding:8px 12px;color:var(--ink)}
+#viewer iframe{flex:1;border:0;width:100%;min-height:0;background:#000;touch-action:none}#viewer button{background:#2a262b;color:var(--ink);border:0;border-radius:6px;padding:5px 10px;cursor:pointer}
 </style></head><body>
 <header><h1>Pezz sessions</h1><small id=upd>loading…</small><small style="margin-left:auto">tailnet only · per-player links are private</small></header>
 <main id=grid></main>
@@ -169,7 +169,10 @@ OBSERVE = r"""<!doctype html><html><head><meta charset=utf-8><meta name=viewport
 <title>Pezz observer</title><style>
 html,body{margin:0;height:100%;background:#0b0c0e;color:#ece4d2;font:13px ui-sans-serif,system-ui,-apple-system;overflow:hidden}
 #wrap{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
-img{max-width:100vw;max-height:100vh;cursor:grab;user-select:none;-webkit-user-drag:none}img:active{cursor:grabbing}
+img{max-width:100vw;max-height:100vh;cursor:grab;user-select:none;-webkit-user-drag:none;touch-action:none}img:active{cursor:grabbing}
+html,body{touch-action:none;overscroll-behavior:none}
+#pad{position:fixed;right:10px;bottom:44px;display:flex;flex-direction:column;gap:6px}
+#pad button{width:44px;height:44px;border-radius:10px;border:1px solid #3a343b;background:rgba(20,17,19,.85);color:#ece4d2;font-size:20px}
 #bar{position:fixed;top:8px;left:8px;right:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;pointer-events:none}
 #bar>*{pointer-events:auto;background:rgba(20,17,19,.82);border:1px solid #3a343b;border-radius:8px;padding:5px 9px;color:#ece4d2}
 select,button{font:inherit;cursor:pointer}button{background:#2a262b}
@@ -177,7 +180,8 @@ select,button{font:inherit;cursor:pointer}button{background:#2a262b}
 #note{color:#e8a33d}
 </style></head><body><div id=wrap><img id=f draggable=false></div>
 <div id=bar><span>👁 observer · look only</span><label>sees as <select id=pov></select></label><span id=fol>click a unit to follow it</span><button id=unf style="display:none">stop following</button><span id=note></span></div>
-<div id=help>drag / WASD / arrows: pan · wheel: zoom · Q/E: rotate · click: follow a unit · Esc: stop following</div>
+<div id=pad><button data-z="0.8">+</button><button data-z="1.25">−</button><button data-y="15">⟲</button><button data-y="-15">⟳</button></div>
+<div id=help>drag: pan · pinch or wheel: zoom · buttons or Q/E: rotate · tap a unit: follow · Esc: stop following</div>
 <script>
 const q=new URLSearchParams(location.search),FR=q.get('frames'),API=q.get('api');let slot=null,pov=+(q.get('pov')??-1);
 const img=document.getElementById('f'),base=()=>`/frames/${FR}/team/${slot}`;
@@ -190,13 +194,20 @@ fetch('/api/sessions').then(r=>r.json()).then(d=>{const s=d.sessions.find(x=>Str
   povSel.innerHTML=o.map(([v,n])=>`<option value="${v}">${n}</option>`).join('');povSel.value=String(pov);document.title=`${s?.title||'Pezz'} · observer`});
 const povSel=document.getElementById('pov');povSel.onchange=()=>{pov=+povSel.value;cam(`pov=${pov}&follow=0`);fol.textContent='click a unit to follow it';unf.style.display='none'};
 // Look around.
-let drag=null,moved=0,acc={dx:0,dy:0,zoom:1,yaw:0},sending=false;
+let moved=0,acc={dx:0,dy:0,zoom:1,yaw:0},sending=false;
 function flush(){if(sending)return;const a=acc;if(!a.dx&&!a.dy&&a.zoom===1&&!a.yaw)return;acc={dx:0,dy:0,zoom:1,yaw:0};sending=true;
   Promise.resolve(cam(`dx=${a.dx.toFixed(4)}&dy=${a.dy.toFixed(4)}&zoom=${a.zoom.toFixed(3)}&yaw=${a.yaw.toFixed(1)}`)).finally(()=>{sending=false;setTimeout(flush,30)})}
-img.addEventListener('mousedown',e=>{drag={x:e.clientX,y:e.clientY};moved=0;e.preventDefault()});
-addEventListener('mouseup',e=>{if(drag&&moved<4)pick(e);drag=null});
-addEventListener('mousemove',e=>{if(!drag)return;const r=img.getBoundingClientRect();moved+=Math.abs(e.clientX-drag.x)+Math.abs(e.clientY-drag.y);
-  acc.dx-=(e.clientX-drag.x)/r.width;acc.dy+=(e.clientY-drag.y)/r.height;drag={x:e.clientX,y:e.clientY};flush()});
+// Pointer events: mouse, pen and touch alike. One finger drags, two pinch to zoom, a tap picks a unit to follow.
+const pts=new Map();let pinch=0;
+img.addEventListener('pointerdown',e=>{img.setPointerCapture(e.pointerId);pts.set(e.pointerId,{x:e.clientX,y:e.clientY});if(pts.size===1)moved=0;e.preventDefault()});
+img.addEventListener('pointermove',e=>{const p=pts.get(e.pointerId);if(!p)return;const r=img.getBoundingClientRect();
+  if(pts.size===1){moved+=Math.abs(e.clientX-p.x)+Math.abs(e.clientY-p.y);acc.dx-=(e.clientX-p.x)/r.width;acc.dy+=(e.clientY-p.y)/r.height}
+  pts.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  if(pts.size===2){const[a,b]=[...pts.values()],d=Math.hypot(a.x-b.x,a.y-b.y);if(pinch)acc.zoom*=pinch/d;pinch=d;moved=99}
+  flush()});
+const up=e=>{if(pts.has(e.pointerId)&&pts.size===1&&moved<6)pick(e);pts.delete(e.pointerId);if(pts.size<2)pinch=0};
+img.addEventListener('pointerup',up);img.addEventListener('pointercancel',e=>{pts.delete(e.pointerId);pinch=0});
+document.querySelectorAll('#pad button').forEach(b=>b.onclick=()=>{if(b.dataset.z)acc.zoom*=+b.dataset.z;if(b.dataset.y)acc.yaw+=+b.dataset.y;flush()});
 addEventListener('wheel',e=>{e.preventDefault();acc.zoom*=e.deltaY<0?0.9:1.11;flush()},{passive:false});
 addEventListener('keydown',e=>{const k=e.key.toLowerCase(),s=.08;if(k==='a'||k==='arrowleft')acc.dx-=s;if(k==='d'||k==='arrowright')acc.dx+=s;if(k==='w'||k==='arrowup')acc.dy+=s;if(k==='s'||k==='arrowdown')acc.dy-=s;
   if(k==='q')acc.yaw+=15;if(k==='e')acc.yaw-=15;if(k==='escape')stopF();flush()});
@@ -225,7 +236,8 @@ def lease(port, want):
     now = time.time()
     for k in [k for k, t in LEASES.items() if t < now]:
         del LEASES[k]
-    if want is not None and (port, want) in LEASES:
+    # A viewer renewing its camera keeps it, even across a restart of this page (it re-claims the slot it had).
+    if want is not None and want in OBSERVER_SLOTS and LEASES.get((port, want), 0) <= now + 30:
         LEASES[(port, want)] = now + 30
         return want
     for slot in OBSERVER_SLOTS:
