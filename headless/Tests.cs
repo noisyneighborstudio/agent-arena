@@ -466,6 +466,9 @@ namespace Pez.Headless
                   $"kills from before kill value was tracked count at a typical unit's value ({World.TypicalKillValue} each: {s.KillValue})");
             w.BackfillKillValue();
             Check(s.KillValue == 300 + 149 * World.TypicalKillValue, "and only once");
+            var lra = Defs.Get("long_range_artillery");
+            Check(lra != null && lra.Weapon.Range == 12 && lra.Sight == 7 && Defs.Get("artillery").Sight == 7,
+                  $"long-range artillery shoots 12 but sees 7, so it needs a spotter like artillery (sight {lra?.Sight})");
         }
 
         static void Drones()
