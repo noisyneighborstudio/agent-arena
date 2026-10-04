@@ -744,6 +744,7 @@ namespace Pez.Headless
             var rsf = Commands.Execute(sv, 0, Cmd("type", "save_for", "unit", "drill_rig"));
             Run(sv, 10);
             int keptSteel = st.Amount("steel");
+            Check(Json.Write(StateData.Team(sv, 0)).Contains("\"saving_for\":{\"key\":\"drill_rig\""), "saving_for is in the JSON state too");
             st.Add("steel", 150);
             var rb = Commands.Execute(sv, 0, Cmd("type", "train", "unit", "drill_rig"));
             Check(Ok(rsf) && keptSteel >= 700 && Ok(rb) && Said(rb).Contains("what you were saving for") && st.SaveFor == null,

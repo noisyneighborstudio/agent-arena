@@ -30,6 +30,7 @@ namespace Pez.Sim
                     .Set("stalled_for_s", t.StalledSince >= 0 ? (int)(w.Time - t.StalledSince) : 0)
                     .Set("stockpile", Stock(t))
                     .Set("reserves", t.Reserve.Aggregate(new JObj(), (j, kv) => j.Set(kv.Key, kv.Value)))
+                    .Set("saving_for", t.SaveFor == null ? null : new JObj().Set("key", t.SaveFor).Set("holding", t.SaveForCost.Aggregate(new JObj(), (j, kv) => j.Set(kv.Key, kv.Value))))
                     .Set("power", new JObj().Set("produced", t.PowerProduced).Set("used", t.PowerUsed).Set("low", t.LowPower)))
                 .Set("map", new JObj().Set("w", w.Map.W).Set("h", w.Map.H).Set("sector_tiles", w.Map.W / 8))
                 .Set("upkeep", StateView.UpkeepJson(w, team)).Set("bottleneck", StateView.Bottleneck(w, team))
@@ -87,7 +88,7 @@ namespace Pez.Sim
                 .Set("yours", x.owner == team).Set("in_sight", x.seen).Set("hp", x.seen ? (object)(int)x.d.Hp : null).Set("max_hp", x.d.Def.MaxHp)
                 .Set("capturable_now", x.capturable).Set("income_steel_per_s", World.DerrickSteel))
                 .Concat(w.DerrickRespawns.Select(r => (object)new JObj().Set("id", null).Set("x", r.origin.X).Set("y", r.origin.Y).Set("w", 2).Set("h", 2)
-                    .Set("owner", "none: destroyed").Set("respawns_in_s", (int)MathF.Max(0, r.at - w.Time)))).ToList());
+                    .Set("owner", "none: destroyed").Set("hp", null).Set("respawns_in_s", (int)MathF.Max(0, r.at - w.Time)))).ToList());
 
             o.Set("enemies", w.Entities.Where(e => !e.Dead && e.Team != team && e.Team >= 0 && w.IsVisibleTo(team, e)).Select(e =>
             {

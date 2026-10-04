@@ -375,7 +375,7 @@ namespace Pez.Sim
                                        .OrderByDescending(d => dist * (d.IsAir ? 1.15f : RouteFactor) / (Tank(d) * d.Speed)).FirstOrDefault();
             float used = worst == null ? 0 : dist * (worst.IsAir ? 1.15f : RouteFactor) / (Tank(worst) * worst.Speed);
             return Ok($"rally point for {s.Def.Key} set to ({x},{y})" +
-                      (used >= 0.25f ? $"; it's {dist:0} tiles away: a new {worst.Key} burns ~{StateView.Pct(MathF.Min(1, used))}% of its fuel getting there" +
+                      (used >= 0.25f ? $"; it's {dist:0} tiles away: the shortest-legged unit this building makes ({worst.Key}) burns ~{StateView.Pct(MathF.Min(1, used))}% of its fuel getting there" +
                                        (used >= 0.5f ? " and may turn back to refuel before it arrives; rally nearer, or at a refuel point (outpost)" : "") : ""));
         }
 
@@ -422,6 +422,8 @@ namespace Pez.Sim
             foreach (var kv in def.Cost) t.SaveForCost[kv.Key] = kv.Value;
             string have = string.Join(", ", def.Cost.Select(kv => $"{t.Amount(kv.Key)}/{kv.Value} {kv.Key}"));
             string ready = t.Missing(def.Cost) == null ? " You can afford it now." : "";
+            var covered = def.Cost.Where(kv => t.Reserve.TryGetValue(kv.Key, out var r) && r >= kv.Value).Select(kv => $"{kv.Key} (your reserve of {t.Reserve[kv.Key]} already covers it)").ToList();
+            if (covered.Count > 0) ready += $" Already held back: {string.Join(", ", covered)}.";
             return Ok($"saving for {key}: converters leave {string.Join(", ", def.Cost.Select(kv => $"{kv.Value} {kv.Key}"))} alone until you buy it (have {have}).{ready} " +
                       $"Then train or build it as usual and the hold lifts; {{\"type\":\"save_for\"}} with no unit cancels.");
         }
