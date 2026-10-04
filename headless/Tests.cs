@@ -600,6 +600,13 @@ namespace Pez.Headless
             var why = w.Events.LastOrDefault(e => e.Type == "capture_stopped" && e.A == eng2.Id);
             Check(eng2.Order == Order.Idle && why != null && why.Text.Contains("below 50%"), $"an engineer that gives up says why: {why?.Text}");
             Check(StateView.EventList(w, 0, 0, 200).Any(e => e.Item3 == "capture_stopped"), "and the player sees it in their events");
+            // Quill: a derrick seen in a team's hands is remembered as neutral when that team leaves, not as "never seen".
+            var mw = new World(3, 7, 96);
+            var md = mw.Derricks.First(); md.Team = 2;
+            mw.Teams[0].KnownEnemyStructures[md.Id] = ("derrick", md.Origin, 2);
+            mw.Leave(2);
+            Check(mw.Teams[0].KnownEnemyStructures.TryGetValue(md.Id, out var mem) && mem.team == -1 && StateView.DerrickInfo(mw, 0).Any(x => x.d.Id == md.Id && x.owner == -1),
+                  "a derrick you saw a departed team hold is remembered as neutral, not forgotten");
             // Ember: capture by x,y counts as taking a neutral derrick, so it's allowed during protection too.
             w.Teams[0].ProtectedUntil = w.Time + 100;
             var neutral = w.Derricks.FirstOrDefault(x => x.Team < 0) ?? w.Derricks.First();

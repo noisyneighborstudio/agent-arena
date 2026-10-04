@@ -71,7 +71,7 @@ namespace Pez.Headless
                 t.Stock["iron_ore"] = 0;
                 Run(w, 1);
                 var hint = Commands.Execute(w, 0, Cmd("type", "build", "structure", "power_plant"));
-                Check(!Ok(hint) && Said(hint).Contains("\"reserve\""), $"a raw-ore cost the refineries eat suggests a reserve: {Said(hint)}");
+                Check(!Ok(hint) && Said(hint).Contains("\"save_for\",\"unit\":\"power_plant\""), $"a raw-ore cost the refineries eat suggests save_for: {Said(hint)}");
                 var r = Commands.Execute(w, 0, Cmd("type", "reserve", "item", "iron_ore", "amount", 250));
                 t.Add("iron_ore", 260);
                 Run(w, 10); // the refinery takes 5/s: without the reserve this would be ~210

@@ -110,7 +110,7 @@ namespace Pez.Sim
             if (missing != null) return Err($"{key} {missing}");
             var t = w.Teams[team];
             var lacking = t.Missing(def.Cost);
-            if (lacking != null) return Err($"{key}: {lacking}{ReserveHint(w, team, def.Cost)}");
+            if (lacking != null) return Err($"{key}: {lacking}{ReserveHint(w, team, def.Cost, key)}");
             float x = c.Num("x"), y = c.Num("y");
             Int2 origin;
             if (float.IsNaN(x) || float.IsNaN(y))
@@ -176,7 +176,7 @@ namespace Pez.Sim
                 queued++;
             }
             string saved = queued > 0 && t.Bought(key) ? $" (that was what you were saving for: converters are back to normal)" : "";
-            if (queued == 0) return Err($"{key}: {t.Missing(def.Cost)}{ReserveHint(w, team, def.Cost)}");
+            if (queued == 0) return Err($"{key}: {t.Missing(def.Cost)}{ReserveHint(w, team, def.Cost, key)}");
             return Ok($"queued {queued}x {key}" + (at != null ? $" at {at.Def.Key} #{at.Id}" : "") + (queued < count ? $" (could only afford {queued})" : "") + $"; {t.UnitQueues[def.BuiltBy].Count} in the queue shared by your {Defs.ProducerKey(def.BuiltBy)} buildings" + saved);
         }
 
@@ -328,7 +328,7 @@ namespace Pez.Sim
                 if (pads.Count > 0 && MathF.Min(traveled, route) >= route - 4f)
                 {
                     result.Add($"#{u.Id} {u.Def.Key} reaches the end of its ~{route:0}-tile trip with ~{MathF.Max(0, (raw - route * burn) / burn):0} tiles of fuel left, " +
-                               $"short of the ~{PadDist(legs[legs.Count - 1]):0} back to the nearest refuel point (it heads back for fuel on arrival)");
+                               $"short of the ~{World.BingoTiles(u, PadDist(legs[legs.Count - 1])) / burn:0} it keeps for the ~{PadDist(legs[legs.Count - 1]):0}-tile trip back to fuel with its reserve (it heads back for fuel on arrival)");
                     continue;
                 }
                 result.Add(pads.Count == 0
@@ -443,14 +443,14 @@ namespace Pez.Sim
         }
 
         /// <summary>A raw cost the team can't pay because its own converters eat that item as it arrives: say how to keep some.</summary>
-        static string ReserveHint(World w, int team, Dictionary<string, int> cost)
+        static string ReserveHint(World w, int team, Dictionary<string, int> cost, string key)
         {
             var t = w.Teams[team];
             var eaten = cost.Where(kv => t.Amount(kv.Key) < kv.Value && t.Reserved(kv.Key) < kv.Value &&
                                          w.Owned(team).Any(s => s.IsStructure && s.IsComplete && s.Def.Recipes.Any(r => r.Inputs.ContainsKey(kv.Key)))).ToList();
             if (eaten.Count == 0) return "";
             var k = eaten[0];
-            return $". Your converters use {k.Key} up as it comes in; to bank some, set a reserve: {{\"type\":\"reserve\",\"item\":\"{k.Key}\",\"amount\":{k.Value}}}";
+            return $". Your converters use {k.Key} up as it comes in; to save up for this, {{\"type\":\"save_for\",\"unit\":\"{key}\"}} holds its cost back from them until you buy it";
         }
 
         static JObj Load(World w, int team, Dictionary<string, object> c)

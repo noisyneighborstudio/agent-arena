@@ -409,8 +409,12 @@ namespace Pez.Sim
         void ForgetTeam(int teamId)
         {
             foreach (var o in Teams)
-                foreach (var id in o.KnownEnemyStructures.Where(kv => kv.Value.team == teamId).Select(kv => kv.Key).ToList())
-                    o.KnownEnemyStructures.Remove(id);
+                foreach (var kv in o.KnownEnemyStructures.Where(kv => kv.Value.team == teamId).ToList())
+                {
+                    // Its derricks go back to neutral (DerrickReleased); everyone who knew of one still knows where it is.
+                    if (kv.Value.key == "derrick") o.KnownEnemyStructures[kv.Key] = (kv.Value.key, kv.Value.origin, -1);
+                    else o.KnownEnemyStructures.Remove(kv.Key);
+                }
         }
 
         /// <summary>
