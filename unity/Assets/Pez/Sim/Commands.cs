@@ -231,7 +231,10 @@ namespace Pez.Sim
                     var at = h.OrderPos;
                     float home = drops.Count == 0 ? 0 : drops.Min(o => o.DistFrom(at));
                     var foe = hostile.Where(k => Vec2.Dist(k.origin.Center, at) < World.HostileOreRadius).Select(k => k.key).FirstOrDefault();
+                    // Enemy units you can see near the field count too (test player Kestrel lost 10 trucks to an army sitting on salvage).
+                    int armed = w.Entities.Count(o => !o.Dead && o.Team != team && o.Team >= 0 && o.IsArmed && !o.IsStructure && Vec2.Dist(o.Pos, at) < World.HostileOreRadius && w.IsVisibleTo(team, o));
                     if (foe != null) risks.Add($"#{h.Id} is heading to {(int)at.X},{(int)at.Y}, by an enemy {foe} you know of");
+                    else if (armed > 0) risks.Add($"#{h.Id} is heading to {(int)at.X},{(int)at.Y}, where you can see {armed} armed enemy unit(s)");
                     else if (home > World.FarFieldDist) risks.Add($"#{h.Id} is heading to {(int)at.X},{(int)at.Y}, {home:0} tiles from your nearest drop-off");
                 }
                 string risk = risks.Count == 0 ? "" : $". Careful: {string.Join("; ", risks.Take(4))}{(risks.Count > 4 ? $" (+{risks.Count - 4} more)" : "")}: escort them, or build a refinery or outpost by that field";
@@ -406,7 +409,10 @@ namespace Pez.Sim
             var t = w.Teams[team];
             if (amount < 1) t.Reserve.Remove(item); else t.Reserve[item] = (int)amount;
             string now = t.Reserve.Count == 0 ? "no reserves" : "reserves: " + string.Join(", ", t.Reserve.Select(kv => $"{kv.Value} {kv.Key}"));
-            string stall = amount >= 1 && t.Amount(item) <= amount ? $". Note: you have only {t.Amount(item)}, so your converters won't use any {item} until you have more than {(int)amount} (building and training still spend it)" : "";
+            // What that stops making: a reserve on iron_ore is a reserve on steel production too.
+            var stops = Defs.All.Values.Where(d => d.IsStructure).SelectMany(d => d.Recipes).Where(r => r.Inputs.ContainsKey(item)).SelectMany(r => r.Outputs.Keys).Distinct().ToList();
+            string stall = amount >= 1 && t.Amount(item) <= amount ? $". Note: you have only {t.Amount(item)}, so your converters won't use any {item} until you have more than {(int)amount}" +
+                (stops.Count > 0 ? $": no {string.Join(" or ", stops)} gets made from it until then" : "") + " (building and training still spend it)" : "";
             return Ok((amount < 1 ? $"{item} reserve cleared" : $"converters now leave {(int)amount} {item} alone ({item} {t.Amount(item)} in stock now)") + stall + $"; {now}");
         }
 

@@ -48,7 +48,19 @@ namespace Pez.Sim
         /// </summary>
         public const int SmallTerritoryReach = 2;
         public static bool Holds(EntityDef d) => d.DropOff || d.Key == "derrick" || d.Key == "deep_mine";
-        public static int ReachOf(EntityDef d) => Holds(d) ? TerritoryReach : SmallTerritoryReach;
+        /// <summary>A refinery holds ground only where there's ore to hold (a surface field within RefineryFieldReach); a
+        /// chain of refineries across empty ground (test player Kestrel) is just buildings.</summary>
+        public const int RefineryFieldReach = 10;
+        public int ReachOf(Entity e)
+        {
+            if (!Holds(e.Def)) return SmallTerritoryReach;
+            if (e.Def.Key != "mining_refinery") return TerritoryReach;
+            var c = Int2.Of(e.Center);
+            for (int y = Math.Max(0, c.Y - RefineryFieldReach); y <= Math.Min(Map.H - 1, c.Y + RefineryFieldReach); y++)
+                for (int x = Math.Max(0, c.X - RefineryFieldReach); x <= Math.Min(Map.W - 1, c.X + RefineryFieldReach); x++)
+                    if (Map.OreBase[Map.Idx(x, y)] > 0) return TerritoryReach;
+            return SmallTerritoryReach;
+        }
 
         public float DecayAt => SuddenDeathAt + DecayAfter;
         public float MatchEndsAt => SuddenDeathAt + EndAfter;
@@ -115,7 +127,7 @@ namespace Pez.Sim
                 foreach (var e in Entities)
                 {
                     if (e.Dead || e.Team != t.Id || !e.IsStructure || !e.IsComplete) continue;
-                    int reach = ReachOf(e.Def);
+                    int reach = ReachOf(e);
                     for (int y = e.Origin.Y - reach; y < e.Origin.Y + e.Def.SizeY + reach; y++)
                         for (int x = e.Origin.X - reach; x < e.Origin.X + e.Def.SizeX + reach; x++)
                         {
@@ -139,7 +151,7 @@ namespace Pez.Sim
             return scoreCache;
         }
 
-        public const string HowScored = "each team's share of what all players still in hold between them, 100 points each: territory (tiles within 6 of your finished command centers, refineries, outposts, derricks and deep mines; 2 around any other structure), economy (ore mined all game) and kills (the ore value of everything you destroyed); the most points wins";
+        public const string HowScored = "each team's share of what all players still in hold between them, 100 points each: territory (tiles within 6 of your finished command centers, outposts, derricks, deep mines and refineries by an ore field; 2 around any other structure), economy (ore mined all game) and kills (the ore value of everything you destroyed); the most points wins";
 
         public string ScoreLine() => string.Join(", ", Scores().Select(s => $"{s.Name} {s.Score}"));
 

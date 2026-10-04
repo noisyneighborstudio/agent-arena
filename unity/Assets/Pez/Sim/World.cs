@@ -612,11 +612,22 @@ namespace Pez.Sim
                 if (deposit == null) return "no deep deposit your team has surveyed within 3 tiles: survey first, then drive the rig onto a deposit";
                 if (deposit.MineId != 0 && Get(deposit.MineId) != null) return $"deposit #{deposit.Id} already has a deep mine on it";
                 if (deposit.Amount <= 0) return $"deposit #{deposit.Id} is exhausted";
-                t = Int2.Of(deposit.Pos);
             }
-            var origin = new Int2(t.X - (def.SizeX - 1) / 2, t.Y - (def.SizeY - 1) / 2);
-            var why = CanPlace(u.Team, key, origin.X, origin.Y, requireNear: false);
-            if (why != null) return $"can't deploy here: {why}";
+            Int2 origin;
+            if (deposit != null)
+            {
+                // Anywhere the mine covers or touches the deposit will do: rock, ore or a truck lane on its exact tile
+                // shouldn't make a whole zone undrillable.
+                var spot = DeepMineSpot(deposit, u.Team, out var blocked);
+                if (spot == null) return $"can't deploy here: {blocked}";
+                origin = spot.Value;
+            }
+            else
+            {
+                origin = new Int2(t.X - (def.SizeX - 1) / 2, t.Y - (def.SizeY - 1) / 2);
+                var why = CanPlace(u.Team, key, origin.X, origin.Y, requireNear: false);
+                if (why != null) return $"can't deploy here: {why}";
+            }
             Remove(u);
             var s = SpawnStructure(u.Team, key, origin, 1f);
             if (deposit != null) { s.DepositId = deposit.Id; deposit.MineId = s.Id; }
@@ -1985,6 +1996,27 @@ namespace Pez.Sim
         }
 
         /// <summary>Why a team's drill rig can't go to work on this deposit, or null if it can.</summary>
+        /// <summary>Where a deep mine can stand on deposit d: its 2x2 footprint over or beside the deposit's tile, nearest
+        /// first. Null (and why) when nothing around it is clear.</summary>
+        public Int2? DeepMineSpot(DeepDeposit d, int team, out string why)
+        {
+            var def = Defs.Get("deep_mine");
+            var c = Int2.Of(d.Pos);
+            why = null;
+            Int2? best = null; float bd = float.MaxValue;
+            for (int dy = -def.SizeY; dy <= 1; dy++)
+                for (int dx = -def.SizeX; dx <= 1; dx++)
+                {
+                    var o = new Int2(c.X + dx, c.Y + dy);
+                    var no = CanPlace(team, "deep_mine", o.X, o.Y, requireNear: false);
+                    if (no != null) { if (dx == -(def.SizeX - 1) / 2 && dy == -(def.SizeY - 1) / 2) why = no; continue; }
+                    float dist = Vec2.DistSq(new Vec2(o.X + def.SizeX / 2f, o.Y + def.SizeY / 2f), d.Pos);
+                    if (dist < bd) { bd = dist; best = o; }
+                }
+            if (best == null) why = $"nowhere around zone #{d.Id} is clear for a 2x2 deep mine ({why ?? "blocked"})";
+            return best;
+        }
+
         public string DrillBlocker(DeepDeposit d, int team)
         {
             if (d == null) return "that zone doesn't exist";
@@ -1995,6 +2027,7 @@ namespace Pez.Sim
                 case "yours": return $"zone #{d.Id} already has your deep_mine #{mine.Id} on it (one mine per zone)";
                 case "taken": return $"zone #{d.Id} is taken: another team's deep mine is on it";
             }
+            if (DeepMineSpot(d, team, out var blocked) == null) return $"zone #{d.Id} can't be drilled right now: {blocked}";
             return null;
         }
 

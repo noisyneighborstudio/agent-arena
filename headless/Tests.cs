@@ -64,6 +64,7 @@ namespace Pez.Headless
             KillValueBackfill();
             BriarFixes();
             CedarDuneFixes();
+            DrillBesideRock();
             LastHqSpills();
             FieldRefuelling();
             ArenaCleared();
@@ -701,9 +702,32 @@ namespace Pez.Headless
             hz.SpawnStructure(0, "outpost", new Int2(40, 75), 1f);
             Run(hz, 1.1f);
             int outpostTiles = hz.Scores().First(x => x.Team == 0).Territory - o0;
+            // Kestrel: a refinery holds ground only by an ore field.
+            var bareAt = new Int2(70, 70);
+            for (int yy = bareAt.Y - 14; yy <= bareAt.Y + 16; yy++)
+                for (int xx = bareAt.X - 14; xx <= bareAt.X + 16; xx++)
+                    if (hz.Map.InBounds(xx, yy)) { int k = hz.Map.Idx(xx, yy); hz.Map.OreBase[k] = 0; hz.Map.Ore[k] = 0; }
+            var bareRef = hz.SpawnStructure(0, "mining_refinery", bareAt, 1f);
+            var fieldRef = hz.Owned(0).FirstOrDefault(e => e.Def.Key == "command_center");
+            Check(hz.ReachOf(bareRef) == World.SmallTerritoryReach && hz.ReachOf(fieldRef) == World.TerritoryReach,
+                  $"a refinery on bare ground claims only {World.SmallTerritoryReach} tiles around it ({hz.ReachOf(bareRef)}); a command center still {World.TerritoryReach}");
             Check(barracksTiles == 36 && outpostTiles == 196, $"a lone barracks claims 2 around it (36 tiles), an outpost, a holding, claims 6 (196): {barracksTiles} / {outpostTiles}");
             var rz = Commands.Execute(hz, 0, Cmd("type", "reserve", "item", "iron_ore", "amount", hz.Teams[0].Amount("iron_ore") + 500));
-            Check(Ok(rz) && Said(rz).Contains("converters won't use any iron_ore"), $"a reserve above your stock says what it stalls: {Said(rz)}");
+            Check(Ok(rz) && Said(rz).Contains("no steel") && Said(rz).Contains("converters won't use any iron_ore"), $"a reserve above your stock says what it stalls: {Said(rz)}");
+        }
+
+        /// <summary>Kestrel: rock on a deposit's own tile made the whole zone undrillable; the mine now stands beside it.</summary>
+        static void DrillBesideRock()
+        {
+            var w = new World(2, 7, 96);
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var d = w.Map.Deep.OrderBy(x => Vec2.Dist(x.Pos, hq.Center)).First();
+            w.Teams[0].Surveyed.Add(d.Id);
+            var c = Int2.Of(d.Pos);
+            w.Map.Tiles[w.Map.Idx(c.X, c.Y)] = Terrain.Rock;
+            var rig = At(w.SpawnUnit(0, "drill_rig", hq), d.Pos + new Vec2(1.5f, 1.5f));
+            var why = w.Deploy(rig, d);
+            Check(why == null && d.MineId != 0, $"a deposit with rock on its tile is still drillable: the mine stands beside it ({why ?? "deployed"})");
         }
 
         static void Drones()
