@@ -88,7 +88,7 @@ namespace Pez.Sim
                 .Set("yours", x.owner == team).Set("in_sight", x.seen).Set("hp", x.seen ? (object)(int)x.d.Hp : null).Set("max_hp", x.d.Def.MaxHp)
                 .Set("capturable_now", x.capturable).Set("income_steel_per_s", World.DerrickSteel))
                 .Concat(w.DerrickRespawns.Select(r => (object)new JObj().Set("id", null).Set("x", r.origin.X).Set("y", r.origin.Y).Set("w", 2).Set("h", 2)
-                    .Set("owner", "none: destroyed").Set("hp", null).Set("respawns_in_s", (int)MathF.Max(0, r.at - w.Time)))).ToList());
+                    .Set("owner", "none: destroyed").Set("hp", null).Set("capturable_now", false).Set("respawns_in_s", (int)MathF.Max(0, r.at - w.Time)))).ToList());
 
             o.Set("enemies", w.Entities.Where(e => !e.Dead && e.Team != team && e.Team >= 0 && w.IsVisibleTo(team, e)).Select(e =>
             {

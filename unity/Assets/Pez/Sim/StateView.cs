@@ -340,6 +340,9 @@ namespace Pez.Sim
             {
                 if (t.Amount(ore) - t.Reserved(ore) < 800) continue;
                 var conv = w.Owned(team).Where(s => s.IsStructure && s.IsComplete && s.Def.Recipes.Any(r => r.Inputs.ContainsKey(ore))).ToList();
+                // Not a bottleneck if you're already rich in what it makes (test player Vale: 4,000 copper, told to refine faster).
+                var makes = Defs.All.Values.Where(d => d.IsStructure).SelectMany(d => d.Recipes).Where(r => r.Inputs.ContainsKey(ore)).SelectMany(r => r.Outputs.Keys).Distinct().ToList();
+                if (makes.Count > 0 && makes.All(m => t.Amount(m) >= 1500)) continue;
                 if (conv.Count == 0) return $"{t.Amount(ore)} {ore} waiting and nothing to refine it: build a mining_refinery";
                 if (conv.All(s => s.Working))
                 {

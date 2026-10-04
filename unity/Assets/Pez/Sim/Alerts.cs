@@ -145,6 +145,10 @@ namespace Pez.Sim
                 parts.Add($"{a.Count} wreck(s) left about {(int)a.Amount} ore of salvage on the ground here; anyone's mining trucks can collect it, so whoever holds the ground gets it");
             if (a.Lost.Count > 0) parts.Add("lost: " + string.Join(", ", a.Lost.Take(6)) + (a.Lost.Count > 6 ? $" +{a.Lost.Count - 6} more" : ""));
 
+            // Economy, power, upkeep and the clock are about what to do next, not who's nearby: keep them short (they stay
+            // in the state for minutes, and test player Vale read the same long unit lists on every poll).
+            if (Strategic(a.Kind)) return string.Join("; ", parts);
+
             // Enemies now visible around the alert, grouped by type.
             var foes = w.Entities.Where(e => !e.Dead && e.Team != a.Team && e.Team >= 0 && !e.IsStructure && w.IsVisibleTo(a.Team, e) && Vec2.Dist(e.Pos, a.Pos) <= 12f).ToList();
             if (foes.Count > 0)
