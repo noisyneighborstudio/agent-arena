@@ -108,7 +108,12 @@ namespace Pez.Sim
         public float LastCommandAt = -1;
         /// <summary>Items converters leave alone below this amount ('reserve' command), so raw-ore costs stay payable.</summary>
         public readonly Dictionary<string, int> Reserve = new Dictionary<string, int>();
-        public int Reserved(string item) => Reserve.TryGetValue(item, out var n) ? n : 0;
+        /// <summary>What the team is saving up for ('save_for'): converters leave its cost alone until it's bought.</summary>
+        public string SaveFor;
+        public readonly Dictionary<string, int> SaveForCost = new Dictionary<string, int>();
+        public int Reserved(string item) => System.Math.Max(Reserve.TryGetValue(item, out var n) ? n : 0, SaveForCost.TryGetValue(item, out var s) ? s : 0);
+        /// <summary>Bought what it was saving for: the hold on converters lifts.</summary>
+        public bool Bought(string key) { if (SaveFor != key) return false; SaveFor = null; SaveForCost.Clear(); return true; }
         public readonly TeamStats Stats = new TeamStats();
         public bool LowPower => PowerUsed > PowerProduced;
     }

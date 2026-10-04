@@ -146,6 +146,7 @@ namespace Pez.Sim
                     .Set("status", t.Resigned ? "resigned as lost (no way left to make progress): call join again for a new seat" : t.Left ? "left" : t.Defeated ? "eliminated: call join again for a new seat" : "playing")
                     .Set("stockpile", Stockpile(t))
                     .Set("reserves", t.Reserve.Count == 0 ? null : string.Join(", ", t.Reserve.Select(kv => $"{kv.Value} {kv.Key}")) + " kept back from converters")
+                    .Set("saving_for", t.SaveFor == null ? null : $"{t.SaveFor}: converters leave {string.Join(", ", t.SaveForCost.Select(kv => $"{kv.Value} {kv.Key}"))} alone until you buy it")
                     .Set("power", $"{t.PowerProduced} produced / {t.PowerUsed} used" + (t.LowPower ? " (LOW POWER: production at half speed, build a power_plant)" : ""))
                     .Set("start", $"{R(t.StartPos.X)},{R(t.StartPos.Y)}")
                     .Set("protection", w.IsProtected(team) ? $"newcomer protection for {(int)(t.ProtectedUntil - w.Time)}s more: you can't be attacked, and you can't attack" : "none"))
@@ -523,8 +524,9 @@ namespace Pez.Sim
         ///     2 around anything else; strategic alerts stay in state for 5 minutes.
         /// 25: a refinery holds ground only by an ore field; deep mines stand beside a blocked deposit tile.
         /// 26: aircraft bingo margin 5% + 6 s (was 15% + 8 s); loss alerts stay 2 minutes; counters tip.
+        /// 27: save_for (save up for one purchase); each home ore warns on its own.
         /// </summary>
-        public const int RulesVersion = 26;
+        public const int RulesVersion = 27;
 
         public static JObj Rules()
         {

@@ -100,6 +100,7 @@ namespace Pez.Sim
             if (t.Surveyed.Count > 0) o.Set("surveyed", t.Surveyed.Cast<object>().ToList());
             if (t.SurveySites.Count > 0) o.Set("survey_sites", SnapIO.Vs(t.SurveySites));
             if (t.Reserve.Count > 0) o.Set("reserve", t.Reserve.Aggregate(new JObj(), (j, kv) => j.Set(kv.Key, kv.Value)));
+            if (t.SaveFor != null) o.Set("save_for", t.SaveFor).Set("save_for_cost", t.SaveForCost.Aggregate(new JObj(), (j, kv) => j.Set(kv.Key, kv.Value)));
             if (t.Zones.Count > 0) o.Set("zones", t.Zones.Values.Select(z => (object)new List<object> { z.ZoneId, z.FlaggedBy, SnapIO.X(z.FlaggedAt) }).ToList());
             var s = t.Stats;
             o.Set("stats", new JObj().Put("units_built", s.UnitsBuilt).Put("structures_built", s.StructuresBuilt).Put("units_lost", s.UnitsLost)
@@ -149,6 +150,9 @@ namespace Pez.Sim
             t.SurveySites.AddRange(SnapIO.ToVecs(d.Arr("survey_sites")));
             var rv = d.Obj("reserve");
             if (rv != null) foreach (var kv in rv) t.Reserve[kv.Key] = SnapIO.ToI(kv.Value);
+            t.SaveFor = d.Str("save_for");
+            var sf = d.Obj("save_for_cost");
+            if (sf != null) foreach (var kv in sf) t.SaveForCost[kv.Key] = SnapIO.ToI(kv.Value);
             foreach (var x in d.Arr("zones"))
                 if (x is List<object> l && l.Count >= 3) t.Zones[SnapIO.ToI(l[0])] = new ZoneFlag { ZoneId = SnapIO.ToI(l[0]), FlaggedBy = SnapIO.ToI(l[1]), FlaggedAt = SnapIO.ToF(l[2]) };
             var s = d.Obj("stats");

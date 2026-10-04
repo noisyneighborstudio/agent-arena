@@ -39,6 +39,7 @@ namespace Pez.Sim
   {""type"":""rally"", ""structure_id"":ID, ""x"":X, ""y"":Y} where new units from that building go
   {""type"":""sell"", ""structure_id"":ID}                 sell for 50% refund (your only one of a tech or production building needs ""confirm"":true)
   {""type"":""reserve"", ""item"":""iron_ore"", ""amount"":300}  converters (refineries, plants) leave this much of an item alone, so raw-ore costs (power_plant, mining_refinery, mining_truck) stay payable; amount 0 clears it
+  {""type"":""save_for"", ""unit"":""drill_rig""}           save up for one unit or structure: converters leave its cost alone until you train/build it (no unit: cancel)
   {""type"":""cancel"", ""unit"":KEY}                       cancel the last queued unit of that type (full refund)
   {""type"":""say"", ""text"":""...""}                      broadcast a chat message (shown on screen)
   {""type"":""propose_tech"", ""name"":""Lancer"", ""base"":""light_tank"", ""weapon_from"":""rocket_soldier"", ""hp"":360, ""damage"":70, ""dry_run"":true}
@@ -80,6 +81,7 @@ namespace Pez.Sim
                     case "drill": return Drill(w, team, c);
                     case "sell": return Sell(w, team, c);
                     case "reserve": return Reserve(w, team, c);
+                    case "save_for": return SaveFor(w, team, c);
                     case "cancel": return Cancel(w, team, c);
                     case "propose_tech": return Tech.Propose(w, team, c);
                     case "say":
@@ -128,6 +130,7 @@ namespace Pez.Sim
                 }
             }
             t.Pay(def.Cost);
+            bool wasSaving = t.Bought(key);
             var s = w.SpawnStructure(team, key, origin, 0f);
             t.StructureQueue.Add(new ProdItem { Key = key, StructureId = s.Id });
             w.Emit("placed", team, s.Id, pos: s.Center, key: key);
@@ -140,7 +143,8 @@ namespace Pez.Sim
                 foreach (var o in w.Owned(team).Where(o => o.IsStructure)) { if (o.Def.Power > 0) made += o.Def.Power; else drawn -= o.Def.Power; }
                 if (drawn > made) power = $". Power warning: with everything placed you'll draw {drawn} against {made} produced, which is LOW POWER (half speed); add a power_plant";
             }
-            return Ok($"{key} #{s.Id} placed at ({origin.X},{origin.Y}), size {def.SizeX}x{def.SizeY}, build time {def.BuildTime}s" + (ahead > 0 ? $", {ahead} structure(s) ahead in queue" : "") + power)
+            return Ok($"{key} #{s.Id} placed at ({origin.X},{origin.Y}), size {def.SizeX}x{def.SizeY}, build time {def.BuildTime}s" + (ahead > 0 ? $", {ahead} structure(s) ahead in queue" : "") + power +
+                      (wasSaving ? " (that was what you were saving for: converters are back to normal)" : ""))
                 .Set("id", s.Id);
         }
 
@@ -171,8 +175,9 @@ namespace Pez.Sim
                 t.UnitQueues[def.BuiltBy].Add(new ProdItem { Key = key, StructureId = at?.Id ?? 0 });
                 queued++;
             }
+            string saved = queued > 0 && t.Bought(key) ? $" (that was what you were saving for: converters are back to normal)" : "";
             if (queued == 0) return Err($"{key}: {t.Missing(def.Cost)}{ReserveHint(w, team, def.Cost)}");
-            return Ok($"queued {queued}x {key}" + (at != null ? $" at {at.Def.Key} #{at.Id}" : "") + (queued < count ? $" (could only afford {queued})" : "") + $"; {t.UnitQueues[def.BuiltBy].Count} in the queue shared by your {Defs.ProducerKey(def.BuiltBy)} buildings");
+            return Ok($"queued {queued}x {key}" + (at != null ? $" at {at.Def.Key} #{at.Id}" : "") + (queued < count ? $" (could only afford {queued})" : "") + $"; {t.UnitQueues[def.BuiltBy].Count} in the queue shared by your {Defs.ProducerKey(def.BuiltBy)} buildings" + saved);
         }
 
         static List<Entity> ResolveUnits(World w, int team, Dictionary<string, object> c)
@@ -398,6 +403,27 @@ namespace Pez.Sim
             if (refund.Length > 0) return Ok($"sold {s.Def.Key} for {refund}{locked}");
             string power = s.Def.Power < 0 ? $"; {-s.Def.Power} power freed" : s.Def.Power > 0 ? $"; its {s.Def.Power} power output is gone" : "";
             return Ok($"removed {s.Def.Key} #{s.Id}: it cost nothing, so there's no refund{power}{locked}");
+        }
+
+        /// <summary>Save up for one unit or structure: converters leave its cost alone until you buy it (test player Reed
+        /// juggled reserves by hand to afford an 800-steel drill rig while electronics plants ate the steel).</summary>
+        static JObj SaveFor(World w, int team, Dictionary<string, object> c)
+        {
+            var t = w.Teams[team];
+            var key = c.Str("unit") ?? c.Str("structure") ?? c.Str("key");
+            if (string.IsNullOrEmpty(key))
+            {
+                string was = t.SaveFor; t.SaveFor = null; t.SaveForCost.Clear();
+                return Ok(was == null ? "you weren't saving for anything" : $"stopped saving for {was}: converters are back to normal");
+            }
+            var def = w.Def(key);
+            if (def == null) return Err($"unknown unit or structure '{key}'");
+            t.SaveFor = key; t.SaveForCost.Clear();
+            foreach (var kv in def.Cost) t.SaveForCost[kv.Key] = kv.Value;
+            string have = string.Join(", ", def.Cost.Select(kv => $"{t.Amount(kv.Key)}/{kv.Value} {kv.Key}"));
+            string ready = t.Missing(def.Cost) == null ? " You can afford it now." : "";
+            return Ok($"saving for {key}: converters leave {string.Join(", ", def.Cost.Select(kv => $"{kv.Value} {kv.Key}"))} alone until you buy it (have {have}).{ready} " +
+                      $"Then train or build it as usual and the hold lifts; {{\"type\":\"save_for\"}} with no unit cancels.");
         }
 
         static JObj Reserve(World w, int team, Dictionary<string, object> c)

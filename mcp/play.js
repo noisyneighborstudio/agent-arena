@@ -213,7 +213,7 @@ export const Command = z
     // A plain string, not an enum: the game validates command types itself, so a new command works over MCP the moment
     // it ships (an enum here drifted out of sync with the game once already). get_rules lists them all.
     type: z.string().min(1).max(40)
-      .describe("Command type, e.g. build, train, move, attack_move, attack, stop, harvest, deploy, survey, prospect (extra field radius), drill (extra field zone), repair, heal, refuel, set_retreat, load, unload, capture, lay_mines, rally, sell, cancel, reserve (fields item, amount), say, propose_tech (design your own unit; extra fields name, base, weapon_from, hp, speed, damage, range, cooldown, sight, fuel, dry_run). get_rules has the full, current list."),
+      .describe("Command type, e.g. build, train, move, attack_move, attack, stop, harvest, deploy, survey, prospect (extra field radius), drill (extra field zone), repair, heal, refuel, set_retreat, load, unload, capture, lay_mines, rally, sell, cancel, reserve (fields item, amount), save_for (field unit or structure: save up for it), say, propose_tech (design your own unit; extra fields name, base, weapon_from, hp, speed, damage, range, cooldown, sight, fuel, dry_run). get_rules has the full, current list."),
     structure: z.string().optional().describe("build: structure key, e.g. power_plant"),
     unit: z.string().optional().describe("train/cancel: unit key, e.g. light_tank"),
     count: z.number().int().min(1).max(10).optional().describe("train: how many; lay_mines: how many mines (max 8)"),

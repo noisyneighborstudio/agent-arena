@@ -718,6 +718,21 @@ namespace Pez.Headless
                   $"a refinery on bare ground claims only {World.SmallTerritoryReach} tiles around it ({hz.ReachOf(bareRef)}); a command center still {World.TerritoryReach}");
             Check(barracksTiles == 36 && outpostTiles == 196, $"a lone barracks claims 2 around it (36 tiles), an outpost, a holding, claims 6 (196): {barracksTiles} / {outpostTiles}");
             var rz = Commands.Execute(hz, 0, Cmd("type", "reserve", "item", "iron_ore", "amount", hz.Teams[0].Amount("iron_ore") + 500));
+            // Reed (#29): save up for a drill rig while an electronics plant would eat the steel.
+            var sv = new World(2, 7, 96);
+            var st = sv.Teams[0];
+            sv.SpawnStructure(0, "factory", sv.FindPlacement(0, "factory").Value, 1f);
+            sv.SpawnStructure(0, "electronics_plant", sv.FindPlacement(0, "electronics_plant").Value, 1f);
+            for (int i = 0; i < 3; i++) sv.SpawnStructure(0, "power_plant", sv.FindPlacement(0, "power_plant").Value, 1f);
+            st.Add("copper", 5000); st.Add("circuits", 500);
+            st.Add("steel", 700 - st.Amount("steel"));
+            var rsf = Commands.Execute(sv, 0, Cmd("type", "save_for", "unit", "drill_rig"));
+            Run(sv, 10);
+            int keptSteel = st.Amount("steel");
+            st.Add("steel", 150);
+            var rb = Commands.Execute(sv, 0, Cmd("type", "train", "unit", "drill_rig"));
+            Check(Ok(rsf) && keptSteel >= 700 && Ok(rb) && Said(rb).Contains("what you were saving for") && st.SaveFor == null,
+                  $"save_for keeps converters off a drill rig's steel until it's bought, then lifts (steel held at {keptSteel}): {Said(rsf)} / {Said(rb)}");
             Check(Ok(rz) && Said(rz).Contains("no steel") && Said(rz).Contains("converters won't use any iron_ore"), $"a reserve above your stock says what it stalls: {Said(rz)}");
         }
 
