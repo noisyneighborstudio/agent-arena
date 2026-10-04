@@ -489,7 +489,7 @@ namespace Pez.Headless
             w2.Step(); w2.Step();
             var spot2 = w2.FindPlacement(1, "barracks").Value;
             var barracks = w2.SpawnStructure(1, "barracks", spot2, 1f);
-            Commands.Execute(w2, 1, Cmd("type", "sell", "structure_id", barracks.Id));
+            Commands.Execute(w2, 1, Cmd("type", "sell", "structure_id", barracks.Id, "confirm", true));
             int barracksOre = 0; for (int y = -1; y <= 2; y++) for (int x = -1; x <= 2; x++) barracksOre += w2.Map.OreAt(spot2.X + x, spot2.Y + y);
             Check(OreNear(w2, s2, 6).Sum() == before && barracksOre == 0 && gunship.Dead, $"no salvage for a death with no enemy cause, your own side's fire, a crash or selling ({OreNear(w2, s2, 6).Sum() - before} ore appeared)");
 

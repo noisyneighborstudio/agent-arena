@@ -808,6 +808,7 @@ namespace Pez.Sim
             Guard("economy", UpdateEconomy);
             Guard("production", UpdateProduction);
             Guard("groups", MeasureGroups);
+            if (Tick % (TickRate * 10) == 0) Guard("home ore", CheckHomeOre);
             double tu = Profile ? profileClock.Elapsed.TotalSeconds : 0;
             for (int i = 0; i < Entities.Count; i++)
             {
@@ -860,6 +861,8 @@ namespace Pez.Sim
             }
         }
 
+        /// <summary>Seconds the reported per-second rates are averaged over.</summary>
+        public const float RateWindow = 15f;
         readonly Dictionary<int, Dictionary<string, float>> rateSnapshot = new Dictionary<int, Dictionary<string, float>>();
 
         /// <summary>Converter buildings turn inputs into outputs; fusion reactors burn plasma.</summary>
@@ -904,13 +907,19 @@ namespace Pez.Sim
             }
             if (powerChanged) UpdatePower();
 
-            // Per-second net rates, from a stock snapshot each second.
+            // Per-second net rates, from a stock snapshot each second, averaged over about 15 s: a truck unloading 150 ore
+            // in one second isn't a rate of +150/s.
             if (Tick % TickRate == 0)
                 foreach (var t in Teams)
                 {
                     if (rateSnapshot.TryGetValue(t.Id, out var prev))
                         foreach (var item in Defs.Items)
-                            t.Rates[item] = (t.Stock.TryGetValue(item, out var now) ? now : 0) - (prev.TryGetValue(item, out var p) ? p : 0);
+                        {
+                            float step = (t.Stock.TryGetValue(item, out var now) ? now : 0) - (prev.TryGetValue(item, out var p) ? p : 0);
+                            float was = t.Rates.TryGetValue(item, out var r0) ? r0 : step;
+                            float avg = was + (step - was) / RateWindow;
+                            t.Rates[item] = MathF.Abs(avg) < 0.005f ? 0f : avg;
+                        }
                     rateSnapshot[t.Id] = new Dictionary<string, float>(t.Stock);
                 }
         }
@@ -1233,10 +1242,26 @@ namespace Pez.Sim
         void UpdateCapture(Entity e)
         {
             var t = Get(e.TargetId);
-            if (t == null || !t.IsStructure || t.Team == e.Team) { SetOrder(e, Order.Idle, e.Pos); return; }
+            // A derrick destroyed and rebuilt on its site is a new entity: an engineer bound for the site takes the new one.
+            if ((t == null || t.Dead) && Derricks.FirstOrDefault(d => Vec2.Dist(d.Center, e.OrderPos) < 1.5f) is Entity again) { e.TargetId = again.Id; t = again; }
+            if (t == null || t.Dead)
+            {
+                bool pending = DerrickRespawns.Any(r => Vec2.Dist(new Vec2(r.origin.X + 1, r.origin.Y + 1), e.OrderPos) < 1.5f);
+                if (pending) { if (Vec2.Dist(e.Pos, e.OrderPos) > 3f) FollowPath(e, e.OrderPos, 2.5f); else e.Moving = false; return; } // wait at the site
+                CaptureStopped(e, "its target is gone");
+                return;
+            }
+            if (!t.IsStructure || t.Team == e.Team) { CaptureStopped(e, t.Team == e.Team ? $"{t.Def.Key} #{t.Id} is already yours" : "that can't be captured"); return; }
             // An engineer can set out for a derrick it can't see; what it finds is judged once it's in sight.
             if (t.Def.Key == "derrick" && !IsVisibleTo(e.Team, t)) { Chase(e, t); return; }
-            if (!t.IsComplete || !Capturable(t) || (t.Team >= 0 && (IsProtected(e.Team) || IsProtected(t.Team)))) { SetOrder(e, Order.Idle, e.Pos); return; }
+            if (!t.IsComplete || !Capturable(t) || (t.Team >= 0 && (IsProtected(e.Team) || IsProtected(t.Team))))
+            {
+                CaptureStopped(e, t.Team < 0 ? $"the neutral {t.Def.Key} #{t.Id} isn't finished"
+                    : !Capturable(t) ? $"{Teams[t.Team].Name} holds {t.Def.Key} #{t.Id} at {(int)(100 * t.Hp / t.Def.MaxHp)}% health: damage it below 50% first"
+                    : IsProtected(e.Team) ? "you can't take other players' buildings during newcomer protection"
+                    : $"{Teams[t.Team].Name} is under newcomer protection");
+                return;
+            }
             if (t.DistFrom(e.Pos) > 0.6f) { Chase(e, t); return; }
             int old = t.Team;
             t.Team = e.Team;
@@ -1251,6 +1276,13 @@ namespace Pez.Sim
             if (t.Def.Key == "derrick") DerrickCaptured(t, old);
             Remove(e); // the engineer moves in for good
             UpdatePower();
+        }
+
+        /// <summary>An engineer giving up on a capture says why, so it isn't left idle without explanation.</summary>
+        void CaptureStopped(Entity e, string why)
+        {
+            SetOrder(e, Order.Idle, e.Pos);
+            Emit("capture_stopped", e.Team, e.Id, 0, e.Pos, key: e.Def.Key, text: $"engineer #{e.Id} stopped and is waiting at {(int)e.Pos.X},{(int)e.Pos.Y}: {why}");
         }
 
         // ------------------------------------------------------------------ mines
@@ -2015,6 +2047,42 @@ namespace Pez.Sim
             return Entities.Any(s => !s.Dead && s.Team == team && s.IsStructure && s.IsComplete && s.Def.Recipes.Any(r => r.Inputs.ContainsKey(ore)));
         }
 
+        /// <summary>Within this many tiles of a drop-off counts as "home" ore.</summary>
+        public const float HomeOreRadius = 20f;
+
+        /// <summary>
+        /// Warn while there's still time to act: when the surface ore around a team's drop-offs is down to a quarter of what
+        /// was there, before the trucks start wandering off to far fields (or the economy simply stops).
+        /// </summary>
+        void CheckHomeOre()
+        {
+            foreach (var team in Teams)
+            {
+                if (team.Defeated || Time - team.SurfaceWarnedAt < 300f) continue;
+                var drops = Entities.Where(s => !s.Dead && s.Team == team.Id && s.IsStructure && s.IsComplete && s.Def.DropOff).ToList();
+                if (drops.Count == 0) continue;
+                var seen = new HashSet<int>();
+                long left = 0, was = 0;
+                int r = (int)HomeOreRadius;
+                foreach (var d in drops)
+                {
+                    int cx = (int)d.Center.X, cy = (int)d.Center.Y;
+                    for (int y = Math.Max(0, cy - r); y <= Math.Min(Map.H - 1, cy + r); y++)
+                        for (int x = Math.Max(0, cx - r); x <= Math.Min(Map.W - 1, cx + r); x++)
+                        {
+                            int i = Map.Idx(x, y);
+                            if (Map.OreBase[i] <= 0 || !seen.Add(i)) continue;
+                            left += Map.Ore[i]; was += Map.OreBase[i];
+                        }
+                }
+                if (was < 1000 || left > was / 4) continue;
+                team.SurfaceWarnedAt = Time;
+                Alerts.Raise(this, team.Id, "surface_ore_exhausted", Priority.Medium, drops[0].Center, hit: false)
+                      .Lost.Add($"the surface ore within {(int)HomeOreRadius} tiles of your drop-offs is down to {left} ({100 * left / was}% of what was there). " +
+                                "Plan the next step now: survey for deep deposits (geological_surveyor, then drill_rig), hold a derrick, or put a refinery or outpost by a new field and guard it; trucks left to choose will start driving far for ore");
+            }
+        }
+
         /// <summary>A truck heading a long way out for ore: the fields near home are used up, and that trip is a risk.</summary>
         void WarnIfFarAfield(Entity truck, Int2 tile)
         {
@@ -2100,7 +2168,9 @@ namespace Pez.Sim
             if (e.Fuel <= 0)
             {
                 e.Fuel = 0;
-                if (e.IsAir) { Crash(e); return; }
+                // Running dry over its own pad, an aircraft glides in rather than falling a tile short of home.
+                if (e.IsAir && Owned(e.Team).Any(s => IsFuelPoint(e, s) && s.DistFrom(e.Pos) <= 3f)) { e.Fuel = 0.01f; }
+                else if (e.IsAir) { Crash(e); return; }
                 if (!e.Stranded)
                 {
                     e.Stranded = true;
@@ -2123,7 +2193,9 @@ namespace Pez.Sim
 
             // Bingo fuel: head for the nearest pad or depot with enough left to get there, then carry on.
             if (e.Order == Order.Refuel || refuelling || (Tick + e.Id) % 10 != 0 || Time < e.NoAutoRefuelUntil) return;
-            if (e.Fuel > max * 0.5f) return;
+            // Ground units don't think about it above half a tank; aircraft always do (a drone half a tank out is already
+            // at the point of no return: waiting for 50% stranded them a tile from home).
+            if (!e.IsAir && e.Fuel > max * 0.5f) return;
             if (!e.IsAir && e.Order == Order.Idle && !e.Moving) return; // a parked vehicle burns nothing
             var p = NearestFuelPoint(e);
             if (p == null)
@@ -2136,8 +2208,7 @@ namespace Pez.Sim
                 }
                 return;
             }
-            float speed = MathF.Max(0.1f, e.Def.Speed), dist = Vec2.Dist(e.Pos, p.Center);
-            float need = e.IsAir ? dist / speed * 1.15f + 8f : dist * 1.4f / speed + 10f; // roads wind; keep a reserve
+            float need = BingoTiles(e, Vec2.Dist(e.Pos, p.Center)) / MathF.Max(0.1f, e.Def.Speed);
             // In a firefight a unit keeps a thinner reserve and fights on; it heads off once the shooting stops.
             // Cutting it that fine can strand it: that's the commander's risk to manage (escort with a tanker).
             if (Time - e.LastHitTime < 4f || Time - e.LastFiredAt < 4f) need = need * 0.55f;
@@ -2207,6 +2278,23 @@ namespace Pez.Sim
             if (e.Fuel >= e.FuelMax * 0.99f) FinishRefuel(e);
         }
 
+        /// <summary>Tiles of travel one unit of fuel buys (aircraft burn by the second, vehicles by the tile).</summary>
+        public static float FuelTiles(Entity u, float fuel) => fuel * MathF.Max(0.1f, u.Def.Speed);
+        /// <summary>Fuel burnt per straight-line tile: roads wind for vehicles, aircraft fly straight.</summary>
+        public static float BurnPerTile(Entity u) => u.IsAir ? 1f : 1.4f;
+        /// <summary>The bingo rule, in tiles of fuel: enough to get padDist back to fuel (with a margin) plus a reserve.
+        /// The sim turns units back on it and the move planner predicts with it, so the two agree.</summary>
+        public static float BingoTiles(Entity u, float padDist) =>
+            u.IsAir ? padDist * 1.15f + 8f * MathF.Max(0.1f, u.Def.Speed) : padDist * 1.4f + 10f * MathF.Max(0.1f, u.Def.Speed);
+
+        /// <summary>Whether a full tank from here gets to `to` and back to fuel: a resumed trip that can't is dropped, not
+        /// yo-yoed (out, turn back, refuel, out again) forever.</summary>
+        bool TripInRange(Entity e, Vec2 to)
+        {
+            var near = Entities.Where(s => IsFuelPoint(e, s)).Select(s => Vec2.Dist(s.Center, to)).DefaultIfEmpty(0f).Min();
+            return FuelTiles(e, e.FuelMax) >= Vec2.Dist(e.Pos, to) * BurnPerTile(e) + BingoTiles(e, near);
+        }
+
         void FinishRefuel(Entity e)
         {
             var o = e.ResumeOrder;
@@ -2223,6 +2311,16 @@ namespace Pez.Sim
                 e.WaypointLoop = e.ResumeWaypoints.RemoveAll(p => float.IsNaN(p.X)) > 0;
                 e.Waypoints.Clear(); e.Waypoints.AddRange(e.ResumeWaypoints); e.SpeedCap = e.ResumeSpeedCap;
                 if (o == Order.Attack && Get(e.TargetId) == null) FinishOrder(e);
+                else if ((o == Order.Move || o == Order.AttackMove) && !e.WaypointLoop && !TripInRange(e, e.OrderPos))
+                {
+                    var goal = e.OrderPos;
+                    SetOrder(e, Order.Idle, e.Pos);
+                    e.ResumeOrder = Order.Idle;
+                    Emit("out_of_range", e.Team, e.Id, 0, e.Pos, key: e.Def.Key,
+                         text: $"{e.Def.Key} #{e.Id} refuelled and is staying put: {(int)goal.X},{(int)goal.Y} is out of its range there and back. " +
+                               (e.IsAir ? "Build an airfield nearer, or use a longer-range aircraft" : "Deploy an outpost along the way, or send a repair truck with it"));
+                    return;
+                }
             }
             e.ResumeOrder = Order.Idle;
             Emit("refuelled", e.Team, e.Id, 0, e.Pos, key: e.Def.Key, text: $"{e.Def.Key} #{e.Id} refuelled and is back on {e.OrderName}.");
@@ -2525,6 +2623,14 @@ namespace Pez.Sim
                 }
             }
             if (airWarned.Count > 500) foreach (var k in airWarned.Where(kv => Time - kv.Value > 60).Select(kv => kv.Key).ToList()) airWarned.Remove(k);
+        }
+
+        /// <summary>Compass direction of d (y grows north).</summary>
+        public static string Compass(Vec2 d)
+        {
+            string[] names = { "east", "north-east", "north", "north-west", "west", "south-west", "south", "south-east" };
+            int i = (int)MathF.Round(MathF.Atan2(d.Y, d.X) / (MathF.PI / 4));
+            return names[((i % 8) + 8) % 8];
         }
 
         static string Heading(Entity a)

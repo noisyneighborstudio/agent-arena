@@ -225,7 +225,7 @@ namespace Pez.Sim
                 return s;
             }).ToList());
 
-            o.Set("derricks", DerrickInfo(w, team).Select(d => d.line).ToList());
+            o.Set("derricks", DerrickInfo(w, team).Select(d => d.line).Concat(DerrickSites(w)).ToList());
             o.Set("upkeep", UpkeepText(w, team));
 
             o.Set("visible_enemies", w.Entities.Where(e => !e.Dead && e.Team != team && e.Team >= 0 && w.IsVisibleTo(team, e)).Select(e =>
@@ -326,6 +326,10 @@ namespace Pez.Sim
         /// it's in sight or yours, else whose it was when last seen (or unknown), whether an engineer could take it now,
         /// and what it pays.
         /// </summary>
+        /// <summary>Derrick sites waiting to be rebuilt (everyone knows where derricks stand).</summary>
+        public static IEnumerable<string> DerrickSites(World w) => w.DerrickRespawns.Select(r =>
+            $"derrick site at {r.origin.X},{r.origin.Y} (2x2): destroyed; rebuilt neutral in about {MathF.Max(0, r.at - w.Time):0}s (an engineer sent there with capture x,y waits for it)");
+
         public static List<(Entity d, int owner, bool seen, bool known, bool capturable, string line)> DerrickInfo(World w, int team)
         {
             var list = new List<(Entity, int, bool, bool, bool, string)>();
@@ -504,8 +508,11 @@ namespace Pez.Sim
         /// 20: long_range_artillery joins the roster (the first adopted agent invention).
         /// 21: together keeps groups formed (leaders wait, stragglers catch up); neutral derricks capturable unseen and
         ///     during protection; trucks left to choose avoid known enemy bases and unused crystal/uranium.
+        /// 22: aircraft bingo-fuel at any level (and the move planner uses the sim's rule); out-of-range resumed trips are
+        ///     dropped; engineers follow a derrick site and say why they stop; capture x,y; unseen fire is described;
+        ///     early home-ore warning; selling your only tech building needs confirm; averaged rates.
         /// </summary>
-        public const int RulesVersion = 21;
+        public const int RulesVersion = 22;
 
         public static JObj Rules()
         {

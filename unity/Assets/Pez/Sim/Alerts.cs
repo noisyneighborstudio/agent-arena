@@ -139,7 +139,18 @@ namespace Pez.Sim
             var foes = w.Entities.Where(e => !e.Dead && e.Team != a.Team && e.Team >= 0 && !e.IsStructure && w.IsVisibleTo(a.Team, e) && Vec2.Dist(e.Pos, a.Pos) <= 12f).ToList();
             if (foes.Count > 0)
                 parts.Add("enemies there: " + string.Join(", ", foes.GroupBy(e => e.Def.Key).Select(g => $"{g.Count()}x {g.Key} ({string.Join(",", g.Take(4).Select(e => "#" + e.Id))}{(g.Count() > 4 ? ",…" : "")})")));
-            else if (a.Kind != "units_lost" && a.Kind != "structure_lost" && a.Kind != "building_burning" && a.Kind != "salvage_dropped" && a.Kind != "match_clock" && a.Kind != "defences_offline") parts.Add("attackers not currently visible");
+            else if (a.Kind != "units_lost" && a.Kind != "structure_lost" && a.Kind != "building_burning" && a.Kind != "salvage_dropped" && a.Kind != "match_clock" && a.Kind != "defences_offline")
+            {
+                // Fire from out of sight still tells you something: what kind of rounds are landing, from which way, and
+                // roughly how far (the way you'd read incoming shells). Not who, or exactly where.
+                var unseen = a.Attackers.Select(w.Get).Where(e => e != null && !e.Dead && e.IsArmed && !w.IsVisibleTo(a.Team, e)).ToList();
+                if (unseen.Count == 0) parts.Add("attackers not currently visible");
+                else parts.Add("attackers out of sight: " + string.Join(", ", unseen.GroupBy(e => (e.Def.Weapon.Name, World.Compass(e.Pos - a.Pos))).Select(g =>
+                {
+                    float d = g.Average(e => Vec2.Dist(e.Pos, a.Pos));
+                    return $"{g.Key.Name} fire from the {g.Key.Item2}, about {MathF.Round(d / 2) * 2:0} tiles away";
+                })) + " (send a spotter, a drone or a radar dome to see them; units that outrange your sight need eyes before you can hit back)");
+            }
 
             // Who could respond: own combat units within 18 tiles, closest first.
             var near = w.Entities.Where(e => !e.Dead && e.Team == a.Team && !e.IsStructure && e.IsArmed && Vec2.Dist(e.Pos, a.Pos) <= 18f)

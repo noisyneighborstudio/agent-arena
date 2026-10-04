@@ -63,6 +63,7 @@ namespace Pez.Headless
             Drones();
             KillValueBackfill();
             BriarFixes();
+            CedarDuneFixes();
             LastHqSpills();
             FieldRefuelling();
             ArenaCleared();
@@ -545,6 +546,75 @@ namespace Pez.Headless
             Check(truck.Order == Order.ReturnOre || truck.Cargo == 0, $"a loaded truck moved home unloads instead of idling with its cargo (order {truck.Order}, cargo {truck.Cargo})");
         }
 
+        /// <summary>Test players Cedar and Dune: engineers and derrick sites, unseen fire, ore warnings, sell, train.</summary>
+        static void CedarDuneFixes()
+        {
+            Console.WriteLine("\n-- derrick sites, unseen fire, ore warnings (Cedar and Dune's playtest)");
+            var w = new World(2, 7, 96);
+            var hq0 = w.Owned(0).First(e => e.Def.Key == "command_center");
+            foreach (var u in w.Owned(0).Concat(w.Owned(1)).Where(u => !u.IsStructure).ToList()) w.Remove(u);
+            w.Teams[0].ProtectedUntil = 0; w.Teams[1].ProtectedUntil = 0;
+            var d = w.Derricks.First();
+            d.Team = 1; // someone holds it (a neutral derrick can't be hurt)
+            var site = d.Center;
+            var eng = At(w.SpawnUnit(0, "engineer", hq0), hq0.Center + new Vec2(3, 0));
+            var r = Commands.Execute(w, 0, Cmd("type", "capture", "units", new[] { eng.Id }, "x", site.X, "y", site.Y));
+            Check(Ok(r) && eng.TargetId == d.Id, $"capture takes a derrick's x,y instead of its id: {Said(r)}");
+            var raider = At(w.SpawnUnit(0, "heavy_tank", hq0), site + new Vec2(3, 3));
+            w.Hurt(d, 1e5f, raider);
+            w.Remove(raider);
+            w.Step();
+            Check(StateView.DerrickSites(w).Any(l => l.Contains("rebuilt neutral in")), "a destroyed derrick's site stays listed, with when it comes back");
+            Run(w, 150);
+            var back = w.Derricks.FirstOrDefault(x => Vec2.Dist(x.Center, site) < 1.5f);
+            Check(back != null && back != d && back.Team == 0 && eng.Dead, $"an engineer bound for a destroyed derrick waits at the site and takes the rebuilt one (new id #{back?.Id}, team {back?.Team})");
+            var eng2 = At(w.SpawnUnit(0, "engineer", hq0), hq0.Center + new Vec2(3, 1));
+            var other = w.Derricks.First(x => x != back && x.Team != 0);
+            other.Team = 1;
+            Commands.Execute(w, 0, Cmd("type", "capture", "units", new[] { eng2.Id }, "target", other.Id));
+            Run(w, 90);
+            var why = w.Events.LastOrDefault(e => e.Type == "capture_stopped" && e.A == eng2.Id);
+            Check(eng2.Order == Order.Idle && why != null && why.Text.Contains("below 50%"), $"an engineer that gives up says why: {why?.Text}");
+
+            // Fire from out of sight: what, from where, roughly how far.
+            foreach (var u in w.Owned(0).Concat(w.Owned(1)).Where(u => !u.IsStructure).ToList()) w.Remove(u);
+            var victim = At(w.SpawnUnit(0, "light_tank", hq0), new Vec2(48, 30));
+            var gun = At(w.SpawnUnit(1, "long_range_artillery", w.Owned(1).First(e => e.IsStructure)), victim.Pos + new Vec2(11, 0));
+            w.UpdateVisibility();
+            w.Hurt(victim, 10, gun);
+            w.Teams[0].Revealed.Clear(); // the muzzle flash has faded by the time the alert is read
+            var al = w.Alerts.Active(w, 0).FirstOrDefault(a => a.Attackers.Contains(gun.Id));
+            string said = al == null ? "" : AlertLog.Describe(w, al);
+            Check(!w.IsVisibleTo(0, gun) && said.Contains("artillery fire from the east") && (said.Contains("about 10 tiles") || said.Contains("about 12 tiles")),
+                  $"an alert about unseen attackers says what's firing and from where: {said}");
+
+            // Selling your only tech gate asks first; count 0 isn't 1.
+            var bk = w.Owned(0).FirstOrDefault(e => e.Def.Key == "barracks") ?? w.SpawnStructure(0, "barracks", w.FindPlacement(0, "barracks").Value, 1f);
+            var s1 = Commands.Execute(w, 0, Cmd("type", "sell", "structure_id", bk.Id));
+            Check(!Ok(s1) && !bk.Dead && Said(s1).Contains("confirm"), $"selling your only barracks asks for confirm first: {Said(s1)}");
+            var s2 = Commands.Execute(w, 0, Cmd("type", "sell", "structure_id", bk.Id, "confirm", true));
+            Check(Ok(s2) && bk.Dead, $"and sells with it: {Said(s2)}");
+            var t0 = Commands.Execute(w, 0, Cmd("type", "train", "unit", "mining_truck", "count", 0));
+            Check(!Ok(t0), $"train count 0 is refused, not taken as 1: {Said(t0)}");
+
+            // Home ore: warned at a quarter left, before trucks wander.
+            var o = new World(2, 7, 96);
+            var oh = o.Owned(0).First(e => e.Def.Key == "command_center");
+            for (int i = 0; i < o.Map.Ore.Length; i++)
+                if (o.Map.OreBase[i] > 0 && Vec2.Dist(new Vec2(i % o.Map.W + 0.5f, i / o.Map.W + 0.5f), oh.Center) <= World.HomeOreRadius + 3) o.Map.Ore[i] = o.Map.OreBase[i] / 5;
+            Run(o, 11);
+            var home = o.Alerts.All.FirstOrDefault(a => a.Team == 0 && a.Kind == "surface_ore_exhausted");
+            Check(home != null && home.Lost.Any(l => l.Contains("of what was there")), $"surface ore near home down to a fifth raises SURFACE ORE RUNNING OUT early: {home?.Lost.FirstOrDefault()}");
+
+            // Rates are averaged: one truck's 150-ore drop isn't +150/s.
+            var rt = new World(2, 7, 96);
+            Run(rt, 3);
+            rt.Teams[0].Add("iron_ore", 150);
+            Run(rt, 1.05f);
+            float spike = rt.Teams[0].Rates["iron_ore"];
+            Check(spike < 20f, $"a sudden 150-ore delivery shows as a modest rate, not +150/s ({spike:0.0}/s)");
+        }
+
         static void Drones()
         {
             Console.WriteLine("\n-- drones");
@@ -566,6 +636,33 @@ namespace Pez.Headless
             w.Open = true;
             for (int k = 0; k < 4 && w.Map.W <= 96; k++) w.AddTeam("llm", "Grower" + k, out _);
             Check(w.Map.W > 96 && light.FuelMax > before && MathF.Abs(light.FuelFraction - 0.5f) < 0.01f, $"when the map grows, drone tanks grow with it and stay as full ({before:0}s -> {light.FuelMax:0}s at {light.FuelFraction:P0})");
+            DroneRoundTrip();
+        }
+
+        /// <summary>Cedar's recon drone: sent past its range, it turned back where the estimate said, then crashed at home.</summary>
+        static void DroneRoundTrip()
+        {
+            var w = new World(2, 7, 128);
+            foreach (var u in w.Owned(1).ToList()) if (!u.IsStructure) w.Remove(u);
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var fac = w.SpawnStructure(0, "factory", w.FindPlacement(0, "factory").Value, 1f);
+            var d = w.SpawnUnit(0, "recon_drone", fac);
+            var dir = (new Vec2(w.Map.W / 2f, w.Map.H / 2f) - fac.Center); dir = dir / dir.Length;
+            var dest = fac.Center + dir * 127f;
+            dest = new Vec2(Math.Clamp(dest.X, 1, w.Map.W - 2), Math.Clamp(dest.Y, 1, w.Map.H - 2));
+            var r = Commands.Execute(w, 0, Cmd("type", "move", "units", new[] { d.Id }, "x", dest.X, "y", dest.Y));
+            float far = 0; string log = "";
+            for (int s = 0; s < 400 && !d.Dead; s++)
+            {
+                Run(w, 1);
+                float out_ = fac.DistFrom(d.Pos); far = MathF.Max(far, out_);
+                if (s % 20 == 0) log += $" t{s}:{out_:0}@{d.FuelFraction:P0}{d.Order.ToString()[0]}";
+            }
+            var m = System.Text.RegularExpressions.Regex.Match(Said(r), @"about (\d+) tiles out");
+            float said = m.Success ? float.Parse(m.Groups[1].Value) : -1;
+            Check(m.Success && MathF.Abs(far - said) <= 6f, $"it turns back where the move reply said it would ({far:0} tiles out; the reply said {said:0}: {Said(r)})");
+            Check(!d.Dead && d.Landed && d.Order == Order.Idle && w.Events.Any(e => e.Type == "out_of_range" && e.A == d.Id),
+                  $"and lands home with fuel to spare, then stays put rather than flying out and back for ever ({log})");
         }
 
         static void BuildingsBurn()

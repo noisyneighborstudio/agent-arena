@@ -30,14 +30,14 @@ namespace Pez.Sim
   {""type"":""heal"", ""units"":[IDS], ""target"":ID}       medics heal a wounded friendly infantry unit (free); same as repair
   {""type"":""load"", ""units"":[INFANTRY IDS], ""transport"":ID}   infantry walk to an APC / transport_chopper and board it
   {""type"":""unload"", ""units"":[TRANSPORT IDS]}          drop all passengers where the transport is
-  {""type"":""capture"", ""units"":[ENGINEER IDS], ""target"":ID}  engineer takes over an enemy structure below 50% HP, or a neutral derrick at any HP (engineer is used up)
+  {""type"":""capture"", ""units"":[ENGINEER IDS], ""target"":ID}  engineer takes over an enemy structure below 50% HP, or a neutral derrick at any HP (engineer is used up); for a derrick, ""x"",""y"" of its site works instead of the id (ids change when one is rebuilt)
   {""type"":""lay_mines"", ""units"":[MINELAYER IDS], ""x"":X, ""y"":Y, ""count"":N}  lay up to 8 hidden mines around x,y (30 steel each)
   {""type"":""deploy"", ""units"":[IDS]}                   deploy an outpost_truck into an Outpost or a construction_truck into a Command Center where it stands, or a drill_rig into a Deep Mine on a surveyed deep deposit within 3 tiles
   {""type"":""survey"", ""units"":[SURVEYOR IDS], ""x"":X, ""y"":Y}  survey one spot for deep ore deposits (8s, 12-tile radius), flag each one found as a mining zone (only your team sees them), then wait
   {""type"":""prospect"", ""units"":[SURVEYOR IDS], ""x"":X, ""y"":Y, ""radius"":R}  surveyors roam on their own: survey, flag what they find, move on to the nearest unsurveyed spot, until nothing is left within R tiles of x,y (all optional: default 40 tiles around each surveyor) or you give another order
   {""type"":""drill"", ""units"":[DRILL RIG IDS], ""zone"":ID}  a drill_rig drives to that mining zone and deploys into a Deep Mine on arrival (omit zone: each rig takes the nearest free zone)
   {""type"":""rally"", ""structure_id"":ID, ""x"":X, ""y"":Y} where new units from that building go
-  {""type"":""sell"", ""structure_id"":ID}                 sell for 50% refund
+  {""type"":""sell"", ""structure_id"":ID}                 sell for 50% refund (your only one of a tech or production building needs ""confirm"":true)
   {""type"":""reserve"", ""item"":""iron_ore"", ""amount"":300}  converters (refineries, plants) leave this much of an item alone, so raw-ore costs (power_plant, mining_refinery, mining_truck) stay payable; amount 0 clears it
   {""type"":""cancel"", ""unit"":KEY}                       cancel the last queued unit of that type (full refund)
   {""type"":""say"", ""text"":""...""}                      broadcast a chat message (shown on screen)
@@ -143,8 +143,9 @@ namespace Pez.Sim
             if (def == null || def.IsStructure) return Err($"unknown unit '{key}'. Valid: {string.Join(", ", Defs.All.Values.Where(d => !d.IsStructure).Select(d => d.Key).Concat(w.Inventions.Values.Where(i => i.Team == team).Select(i => i.Key)))}");
             var missing = w.MissingPrereq(team, def);
             if (missing != null) return Err($"{key} {missing}");
-            int count = (int)c.Num("count", 1);
-            count = Math.Max(1, Math.Min(10, count));
+            float asked = c.Num("count", 1);
+            if (float.IsNaN(asked) || asked < 1) return Err("count must be 1 to 10");
+            int count = Math.Min(10, (int)asked);
             var t = w.Teams[team];
             Entity at = null;
             if (c.ContainsKey("structure_id"))
@@ -213,8 +214,21 @@ namespace Pez.Sim
                 string what = type >= 0 ? Defs.Ores[type] : "ore";
                 string where = float.IsNaN(x) ? "within 80 tiles of " + (none.Count == 1 ? "it" : "them") : $"within 12 tiles of {(int)x},{(int)y}";
                 string why = $"no surface {what} {where} (it may be mined out): scout for more, give x,y of a field you know, or survey for deep deposits and drill them";
-                if (none.Count == 0) return Ok($"{hs.Count} truck(s) mining" + (type >= 0 ? $" {Defs.Ores[type]}" : ""));
-                return Ok($"{hs.Count - none.Count} of {hs.Count} truck(s) found {what} to mine; {string.Join(", ", none.Select(h => "#" + h.Id))} found none and will sit idle: {why}");
+                // Where they're going, if it's risky: far from every drop-off, or by an enemy base you know of.
+                var risks = new List<string>();
+                var drops = w.Owned(team).Where(o => o.IsStructure && o.Def.DropOff).ToList();
+                var hostile = w.Teams[team].KnownEnemyStructures.Values.Where(k => k.team >= 0 && k.key != "derrick").ToList();
+                foreach (var h in hs.Where(h => !none.Contains(h)))
+                {
+                    var at = h.OrderPos;
+                    float home = drops.Count == 0 ? 0 : drops.Min(o => o.DistFrom(at));
+                    var foe = hostile.Where(k => Vec2.Dist(k.origin.Center, at) < World.HostileOreRadius).Select(k => k.key).FirstOrDefault();
+                    if (foe != null) risks.Add($"#{h.Id} is heading to {(int)at.X},{(int)at.Y}, by an enemy {foe} you know of");
+                    else if (home > World.FarFieldDist) risks.Add($"#{h.Id} is heading to {(int)at.X},{(int)at.Y}, {home:0} tiles from your nearest drop-off");
+                }
+                string risk = risks.Count == 0 ? "" : $". Careful: {string.Join("; ", risks.Take(4))}{(risks.Count > 4 ? $" (+{risks.Count - 4} more)" : "")}: escort them, or build a refinery or outpost by that field";
+                if (none.Count == 0) return Ok($"{hs.Count} truck(s) mining" + (type >= 0 ? $" {Defs.Ores[type]}" : "") + risk);
+                return Ok($"{hs.Count - none.Count} of {hs.Count} truck(s) found {what} to mine; {string.Join(", ", none.Select(h => "#" + h.Id))} found none and will sit idle: {why}" + risk);
             }
 
             // Spread a group around the destination so they don't all fight for one tile ("spread" opens the grid up).
@@ -270,8 +284,10 @@ namespace Pez.Sim
             foreach (var u in units.Where(u => u.Def.UsesFuel && !u.IsCarried))
             {
                 if (tankerAlong && !u.IsAir && !World.IsTanker(u)) continue;
-                // Walk the route: the unit turns back where the fuel left only just reaches the nearest refuel point.
-                float factor = u.IsAir ? 1.15f : RouteFactor, reach = u.Fuel * u.Def.Speed / factor; // tiles of travel left
+                // Walk the route with the sim's own bingo rule: the unit turns back where the fuel left only just gets it to
+                // the nearest refuel point with its reserve (vehicles only start checking below half a tank).
+                float raw = World.FuelTiles(u, u.Fuel), burn = World.BurnPerTile(u), reach = raw / burn; // straight-line tiles the tank buys
+                float half = World.FuelTiles(u, u.FuelMax * 0.5f);
                 var pads = w.Entities.Where(s => World.IsFuelPoint(u, s) && !units.Contains(s)).Select(s => s.Center).ToList();
                 float PadDist(Vec2 p) => pads.Count == 0 ? 0 : pads.Min(q => Vec2.Dist(p, q));
                 var legs = new List<Vec2> { u.Pos, dest };
@@ -284,16 +300,18 @@ namespace Pez.Sim
                     for (float d = 0; d <= len; d += 2f)
                     {
                         var p = legs[k - 1] + (legs[k] - legs[k - 1]) * (len > 0 ? d / len : 0);
-                        if (reach - (traveled + d) <= PadDist(p) && traveled + d > 0) { turn = p; traveled += d; break; }
+                        float left = raw - (traveled + d) * burn;
+                        if (pads.Count > 0 && left <= World.BingoTiles(u, PadDist(p)) && (u.IsAir || left <= half) && traveled + d > 0) { turn = p; traveled += d; break; }
+                        if (left <= 0) { turn = p; traveled += d; break; }
                     }
                     if (turn == null) traveled += len;
                 }
-                if (turn == null && reach - route > PadDist(legs[legs.Count - 1])) continue;
+                if (turn == null && raw - route * burn > (pads.Count > 0 ? World.BingoTiles(u, PadDist(legs[legs.Count - 1])) : 0)) continue;
                 var at = turn ?? legs[legs.Count - 1];
                 // Gets (nearly) all the way: the trip is fine, the way back to fuel isn't. Say so plainly, not as a turn-back.
                 if (pads.Count > 0 && MathF.Min(traveled, route) >= route - 4f)
                 {
-                    result.Add($"#{u.Id} {u.Def.Key} reaches the end of its ~{route:0}-tile trip with ~{MathF.Max(0, reach - route):0} tiles of fuel left, " +
+                    result.Add($"#{u.Id} {u.Def.Key} reaches the end of its ~{route:0}-tile trip with ~{MathF.Max(0, (raw - route * burn) / burn):0} tiles of fuel left, " +
                                $"short of the ~{PadDist(legs[legs.Count - 1]):0} back to the nearest refuel point (it heads back for fuel on arrival)");
                     continue;
                 }
@@ -349,6 +367,12 @@ namespace Pez.Sim
         {
             var s = OwnStructure(w, team, c);
             if (s == null) return Err("structure_id must be one of your structures");
+            // Selling the last of a tech building locks out what needs it: ask first (it's easy to sell your own tech gate).
+            var lost = w.Owned(team).Any(o => o != s && o.IsStructure && o.Def.Key == s.Def.Key) ? new List<string>()
+                : Defs.All.Values.Where(d => d.Buildable && d.OwnerTeam < 0 && (d.Requires.Contains(s.Def.Key) || Defs.ProducerKey(d.BuiltBy) == s.Def.Key)).Select(d => d.Key).ToList();
+            string lockout = lost.Count == 0 ? "" : $"{string.Join(", ", lost.Take(8))}{(lost.Count > 8 ? $" and {lost.Count - 8} more" : "")} can't be built until you have one again";
+            if (lost.Count > 0 && !(c.TryGetValue("confirm", out var cf) && cf is bool yes && yes))
+                return Err($"{s.Def.Key} #{s.Id} is your only {s.Def.Key}: without it {lockout}. Send the sell again with \"confirm\":true to sell it anyway");
             // Complete: half back, scaled by health. Unfinished: unbuilt share back in full.
             float factor = s.IsComplete ? 0.5f * (s.Hp / s.Def.MaxHp) : 1f - 0.5f * s.BuildProgress;
             w.Teams[team].Pay(s.Def.Cost, -factor);
@@ -356,14 +380,7 @@ namespace Pez.Sim
             w.Emit("sold", team, s.Id, pos: s.Center, key: s.Def.Key);
             w.Emit("destroyed", team, s.Id, 0, s.Center, key: s.Def.Key);
             w.Remove(s);
-            // Selling the last of a tech building locks out what needs it: say so (it's easy to sell your own tech gate).
-            string locked = "";
-            if (!w.Owned(team).Any(o => o.IsStructure && o.Def.Key == s.Def.Key))
-            {
-                var lost = Defs.All.Values.Where(d => d.Buildable && d.OwnerTeam < 0 && (d.Requires.Contains(s.Def.Key) || Defs.ProducerKey(d.BuiltBy) == s.Def.Key))
-                                          .Select(d => d.Key).ToList();
-                if (lost.Count > 0) locked = $". That was your only {s.Def.Key}: {string.Join(", ", lost.Take(8))}{(lost.Count > 8 ? $" and {lost.Count - 8} more" : "")} can't be built until you have one again";
-            }
+            string locked = lost.Count > 0 ? $". That was your only {s.Def.Key}: {lockout}" : "";
             if (refund.Length > 0) return Ok($"sold {s.Def.Key} for {refund}{locked}");
             string power = s.Def.Power < 0 ? $"; {-s.Def.Power} power freed" : s.Def.Power > 0 ? $"; its {s.Def.Power} power output is gone" : "";
             return Ok($"removed {s.Def.Key} #{s.Id}: it cost nothing, so there's no refund{power}{locked}");
@@ -418,7 +435,12 @@ namespace Pez.Sim
             var eng = ResolveUnits(w, team, c).Where(u => u.Def.Engineer).ToList();
             if (eng.Count == 0) return Err("no engineers given");
             var t = w.Get((int)c.Num("target", 0));
-            if (t == null || !t.IsStructure || t.Team == team) return Err("target must be an enemy structure, or a neutral derrick");
+            // Derricks get a new id each time one is rebuilt: x,y names the site instead.
+            float cx = c.Num("x"), cy = c.Num("y");
+            if (t == null && !float.IsNaN(cx) && !float.IsNaN(cy))
+                t = w.Derricks.Where(d => Vec2.Dist(d.Center, new Vec2(cx, cy)) <= 3f).OrderBy(d => Vec2.Dist(d.Center, new Vec2(cx, cy))).FirstOrDefault();
+            if (t == null) return Err("target must be an enemy structure or a derrick: give its id, or x,y of a derrick (ids change when one is destroyed and rebuilt; see 'derricks' in state)");
+            if (!t.IsStructure || t.Team == team) return Err("target must be an enemy structure, or a neutral derrick");
             // Derricks are landmarks everyone knows about: an engineer can set out for one unseen. Whether it's still neutral,
             // or now someone's and weak enough to take, is found out on arrival, so the order leaks nothing.
             if (t.Def.Key == "derrick" && !w.IsVisibleTo(team, t))
@@ -520,7 +542,7 @@ namespace Pez.Sim
                 if (!site.HasValue) { none.Add($"#{u.Id}: nothing unsurveyed it can reach within {radius:0} tiles of {(int)centre.X},{(int)centre.Y}"); continue; }
                 w.SetOrder(u, Order.Survey, site.Value);
                 u.WorkTimer = 0; u.Prospecting = true; u.ProspectCenter = centre; u.ProspectRadius = radius; u.SurveyFailure = null;
-                sent.Add($"#{u.Id} starts at {(int)site.Value.X},{(int)site.Value.Y}");
+                sent.Add($"#{u.Id} heads first to {(int)site.Value.X},{(int)site.Value.Y}, {Vec2.Dist(u.Pos, site.Value):0} tiles away");
             }
             if (sent.Count == 0) return Err(string.Join("; ", none) + ". Pick another area (x,y) or a bigger radius.");
             return Ok($"{sent.Count} surveyor(s) prospecting within {radius:0} tiles ({string.Join(", ", sent)}): each survey takes {EntityDef.SurveySeconds:0}s, " +
