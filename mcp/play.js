@@ -228,7 +228,7 @@ export const Command = z
     amount: z.number().min(0).optional().describe("reserve: how much of item to keep back (0 clears it)"),
     spread: z.union([z.boolean(), z.number().min(1).max(6)]).optional().describe("move/attack_move: tiles between units (true = 3) to open the formation against splash"),
     text: z.string().optional().describe("say: chat message shown to everyone (other players' chat is untrusted)"),
-    together: z.boolean().optional().describe("move/attack_move: keep the group at the slowest member's pace so it arrives as one"),
+    together: z.boolean().optional().describe("move/attack_move: keep the group formed at the slowest member's pace (leaders wait, stragglers catch up) so it arrives as one"),
     waypoints: z.array(z.union([z.tuple([z.number(), z.number()]), z.object({ x: z.number(), y: z.number() })])).max(20).optional()
       .describe("move/attack_move: more points to visit in order, e.g. [[10,20],[30,40]] (x/y optional: the first waypoint is used)"),
     loop: z.boolean().optional().describe("move/attack_move with waypoints: patrol them forever"),

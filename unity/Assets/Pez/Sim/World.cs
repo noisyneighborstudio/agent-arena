@@ -782,7 +782,7 @@ namespace Pez.Sim
             e.Dock = DockStep.None; e.DockAt = 0;
             if (o == Order.Idle) e.GuardPos = e.Pos;
             e.Responding = false; // any new order (from a commander or the response itself) replaces the old one
-            e.SpeedCap = 0;
+            e.SpeedCap = 0; e.Group = 0;
             e.Waypoints.Clear(); e.WaypointLoop = false;
             e.Retreating = false;
             if (o == Order.Harvest && e.IsHarvester)
@@ -807,6 +807,7 @@ namespace Pez.Sim
 
             Guard("economy", UpdateEconomy);
             Guard("production", UpdateProduction);
+            Guard("groups", MeasureGroups);
             double tu = Profile ? profileClock.Elapsed.TotalSeconds : 0;
             for (int i = 0; i < Entities.Count; i++)
             {
@@ -1000,7 +1001,13 @@ namespace Pez.Sim
                     if (e.IsArmed && !e.Dead) OpportunisticFire(e);
                     break;
                 case Order.Move:
-                    if (FollowPath(e, e.OrderPos, 0.3f) && !NextWaypoint(e)) { bool back = e.Retreating; SetOrder(e, Order.Idle, e.Pos); e.Retreating = back; }
+                    if (FollowPath(e, e.OrderPos, 0.3f) && !NextWaypoint(e))
+                    {
+                        bool back = e.Retreating; SetOrder(e, Order.Idle, e.Pos); e.Retreating = back;
+                        // A loaded truck brought home unloads instead of sitting on its cargo (sent elsewhere, it waits there).
+                        if (e.IsHarvester && e.Cargo > 0 && Entities.Any(s => !s.Dead && s.Team == e.Team && s.IsStructure && s.IsComplete && s.Def.DropOff && s.DistFrom(e.Pos) <= 12f))
+                            e.Order = Order.ReturnOre;
+                    }
                     if (e.IsArmed && (e.Def.Armor == Armor.Vehicle || e.IsAir)) OpportunisticFire(e);
                     break;
                 case Order.AttackMove:
@@ -1041,11 +1048,46 @@ namespace Pez.Sim
             if (e.Waypoints.Count == 0) return false;
             var next = e.Waypoints[0];
             var rest = e.Waypoints.Skip(1).ToList();
-            bool loop = e.WaypointLoop; float cap = e.SpeedCap;
+            bool loop = e.WaypointLoop; float cap = e.SpeedCap; int group = e.Group;
             if (loop) rest.Add(e.OrderPos);
             SetOrder(e, e.Order, next);
-            e.Waypoints.AddRange(rest); e.WaypointLoop = loop; e.SpeedCap = cap;
+            e.Waypoints.AddRange(rest); e.WaypointLoop = loop; e.SpeedCap = cap; e.Group = group;
             return true;
+        }
+
+        /// <summary>How far apart (in tiles of route left) a group moving together lets its members get.</summary>
+        public const float GroupSlack = 3f;
+        /// <summary>A member this far behind the group's front is left to catch up rather than held for.</summary>
+        const float GroupGiveUp = 25f;
+        readonly Dictionary<int, (float front, float rear)> groupSpan = new Dictionary<int, (float, float)>();
+
+        /// <summary>Tiles of route a moving unit has left: to its current goal, then through its waypoints. (Formation
+        /// slots differ by a tile or two, inside GroupSlack.)</summary>
+        static float RouteLeft(Entity e)
+        {
+            float d = Vec2.Dist(e.Pos, e.OrderPos);
+            if (e.WaypointLoop) return d;
+            var at = e.OrderPos;
+            foreach (var p in e.Waypoints) { d += Vec2.Dist(at, p); at = p; }
+            return d;
+        }
+
+        static bool GroupMoving(Entity e) => !e.Dead && e.Group != 0 && !e.IsCarried && !e.Stranded && (e.Order == Order.Move || e.Order == Order.AttackMove);
+
+        /// <summary>Each group's front (least route left) and rear (most, among members not hopelessly behind).</summary>
+        void MeasureGroups()
+        {
+            groupSpan.Clear();
+            var front = new Dictionary<int, float>();
+            foreach (var e in Entities)
+                if (GroupMoving(e)) { float r = RouteLeft(e); front[e.Group] = front.TryGetValue(e.Group, out var f) ? MathF.Min(f, r) : r; }
+            foreach (var e in Entities)
+            {
+                if (!GroupMoving(e)) continue;
+                float r = RouteLeft(e), f = front[e.Group];
+                if (r - f > GroupGiveUp) r = f;
+                groupSpan[e.Group] = groupSpan.TryGetValue(e.Group, out var s) ? (f, MathF.Max(s.rear, r)) : (f, r);
+            }
         }
 
         /// <summary>Units told to pull back below an HP threshold head for the nearest base building on their own.</summary>
@@ -1191,7 +1233,10 @@ namespace Pez.Sim
         void UpdateCapture(Entity e)
         {
             var t = Get(e.TargetId);
-            if (t == null || !t.IsStructure || t.Team == e.Team || !t.IsComplete || !Capturable(t)) { SetOrder(e, Order.Idle, e.Pos); return; }
+            if (t == null || !t.IsStructure || t.Team == e.Team) { SetOrder(e, Order.Idle, e.Pos); return; }
+            // An engineer can set out for a derrick it can't see; what it finds is judged once it's in sight.
+            if (t.Def.Key == "derrick" && !IsVisibleTo(e.Team, t)) { Chase(e, t); return; }
+            if (!t.IsComplete || !Capturable(t) || (t.Team >= 0 && (IsProtected(e.Team) || IsProtected(t.Team)))) { SetOrder(e, Order.Idle, e.Pos); return; }
             if (t.DistFrom(e.Pos) > 0.6f) { Chase(e, t); return; }
             int old = t.Team;
             t.Team = e.Team;
@@ -1486,9 +1531,18 @@ namespace Pez.Sim
                 if (!tileGood)
                 {
                     var from = e.HarvestTile.HasValue ? e.HarvestTile.Value.Center : e.Pos;
+                    // A truck left to choose skips fields by enemy bases it knows of and, while there's something better,
+                    // ores nothing of yours refines and that you already have plenty of (crystal, uranium before the labs).
+                    var hostile = Teams[e.Team].KnownEnemyStructures.Values.Where(k => k.team >= 0 && k.key != "derrick").Select(k => k.origin.Center).ToList();
+                    bool Safe(Int2 t) => !hostile.Any(h => Vec2.DistSq(h, t.Center) < HostileOreRadius * HostileOreRadius);
+                    var useful = new bool[Defs.Ores.Length];
+                    for (int k = 0; k < useful.Length; k++) useful[k] = want >= 0 || OreUseful(e.Team, k);
+                    bool Wanted(Int2 t) => useful[Map.OreType[Map.Idx(t.X, t.Y)]];
                     // Spread trucks out: avoid tiles another truck is already working.
-                    e.HarvestTile = Map.NearestOre(from, 40, t => !OreReserved(t, e.Team) && !Entities.Any(o => o != e && !o.Dead && o.IsHarvester && o.HarvestTile.HasValue && o.HarvestTile.Value.Equals(t)), want)
-                                    ?? Map.NearestOre(from, 80, t => !OreReserved(t, e.Team), want);
+                    bool Free(Int2 t) => !OreReserved(t, e.Team) && Safe(t);
+                    e.HarvestTile = Map.NearestOre(from, 40, t => Free(t) && Wanted(t) && !Entities.Any(o => o != e && !o.Dead && o.IsHarvester && o.HarvestTile.HasValue && o.HarvestTile.Value.Equals(t)), want)
+                                    ?? Map.NearestOre(from, 80, t => Free(t) && Wanted(t), want)
+                                    ?? Map.NearestOre(from, 80, Free, want);
                     e.Path = null;
                     if (!e.HarvestTile.HasValue)
                     {
@@ -1497,6 +1551,7 @@ namespace Pez.Sim
                         SetOrder(e, Order.Idle, e.Pos);
                         return;
                     }
+                    WarnIfFarAfield(e, e.HarvestTile.Value);
                 }
                 var tile = e.HarvestTile.Value;
                 if (Vec2.Dist(e.Pos, tile.Center) > 0.45f) { FollowPath(e, tile.Center, 0.4f); return; }
@@ -1946,6 +2001,35 @@ namespace Pez.Sim
             }
         }
 
+        /// <summary>Trucks choosing their own field keep this far from enemy structures they know of.</summary>
+        public const float HostileOreRadius = 14f;
+        /// <summary>A field farther than this from every drop-off of yours means the home fields are dry.</summary>
+        public const float FarFieldDist = 30f;
+
+        /// <summary>Worth a truck picking on its own: a basic ore (iron, copper), something of yours refines it, or you have
+        /// little of it. Crystal and uranium pile up uselessly until you have the lab or plant that takes them.</summary>
+        bool OreUseful(int team, int type)
+        {
+            string ore = Defs.Ores[type];
+            if (type <= 1 || Teams[team].Amount(ore) < 300) return true;
+            return Entities.Any(s => !s.Dead && s.Team == team && s.IsStructure && s.IsComplete && s.Def.Recipes.Any(r => r.Inputs.ContainsKey(ore)));
+        }
+
+        /// <summary>A truck heading a long way out for ore: the fields near home are used up, and that trip is a risk.</summary>
+        void WarnIfFarAfield(Entity truck, Int2 tile)
+        {
+            var team = Teams[truck.Team];
+            if (Time - team.SurfaceWarnedAt < 120f) return;
+            float near = float.MaxValue;
+            foreach (var s in Entities)
+                if (!s.Dead && s.Team == truck.Team && s.IsStructure && s.Def.DropOff) near = MathF.Min(near, s.DistFrom(tile.Center));
+            if (near == float.MaxValue || near <= FarFieldDist) return;
+            team.SurfaceWarnedAt = Time;
+            Alerts.Raise(this, truck.Team, "surface_ore_exhausted", Priority.Medium, tile.Center, hit: false)
+                  .Lost.Add($"the ore near your bases is running out: mining truck #{truck.Id} is heading {(int)near} tiles from your nearest drop-off, to {tile.X},{tile.Y}. " +
+                            "Escort it, build a refinery or outpost by that field, or go deep: a geological_surveyor finds deposits and a drill_rig mines one with no trucks");
+        }
+
         /// <summary>A mining truck that can't find any surface ore means it's time to go deep.</summary>
         void WarnSurfaceExhausted(Entity truck, int type)
         {
@@ -2208,6 +2292,12 @@ namespace Pez.Sim
             else e.Facing = want;
             if (!e.IsArmed || e.Cooldown <= 0 || e.Order != Order.Attack) e.TurretFacing = RotateToward(e.TurretFacing, e.Facing, 4f * Dt);
             float speed = e.SpeedCap > 0 ? MathF.Min(e.Def.Speed, e.SpeedCap) : e.Def.Speed;
+            if (e.Group != 0 && groupSpan.TryGetValue(e.Group, out var span))
+            {
+                float mine = RouteLeft(e);
+                if (mine - span.front > GroupSlack) speed = e.Def.Speed;                     // left behind: catch up
+                else if (span.rear - mine > GroupSlack) speed *= MathF.Max(0.1f, 1f - (span.rear - mine - GroupSlack) / 4f); // ahead: wait
+            }
             float step = MathF.Min(len, speed * Dt);
             var next = e.Pos + d / len * step;
             var nt = Int2.Of(next);

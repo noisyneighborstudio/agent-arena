@@ -62,6 +62,7 @@ namespace Pez.Headless
             BuildingsBurn();
             Drones();
             KillValueBackfill();
+            BriarFixes();
             LastHqSpills();
             FieldRefuelling();
             ArenaCleared();
@@ -466,6 +467,82 @@ namespace Pez.Headless
                   $"kills from before kill value was tracked count at a typical unit's value ({World.TypicalKillValue} each: {s.KillValue})");
             w.BackfillKillValue();
             Check(s.KillValue == 300 + 149 * World.TypicalKillValue, "and only once");
+            var lra = Defs.Get("long_range_artillery");
+            Check(lra != null && lra.Weapon.Range == 12 && lra.Sight == 7 && Defs.Get("artillery").Sight == 7,
+                  $"long-range artillery shoots 12 but sees 7, so it needs a spotter like artillery (sight {lra?.Sight})");
+        }
+
+        /// <summary>Test player Briar's findings: derricks, moving together, trucks left to choose.</summary>
+        static void BriarFixes()
+        {
+            Console.WriteLine("\n-- derricks, groups and trucks (Briar's playtest)");
+            var w = new World(2, 7, 96);
+            var hq0 = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var ds = w.Derricks.ToList();
+            foreach (var u in w.Owned(0).Concat(w.Owned(1)).Where(u => !u.IsStructure).ToList()) w.Remove(u);
+            w.Teams[0].ProtectedUntil = w.Time + 600;
+            var eng = At(w.SpawnUnit(0, "engineer", hq0), hq0.Center + new Vec2(3, 0));
+            w.UpdateVisibility();
+            Check(!w.IsVisibleTo(0, ds[0]), "the derrick starts out of sight");
+            var r = Commands.Execute(w, 0, Cmd("type", "capture", "units", new[] { eng.Id }, "target", ds[0].Id));
+            Check(Ok(r) && Said(r).Contains("out of sight"), $"under newcomer protection, an engineer can still set out for an unseen neutral derrick: {Said(r)}");
+            var st = Json.Write(StateView.TeamState(w, 0));
+            Check(st.Contains("\"capturable_now\":true") || StateView.DerrickInfo(w, 0).Any(x => x.d == ds[0] && x.capturable), "and the state says it's capturable");
+            Run(w, 90);
+            Check(ds[0].Team == 0 && eng.Dead, $"it walks there and takes it (derrick team {ds[0].Team}, engineer at {eng.Pos.X:0},{eng.Pos.Y:0})");
+
+            // Someone else's derrick, unseen: the order is taken (nothing leaks), and on arrival a healthy one isn't captured.
+            ds[1].Team = 1;
+            var eng2 = At(w.SpawnUnit(0, "engineer", hq0), hq0.Center + new Vec2(3, 1));
+            w.UpdateVisibility();
+            var r2 = Commands.Execute(w, 0, Cmd("type", "capture", "units", new[] { eng2.Id }, "target", ds[1].Id));
+            Run(w, 90);
+            Check(Ok(r2) && ds[1].Team == 1 && !eng2.Dead && eng2.Order == Order.Idle, $"an unseen derrick someone holds: the engineer goes, sees it's healthy and stops ({Said(r2)})");
+            // A protected player can't take other players' buildings, even weakened.
+            w.Hurt(ds[1], ds[1].Def.MaxHp * 0.7f, null, 1);
+            w.UpdateVisibility();
+            var r3 = Commands.Execute(w, 0, Cmd("type", "capture", "units", new[] { eng2.Id }, "target", ds[1].Id));
+            Check(!Ok(r3) && Said(r3).Contains("neutral derricks are fine"), $"but not another player's, while protected: {Said(r3)}");
+            w.Teams[0].ProtectedUntil = 0;
+            At(w.SpawnUnit(0, "rifleman", hq0), hq0.Center + new Vec2(3, 2));
+            var r4 = Commands.Execute(w, 0, Cmd("type", "attack", "units", "all", "target", 99999));
+            Check(!Ok(r4) && !Said(r4).Contains("it may be destroyed"), $"attacking a missing id says what that means: {Said(r4)}");
+
+            // Moving together: a buggy far ahead waits; a heavy tank far behind catches up.
+            var g = new World(2, 7, 96);
+            var h = g.Owned(0).First(e => e.Def.Key == "command_center");
+            var buggy = At(g.SpawnUnit(0, "scout_buggy", h), new Vec2(30, 40));
+            var heavy = At(g.SpawnUnit(0, "heavy_tank", h), new Vec2(20, 40));
+            var rifle = At(g.SpawnUnit(0, "rifleman", h), new Vec2(21, 41));
+            var rg = Commands.Execute(g, 0, Cmd("type", "move", "units", new[] { buggy.Id, heavy.Id, rifle.Id }, "x", 70, "y", 40, "together", true));
+            Run(g, 10);
+            float gap = buggy.Pos.X - MathF.Min(heavy.Pos.X, rifle.Pos.X);
+            Check(Ok(rg) && gap < 6f && heavy.Group == buggy.Group && heavy.Group != 0, $"together: the leader waits for the group (10 tiles apart -> {gap:0.0})");
+            var slow = At(g.SpawnUnit(0, "heavy_tank", h), new Vec2(10, 44));
+            var quick = At(g.SpawnUnit(0, "light_tank", h), new Vec2(26, 44));
+            var tail = At(g.SpawnUnit(0, "rifleman", h), new Vec2(27, 45));
+            Commands.Execute(g, 0, Cmd("type", "move", "units", new[] { slow.Id, quick.Id, tail.Id }, "x", 80, "y", 44, "together", true));
+            float start = slow.Pos.X;
+            Run(g, 12);
+            Check(slow.Pos.X - start > tail.Def.Speed * 12 + 2f, $"a member left behind catches up at its own speed ({slow.Pos.X - start:0.0} tiles in 12 s; the group's pace is {tail.Def.Speed:0.0}/s)");
+            var drone = g.SpawnUnit(0, "recon_drone", h);
+            var rd = Commands.Execute(g, 0, Cmd("type", "move", "units", new[] { drone.Id, slow.Id, quick.Id }, "x", 60, "y", 60, "together", true));
+            Check(drone.SpeedCap == 0 && drone.Group == 0 && Said(rd).Contains("aircraft at their own speed"), $"aircraft fly their own pace (they burn fuel by the second): {Said(rd)}");
+
+            // Trucks left to choose: not into a known enemy base's field; home with a load, they unload.
+            var t = new World(2, 7, 96);
+            var th = t.Owned(0).First(e => e.Def.Key == "command_center");
+            var truck = t.Owned(0).First(e => e.IsHarvester);
+            var near = t.Map.NearestOre(truck.Pos, 80).Value;
+            t.Teams[0].KnownEnemyStructures[99999] = ("barracks", near, 1);
+            truck.HarvestTile = null; t.SetOrder(truck, Order.Harvest, truck.Pos);
+            Run(t, 1);
+            Check(truck.HarvestTile.HasValue && Vec2.Dist(truck.HarvestTile.Value.Center, near.Center) >= World.HostileOreRadius,
+                  $"a truck picking its own field skips one by a known enemy base ({(truck.HarvestTile.HasValue ? Vec2.Dist(truck.HarvestTile.Value.Center, near.Center) : -1):0} tiles from it)");
+            truck.Cargo = 80; truck.CargoType = 0;
+            Commands.Execute(t, 0, Cmd("type", "move", "units", new[] { truck.Id }, "x", th.Center.X + 5, "y", th.Center.Y));
+            Run(t, 20);
+            Check(truck.Order == Order.ReturnOre || truck.Cargo == 0, $"a loaded truck moved home unloads instead of idling with its cargo (order {truck.Order}, cargo {truck.Cargo})");
         }
 
         static void Drones()
