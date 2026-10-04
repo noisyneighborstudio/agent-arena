@@ -37,6 +37,10 @@ namespace Pez.View
         readonly Dictionary<int, (Vector3 focus, float size, float yaw, float until)> manual = new Dictionary<int, (Vector3, float, float, float)>();
         // A unit the viewer clicked: the stream rides along with it until they deselect it (or it dies or vanishes).
         readonly Dictionary<int, int> follow = new Dictionary<int, int>();
+        // Observer cameras (FrameServer.ObserverBase..): whose sight each shows (-1: everything, no fog).
+        readonly Dictionary<int, int> observerPov = new Dictionary<int, int>();
+        int PovOf(int key) => FrameServer.IsObserver(key) ? (observerPov.TryGetValue(key, out var p) ? p : -1) : key;
+        static bool Sees(World w, int pov, Entity e) => pov < 0 || e.Team == pov || w.IsVisibleTo(pov, e);
         const float StreamPitch = 55f;
         // The public spectator camera: the whole map, no fog, aimed by its own director (FrameServer.SpectatorView).
         readonly SpectatorDirector spectator = new SpectatorDirector();
@@ -71,6 +75,11 @@ namespace Pez.View
             while (FrameServer.CamOps.TryDequeue(out var op))
             {
                 if (op.Team < 0) { Runner.Camera.Nudge(op.Dx, op.Dy, op.Zoom, op.Yaw); continue; }
+                if (FrameServer.IsObserver(op.Team))
+                {
+                    if (op.Pov >= -1) observerPov[op.Team] = op.Pov < w.Teams.Count ? op.Pov : -1;
+                    if (!state.ContainsKey(op.Team)) state[op.Team] = (new Vector3(w.Map.W / 2f, 0, w.Map.H / 2f), 0f, 0);
+                }
                 if (op.Follow == 0) follow.Remove(op.Team);
                 else if (op.Follow > 0) follow[op.Team] = op.Follow;
                 if (!state.TryGetValue(op.Team, out var st)) continue;
@@ -97,6 +106,15 @@ namespace Pez.View
                 float gap = FrameServer.Streaming(t) ? 0.9f / FrameServer.StreamFps : SnapshotInterval;
                 if (Time.unscaledTime - s.last < gap || FrameServer.Busy(t)) continue;
                 Render(w, view, t);
+                rendered = true;
+            }
+            for (int k = FrameServer.ObserverBase; k < FrameServer.ObserverBase + FrameServer.Observers; k++)
+            {
+                if (!FrameServer.Wanted(k)) continue;
+                if (!state.TryGetValue(k, out var s)) state[k] = s = (new Vector3(w.Map.W / 2f, 0, w.Map.H / 2f), 0f, 0);
+                float gap = FrameServer.Streaming(k) ? 0.9f / FrameServer.StreamFps : SnapshotInterval;
+                if (Time.unscaledTime - s.last < gap || FrameServer.Busy(k)) continue;
+                Render(w, view, k);
                 rendered = true;
             }
             int sv = FrameServer.SpectatorView;
@@ -136,7 +154,7 @@ namespace Pez.View
             foreach (var e in w.Entities)
             {
                 if (e.Dead || e.IsMine || e.IsCarried) continue;
-                if (e.Team != req.Team && !w.IsVisibleTo(req.Team, e)) continue; // nothing the player couldn't see
+                if (!Sees(w, PovOf(req.Team), e)) continue; // nothing the stream's point of view couldn't see
                 float d = e.DistFrom(p);
                 if (d <= (e.IsStructure ? 0.15f : 0.8f) && d < bd) { bd = d; best = e; }
             }
@@ -222,10 +240,11 @@ namespace Pez.View
         void Render(World w, WorldView view, int team)
         {
             var s = state[team];
+            int pov = PovOf(team); // a team's stream sees as that team; an observer as its chosen team, or everything
             float size = DefaultSize, yaw = 45f;
             Vector3 focus;
             var followed = follow.TryGetValue(team, out var fid) ? w.Get(fid) : null;
-            if (followed != null && (followed.IsStructure || (followed.Team != team && !w.IsVisibleTo(team, followed)))) { follow.Remove(team); followed = null; }
+            if (followed != null && (followed.IsStructure || !Sees(w, pov, followed))) { follow.Remove(team); followed = null; }
             if (fid != 0 && followed == null) follow.Remove(team); // died or left sight: stop following
             if (manual.TryGetValue(team, out var m) && Time.unscaledTime < m.until) { size = m.size; yaw = m.yaw; }
             if (followed != null)
@@ -237,7 +256,8 @@ namespace Pez.View
             else if (manual.TryGetValue(team, out m) && Time.unscaledTime < m.until) { focus = m.focus; size = m.size; yaw = m.yaw; }
             else
             {
-                if (!directed.TryGetValue(team, out var d) || Time.unscaledTime - d.at > 0.25f) directed[team] = d = (Director(w, team), Time.unscaledTime);
+                if (!directed.TryGetValue(team, out var d) || Time.unscaledTime - d.at > 0.25f)
+                    directed[team] = d = (pov >= 0 ? Director(w, pov) : spectator.Focus != Vector3.zero ? spectator.Focus : new Vector3(w.Map.W / 2f, 0, w.Map.H / 2f), Time.unscaledTime);
                 var target = OverMap(w, d.target, size, yaw); // a base in a corner frames with the map, not the void
                 float dt = s.last == 0 ? 10f : Time.unscaledTime - s.last;
                 focus = s.last == 0 ? target : Vector3.Lerp(s.focus, target, 1f - Mathf.Exp(-dt * 1.5f));
@@ -249,15 +269,28 @@ namespace Pez.View
             cam.orthographicSize = size;
             cam.transform.rotation = rot;
             cam.transform.position = focus - rot * Vector3.forward * RtsCamera.BackDistance(size);
-            cam.cullingMask = (~(TerrainView.TeamFogMask | 1 << TerrainView.MainFogLayer) | 1 << (TerrainView.TeamFogLayerBase + team)) & ~(1 << Bars.Layer);
             RtsCamera.FitShadows(size);
             cam.farClipPlane = RtsCamera.FarClip(size);
-            view.Terrain.UpdateTeamFog(w, team);
+            GameObject fog = null; bool fogWas = false;
+            if (pov >= 0)
+            {
+                cam.cullingMask = (~(TerrainView.TeamFogMask | 1 << TerrainView.MainFogLayer) | 1 << (TerrainView.TeamFogLayerBase + pov)) & ~(1 << Bars.Layer);
+                view.Terrain.UpdateTeamFog(w, pov);
+            }
+            else
+            {
+                // Everything, like the spectator camera: no team's fog, and the host's own fog overlay hidden.
+                cam.cullingMask = ~TerrainView.TeamFogMask & ~(1 << Bars.Layer);
+                fog = view.Terrain.MainFog;
+                fogWas = fog != null && fog.activeSelf;
+                if (fogWas) fog.SetActive(false);
+            }
 
-            view.SetPov(team);
+            view.SetPov(pov);
             RtsCamera.AimSun(yaw); // the sun sits at the upper left of whichever view renders
             cam.targetTexture = rt;
-            cam.Render();
+            try { cam.Render(); }
+            finally { if (fogWas) fog.SetActive(true); }
             RenderCount++;
             cam.targetTexture = null;
             Graphics.Blit(rt, resolved);

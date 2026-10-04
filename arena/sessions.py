@@ -84,9 +84,12 @@ def session(entry):
                     view = f"{gw}/view/r{room}-{vt}"
             except Exception:
                 pass
+        # With a renderer, "watch" opens an observer camera seeing what this team sees (its own camera, so the player's
+        # view never moves); without one, the gateway's tactical view of the seat.
+        watch = f"/observe?frames={frames}&api={api}&pov={t['team']}" if frames else view
         seats.append({"name": t.get("name"), "player": t.get("player"), "controller": t.get("controller"),
                       "out": bool(t.get("defeated")), "structures": t.get("structures"), "units": t.get("units"),
-                      "kills": t.get("kills"), "view": view})
+                      "kills": t.get("kills"), "view": watch, "team": t["team"]})
     match = st.get("match") or {}
     scores = {s["team"]: s["score"] for s in match.get("scores", [])}
     for t, seat in zip(st.get("teams", []), seats):
@@ -97,7 +100,7 @@ def session(entry):
     if gw and room:
         viewers.append(("spectator /watch", f"{gw}/watch" if room == 1 else f"{gw}/watch/{room}"))
     if frames:
-        viewers.append(("live 3D" + ("" if cam else " (view-only)"), f"/frames/{frames}/"))
+        viewers.append(("live 3D (everything)", f"/observe?frames={frames}&api={api}&pov=-1"))
     viewers += links
     return {"id": sid, "title": title, "label": label, "commit": commit, "api": api, "frames": frames,
             "time_s": st.get("time_s"), "speed": st.get("speed"), "paused": st.get("paused"), "map": st.get("map_size"),
@@ -139,10 +142,10 @@ function openV(title,url){vt.textContent=title;vo.href=url;vf.src=url;viewer.cla
 function closeV(){viewer.classList.remove('on');vf.src='about:blank'}
 addEventListener('keydown',e=>{if(e.key==='Escape')closeV()});
 function card(s){
-  const thumb=s.frames?`<img class=thumb data-src="/frames/${s.frames}/frame.jpg" onclick="openV(${esc(JSON.stringify(s.title+' · live 3D'))},'/frames/${s.frames}/')">`:`<div class=nothumb>no renderer (tactical views only)</div>`;
+  const thumb=s.frames?`<img class=thumb data-src="/frames/${s.frames}/frame.jpg" onclick="openV(${esc(JSON.stringify(s.title+' · live 3D'))},'/observe?frames=${s.frames}&api=${s.api}&pov=-1')">`:`<div class=nothumb>no renderer (tactical views only)</div>`;
   const status=s.game_over?'<span class=err>game over</span>':s.paused?'paused':`<span class=okc>running</span> ×${s.speed}`;
   const links=s.viewers.map(([n,u])=>`<a href="${esc(u)}" onclick="openV(${esc(JSON.stringify(s.title+' · '+n))},'${esc(u)}');return false">${esc(n)}</a>`).join('');
-  const rows=s.seats.map(t=>`<tr class="${t.out?'out':''}"><td><b>${esc(t.name)}</b> ${esc(t.player||t.controller||'')}${t.out?' · out':''}</td><td class=n>${t.score??''}</td><td class=n>${t.structures??''}s ${t.units??''}u ${t.kills??''}k</td><td>${t.view?`<a href="${esc(t.view)}" onclick="openV(${esc(JSON.stringify(s.title+' · '+t.name+' ('+(t.player||'')+')'))},'${esc(t.view)}');return false">view</a>`:''}</td></tr>`).join('');
+  const rows=s.seats.map(t=>`<tr class="${t.out?'out':''}"><td><b>${esc(t.name)}</b> ${esc(t.player||t.controller||'')}${t.out?' · out':''}</td><td class=n>${t.score??''}</td><td class=n>${t.structures??''}s ${t.units??''}u ${t.kills??''}k</td><td>${t.view?`<a href="${esc(t.view)}" onclick="openV(${esc(JSON.stringify(s.title+' · '+t.name+' ('+(t.player||'')+')'))},'${esc(t.view)}');return false">watch</a>`:''}</td></tr>`).join('');
   return `<div class=card>${thumb}<div class=body><div class=t><b>${esc(s.title)}</b><span>${status}</span></div>
   ${s.label?`<div class=lbl>${esc(s.label)}${s.commit?' · '+esc(s.commit):''}</div>`:''}
   <div class=meta>game ${hms(s.time_s)} · map ${esc(s.map)} · ${s.phase?esc(s.phase)+(s.ends_in_s!=null?' · ends in '+hms(s.ends_in_s):''):''} · api :${s.api}${s.errors?` · <span class=err>${s.errors} sim errors</span>`:''}</div>
@@ -157,6 +160,73 @@ async function load(){
 function thumbs(){document.querySelectorAll('img.thumb').forEach(i=>i.src=i.dataset.src+'?'+Date.now())}
 load();setInterval(load,10000);setInterval(thumbs,3000);
 </script></body></html>"""
+
+
+OBSERVE = r"""<!doctype html><html><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>Pezz observer</title><style>
+html,body{margin:0;height:100%;background:#0b0c0e;color:#ece4d2;font:13px ui-sans-serif,system-ui,-apple-system;overflow:hidden}
+#wrap{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
+img{max-width:100vw;max-height:100vh;cursor:grab;user-select:none;-webkit-user-drag:none}img:active{cursor:grabbing}
+#bar{position:fixed;top:8px;left:8px;right:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;pointer-events:none}
+#bar>*{pointer-events:auto;background:rgba(20,17,19,.82);border:1px solid #3a343b;border-radius:8px;padding:5px 9px;color:#ece4d2}
+select,button{font:inherit;cursor:pointer}button{background:#2a262b}
+#help{position:fixed;bottom:8px;right:10px;color:#9a9184;background:rgba(20,17,19,.8);padding:6px 10px;border-radius:8px;font-size:12px}
+#note{color:#e8a33d}
+</style></head><body><div id=wrap><img id=f draggable=false></div>
+<div id=bar><span>👁 observer · look only</span><label>sees as <select id=pov></select></label><span id=fol>click a unit to follow it</span><button id=unf style="display:none">stop following</button><span id=note></span></div>
+<div id=help>drag / WASD / arrows: pan · wheel: zoom · Q/E: rotate · click: follow a unit · Esc: stop following</div>
+<script>
+const q=new URLSearchParams(location.search),FR=q.get('frames'),API=q.get('api');let slot=null,pov=+(q.get('pov')??-1);
+const img=document.getElementById('f'),base=()=>`/frames/${FR}/team/${slot}`;
+const cam=qs=>slot!=null&&fetch(`${base()}/cam?${qs}`);
+async function lease(){const r=await fetch(`/api/observe?frames=${FR}`+(slot!=null?`&slot=${slot}`:''));const d=await r.json();
+  if(!d.ok){note.textContent=d.error;return false}const first=slot==null;slot=d.slot;if(first){cam(`pov=${pov}`);img.src=`${base()}/stream`;watchdog()}return true}
+setInterval(lease,10000);
+// Teams to see as.
+fetch('/api/sessions').then(r=>r.json()).then(d=>{const s=d.sessions.find(x=>String(x.frames)===FR);const o=[['-1','everything (no fog)']].concat((s?.seats||[]).map(t=>[String(t.team),`${t.name} (${t.player||t.controller||''})${t.out?' · out':''}`]));
+  povSel.innerHTML=o.map(([v,n])=>`<option value="${v}">${n}</option>`).join('');povSel.value=String(pov);document.title=`${s?.title||'Pezz'} · observer`});
+const povSel=document.getElementById('pov');povSel.onchange=()=>{pov=+povSel.value;cam(`pov=${pov}&follow=0`);fol.textContent='click a unit to follow it';unf.style.display='none'};
+// Look around.
+let drag=null,moved=0,acc={dx:0,dy:0,zoom:1,yaw:0},sending=false;
+function flush(){if(sending)return;const a=acc;if(!a.dx&&!a.dy&&a.zoom===1&&!a.yaw)return;acc={dx:0,dy:0,zoom:1,yaw:0};sending=true;
+  Promise.resolve(cam(`dx=${a.dx.toFixed(4)}&dy=${a.dy.toFixed(4)}&zoom=${a.zoom.toFixed(3)}&yaw=${a.yaw.toFixed(1)}`)).finally(()=>{sending=false;setTimeout(flush,30)})}
+img.addEventListener('mousedown',e=>{drag={x:e.clientX,y:e.clientY};moved=0;e.preventDefault()});
+addEventListener('mouseup',e=>{if(drag&&moved<4)pick(e);drag=null});
+addEventListener('mousemove',e=>{if(!drag)return;const r=img.getBoundingClientRect();moved+=Math.abs(e.clientX-drag.x)+Math.abs(e.clientY-drag.y);
+  acc.dx-=(e.clientX-drag.x)/r.width;acc.dy+=(e.clientY-drag.y)/r.height;drag={x:e.clientX,y:e.clientY};flush()});
+addEventListener('wheel',e=>{e.preventDefault();acc.zoom*=e.deltaY<0?0.9:1.11;flush()},{passive:false});
+addEventListener('keydown',e=>{const k=e.key.toLowerCase(),s=.08;if(k==='a'||k==='arrowleft')acc.dx-=s;if(k==='d'||k==='arrowright')acc.dx+=s;if(k==='w'||k==='arrowup')acc.dy+=s;if(k==='s'||k==='arrowdown')acc.dy-=s;
+  if(k==='q')acc.yaw+=15;if(k==='e')acc.yaw-=15;if(k==='escape')stopF();flush()});
+// Follow: click a unit.
+async function pick(e){const r=img.getBoundingClientRect();const u=(e.clientX-r.left)/r.width,v=(e.clientY-r.top)/r.height;if(u<0||u>1||v<0||v>1)return;
+  const d=await (await fetch(`${base()}/pick?u=${u.toFixed(4)}&v=${v.toFixed(4)}`)).json();
+  if(d.id&&!d.structure){cam(`follow=${d.id}`);fol.textContent=`following ${d.type} #${d.id} (team ${d.team})`;unf.style.display=''}}
+function stopF(){cam('follow=0');fol.textContent='click a unit to follow it';unf.style.display='none'}
+unf.onclick=stopF;
+// Streams drop when a game restarts: reconnect. A build without observer cameras sends nothing: say so.
+img.onerror=()=>setTimeout(()=>img.src=`${base()}/stream?${Date.now()}`,1000);
+function watchdog(){setTimeout(()=>{if(!img.naturalWidth)note.textContent='no picture yet: this session\'s build may predate observer cameras (they arrive with the next deploy)'},6000)}
+lease();
+</script></body></html>"""
+
+# Observer camera leases: (frames port, slot) -> expiry. A viewer renews every 10 s; a slot is free 30 s after its last renewal.
+LEASES = {}
+OBSERVER_SLOTS = range(10, 14)
+
+
+def lease(port, want):
+    import time
+    now = time.time()
+    for k in [k for k, t in LEASES.items() if t < now]:
+        del LEASES[k]
+    if want is not None and (port, want) in LEASES:
+        LEASES[(port, want)] = now + 30
+        return want
+    for slot in OBSERVER_SLOTS:
+        if (port, slot) not in LEASES:
+            LEASES[(port, slot)] = now + 30
+            return slot
+    return None
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -180,6 +250,18 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, PAGE)
         if path == "/api/sessions":
             return self.send(200, json.dumps({"sessions": sessions(Handler.ts)}), "application/json")
+        if path == "/observe":
+            return self.send(200, OBSERVE)
+        if path == "/api/observe":
+            from urllib.parse import parse_qs
+            q = parse_qs(urlparse(self.path).query)
+            try:
+                port = int(q["frames"][0])
+                want = int(q["slot"][0]) if "slot" in q else None
+            except (KeyError, ValueError):
+                return self.send(400, json.dumps({"ok": False, "error": "frames=<port> is required"}), "application/json")
+            slot = lease(port, want)
+            return self.send(200, json.dumps({"ok": slot is not None, "slot": slot, "error": None if slot is not None else "all 4 observer cameras on this session are in use: close another viewer"}), "application/json")
         if path.startswith("/frames/"):
             return self.frames(path)
         self.send(404, "not found", "text/plain")
@@ -194,8 +276,13 @@ class Handler(BaseHTTPRequestHandler):
         if port not in {7778, 7928, 7948, 7958, 7968, 7978, 7988}:
             return self.send(403, "not a Pezz frames port", "text/plain")
         rest = parts[3] if len(parts) > 3 else ""
-        if rest.startswith("cam") and port == 7778:
-            return self.send(204, b"")  # room 1's camera is the public stream's: look, don't steer
+        # Look, don't touch: this page only steers its own observer cameras (team/10-13). The host's view, the players'
+        # own stream cameras (team/0-7) and the spectator camera (team/8) are never moved from here.
+        import re
+        if rest.startswith("cam") or "/cam" in rest:
+            m = re.match(r"^team/(\d+)/cam$", rest)
+            if not m or int(m.group(1)) not in OBSERVER_SLOTS:
+                return self.send(204, b"")
         query = urlparse(self.path).query
         url = f"http://127.0.0.1:{port}/{rest}" + (f"?{query}" if query else "")
         try:

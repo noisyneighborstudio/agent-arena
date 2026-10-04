@@ -24,6 +24,11 @@ namespace Pez.View
         /// <summary>The public spectator camera (whole map, no fog, its own director): a stream like a team's, keyed 8.
         /// The gateway buffers it and serves it WATCH_DELAY_S late, so it renders at a modest rate (-spectatorfps N).</summary>
         public const int SpectatorView = 8;
+        /// <summary>Observer cameras for the host's sessions dashboard (arena/sessions.py): streams keyed 10-13, each with its
+        /// own pose, follow and point of view (the whole map, or what one team sees). Nobody's own view moves when they do,
+        /// and there's no command path: look, don't touch.</summary>
+        public const int ObserverBase = 10, Observers = 4;
+        public static bool IsObserver(int key) => key >= ObserverBase && key < ObserverBase + Observers;
         public static readonly int SpectatorFps = Arg("-spectatorfps", 12, 1, 30);
         static int Arg(string name, int def, int min, int max)
         {
@@ -63,7 +68,7 @@ namespace Pez.View
 
         // Frames are read back from the GPU asynchronously and JPEG-encoded on worker threads, so a 60fps stream
         // doesn't stall the game. A stream with too many frames in flight skips rendering until they land.
-        static readonly int[] inFlight = new int[10]; // MainView, teams 0-7 and the spectator camera
+        static readonly int[] inFlight = new int[ObserverBase + Observers + 1]; // MainView, teams 0-7, the spectator camera, observers
         static readonly System.Collections.Concurrent.ConcurrentBag<byte[]> pixelPool = new System.Collections.Concurrent.ConcurrentBag<byte[]>();
         public static bool Busy(int team) => Volatile.Read(ref inFlight[team + 1]) >= 3;
 
@@ -94,7 +99,7 @@ namespace Pez.View
         }
 
         /// <summary>Camera input from a stream viewer: team -1 is the host's main view, 0-7 a player's own stream.</summary>
-        public struct CamOp { public int Team; public float Dx, Dy, Zoom, Yaw, X, Y; public int Follow; } // X/Y: absolute focus (NaN = keep); Follow: entity id to ride along with (0 = stop, -1 = no change)
+        public struct CamOp { public int Team; public float Dx, Dy, Zoom, Yaw, X, Y; public int Follow, Pov; } // X/Y: absolute focus (NaN = keep); Follow: entity id to ride along with (0 = stop, -1 = no change); Pov (observers): team whose sight to show, -1 everything, -2 no change
 
         /// <summary>"What's under this point of team N's stream?" Answered on the main thread, where the stream camera lives.</summary>
         public class PickReq { public int Team; public float U, V; public string Result; public readonly System.Threading.ManualResetEventSlim Done = new System.Threading.ManualResetEventSlim(false); }
@@ -274,6 +279,7 @@ img.onerror=()=>setTimeout(()=>img.src='stream?'+Date.now(),1000);img.src='strea
                             Zoom = Mathf.Clamp(Q(q, "zoom", 1), 0.5f, 2f), Yaw = Mathf.Clamp(Q(q, "yaw", 0), -90, 90),
                             X = Q(q, "x", float.NaN), Y = Q(q, "y", float.NaN),
                             Follow = (int)Q(q, "follow", -1),
+                            Pov = (int)Q(q, "pov", -2),
                         });
                         body = Encoding.ASCII.GetBytes("{\"ok\":true}"); type = "application/json";
                     }
