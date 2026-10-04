@@ -37,6 +37,7 @@ namespace Pez.Sim
         public int PathIdx;
         public float Cooldown;
         public float SpeedCap;        // moving as a group: no faster than the slowest member (0 = own speed)
+        public int Group;             // moving together: the group's id (its lowest unit id); leaders wait, stragglers catch up
         // Anti-jam: where it was when progress was last checked, and until when it may pass through other units.
         public Vec2 ProgressPos;
         public float ProgressAt, GhostUntil, ProgressDist;

@@ -335,7 +335,7 @@ namespace Pez.Sim
                 bool seen = d.Team == team || w.IsVisibleTo(team, d);
                 bool known = seen || memory.ContainsKey(d.Id);
                 int owner = seen ? d.Team : known ? memory[d.Id].team : -2;
-                bool capturable = seen && d.Team != team && World.Capturable(d);
+                bool capturable = d.Team != team && (seen ? World.Capturable(d) : owner < 0); // unseen: worth an engineer if last known neutral
                 string whose = owner == team ? $"YOURS: +{World.DerrickSteel} steel/s, hp {(int)d.Hp}/{d.Def.MaxHp}" + (d.Hp <= d.Def.MaxHp * World.CaptureThreshold ? " (below 50%: enemy engineers can take it; repair it)" : "")
                              : owner == -1 ? $"neutral{(seen ? "" : " when last seen")}: any engineer captures it ('capture'), then it pays {World.DerrickSteel} steel/s"
                              : owner >= 0 ? $"{w.Teams[owner].Name}'s (team{owner}){(seen ? $", hp {(int)d.Hp}/{d.Def.MaxHp}{(capturable ? ": below 50%, your engineers can take it" : ": damage it below 50% to capture it")}" : " when last seen")}"
@@ -502,8 +502,10 @@ namespace Pez.Sim
         /// 18: neutral derricks near the middle: an engineer captures one at any health; it pays its holder 1.5 steel/s.
         /// 19: defence upkeep: armed defences past the first 4 cost 3 steel/min each; unpaid ones go offline, newest first.
         /// 20: long_range_artillery joins the roster (the first adopted agent invention).
+        /// 21: together keeps groups formed (leaders wait, stragglers catch up); neutral derricks capturable unseen and
+        ///     during protection; trucks left to choose avoid known enemy bases and unused crystal/uranium.
         /// </summary>
-        public const int RulesVersion = 20;
+        public const int RulesVersion = 21;
 
         public static JObj Rules()
         {

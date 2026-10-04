@@ -120,13 +120,13 @@ namespace Pez.Headless
                 var tank = At(w.SpawnUnit(0, "light_tank", hq), new Vec2(12, 12));
                 tank.Fuel = 30;
                 var r = Commands.Execute(w, 0, Cmd("type", "move", "units", new[] { tank.Id }, "x", 72, "y", 72));
-                Check(Said(r).Contains("NOT ENOUGH FUEL") && Said(r).Contains("turns back"), $"move warns a tank can't make it: {Said(r)}");
+                Check(Said(r).Contains("FUEL:") && Said(r).Contains("turns back"), $"move warns a tank can't make it: {Said(r)}");
                 var tanker = At(w.SpawnUnit(0, "repair_truck", hq), new Vec2(13, 12));
                 var r2 = Commands.Execute(w, 0, Cmd("type", "move", "units", new[] { tank.Id, tanker.Id }, "x", 72, "y", 72));
-                Check(!Said(r2).Contains("NOT ENOUGH FUEL"), $"no warning with a repair truck in the group: {Said(r2)}");
+                Check(!Said(r2).Contains("FUEL:"), $"no warning with a repair truck in the group: {Said(r2)}");
                 var full = At(w.SpawnUnit(0, "light_tank", hq), new Vec2(12, 14));
                 var r3 = Commands.Execute(w, 0, Cmd("type", "move", "units", new[] { full.Id }, "x", 40, "y", 40));
-                Check(!Said(r3).Contains("NOT ENOUGH FUEL"), $"no warning for a trip it can make: {Said(r3)}");
+                Check(!Said(r3).Contains("FUEL:"), $"no warning for a trip it can make: {Said(r3)}");
             }
 
             // An idle drone hovering near its factory lands instead of burning its tank.

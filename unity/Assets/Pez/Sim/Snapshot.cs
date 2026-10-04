@@ -177,7 +177,7 @@ namespace Pez.Sim
             if (e.Rally.HasValue) o.Set("rally", SnapIO.V(e.Rally.Value));
             o.PutEnum("order", e.Order, Order.Idle).PutV("order_pos", e.OrderPos).PutV("guard_pos", e.GuardPos).Put("target", e.TargetId);
             if (e.Path != null) o.Set("path", SnapIO.Vs(e.Path)).Put("path_idx", e.PathIdx);
-            o.Put("cooldown", e.Cooldown).Put("speed_cap", e.SpeedCap)
+            o.Put("cooldown", e.Cooldown).Put("speed_cap", e.SpeedCap).Put("group", e.Group, 0)
              .PutV("progress_pos", e.ProgressPos).Put("progress_at", e.ProgressAt).Put("ghost_until", e.GhostUntil).Put("progress_dist", e.ProgressDist);
             if (e.Waypoints.Count > 0) o.Set("waypoints", SnapIO.Vs(e.Waypoints));
             o.Put("waypoint_loop", e.WaypointLoop).Put("retreat_below", e.RetreatBelow).Put("retreating", e.Retreating)
@@ -217,7 +217,7 @@ namespace Pez.Sim
             if (d.Has("rally", out _)) { var r = default(Vec2); d.Load("rally", ref r); e.Rally = r; }
             d.LoadEnum("order", ref e.Order); d.Load("order_pos", ref e.OrderPos); d.Load("guard_pos", ref e.GuardPos); d.Load("target", ref e.TargetId);
             if (d.Has("path", out _)) { e.Path = SnapIO.ToVecs(d.Arr("path")); d.Load("path_idx", ref e.PathIdx); }
-            d.Load("cooldown", ref e.Cooldown); d.Load("speed_cap", ref e.SpeedCap);
+            d.Load("cooldown", ref e.Cooldown); d.Load("speed_cap", ref e.SpeedCap); d.Load("group", ref e.Group);
             d.Load("progress_pos", ref e.ProgressPos); d.Load("progress_at", ref e.ProgressAt); d.Load("ghost_until", ref e.GhostUntil); d.Load("progress_dist", ref e.ProgressDist);
             e.Waypoints.AddRange(SnapIO.ToVecs(d.Arr("waypoints")));
             d.Load("waypoint_loop", ref e.WaypointLoop); d.Load("retreat_below", ref e.RetreatBelow); d.Load("retreating", ref e.Retreating);

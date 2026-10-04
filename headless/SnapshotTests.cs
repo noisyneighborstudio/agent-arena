@@ -53,7 +53,7 @@ namespace Pez.Headless
         static readonly Dictionary<Type, string> SavedFields = new Dictionary<Type, string>
         {
             [typeof(Entity)] = "Id Team Def Pos PrevPos Facing TurretFacing Hp Dead Origin BuildProgress Rally Order OrderPos GuardPos TargetId Path PathIdx Cooldown " +
-                "SpeedCap ProgressPos ProgressAt GhostUntil ProgressDist Waypoints WaypointLoop RetreatBelow Retreating RepathTimer Moving LastAttackerId LastHitTime " +
+                "SpeedCap Group ProgressPos ProgressAt GhostUntil ProgressDist Waypoints WaypointLoop RetreatBelow Retreating RepathTimer Moving LastAttackerId LastHitTime " +
                 "LastCallForHelp LastAttackerTeam Responding HomePos Cargo CargoType HarvestType HarvestTile WorkTimer Burning Dock DockAt DepositId Working Offline CarrierId Passengers Fuel Landed Stranded " +
                 "FuelCap AtDepot FuelWarned NoAutoRefuelUntil ResumeOrder ResumePos ResumeGuard ResumeTarget ResumeWaypoints ResumeSpeedCap MineQueue LastFiredAt " +
                 "Prospecting ProspectCenter ProspectRadius SkipSites SurveyFailure SurveyFailedAt ZoneId",
@@ -62,7 +62,7 @@ namespace Pez.Headless
                 "SurfaceWarnedAt LastCommandAt Reserve Stats",
             [typeof(World)] = "Map Paths MapVersion Open MaxPlayers MaxMapSize GrowStep SafeJoinDistance ProtectionSeconds Teams ById Entities Projectiles Events " +
                 "EventCounts Alerts Tick GameOver Winner Errors LastError nextId nextSeq seatCounter rng rateSnapshot airWarned StallGrace ArenaChampion contested Inventions GameId Regrown SuddenDeathAt DerrickRespawns " +
-                "| ErrorLog loggedErrors cells cellsW cellsH nearTarget nearHelp nearMine nearSep nearVis Showcase OreVersion oreDirty beingMined regrowNow scoreCache scoreCacheTick NextMatchIn derricksChecked", // Showcase: the kitchen sink room is never saved (rebuilt from code)
+                "| ErrorLog loggedErrors cells cellsW cellsH nearTarget nearHelp nearMine nearSep nearVis Showcase OreVersion oreDirty beingMined regrowNow scoreCache scoreCacheTick NextMatchIn derricksChecked groupSpan", // Showcase: the kitchen sink room is never saved (rebuilt from code)
             [typeof(Invention)] = "Key Name Chassis WeaponFrom Summary Team Def ResearchCost ResearchTime Progress Novelty PriceFactor ProposedAt ResearchedAt Built Lost Kills",
             [typeof(Map)] = "W H Tiles Ore OreType Occupant Spawns Deep OreScale nextDepositId OreBase OreBaseType | writable fieldsChanged fieldTiles fieldRoots BaseMissing",
             [typeof(SimpleAI)] = "team Passive nextThink waveSize outpostTargets nextProspect prospectRadius knownSurface",

@@ -17,7 +17,7 @@ namespace Pez.Sim
       add ""structure_id"":ID to have them come out of that building (e.g. a forward barracks); otherwise your first one
   {""type"":""move"", ""units"":[IDS], ""x"":X, ""y"":Y}     move, ignoring enemies
   {""type"":""attack_move"", ""units"":[IDS], ""x"":X, ""y"":Y}  move, engaging enemies on the way
-      add ""together"":true to move or attack_move so the group keeps the slowest member's pace and arrives as one
+      add ""together"":true to move or attack_move so the group keeps the slowest member's pace and arrives as one (leaders wait, stragglers catch up; aircraft fly their own pace)
       add ""spread"":3 (tiles between units, 1-6; true = 3) to open the formation up against splash (artillery, heavy tanks)
       add ""waypoints"":[[x,y],...] to queue more points (x/y optional: the first waypoint is used), and ""loop"":true to patrol them
   {""type"":""set_retreat"", ""units"":[IDS], ""below_pct"":30}  units pull back to base on their own below that HP % (0 = off)
@@ -53,7 +53,8 @@ namespace Pez.Sim
                 if (w.GameOver) return Err("game is over");
                 if (w.Teams[team].Defeated) return Err("your team is defeated");
                 var type = c.Str("type", "").ToLowerInvariant();
-                if ((type == "attack" || type == "capture") && w.IsProtected(team))
+                // Protection stops you hurting other players; taking a neutral derrick hurts no one.
+                if ((type == "attack" || (type == "capture" && !CapturesNeutral(w, c))) && w.IsProtected(team))
                     return Err($"you're under newcomer protection for {(int)(w.Teams[team].ProtectedUntil - w.Time)}s more and can't attack yet; use the time to build up");
                 switch (type)
                 {
@@ -239,16 +240,18 @@ namespace Pez.Sim
                     u.WaypointLoop = loop && waypoints.Count > 0;
                 }
             }
-            // Moving together: everyone keeps to the slowest member's pace so the group arrives as one.
-            bool together = order != Order.Idle && n > 1 && c.TryGetValue("together", out var tg) && tg is bool tb && tb;
-            float pace = together ? units.Min(u => u.Def.Speed) : 0;
-            if (together) foreach (var u in units) u.SpeedCap = pace;
+            // Moving together: the group keeps to the slowest member's pace, the leaders wait for the rest and anyone left
+            // behind catches up at full speed, so it arrives as one. Aircraft fly their own pace (they burn fuel by the second).
+            var ground = units.Where(u => !u.IsAir).ToList();
+            bool together = order != Order.Idle && ground.Count > 1 && c.TryGetValue("together", out var tg) && tg is bool tb && tb;
+            float pace = together ? ground.Min(u => u.Def.Speed) : 0;
+            if (together) { int group = ground.Min(u => u.Id); foreach (var u in ground) { u.SpeedCap = pace; u.Group = group; } }
             var low = units.Where(u => u.Def.UsesFuel && u.FuelFraction < 0.35f).ToList();
             var shortOfFuel = order == Order.Idle ? new List<string>() : FuelShortfalls(w, units, dest, waypoints);
             return Ok($"{n} unit(s) {(order == Order.Idle ? "stopped" : order == Order.AttackMove ? "attack-moving" : "moving")}" +
-                      (together ? $" together at {pace:0.0} tiles/s" : "") +
+                      (together ? $" together at {pace:0.0} tiles/s{(ground.Count < n ? " (aircraft at their own speed)" : "")}" : "") +
                       (waypoints.Count > 0 ? $", then {waypoints.Count} more waypoint(s){(loop ? " on a loop" : "")}" : "") +
-                      (shortOfFuel.Count > 0 ? $"; NOT ENOUGH FUEL for the trip: {string.Join("; ", shortOfFuel.Take(4))}{(shortOfFuel.Count > 4 ? $" (+{shortOfFuel.Count - 4} more)" : "")}. " +
+                      (shortOfFuel.Count > 0 ? $"; FUEL: {string.Join("; ", shortOfFuel.Take(4))}{(shortOfFuel.Count > 4 ? $" (+{shortOfFuel.Count - 4} more)" : "")}. " +
                                                "Units turn back to refuel when what's left only just gets them to a refuel point: deploy an outpost along the way, or send a repair truck with them"
                        : low.Count > 0 ? $"; low fuel: {string.Join(", ", low.Select(u => $"#{u.Id} {StateView.Pct(u.FuelFraction)}%"))} (they'll turn back to refuel when they must)" : ""));
         }
@@ -287,6 +290,13 @@ namespace Pez.Sim
                 }
                 if (turn == null && reach - route > PadDist(legs[legs.Count - 1])) continue;
                 var at = turn ?? legs[legs.Count - 1];
+                // Gets (nearly) all the way: the trip is fine, the way back to fuel isn't. Say so plainly, not as a turn-back.
+                if (pads.Count > 0 && MathF.Min(traveled, route) >= route - 4f)
+                {
+                    result.Add($"#{u.Id} {u.Def.Key} reaches the end of its ~{route:0}-tile trip with ~{MathF.Max(0, reach - route):0} tiles of fuel left, " +
+                               $"short of the ~{PadDist(legs[legs.Count - 1]):0} back to the nearest refuel point (it heads back for fuel on arrival)");
+                    continue;
+                }
                 result.Add(pads.Count == 0
                     ? $"#{u.Id} {u.Def.Key} has ~{reach:0} tiles of fuel for a ~{route:0}-tile trip and nowhere to refuel"
                     : $"#{u.Id} {u.Def.Key} has ~{reach:0} tiles of fuel for a ~{route:0}-tile trip; it turns back to refuel about {MathF.Min(traveled, route):0} tiles out, near {(int)at.X},{(int)at.Y}");
@@ -299,7 +309,7 @@ namespace Pez.Sim
             var units = ResolveUnits(w, team, c).Where(u => u.IsArmed).ToList();
             if (units.Count == 0) return Err("no valid armed units of yours given");
             var target = w.Get((int)c.Num("target", 0));
-            if (target == null) return Err("target not found (it may be destroyed)");
+            if (target == null) return Err($"nothing with id #{(int)c.Num("target", 0)} exists: it was destroyed, or the id is wrong");
             if (target.Team == team) return Err("that is your own unit");
             if (target.Team < 0) return Err($"{target.Def.Key} #{target.Id} is neutral: it can't be hurt; capture it with an engineer instead");
             if (w.IsProtected(target.Team)) return Err($"that player is under newcomer protection for {(int)(w.Teams[target.Team].ProtectedUntil - w.Time)}s more");
@@ -409,14 +419,30 @@ namespace Pez.Sim
             if (eng.Count == 0) return Err("no engineers given");
             var t = w.Get((int)c.Num("target", 0));
             if (t == null || !t.IsStructure || t.Team == team) return Err("target must be an enemy structure, or a neutral derrick");
-            // Neutral derricks are landmarks everyone knows about: no need to see one to send an engineer.
-            if (t.Team >= 0 && !w.IsVisibleTo(team, t)) return Err("target is not currently visible");
+            // Derricks are landmarks everyone knows about: an engineer can set out for one unseen. Whether it's still neutral,
+            // or now someone's and weak enough to take, is found out on arrival, so the order leaks nothing.
+            if (t.Def.Key == "derrick" && !w.IsVisibleTo(team, t))
+            {
+                foreach (var u in eng) w.SetOrder(u, Order.Capture, t.Center, t.Id);
+                return Ok($"{eng.Count} engineer(s) heading for derrick #{t.Id}, out of sight: if it's still neutral when they get there they take it " +
+                          $"(it pays {World.DerrickSteel} steel/s while you hold it); if someone holds it, it must be below 50% hp");
+            }
+            if (!w.IsVisibleTo(team, t)) return Err("target is not currently visible");
             if (w.IsProtected(t.Team)) return Err("that player is under newcomer protection");
+            if (t.Team >= 0 && w.IsProtected(team))
+                return Err($"you're under newcomer protection for {(int)(w.Teams[team].ProtectedUntil - w.Time)}s more and can't take other players' buildings yet; neutral derricks are fine");
             if (!t.IsComplete) return Err("can't capture a structure that's still under construction");
             if (!World.Capturable(t))
                 return Err($"{t.Def.Key} #{t.Id} is at {(int)t.Hp}/{t.Def.MaxHp}; damage it below 50% before an engineer can capture it");
             foreach (var u in eng) w.SetOrder(u, Order.Capture, t.Center, t.Id);
             return Ok($"{eng.Count} engineer(s) moving to capture {(t.Team < 0 ? "the neutral " : "")}{t.Def.Key} #{t.Id}" + (t.Def.Key == "derrick" ? $" (it pays {World.DerrickSteel} steel/s while you hold it)" : ""));
+        }
+
+        /// <summary>A capture order whose target is a derrick: neutral, or unseen (decided on arrival).</summary>
+        static bool CapturesNeutral(World w, Dictionary<string, object> c)
+        {
+            var t = w.Get((int)c.Num("target", 0));
+            return t != null && t.Def.Key == "derrick";
         }
 
         static readonly Vec2[] MinePattern =
