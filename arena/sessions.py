@@ -58,17 +58,27 @@ def known(ts):
         s.append((f"copy{p}", f"Test copy :{p}", p, p + 1, None, 0, [], True))
     # Extra gateway rooms (headless, no renderer) live behind the same public gateway.
     try:
+        hosts = {}
+        try: hosts = {h["name"]: h["url"] for h in json.load(open(os.path.join(HOME, ".config/pezz/roomhosts.json")))}
+        except Exception: pass
         for r in json.load(open(os.path.join(HOME, ".config/pezz/rooms.json"))).get("rooms", []):
-            s.append((f"room{r['id']}", f"Room {r['id']} · {r.get('code', '')}", r["port"], None, PUBLIC, r["id"], [], False))
+            # A room on a room host is reached through that host (the URL carries its secret; it never leaves this page's server).
+            api = f"{hosts[r['host']]}/rooms/{r['id']}" if r.get("kind") == "remote" and r.get("host") in hosts else r.get("port")
+            where = f" · on {r['host']} ({r.get('region', '?')})" if r.get("kind") == "remote" else ""
+            s.append((f"room{r['id']}", f"Room {r['id']} · {r.get('code', '')}{where}", api, None, PUBLIC, r["id"], [], False))
     except Exception:
         pass
     return s
 
 
+def base_of(api):
+    return api if isinstance(api, str) else f"http://127.0.0.1:{api}"
+
+
 def session(entry):
     sid, title, api, frames, gw, room, links, cam = entry
     try:
-        st = get(f"http://127.0.0.1:{api}/api/status")
+        st = get(f"{base_of(api)}/api/status")
     except Exception:
         return None
     seats = []
@@ -77,9 +87,9 @@ def session(entry):
         if gw and room:
             try:
                 try:  # host-only: mints a view token for seats that never got one (newer builds)
-                    vt = get(f"http://127.0.0.1:{api}/api/admin/viewlink?team={t['team']}").get("view_token")
+                    vt = get(f"{base_of(api)}/api/admin/viewlink?team={t['team']}").get("view_token")
                 except Exception:
-                    vt = get(f"http://127.0.0.1:{api}/api/viewlink?team={t['team']}").get("view_token")
+                    vt = get(f"{base_of(api)}/api/viewlink?team={t['team']}").get("view_token")
                 if vt:
                     view = f"{gw}/view/r{room}-{vt}"
             except Exception:
@@ -105,7 +115,8 @@ def session(entry):
     if frames:
         viewers.append(("live 3D (everything)", f"/observe?frames={frames}&api={api}&pov=-1"))
     viewers += links
-    return {"id": sid, "title": title, "label": label, "commit": commit, "api": api, "frames": frames,
+    # Never hand a room host's URL to the browser: it carries the host secret. Local ports are fine to show.
+    return {"id": sid, "title": title, "label": label, "commit": commit, "api": api if isinstance(api, int) else "room host", "frames": frames,
             "time_s": st.get("time_s"), "speed": st.get("speed"), "paused": st.get("paused"), "map": st.get("map_size"),
             "errors": st.get("sim_errors"), "game_over": st.get("game_over"), "phase": match.get("phase"),
             "ends_in_s": match.get("ends_in_s"), "seats": seats, "viewers": viewers}
