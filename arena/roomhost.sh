@@ -6,6 +6,7 @@
 #   arena/roomhost.sh update <ssh-host>                     ship a new engine and room host; running rooms save and resume
 #   arena/roomhost.sh roll-all                              update every installed host (CI runs this after a deploy)
 #   arena/roomhost.sh status [<ssh-host>]                   ask a host (or every host the gateway knows) how it is
+#   arena/roomhost.sh add-url <name> <region> <url>         register a host you run some other way (cloud container)
 #   arena/roomhost.sh remove <ssh-host>                     stop it and take it off the machine (rooms' saves stay)
 #
 # The gateway learns hosts from ~/.config/pezz/roomhosts.json (written here); restart the gateway to pick changes up.
@@ -120,6 +121,10 @@ for h in json.load(open(sys.argv[1])):
     except Exception as e: print(f'{h["name"]:16} {h["region"]:10} DOWN  {e}')
 EOF
     ;;
+  add-url)
+    # A host that wasn't installed over ssh (a cloud container, deploy/roomhost/Dockerfile): name, region, its tailnet URL.
+    register "$2" "${4%/}/k/$SECRET" "$3" ""
+    curl -s -m 5 "${4%/}/k/$SECRET/host" || echo "(not answering yet)"; echo ;;
   remove)
     ssh "$2" 'launchctl bootout gui/$(id -u)/com.pezz.roomhost 2>/dev/null; rm -f ~/Library/LaunchAgents/com.pezz.roomhost.plist; systemctl --user disable --now pezz-roomhost 2>/dev/null; rm -rf ~/pezz-roomhost' || true
     name=$(ssh "$2" hostname -s)
