@@ -293,6 +293,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, json.dumps({"ok": slot is not None, "slot": slot, "error": None if slot is not None else "all 4 observer cameras on this session are in use: close another viewer"}), "application/json")
         if path.startswith("/frames/"):
             return self.frames(path)
+        if path == "/b3d" or path.startswith("/b3d/"):
+            return self.b3d(path)
         if path == "/pv/start":
             return self.pv_start()
         if path.startswith("/pv/"):
@@ -326,6 +328,45 @@ class Handler(BaseHTTPRequestHandler):
             pass
         finally:
             up.close()
+
+    def b3d(self, path):
+        """The browser 3D renderer spike (arena/web3d): its files, the models, and the view data it reads (read-only)."""
+        from urllib.parse import parse_qs
+        rest = path[len("/b3d"):].lstrip("/")
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if rest in ("", "index.html"):
+            if not path.endswith("/"):
+                self.send_response(302); self.send_header("Location", "/b3d/" + (("?" + urlparse(self.path).query) if urlparse(self.path).query else "")); self.end_headers(); return
+            rest = "index.html"
+        if rest.startswith("data/"):
+            q = parse_qs(urlparse(self.path).query)
+            if rest[5:] not in ("frame", "map"):
+                return self.send(403, "not a Pezz view", "text/plain")
+            try:
+                team = int(q.get("team", ["0"])[0])
+                # host=<room host name>&room=<id>: a room on a room host (no renderer there: this page is its only 3D)
+                if "host" in q:
+                    hosts = {h["name"]: h["url"] for h in json.load(open(os.path.join(HOME, ".config/pezz/roomhosts.json")))}
+                    base = f"{hosts[q['host'][0]]}/rooms/{int(q['room'][0])}"
+                else:
+                    api = int(q["api"][0])
+                    if api not in (7777, 7927, 7947, 7957, 7967, 7977, 7987):
+                        return self.send(403, "not a Pezz view", "text/plain")
+                    base = f"http://127.0.0.1:{api}"
+            except (KeyError, ValueError):
+                return self.send(400, "api (or host and room) and team are required", "text/plain")
+            return self.relay(f"{base}/api/view/{rest[5:]}?team={team}")
+        if rest.startswith("models/"):
+            name = os.path.basename(rest[7:])
+            f = os.path.join(repo, "unity/Assets/Pez/Resources/PezModels", name)
+            if not name.endswith(".glb") or not os.path.isfile(f):
+                return self.send(404, "no such model", "text/plain")
+            return self.send(200, open(f, "rb").read(), "model/gltf-binary")
+        f = os.path.normpath(os.path.join(repo, "arena/web3d", rest))
+        if not f.startswith(os.path.join(repo, "arena/web3d")) or not os.path.isfile(f):
+            return self.send(404, "not found", "text/plain")
+        ctype = "text/html; charset=utf-8" if f.endswith(".html") else "text/javascript; charset=utf-8" if f.endswith(".js") else "application/octet-stream"
+        return self.send(200, open(f, "rb").read(), ctype)
 
     def pv_start(self):
         """A player's own viewer page, as their human sees it, but on an observer camera: lease a camera, aim its
