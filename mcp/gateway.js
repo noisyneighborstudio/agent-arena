@@ -31,7 +31,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { Player, registerPlayTools } from "./play.js";
-import { Rooms } from "./rooms.js";
+import { Rooms, regionOf } from "./rooms.js";
 import { CHANGES, LATEST, changesFor } from "./changes.js";
 import * as inventions from "./inventions.js";
 
@@ -46,10 +46,19 @@ const WATCH_DELAY_S = Number(process.env.PEZZ_WATCH_DELAY || 45);
 // The Unity host's frame server: renders each player's own high-res live stream (absent on headless servers).
 const FRAMES = (process.env.PEZZ_FRAMES || GAME.replace(/:(\d+)$/, (m, p) => `:${Number(p) + 1}`)).replace(/\/$/, ""); // public spectator view lags so players can't use it to see through fog
 const CONFIG_DIR = path.join(os.homedir(), ".config", "pezz");
+// Operator secret for /admin (arena/rooms.sh reads the same file). Made on first start.
+const ADMIN_SECRET = (() => {
+  const f = process.env.PEZZ_ADMIN_SECRET_FILE || path.join(CONFIG_DIR, "admin-secret");
+  try { return fs.readFileSync(f, "utf8").trim(); } catch {}
+  try { fs.mkdirSync(path.dirname(f), { recursive: true, mode: 0o700 }); const s = randomBytes(24).toString("hex"); fs.writeFileSync(f, s, { mode: 0o600 }); return s; } catch { return null; }
+})();
 const rooms = new Rooms({
   hostGame: GAME, hostFrames: FRAMES,
   engine: process.env.PEZZ_ENGINE || path.resolve(HERE, "../headless/bin/Release/net10.0/pez-headless.dll"),
   stateFile: process.env.PEZZ_ROOMS_FILE || path.join(CONFIG_DIR, "rooms.json"),
+  // Room hosts on other machines (arena/roomhost.sh): new rooms go there, nearest region first.
+  hostsFile: process.env.PEZZ_ROOMHOSTS_FILE || path.join(CONFIG_DIR, "roomhosts.json"),
+  localRooms: process.env.PEZZ_LOCAL_ROOMS !== "0",
   logDir: path.resolve(HERE, "../arena/logs"),
   maxRooms: Number(process.env.PEZZ_MAX_ROOMS || 6),
   idleMinutes: Number(process.env.PEZZ_ROOM_IDLE_MIN || 10),
@@ -310,6 +319,13 @@ function readBody(req) {
   });
 }
 
+/** A game client for one seat. Its address follows the room, which can move to another host mid-game. */
+function seatClient(room, raw) {
+  const p = new Player(room.game, { token: raw }, room.frames);
+  Object.defineProperty(p, "base", { get: () => room.game.replace(/\/$/, ""), configurable: true });
+  return p;
+}
+
 async function gameAt(room, pathname, { method = "GET", body, token } = {}) {
   const headers = { "content-type": "application/json" };
   if (token) headers.authorization = `Bearer ${token}`;
@@ -342,13 +358,13 @@ function shareFor(room, base) {
 let joinQueue = Promise.resolve();
 
 /** Seat a new player: in the room their code names, else the first room with space, else a new room. */
-async function join(name, code, base) {
-  const run = joinQueue.then(() => placeAndRegister(name, code, base));
+async function join(name, code, base, region = null) {
+  const run = joinQueue.then(() => placeAndRegister(name, code, base, region));
   joinQueue = run.catch(() => {});
   return run;
 }
 
-async function placeAndRegister(name, code, base) {
+async function placeAndRegister(name, code, base, region = null) {
   await rooms.ready;
   const maint = maintenance();
   if (maint) throw new MaintenanceError(maint);
@@ -357,7 +373,10 @@ async function placeAndRegister(name, code, base) {
     wanted = rooms.byCode(code);
     if (!wanted) { const e = new Error(`no room has the code "${String(code).slice(0, 20)}" (it may have closed). Join without a code to be placed in an open room.`); e.status = 404; throw e; }
   }
-  const order = wanted ? [wanted, ...rooms.all().filter((r) => r !== wanted)] : rooms.all();
+  // Rooms in the player's region first (they're nearer); a room code always wins.
+  const near = (r) => !!region && String(r.region ?? "").startsWith(region);
+  const rest = rooms.all().filter((r) => r !== wanted).sort((a, b) => (near(b) - near(a)) || (a.id - b.id));
+  const order = wanted ? [wanted, ...rest] : rest;
   const notes = [];
   let room = null, r = null;
   for (const candidate of order) {
@@ -367,7 +386,7 @@ async function placeAndRegister(name, code, base) {
       if (!/full|taken|fetch failed|ECONNREFUSED|not open/i.test(e.message)) throw e;
     }
   }
-  if (!room) { room = await rooms.spawn(); r = await gameAt(room, "/api/register", { method: "POST", body: { name: String(name ?? "").slice(0, 64) } }); notes.push(`Every room was full, so you opened room ${room.id}. Invite friends with the room code.`); }
+  if (!room) { room = await rooms.spawn(region); r = await gameAt(room, "/api/register", { method: "POST", body: { name: String(name ?? "").slice(0, 64) } }); notes.push(`Every room was full, so you opened room ${room.id}. Invite friends with the room code.`); }
   const view_url = `${base}/view/${roomToken(room, r.view_token)}`;
   const token = roomToken(room, r.token);
   await markAllSeen(token); // they get the current list right here
@@ -399,7 +418,7 @@ async function placeAndRegister(name, code, base) {
 const httpPlayers = new Map();
 function playerFor(token) {
   let p = httpPlayers.get(token);
-  if (!p) { const { room, raw } = parseToken(token); p = new Player(room.game, { token: raw }, room.frames); p.room = room; p.news = () => takeNews(token); p.onCommands = (c, r) => recordCommands(token, c, r); httpPlayers.set(token, p); }
+  if (!p) { const { room, raw } = parseToken(token); p = seatClient(room, raw); p.room = room; p.news = () => takeNews(token); p.onCommands = (c, r) => recordCommands(token, c, r); httpPlayers.set(token, p); }
   return p;
 }
 
@@ -738,7 +757,7 @@ function saveSessions() { // only on join, rejoin and leave, so writing straight
 
 function seatFromToken(seat, token) {
   const { room, raw } = parseToken(token);
-  seat.token = token; seat.player = new Player(room.game, { token: raw }, room.frames);
+  seat.token = token; seat.player = seatClient(room, raw);
   seat.player.news = () => takeNews(token);
   seat.player.onCommands = (c, r) => recordCommands(token, c, r);
 }
@@ -748,8 +767,9 @@ async function lobby() {
   await rooms.ready;
   const out = [];
   for (const room of rooms.all()) {
-    try { out.push({ room: room.id, code: room.code, renderer: room.frames ? "high-res live view" : "map view", ...(await gameAt(room, "/api/lobby")) }); }
-    catch { out.push({ room: room.id, code: room.code, status: "not running" }); }
+    const where = { region: room.region ?? "us", host: room.host ?? "main" };
+    try { out.push({ room: room.id, code: room.code, ...where, renderer: room.frames ? "high-res live view" : "map view", ...(await gameAt(room, "/api/lobby")) }); }
+    catch { out.push({ room: room.id, code: room.code, ...where, status: "not running" }); }
   }
   const m = maintenance();
   return { ...(m ? { maintenance: maintenanceNotice(m) } : {}), rooms: out, join: "POST /join (or the MCP join tool); add \"room\":\"<code>\" to join a specific room" };
@@ -765,9 +785,10 @@ function mcpServerFor(seat, baseUrl) {
       name: z.string().min(1).max(40).describe("Your display name, e.g. your model or agent name"),
       room: z.string().max(40).optional().describe("A friend's room code (pezz-…), to join their game. Leave out to be placed in any room with space."),
       invite: z.string().max(40).optional().describe("Same as room (older name)"),
+      region: z.enum(["us", "eu", "ap"]).optional().describe("Optional: prefer a room in this region (Americas, Europe/Africa, Asia-Pacific). By default it's worked out from where you connect from."),
       switch_seat: z.boolean().optional().describe("Already playing a living team in this session and want a second seat? true takes a new seat here; the old team keeps playing on its own, and previous_token (in the reply) switches back with rejoin"),
     },
-  }, async ({ name, room, invite, switch_seat }) => {
+  }, async ({ name, room, invite, region, switch_seat }) => {
     let previous = null;
     if (seat.player) {
       // Still alive? Then this is a duplicate join, unless the agent asks to switch seats. Eliminated (or left)? Then take a fresh seat.
@@ -778,7 +799,7 @@ function mcpServerFor(seat, baseUrl) {
       seat.player = null; seat.token = null;
     }
     try {
-      const r = await join(name, room ?? invite, baseUrl);
+      const r = await join(name, room ?? invite, baseUrl, region ?? seat.region ?? null);
       seatFromToken(seat, r.token);
       saveSessions();
       const extra = previous ? { previous_token: previous, previous_note: "Your previous team is still in the game, with nobody at the controls until you rejoin it with previous_token. Keep it secret." } : {};
@@ -841,8 +862,8 @@ function mcpServerFor(seat, baseUrl) {
 }
 
 /** A new session, or (given an id) one a client opened with an earlier gateway, restored with its seat if we saved it. */
-async function openSession(base, adoptId) {
-  const seat = {};
+async function openSession(base, adoptId, region = null) {
+  const seat = { region };
   const token = adoptId && savedTokens.get(adoptId);
   if (token) {
     try { seatFromToken(seat, token); } catch { seat.token = null; seat.player = null; }
@@ -872,10 +893,11 @@ async function handleMcp(req, res, base) {
   const body = req.method === "POST" ? await readBody(req) : undefined;
   let s = sid ? sessions.get(sid) : null;
   if (!s) {
-    if (!sid && req.method === "POST" && isInitializeRequest(body)) return (await openSession(base)).handleRequest(req, res, body);
+    const region = regionOf(req.headers["cf-ipcountry"]);
+    if (!sid && req.method === "POST" && isInitializeRequest(body)) return (await openSession(base, undefined, region)).handleRequest(req, res, body);
     if (!sid || req.method === "DELETE" || !/^[\w-]{8,100}$/.test(sid)) // per spec, 404 tells the client to start a new session
       return send(res, 404, { jsonrpc: "2.0", error: { code: -32001, message: "Session not found; send an initialize request to start a new one" }, id: null });
-    return (await openSession(base, sid)).handleRequest(req, res, body);
+    return (await openSession(base, sid, region)).handleRequest(req, res, body);
   }
   return s.transport.handleRequest(req, res, body);
 }
@@ -988,6 +1010,19 @@ const server = http.createServer(async (req, res) => {
   try {
     if (!allow(`ip:${ip}`, 40, 120)) return send(res, 429, { ok: false, error: "slow down" });
     if (p === "/mcp") return await handleMcp(req, res, base);
+    // Operator commands, from this machine only (never through the public tunnel, which adds cf-connecting-ip), and
+    // only with the admin secret: move a room between hosts, drain a host, see the fleet.
+    if (p.startsWith("/admin/")) {
+      if (req.headers["cf-connecting-ip"] || !["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(req.socket.remoteAddress)) return send(res, 404, { ok: false, error: "not found" });
+      if (!ADMIN_SECRET || req.headers["x-pezz-admin"] !== ADMIN_SECRET) return send(res, 403, { ok: false, error: "admin secret required" });
+      await rooms.ready;
+      const mv = p.match(/^\/admin\/rooms\/(\d+)\/move$/);
+      if (mv && req.method === "POST") { const b = (await readBody(req)) ?? {}; return send(res, 200, await rooms.move(Number(mv[1]), String(b.to ?? ""))); }
+      const dr = p.match(/^\/admin\/hosts\/([\w.-]+)\/drain$/);
+      if (dr && req.method === "POST") return send(res, 200, await rooms.drain(dr[1]));
+      if (p === "/admin/fleet") return send(res, 200, { ok: true, hosts: await rooms.fleet(), rooms: rooms.all().map(({ id, code, kind, host, region }) => ({ id, code, kind, host, region })) });
+      return send(res, 404, { ok: false, error: "not found" });
+    }
     if (p === "/" || p === "/play") return send(res, 200, briefing(base, url.searchParams.get("room")), "text/markdown");
     if (p === "/lobby") return send(res, 200, await lobby());
     if (p === "/loop.sh") return send(res, 200, loopScript(base), "text/x-shellscript");
@@ -1002,7 +1037,8 @@ const server = http.createServer(async (req, res) => {
     if (p === "/join" && req.method === "POST") {
       if (!allow(`join:${ip}`, 5 / 600, 5)) return send(res, 429, { ok: false, error: "too many joins from your address; try again later" });
       const b = (await readBody(req)) ?? {};
-      return send(res, 200, await join(b.name, b.room ?? b.invite, base));
+      const region = /^(us|eu|ap)$/.test(String(b.region ?? "")) ? b.region : regionOf(req.headers["cf-ipcountry"]);
+      return send(res, 200, await join(b.name, b.room ?? b.invite, base, region));
     }
 
     // Read-only personal web view: /view/<view token>[/map|/frame]

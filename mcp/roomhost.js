@@ -38,11 +38,13 @@ const CAPACITY = Number(process.env.PEZZ_HOST_ROOMS) > 0 ? Number(process.env.PE
 const ENGINE = process.env.PEZZ_ENGINE;
 const BASE_PORT = Number(process.env.PEZZ_HOST_BASE_PORT || 7801);
 const HOME = path.join(os.homedir(), ".config", "pezz");
-const STATE = path.join(HOME, "roomhost.json");
+// Per host name, so two hosts on one machine (a test, a second region on a big box) never adopt each other's rooms.
+const STATE = path.join(HOME, `roomhost-${NAME}.json`);
+const LEGACY_STATE = path.join(HOME, "roomhost.json");
 const LOGS = path.join(HOME, "roomhost-logs");
 // pez-headless saves its game here, per port; a room's snapshot follows it from port to port (and host to host).
 const snapshotFile = (port) => path.join(HOME, "rooms", `game-${port}.json`);
-const heldSnapshot = (id) => path.join(HOME, "rooms", `held-${id}.json`);
+const heldSnapshot = (id) => path.join(HOME, "rooms", `held-${NAME}-${id}.json`);
 if (!ENGINE || !fs.existsSync(ENGINE)) { console.error(`PEZZ_ENGINE must point at the engine (got ${ENGINE})`); process.exit(2); }
 
 function bindAddress() {
@@ -69,7 +71,7 @@ async function launch(id, resume) {
     const held = fs.existsSync(heldSnapshot(id)) ? heldSnapshot(id) : null;
     if (!held) throw Object.assign(new Error(`no saved game for room ${id} on this host`), { status: 404 });
     fs.copyFileSync(held, snapshotFile(port));
-  } else fs.rmSync(snapshotFile(port), { force: true });
+  } else { fs.rmSync(snapshotFile(port), { force: true }); fs.rmSync(heldSnapshot(id), { force: true }); } // a new room: no old game under its id
   fs.mkdirSync(LOGS, { recursive: true });
   const out = fs.openSync(path.join(LOGS, `room-${id}.log`), "a");
   const seed = String(1 + (randomBytes(4).readUInt32BE() % 1e9));
@@ -163,7 +165,8 @@ const server = http.createServer(async (req, res) => {
 });
 
 // Rooms survive a restart of this daemon (they're detached); re-adopt the ones that still answer.
-try { for (const r of JSON.parse(fs.readFileSync(STATE, "utf8"))) if (await alive(r.port)) rooms.set(r.id, r); } catch {}
+try { for (const r of JSON.parse(fs.readFileSync(fs.existsSync(STATE) ? STATE : LEGACY_STATE, "utf8"))) if (await alive(r.port)) rooms.set(r.id, r); } catch {}
+if (!fs.existsSync(STATE) && fs.existsSync(LEGACY_STATE) && rooms.size) fs.rmSync(LEGACY_STATE, { force: true }); // migrated: one host owns them
 save();
 const bind = bindAddress();
 server.listen(PORT, bind, () => log(`room host ${NAME} (${REGION}, ${os.platform()}-${os.arch()}, ${CAPACITY} rooms) on http://${bind}:${PORT}; ${rooms.size} room(s) adopted`));
