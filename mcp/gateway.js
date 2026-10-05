@@ -369,6 +369,9 @@ async function placeAndRegister(name, code, base, region = null, ip = null) {
   const maint = maintenance();
   if (maint) throw new MaintenanceError(maint);
   let wanted = null;
+  // "room":"new": start your own room (for friends to join with its code) rather than fill the open ones.
+  const fresh = String(code ?? "").trim().toLowerCase() === "new";
+  if (fresh) code = null;
   if (code) {
     wanted = rooms.byCode(code);
     if (!wanted) { const e = new Error(`no room has the code "${String(code).slice(0, 20)}" (it may have closed). Join without a code to be placed in an open room.`); e.status = 404; throw e; }
@@ -376,7 +379,7 @@ async function placeAndRegister(name, code, base, region = null, ip = null) {
   // Rooms in the player's region first (they're nearer); a room code always wins.
   const near = (r) => !!region && String(r.region ?? "").startsWith(region);
   const rest = rooms.all().filter((r) => r !== wanted).sort((a, b) => (near(b) - near(a)) || (a.id - b.id));
-  const order = wanted ? [wanted, ...rest] : rest;
+  const order = fresh ? [] : wanted ? [wanted, ...rest] : rest;
   const notes = [];
   let room = null, r = null;
   for (const candidate of order) {
@@ -388,7 +391,7 @@ async function placeAndRegister(name, code, base, region = null, ip = null) {
   }
   // Opening a room starts a game on a real machine: at most 2 per address an hour (joining an open room is free).
   if (!room && ip && !allow(`spawn:${ip}`, 2 / 3600, 2)) { const e = new Error("every room is full, and you've opened rooms recently; try again later"); e.status = 429; throw e; }
-  if (!room) { room = await rooms.spawn(region); r = await gameAt(room, "/api/register", { method: "POST", body: { name: String(name ?? "").slice(0, 64) } }); notes.push(`Every room was full, so you opened room ${room.id}. Invite friends with the room code.`); }
+  if (!room) { room = await rooms.spawn(region); r = await gameAt(room, "/api/register", { method: "POST", body: { name: String(name ?? "").slice(0, 64) } }); notes.push(fresh ? `You opened room ${room.id}. Invite friends with its code: ${room.code}.` : `Every room was full, so you opened room ${room.id}. Invite friends with the room code.`); }
   const view_url = `${base}/view/${roomToken(room, r.view_token)}`;
   const token = roomToken(room, r.token);
   await markAllSeen(token); // they get the current list right here
@@ -774,7 +777,7 @@ async function lobby() {
     catch { out.push({ room: room.id, code: room.code, ...where, status: "not running" }); }
   }
   const m = maintenance();
-  return { ...(m ? { maintenance: maintenanceNotice(m) } : {}), rooms: out, join: "POST /join (or the MCP join tool); add \"room\":\"<code>\" to join a specific room" };
+  return { ...(m ? { maintenance: maintenanceNotice(m) } : {}), rooms: out, join: "POST /join (or the MCP join tool); add \"room\":\"<code>\" to join a specific room, or \"room\":\"new\" to start your own" };
 }
 
 function mcpServerFor(seat, baseUrl) {
@@ -785,7 +788,7 @@ function mcpServerFor(seat, baseUrl) {
     description: "Join the arena as a new commander. Returns your flavour, base location and tell_your_human: one private link (commander_url) for your human, their live view with an orders box. If your team was eliminated, call join again for a fresh seat. Use rejoin with your token to resume a living team after a disconnect.",
     inputSchema: {
       name: z.string().min(1).max(40).describe("Your display name, e.g. your model or agent name"),
-      room: z.string().max(40).optional().describe("A friend's room code (pezz-…), to join their game. Leave out to be placed in any room with space."),
+      room: z.string().max(40).optional().describe("A friend's room code (pezz-…), to join their game, or \"new\" to start your own room and invite friends with its code. Leave out to be placed in any room with space."),
       invite: z.string().max(40).optional().describe("Same as room (older name)"),
       region: z.enum(["us", "eu", "ap"]).optional().describe("Optional: prefer a room in this region (Americas, Europe/Africa, Asia-Pacific). By default it's worked out from where you connect from."),
       switch_seat: z.boolean().optional().describe("Already playing a living team in this session and want a second seat? true takes a new seat here; the old team keeps playing on its own, and previous_token (in the reply) switches back with rejoin"),
