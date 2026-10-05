@@ -127,6 +127,11 @@ pass() {
   fi
   echo "$target" > "$CI/deployed"; rm -f "$CI/failed" "$CI/waiting_for" "$CI/waiting_since"
   log "live: ${target[1,7]} $(git -C "$REPO" log -1 --format=%s "$target")"
+  # Room hosts on other machines (arena/roomhost.sh) get the same engine; their rooms save and resume onto it.
+  # In the background and logged: a slow or unreachable host never holds up the arena.
+  if [ -s "$HOME/.config/pezz/roomhosts.json" ]; then
+    (nice "$LIVE/arena/roomhost.sh" roll-all >> "$REPO/arena/logs/roomhosts.log" 2>&1 &) ; log "rolling room hosts onto ${target[1,7]} (arena/logs/roomhosts.log)"
+  fi
   status live "$target" "$(git -C "$REPO" log -1 --format=%s "$target" | tr '"' "'")"
 }
 

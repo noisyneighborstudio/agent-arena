@@ -4,6 +4,7 @@
 #   arena/roomhost.sh install <ssh-host> <region> [rooms]   build the engine for that machine, copy it over, and keep the
 #                                                           room host running there (launchd on macOS, systemd on Linux)
 #   arena/roomhost.sh update <ssh-host>                     ship a new engine and room host; running rooms save and resume
+#   arena/roomhost.sh roll-all                              update every installed host (CI runs this after a deploy)
 #   arena/roomhost.sh status [<ssh-host>]                   ask a host (or every host the gateway knows) how it is
 #   arena/roomhost.sh remove <ssh-host>                     stop it and take it off the machine (rooms' saves stay)
 #
@@ -25,19 +26,22 @@ rid() { # the .NET runtime id for a remote machine
   esac
 }
 
-build() { # build <rid> -> prints the engine path
-  local out=$HOME/pezz-engines/$1
-  (cd "$REPO/headless" && dotnet publish -c Release -r "$1" --self-contained true -p:PublishSingleFile=true -o "$out" >/dev/null)
+build() { # build <rid> -> prints the engine path (built once per commit and platform)
+  local out=$HOME/pezz-engines/$1 commit=$(git -C "$REPO" rev-parse HEAD)
+  if [ "$(cat "$out/.commit" 2>/dev/null)" != "$commit" ]; then
+    (cd "$REPO/headless" && dotnet publish -c Release -r "$1" --self-contained true -p:PublishSingleFile=true -o "$out" >/dev/null)
+    echo "$commit" > "$out/.commit"
+  fi
   echo "$out/pez-headless"
 }
 
-register() { # register <name> <url> <region>
-  python3 - "$HOSTS" "$1" "$2" "$3" <<'EOF'
+register() { # register <name> <url> <region> <ssh-host>
+  python3 - "$HOSTS" "$1" "$2" "$3" "$4" <<'EOF'
 import json, sys
-p, name, url, region = sys.argv[1:]
+p, name, url, region, ssh = sys.argv[1:]
 try: hosts = json.load(open(p))
 except Exception: hosts = []
-hosts = [h for h in hosts if h["name"] != name] + [{"name": name, "url": url, "region": region}]
+hosts = [h for h in hosts if h["name"] != name] + [{"name": name, "url": url, "region": region, "ssh": ssh}]
 json.dump(hosts, open(p, "w"), indent=1)
 EOF
   chmod 600 "$HOSTS"
@@ -88,7 +92,7 @@ WantedBy=default.target
 EOF
 systemctl --user daemon-reload && systemctl --user enable --now pezz-roomhost && systemctl --user restart pezz-roomhost"
   fi
-  register "$name" "http://$ip:7700/k/$SECRET" "$region"
+  register "$name" "http://$ip:7700/k/$SECRET" "$region" "$h"
   for i in {1..20}; do curl -s -m 3 "http://$ip:7700/k/$SECRET/host" >/dev/null && break; sleep 1; done
   curl -s -m 3 "http://$ip:7700/k/$SECRET/host"; echo
 }
@@ -96,8 +100,18 @@ systemctl --user daemon-reload && systemctl --user enable --now pezz-roomhost &&
 case "${1:-status}" in
   install) ship "$2" "${3:-unknown}" "${4:-0}" ;;
   update)
-    region=$(python3 -c "import json,sys; print(next((h['region'] for h in json.load(open('$HOSTS')) if h['name']=='$(ssh $2 hostname -s)'), 'unknown'))")
-    ship "$2" "$region" 0 ;;
+    # New engine and room host on the machine, then each running room saves and resumes on the new engine.
+    name=$(ssh "$2" hostname -s)
+    region=$(python3 -c "import json,sys; print(next((h['region'] for h in json.load(open('$HOSTS')) if h['name']=='$name'), 'unknown'))")
+    ship "$2" "$region" 0
+    url=$(python3 -c "import json; print(next(h['url'] for h in json.load(open('$HOSTS')) if h['name']=='$name'))")
+    curl -s -m 600 -X POST "$url/roll"; echo ;;
+  roll-all)
+    # Every host installed with this script (it has an ssh target): update it and roll its rooms. CI runs this after
+    # each live deploy, so room hosts run the same engine as room 1.
+    for h in $(python3 -c "import json; print(' '.join(h['ssh'] for h in json.load(open('$HOSTS')) if h.get('ssh')))" 2>/dev/null); do
+      echo "== $h"; "$0" update "$h" || echo "update of $h FAILED"
+    done ;;
   status)
     python3 - "$HOSTS" <<'EOF'
 import json, sys, urllib.request

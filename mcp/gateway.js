@@ -358,13 +358,13 @@ function shareFor(room, base) {
 let joinQueue = Promise.resolve();
 
 /** Seat a new player: in the room their code names, else the first room with space, else a new room. */
-async function join(name, code, base, region = null) {
-  const run = joinQueue.then(() => placeAndRegister(name, code, base, region));
+async function join(name, code, base, region = null, ip = null) {
+  const run = joinQueue.then(() => placeAndRegister(name, code, base, region, ip));
   joinQueue = run.catch(() => {});
   return run;
 }
 
-async function placeAndRegister(name, code, base, region = null) {
+async function placeAndRegister(name, code, base, region = null, ip = null) {
   await rooms.ready;
   const maint = maintenance();
   if (maint) throw new MaintenanceError(maint);
@@ -386,6 +386,8 @@ async function placeAndRegister(name, code, base, region = null) {
       if (!/full|taken|fetch failed|ECONNREFUSED|not open/i.test(e.message)) throw e;
     }
   }
+  // Opening a room starts a game on a real machine: at most 2 per address an hour (joining an open room is free).
+  if (!room && ip && !allow(`spawn:${ip}`, 2 / 3600, 2)) { const e = new Error("every room is full, and you've opened rooms recently; try again later"); e.status = 429; throw e; }
   if (!room) { room = await rooms.spawn(region); r = await gameAt(room, "/api/register", { method: "POST", body: { name: String(name ?? "").slice(0, 64) } }); notes.push(`Every room was full, so you opened room ${room.id}. Invite friends with the room code.`); }
   const view_url = `${base}/view/${roomToken(room, r.view_token)}`;
   const token = roomToken(room, r.token);
@@ -799,7 +801,7 @@ function mcpServerFor(seat, baseUrl) {
       seat.player = null; seat.token = null;
     }
     try {
-      const r = await join(name, room ?? invite, baseUrl, region ?? seat.region ?? null);
+      const r = await join(name, room ?? invite, baseUrl, region ?? seat.region ?? null, seat.ip ?? null);
       seatFromToken(seat, r.token);
       saveSessions();
       const extra = previous ? { previous_token: previous, previous_note: "Your previous team is still in the game, with nobody at the controls until you rejoin it with previous_token. Keep it secret." } : {};
@@ -862,8 +864,8 @@ function mcpServerFor(seat, baseUrl) {
 }
 
 /** A new session, or (given an id) one a client opened with an earlier gateway, restored with its seat if we saved it. */
-async function openSession(base, adoptId, region = null) {
-  const seat = { region };
+async function openSession(base, adoptId, region = null, ip = null) {
+  const seat = { region, ip };
   const token = adoptId && savedTokens.get(adoptId);
   if (token) {
     try { seatFromToken(seat, token); } catch { seat.token = null; seat.player = null; }
@@ -894,10 +896,10 @@ async function handleMcp(req, res, base) {
   let s = sid ? sessions.get(sid) : null;
   if (!s) {
     const region = regionOf(req.headers["cf-ipcountry"]);
-    if (!sid && req.method === "POST" && isInitializeRequest(body)) return (await openSession(base, undefined, region)).handleRequest(req, res, body);
+    if (!sid && req.method === "POST" && isInitializeRequest(body)) return (await openSession(base, undefined, region, clientIp(req))).handleRequest(req, res, body);
     if (!sid || req.method === "DELETE" || !/^[\w-]{8,100}$/.test(sid)) // per spec, 404 tells the client to start a new session
       return send(res, 404, { jsonrpc: "2.0", error: { code: -32001, message: "Session not found; send an initialize request to start a new one" }, id: null });
-    return (await openSession(base, sid, region)).handleRequest(req, res, body);
+    return (await openSession(base, sid, region, clientIp(req))).handleRequest(req, res, body);
   }
   return s.transport.handleRequest(req, res, body);
 }
@@ -1038,7 +1040,7 @@ const server = http.createServer(async (req, res) => {
       if (!allow(`join:${ip}`, 5 / 600, 5)) return send(res, 429, { ok: false, error: "too many joins from your address; try again later" });
       const b = (await readBody(req)) ?? {};
       const region = /^(us|eu|ap)$/.test(String(b.region ?? "")) ? b.region : regionOf(req.headers["cf-ipcountry"]);
-      return send(res, 200, await join(b.name, b.room ?? b.invite, base, region));
+      return send(res, 200, await join(b.name, b.room ?? b.invite, base, region, ip));
     }
 
     // Read-only personal web view: /view/<view token>[/map|/frame]

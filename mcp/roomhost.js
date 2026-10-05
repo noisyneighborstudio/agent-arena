@@ -21,6 +21,7 @@
 //   DELETE /rooms/<id>                 save and stop a room (its snapshot stays, for a later resume or a move)
 //   GET    /rooms/<id>/snapshot        the room's saved game (saves first), for moving it to another host
 //   PUT    /rooms/<id>/snapshot        receive a saved game; POST /rooms {id, resume:true} then picks it up
+//   POST   /roll                       after a new engine is installed: save and resume each room on it, one at a time
 //   *      /rooms/<id>/<path>          the room's own game API (status, register, state, command, wait, admin...)
 import http from "node:http";
 import fs from "node:fs";
@@ -135,6 +136,15 @@ const server = http.createServer(async (req, res) => {
     if (!m || !secretOk(m[1])) return send(res, 404, { ok: false, error: "not found" });
     const p = m[2] || "/";
     if (p === "/host" && req.method === "GET") return send(res, 200, hostInfo());
+    if (p === "/roll" && req.method === "POST") {
+      // One room at a time, so each pauses only for its own save and resume (a couple of seconds).
+      const rolled = [];
+      for (const r of [...rooms.values()]) {
+        try { await stop(r); await launch(r.id, true); rolled.push({ id: r.id, ok: true }); }
+        catch (e) { rolled.push({ id: r.id, ok: false, error: e.message }); log(`room ${r.id} didn't come back after the roll: ${e.message}`); }
+      }
+      return send(res, 200, { ok: rolled.every((x) => x.ok), rolled });
+    }
     if (p === "/rooms" && req.method === "POST") {
       const b = JSON.parse((await readBody(req)).toString() || "{}");
       const id = Number(b.id);
