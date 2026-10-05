@@ -78,8 +78,11 @@ cat > ~/Library/LaunchAgents/com.pezz.roomhost.plist <<EOF
 <key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
 </dict></plist>
 EOF
+# bootout is asynchronous: wait until the old one is gone, then load (retrying), or the load fails with an I/O error.
 launchctl bootout gui/\$(id -u)/com.pezz.roomhost 2>/dev/null || true
-launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/com.pezz.roomhost.plist"
+for i in 1 2 3 4 5 6 7 8 9 10; do launchctl print gui/\$(id -u)/com.pezz.roomhost >/dev/null 2>&1 || break; sleep 1; done
+for i in 1 2 3; do launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/com.pezz.roomhost.plist 2>/dev/null && break; sleep 2; done
+launchctl print gui/\$(id -u)/com.pezz.roomhost >/dev/null 2>&1 || { echo 'the room host did not start'; exit 1; }"
   else
     ssh "$h" "mkdir -p ~/.config/systemd/user && cat > ~/.config/systemd/user/pezz-roomhost.service <<EOF
 [Unit]
