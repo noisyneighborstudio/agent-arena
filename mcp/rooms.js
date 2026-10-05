@@ -242,7 +242,8 @@ export class Rooms {
       let outside = 0;
       try {
         const l = await (await fetch(`${r.game}/api/lobby`, { signal: AbortSignal.timeout(5000) })).json();
-        outside = l.teams.filter((t) => !t.house && t.status === "playing").length;
+        // A seat whose agent stopped sending commands doesn't keep a room (and a host's slot) open forever.
+        outside = l.teams.filter((t) => !t.house && t.status === "playing" && !(t.idle_s > this.idleMs / 1000)).length;
         r.downSince = null;
       } catch {
         // The engine (or its whole host) is down: bring the game back from its save. A host that stays unreachable
