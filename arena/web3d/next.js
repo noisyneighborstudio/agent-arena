@@ -6,6 +6,7 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { toCreasedNormals } from "three/addons/utils/BufferGeometryUtils.js";
+import { makeComposer, skyEnvironment, Particles } from "./fx.js";
 
 const Q = new URLSearchParams(location.search);
 const DATA = (p) => `./data/${p}?${Q.has("host") ? `host=${Q.get("host")}&room=${Q.get("room")}` : `api=${Q.get("api") ?? 7957}`}&team=${Q.get("team") ?? 0}`;
@@ -29,7 +30,7 @@ const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "hi
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap;
 renderer.toneMapping = THREE.NeutralToneMapping; // close to PezPost's light grade (exposure 1.06, contrast 1.04)
 renderer.toneMappingExposure = 1.06;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -42,13 +43,16 @@ scene.background = new THREE.Color(0x16120f);
 const world = new THREE.Group();
 world.scale.set(1, 1, -1);
 scene.add(world);
+scene.environment = skyEnvironment(renderer);
+scene.environmentIntensity = 0.3;
+const particles = new Particles(world, scene);
 // Look.cs: trilight ambient (cool sky, warm ground bounce) and a warm sun at 1.35. three's lights are divided by π
 // (physical units) where Unity's built-in pipeline's aren't, hence the π.
-const hemi = new THREE.HemisphereLight(new THREE.Color(0.50, 0.58, 0.74), C(98, 80, 58), 1.0 * Math.PI);
+const hemi = new THREE.HemisphereLight(new THREE.Color(0.50, 0.58, 0.74), C(98, 80, 58), 0.85 * Math.PI);
 scene.add(hemi);
 const sun = new THREE.DirectionalLight(C(255, 228, 192), 1.35 * Math.PI);
 sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.mapSize.set(2048, 2048); sun.shadow.radius = 3;
 sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.02;
 scene.add(sun, sun.target);
 
@@ -205,7 +209,7 @@ function tint(obj, team) {
         if (!teamMats.has(k)) { const c = m.clone(); c.color = (team >= 0 ? TEAM[team % TEAM.length] : NEUTRAL).clone(); teamMats.set(k, c); }
         return teamMats.get(k);
       }
-      if (m.name?.startsWith("M_E_") && !m.userData.glow) { m.emissive = m.color.clone(); m.emissiveIntensity = 1.6; m.userData.glow = true; }
+      if (m.name?.startsWith("M_E_") && !m.userData.glow) { m.emissive = m.color.clone(); m.emissiveIntensity = 2.2; m.userData.glow = true; }
       return m;
     });
     if (o.material.length === 1) o.material = o.material[0];
@@ -234,6 +238,17 @@ function upsert(e, now) {
       tint(m, team);
       const holder = new THREE.Group(); holder.scale.set(1, 1, -1); holder.add(m); // undo the world's mirror for the model itself
       s.body = m; s.obj.add(holder);
+      // Steam vents: the glowing caps of a power plant's stacks (their tops, in this entity's own space).
+      if (key === "power_plant") {
+        s.vents = [];
+        m.updateMatrixWorld(true); s.obj.updateMatrixWorld(true);
+        m.traverse((o) => { if (o.isMesh && /M_E_Cyan/.test(o.name)) {
+          const box = new THREE.Box3().setFromObject(o), c = box.getCenter(new THREE.Vector3()); c.y = box.max.y;
+          // split two-stack meshes by side (the stacks sit either side of the model's centre)
+          const sides = box.max.x - box.min.x > 0.6 ? [new THREE.Vector3(box.min.x + (box.max.x - box.min.x) * 0.25, c.y, c.z), new THREE.Vector3(box.max.x - (box.max.x - box.min.x) * 0.25, c.y, c.z)] : [c];
+          for (const p of sides) s.vents.push(s.obj.worldToLocal(p.clone()));
+        } });
+      }
       // Construction stages (PezEmerge): stage_0..stage_3 rise out of the ground in turn as the build progresses.
       s.stages = [0, 1, 2, 3].map((i) => {
         const o = m.getObjectByName(`stage_${i}`); if (!o) return null;
@@ -244,7 +259,7 @@ function upsert(e, now) {
   }
   if (s.team !== team && s.body) { tint(s.body, team); s.team = team; } // captured
   s.a = { ...s.b, t: s.b.t }; s.b = { x, y, f: facing, t: now };
-  s.build = build; s.seen = now;
+  s.build = build; s.hp = hp; s.size = size; s.seen = now;
 }
 
 // ---------------------------------------------------------------- effects: [seq, type, x, y, x2, y2, team, a]
@@ -253,9 +268,15 @@ function effect(e) {
   const [seq, type, x, y, x2, y2, team] = e;
   if (seenFx.has(seq)) return; seenFx.add(seq);
   if (type === "shot" || type === "fire") {
+    particles.flash(new THREE.Vector3(x, 0.55, y));
     const g = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(x, 0.45, y), new THREE.Vector3(x2, 0.35, y2)]);
     const l = new THREE.Line(g, new THREE.LineBasicMaterial({ color: team >= 0 ? TEAM[team % TEAM.length] : 0xffe0a0, transparent: true }));
     world.add(l); fx.push({ o: l, life: 0.18, t: 0 });
+  } else if (type === "destroyed") {
+    const dead = ents.get(e[7]), structure = dead && dead.size > 0;
+    particles.explosion(new THREE.Vector3(x, 0.3, y), structure ? 1.8 : dead && /infantry|rifle|soldier|trooper|medic|engineer|sniper|commando/.test(dead.key) ? 0.4 : 1);
+    const pl = new THREE.PointLight(0xff9a3a, structure ? 60 : 30, structure ? 9 : 6); pl.position.set(x, 1.4, y); world.add(pl); fx.push({ o: pl, life: 0.6, t: 0, light: true, peak: structure ? 60 : 30 });
+    return;
   } else if (type === "destroyed" || type === "hit") {
     const big = type === "destroyed";
     const s = new THREE.Mesh(new THREE.SphereGeometry(big ? 0.6 : 0.18, 12, 8), new THREE.MeshBasicMaterial({ color: 0xffb04a, transparent: true }));
@@ -284,8 +305,8 @@ async function poll() {
       const now = performance.now();
       const live = new Set();
       for (const e of f.entities) { upsert(e, now); live.add(e[0]); }
-      for (const [id, s] of ents) if (!live.has(id)) { world.remove(s.obj); ents.delete(id); }
       for (const e of f.effects ?? []) effect(e);
+      for (const [id, s] of ents) if (!live.has(id)) { world.remove(s.obj); ents.delete(id); }
       updateFog(f.shroud);
       frames++;
       document.getElementById("who").textContent = `· ${f.you?.flavor ?? ""} · game ${Math.floor(f.time_s / 60)}:${String(Math.floor(f.time_s % 60)).padStart(2, "0")}`;
@@ -358,15 +379,21 @@ function tick() {
     // Unity: Euler(0, 90° − facing) in its own (left-handed) coordinates: the world group carries that over.
     s.obj.rotation.y = Math.PI / 2 - f;
     if (s.stages) emerge(s, s.build < 0 ? 1 : s.build / 100, dt);
+    const pos = s.obj.position;
+    if (s.vents && (s.build < 0 || s.build >= 100)) s.vents.forEach((v, i) => particles.loop(`v${id}:${i}`, () => particles.steam(), s.obj.localToWorld(v.clone()).applyMatrix4(worldInv)));
+    if (s.size > 0 && s.build >= 100 && s.hp < 30) particles.fireAt(`f${id}`, Math.min(1, (30 - s.hp) / 30), new THREE.Vector3(pos.x, 0.5, pos.z), s.size);
+    const speed = Math.hypot(s.b.x - s.a.x, s.b.y - s.a.y) / Math.max(0.05, (s.b.t - s.a.t) / 1000);
+    if (s.size === 0 && !AIR.has(s.key) && !/rifle|soldier|trooper|medic|engineer|sniper|commando/.test(s.key) && speed > 0.25) particles.loop(`d${id}`, () => particles.dust(), new THREE.Vector3(pos.x, 0.1, pos.z));
     if (id === view.followId) { view.x += (x - view.x) * Math.min(1, dt * 6); view.y += (y - view.y) * Math.min(1, dt * 6); }
   }
   for (let i = fx.length - 1; i >= 0; i--) {
     const e = fx[i]; e.t += dt; const k = e.t / e.life;
     if (k >= 1) { world.remove(e.o); e.o.geometry?.dispose(); fx.splice(i, 1); continue; }
-    if (e.light) e.o.intensity = 30 * (1 - k); else { e.o.material.opacity = 1 - k; if (e.grow) e.o.scale.setScalar(1 + (e.grow - 1) * k); }
+    if (e.light) e.o.intensity = (e.peak ?? 30) * (1 - k) * (1 - k); else { e.o.material.opacity = 1 - k; if (e.grow) e.o.scale.setScalar(1 + (e.grow - 1) * k); }
   }
   placeCamera();
-  renderer.render(scene, cam);
+  particles.update(dt); particles.sweep();
+  if (FXQ === "off") renderer.render(scene, cam); else post.composer.render(dt);
   fpsN++; fpsT += dt; if (fpsT >= 1) { fps = fpsN / fpsT; fpsN = 0; fpsT = 0;
     const cut = now - 5000; bytesWindow = bytesWindow.filter(([t]) => t > cut); const bps = bytesWindow.reduce((s, [, n]) => s + n, 0) / 5;
     document.getElementById("stats").textContent = `${fps.toFixed(0)} fps · ${ents.size} things · ${(bps / 1024).toFixed(1)} KB/s data · models ${(modelBytes / 1024).toFixed(0)} KB · ${renderer.info.render.calls} draw calls`;
@@ -374,6 +401,14 @@ function tick() {
   }
   requestAnimationFrame(tick);
 }
+window.__fxdbg = () => JSON.stringify({ loops: particles.loops.size, bursts: particles.bursts.length, vents: [...ents.values()].filter((s) => s.vents).map((s) => s.vents.length), systems: particles.batch.systemToBatchIndex?.size ?? null, batches: particles.batch.batches?.length });
+// ?fx=off|noao|nobloom for measuring what each effect costs
+const FXQ = Q.get("fx") ?? "";
+const worldInv = new THREE.Matrix4();
+const post = makeComposer(renderer, scene, cam);
+if (FXQ.includes("noao")) post.ao.enabled = false;
+if (FXQ.includes("nobloom")) post.bloom.intensity = 0;
+world.updateMatrixWorld(true); worldInv.copy(world.matrixWorld).invert();
 placeCamera();
 poll();
 tick();
