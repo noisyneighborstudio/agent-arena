@@ -1,0 +1,20 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>Pezz · browser 3D (spike)</title>
+<style>
+  html,body{margin:0;height:100%;background:#16120f;overflow:hidden;touch-action:none;overscroll-behavior:none;font:12px ui-sans-serif,system-ui,-apple-system;color:#ece4d2}
+  canvas{display:block;width:100vw;height:100vh;touch-action:none}
+  #hud{position:fixed;top:8px;left:8px;background:rgba(20,17,19,.82);border:1px solid #3a343b;border-radius:8px;padding:6px 10px;line-height:1.5;pointer-events:none}
+  #hud b{color:#e8a33d}
+  #pad{position:fixed;right:10px;bottom:12px;display:flex;flex-direction:column;gap:6px}
+  #pad button{width:44px;height:44px;border-radius:10px;border:1px solid #3a343b;background:rgba(20,17,19,.85);color:#ece4d2;font-size:20px}
+  #fol{position:fixed;left:50%;transform:translateX(-50%);bottom:12px;background:rgba(20,17,19,.85);border:1px solid #3a343b;border-radius:8px;padding:5px 10px;display:none}
+</style>
+<script type="importmap">{"imports":{"three":"./vendor/three.module.js","three/addons/":"./vendor/addons/","three/examples/jsm/":"./vendor/addons/",
+  "postprocessing":"./vendor/libs/postprocessing.js","n8ao":"./vendor/libs/n8ao.js","three.quarks":"./vendor/libs/three.quarks.js","quarks.core":"./vendor/libs/quarks.core.js"}}</script>
+</head><body>
+<div id="hud"><b>Pezz · three.js (bundled)</b> <span id="who"></span><br><span id="stats">…</span></div>
+<div id="pad"><button data-z="0.8">+</button><button data-z="1.25">−</button><button data-y="-15">⟲</button><button data-y="15">⟳</button></div>
+<div id="fol"></div>
+<script src="./boot.js" data-main="./three-bundle.js" data-files="./three-bundle.js"></script>
+</body></html>

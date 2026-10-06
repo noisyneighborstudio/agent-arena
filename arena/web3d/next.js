@@ -242,7 +242,8 @@ function upsert(e, now) {
       if (!ents.has(id)) return;
       const m = proto ? proto.clone(true) : placeholder(team);
       tint(m, team);
-      const holder = new THREE.Group(); holder.scale.set(1, 1, -1); holder.add(m); // undo the world's mirror for the model itself
+      // glTF into Unity space the way glTFast imports it (x negated), so the world's mirror leaves the model the right way round.
+      const holder = new THREE.Group(); holder.scale.set(-1, 1, 1); holder.add(m);
       s.body = m; s.obj.add(holder);
       // Steam vents: the glowing caps of a power plant's stacks (their tops, in this entity's own space).
       if (key === "power_plant") {
@@ -292,37 +293,70 @@ function effect(e) {
 }
 
 // ---------------------------------------------------------------- polling
+// One frame of the world, however it arrived (a poll, or the WebSocket feed's snapshot plus deltas).
+function applyFrame(f, size) {
+  if (!booted) BOOT.step("data", "ok", `${(size / 1024).toFixed(1)} KB · ${f.entities.length} things`);
+  if (f.tick === lastTick) return;
+  lastTick = f.tick;
+  const now = performance.now(), live = new Set();
+  for (const e of f.entities) { upsert(e, now); live.add(e[0]); }
+  for (const e of f.effects ?? []) effect(e);
+  for (const [id, s] of ents) if (!live.has(id)) { world.remove(s.obj); ents.delete(id); }
+  if (f.shroud !== undefined) updateFog(f.shroud);
+  frames++;
+  if (f.you || f.time_s != null) document.getElementById("who").textContent = `· ${f.you?.flavor ?? lastWho} · game ${Math.floor(f.time_s / 60)}:${String(Math.floor(f.time_s % 60)).padStart(2, "0")}${FEED ? " · live feed" : ""}`;
+  if (f.you?.flavor) lastWho = f.you.flavor;
+}
+let lastWho = "";
+function applyMap(m, entities) {
+  if (!booted) BOOT.step("map", "run");
+  buildTerrain(m);
+  if (!booted) BOOT.step("map", "ok", `${m.w}×${m.h} tiles`);
+  oreVersion = m.ore_version;
+  if (!frames && entities) {
+    // Start on ?x=&y=, else this team's command center, else anything of theirs, else anything at all.
+    const team = Number(Q.get("team") ?? 0), mine = entities.filter((e) => e[2] === team);
+    const at = Q.has("x") ? [0, 0, 0, +Q.get("x"), +Q.get("y")] : mine.find((e) => e[1] === "command_center") ?? mine[0] ?? entities[0];
+    if (at) { view.x = at[3]; view.y = at[4]; }
+    if (Q.has("size")) view.size = +Q.get("size");
+    placeCamera();
+  }
+}
+
 async function poll() {
   try {
     const r = await fetch(DATA("frame"), { cache: "no-store" });
     const txt = await r.text(); bytesIn += txt.length; bytesWindow.push([performance.now(), txt.length]);
     const f = JSON.parse(txt);
     if (f.ok === false) throw new Error(f.error);
-    if (!booted) BOOT.step("data", "ok", `${(txt.length / 1024).toFixed(0)} KB per update · ${f.entities.length} things`);
-    if (!terrain || f.ore_version !== oreVersion) { if (!booted) BOOT.step("map", "run"); const m = await (await fetch(DATA("map"), { cache: "no-store" })).json(); bytesIn += 1; buildTerrain(m); if (!booted) BOOT.step("map", "ok", `${m.w}×${m.h} tiles`); oreVersion = f.ore_version; if (!frames) {
-      // Start on ?x=&y=, else this team's command center, else anything of theirs, else anything at all.
-      const team = Number(Q.get("team") ?? 0), mine = f.entities.filter((e) => e[2] === team);
-      const at = Q.has("x") ? [0, 0, 0, +Q.get("x"), +Q.get("y")] : mine.find((e) => e[1] === "command_center") ?? mine[0] ?? f.entities[0];
-      if (at) { view.x = at[3]; view.y = at[4]; }
-      if (Q.has("size")) view.size = +Q.get("size");
-      placeCamera();
-    } }
-    if (f.tick !== lastTick) {
-      lastTick = f.tick;
-      const now = performance.now();
-      const live = new Set();
-      for (const e of f.entities) { upsert(e, now); live.add(e[0]); }
-      for (const e of f.effects ?? []) effect(e);
-      for (const [id, s] of ents) if (!live.has(id)) { world.remove(s.obj); ents.delete(id); }
-      updateFog(f.shroud);
-      frames++;
-      document.getElementById("who").textContent = `· ${f.you?.flavor ?? ""} · game ${Math.floor(f.time_s / 60)}:${String(Math.floor(f.time_s % 60)).padStart(2, "0")}`;
-    }
+    if (!terrain || f.ore_version !== oreVersion) applyMap(await (await fetch(DATA("map"), { cache: "no-store" })).json(), f.entities);
+    applyFrame(f, txt.length);
   } catch (err) {
     document.getElementById("stats").textContent = "data: " + err.message;
     if (!booted) BOOT.step("data", "run", `retrying: ${err.message}`);
   }
   setTimeout(poll, POLL_MS);
+}
+
+// The WebSocket feed (arena/web3d/server/feed.mjs): a snapshot, then only what changed, pushed as it happens.
+const FEED = Q.get("feed") === "ws";
+function feed() {
+  const wsBase = location.port === "8458" ? `wss://${location.hostname}:8459` : "ws://127.0.0.1:7427";
+  const qs = Q.has("host") ? `host=${Q.get("host")}&room=${Q.get("room")}` : `api=${Q.get("api") ?? 7957}`;
+  const ws = new WebSocket(`${wsBase}/feed?${qs}&team=${Q.get("team") ?? 0}`);
+  const table = new Map(); let head = {}, shroud = null, pendingMap = null;
+  ws.onmessage = (ev) => {
+    const txt = ev.data; bytesIn += txt.length; bytesWindow.push([performance.now(), txt.length]);
+    const m = JSON.parse(txt);
+    if (m.t === "map") { pendingMap = m.map; if (table.size) { applyMap(pendingMap, [...table.values()]); pendingMap = null; } return; }
+    if (m.t === "error") { document.getElementById("stats").textContent = "feed: " + m.error; if (!booted) BOOT.step("data", "run", `retrying: ${m.error}`); return; }
+    if (m.t === "full") { table.clear(); for (const e of m.ents) table.set(e[0], e); head = m.head ?? {}; shroud = m.shroud; }
+    else if (m.t === "delta") { for (const e of m.add) table.set(e[0], e); for (const e of m.upd) table.set(e[0], e); for (const id of m.del) table.delete(id); if (m.head) head = m.head; if (m.shroud !== undefined) shroud = m.shroud; head.time_s = m.time_s; }
+    if (pendingMap) { applyMap(pendingMap, [...table.values()]); pendingMap = null; }
+    applyFrame({ tick: m.tick, time_s: head.time_s, you: head.you, entities: [...table.values()], effects: m.fx ?? [], shroud }, txt.length);
+  };
+  ws.onclose = () => { document.getElementById("stats").textContent = "feed closed: reconnecting…"; if (!booted) BOOT.step("data", "run", "reconnecting…"); setTimeout(feed, 1500); };
+  ws.onerror = () => {};
 }
 
 // ---------------------------------------------------------------- input: drag pan, pinch/wheel zoom, rotate, tap to follow
@@ -389,7 +423,7 @@ function tick() {
     const alt = AIR.has(s.key) ? 2.2 : 0;
     s.obj.position.set(x, alt, y);
     // Unity: Euler(0, 90° − facing) in its own (left-handed) coordinates: the world group carries that over.
-    s.obj.rotation.y = Math.PI / 2 - f;
+    s.obj.rotation.y = s.size > 0 ? 0 : Math.PI / 2 - f; // structures never turn in Unity
     if (s.stages) emerge(s, s.build < 0 ? 1 : s.build / 100, dt);
     const pos = s.obj.position;
     if (s.vents && (s.build < 0 || s.build >= 100)) s.vents.forEach((v, i) => particles.loop(`v${id}:${i}`, () => particles.steam(), s.obj.localToWorld(v.clone()).applyMatrix4(worldInv)));
@@ -422,5 +456,5 @@ if (FXQ.includes("noao")) post.ao.enabled = false;
 if (FXQ.includes("nobloom")) post.bloom.intensity = 0;
 world.updateMatrixWorld(true); worldInv.copy(world.matrixWorld).invert();
 placeCamera();
-poll();
+if (FEED) feed(); else poll();
 tick();

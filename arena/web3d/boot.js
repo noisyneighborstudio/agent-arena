@@ -40,7 +40,7 @@
   window.__boot = {
     step: set,
     fail,
-    ready() { set("frame", "ok"); el.style.transition = "opacity .4s"; el.style.opacity = "0"; setTimeout(() => (el.style.display = "none"), 450); },
+    ready() { window.__readyAt = performance.now(); set("frame", "ok"); el.style.transition = "opacity .4s"; el.style.opacity = "0"; setTimeout(() => (el.style.display = "none"), 450); },
   };
   addEventListener("error", (e) => { if (el.style.display !== "none") fail((e.message || "a script failed to load") + (e.filename ? ` (${e.filename.split("/").pop()})` : "")); }, true);
   addEventListener("unhandledrejection", (e) => { if (el.style.display !== "none") fail(String(e.reason?.message || e.reason)); });

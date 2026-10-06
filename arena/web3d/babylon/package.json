@@ -1,0 +1,3 @@
+{ "name": "pezz-web3d-babylon", "private": true, "type": "module",
+  "scripts": { "build": "esbuild src/main.js --bundle --format=esm --minify --target=es2022 --outfile=../bab.js --metafile=meta.json", "build:three": "esbuild ../next.js --bundle --format=esm --minify --target=es2022 --outfile=../three-bundle.js --alias:three=../vendor/three.module.js --alias:postprocessing=../vendor/libs/postprocessing.js --alias:n8ao=../vendor/libs/n8ao.js --alias:three.quarks=../vendor/libs/three.quarks.js --alias:quarks.core=../vendor/libs/quarks.core.js --alias:three/addons=../vendor/addons --alias:three/examples/jsm=../vendor/addons" },
+  "dependencies": { "@babylonjs/core": "^9.29.0", "@babylonjs/loaders": "^9.29.0" }, "devDependencies": { "esbuild": "^0.25.0" } }

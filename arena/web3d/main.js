@@ -238,7 +238,8 @@ function upsert(e, now) {
       if (!ents.has(id)) return;
       const m = proto ? proto.clone(true) : placeholder(team);
       tint(m, team);
-      const holder = new THREE.Group(); holder.scale.set(1, 1, -1); holder.add(m); // undo the world's mirror for the model itself
+      // glTF into Unity space the way glTFast imports it (x negated), so the world's mirror leaves the model the right way round.
+      const holder = new THREE.Group(); holder.scale.set(-1, 1, 1); holder.add(m);
       s.body = m; s.obj.add(holder);
       // Construction stages (PezEmerge): stage_0..stage_3 rise out of the ground in turn as the build progresses.
       s.stages = [0, 1, 2, 3].map((i) => {
@@ -368,7 +369,7 @@ function tick() {
     const alt = AIR.has(s.key) ? 2.2 : 0;
     s.obj.position.set(x, alt, y);
     // Unity: Euler(0, 90° − facing) in its own (left-handed) coordinates: the world group carries that over.
-    s.obj.rotation.y = Math.PI / 2 - f;
+    s.obj.rotation.y = s.size > 0 ? 0 : Math.PI / 2 - f; // structures never turn in Unity
     if (s.stages) emerge(s, s.build < 0 ? 1 : s.build / 100, dt);
     if (id === view.followId) { view.x += (x - view.x) * Math.min(1, dt * 6); view.y += (y - view.y) * Math.min(1, dt * 6); }
   }

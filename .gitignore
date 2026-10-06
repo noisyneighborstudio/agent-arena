@@ -22,3 +22,7 @@ ci-work/
 .claude/*
 !.claude/agents/
 __pycache__/
+# browser renderer bundles (arena/web3d/babylon: npm ci && npm run build && npm run build:three)
+arena/web3d/bab.js
+arena/web3d/three-bundle.js
+arena/web3d/babylon/meta.json
