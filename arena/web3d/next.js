@@ -6,7 +6,7 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { toCreasedNormals } from "three/addons/utils/BufferGeometryUtils.js";
-import { makeComposer, skyEnvironment, Particles } from "./fx.js";
+import { makeComposer, skyEnvironment, Particles, DepthPrepass } from "./fx.js";
 
 const Q = new URLSearchParams(location.search);
 // The loading screen (boot.js): what's happening, step by step. A no-op if the page was opened without it.
@@ -50,6 +50,7 @@ scene.add(world);
 scene.environment = skyEnvironment(renderer);
 scene.environmentIntensity = 0.3;
 const particles = new Particles(world, scene);
+let fogMesh = null; // the fog of war's plane: kept out of the depth that soft particles fade against
 // Look.cs: trilight ambient (cool sky, warm ground bounce) and a warm sun at 1.35. three's lights are divided by π
 // (physical units) where Unity's built-in pipeline's aren't, hence the π.
 const hemi = new THREE.HemisphereLight(new THREE.Color(0.50, 0.58, 0.74), C(98, 80, 58), 0.85 * Math.PI);
@@ -173,7 +174,7 @@ function buildTerrain(m) {
   // Lying flat with texel (x, y) over tile (x, y): rotated so the plane's +y runs along +z (sim +y).
   fog.rotation.x = Math.PI / 2; fog.position.set(mapW / 2, 1.6, mapH / 2); fog.renderOrder = 10;
   fog.material.side = THREE.DoubleSide;
-  terrain.add(fog);
+  terrain.add(fog); fogMesh = fog;
   world.add(terrain);
 }
 function updateFog(shroud) {
@@ -245,6 +246,7 @@ function upsert(e, now) {
       // glTF into Unity space the way glTFast imports it (x negated), so the world's mirror leaves the model the right way round.
       const holder = new THREE.Group(); holder.scale.set(-1, 1, 1); holder.add(m);
       s.body = m; s.obj.add(holder);
+      s.top = new THREE.Box3().setFromObject(m).max.y; // its roof: fires burn on top, not inside where they'd only fade
       // Steam vents: the glowing caps of a power plant's stacks (their tops, in this entity's own space).
       if (key === "power_plant") {
         s.vents = [];
@@ -427,7 +429,7 @@ function tick() {
     if (s.stages) emerge(s, s.build < 0 ? 1 : s.build / 100, dt);
     const pos = s.obj.position;
     if (s.vents && (s.build < 0 || s.build >= 100)) s.vents.forEach((v, i) => particles.loop(`v${id}:${i}`, () => particles.steam(), s.obj.localToWorld(v.clone()).applyMatrix4(worldInv)));
-    if (s.size > 0 && s.build >= 100 && s.hp < 30) particles.fireAt(`f${id}`, Math.min(1, (30 - s.hp) / 30), new THREE.Vector3(pos.x, 0.5, pos.z), s.size);
+    if (s.size > 0 && s.build >= 100 && s.hp < 30) particles.fireAt(`f${id}`, Math.min(1, (30 - s.hp) / 30), new THREE.Vector3(pos.x, (s.top ?? 1) * 0.85, pos.z), s.size);
     const speed = Math.hypot(s.b.x - s.a.x, s.b.y - s.a.y) / Math.max(0.05, (s.b.t - s.a.t) / 1000);
     if (s.size === 0 && !AIR.has(s.key) && !/rifle|soldier|trooper|medic|engineer|sniper|commando/.test(s.key) && speed > 0.25) particles.loop(`d${id}`, () => particles.dust(), new THREE.Vector3(pos.x, 0.1, pos.z));
     if (id === view.followId) { view.x += (x - view.x) * Math.min(1, dt * 6); view.y += (y - view.y) * Math.min(1, dt * 6); }
@@ -439,6 +441,7 @@ function tick() {
   }
   placeCamera();
   particles.update(dt); particles.sweep();
+  depthPre.render(scene, cam, fogMesh ? [particles.batch, fogMesh] : [particles.batch]);
   if (FXQ === "off") renderer.render(scene, cam); else post.composer.render(dt);
   fpsN++; fpsT += dt; if (fpsT >= 1) { fps = fpsN / fpsT; fpsN = 0; fpsT = 0;
     const cut = now - 5000; bytesWindow = bytesWindow.filter(([t]) => t > cut); const bps = bytesWindow.reduce((s, [, n]) => s + n, 0) / 5;
@@ -452,6 +455,7 @@ window.__fxdbg = () => JSON.stringify({ loops: particles.loops.size, bursts: par
 const FXQ = Q.get("fx") ?? "";
 const worldInv = new THREE.Matrix4();
 const post = makeComposer(renderer, scene, cam); window.__post = post;
+const depthPre = new DepthPrepass(renderer); particles.batch.setDepthTexture(depthPre.texture);
 if (FXQ.includes("noao")) post.ao.enabled = false;
 if (FXQ.includes("nobloom")) post.bloom.intensity = 0;
 world.updateMatrixWorld(true); worldInv.copy(world.matrixWorld).invert();

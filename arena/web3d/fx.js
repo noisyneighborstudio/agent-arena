@@ -16,15 +16,39 @@ export function makeComposer(renderer, scene, camera) {
   ao.setQualityMode("Medium");
   composer.addPass(ao);
   const bloom = new BloomEffect({ intensity: 1.8, luminanceThreshold: 1.6, luminanceSmoothing: 0.15, mipmapBlur: true, radius: 0.85 }); // above any sunlit wall, so only the glowing parts bloom (like Babylon's GlowLayer)
-  composer.addPass(new EffectPass(camera,
+  const grade = new EffectPass(camera,
     bloom,
     new BrightnessContrastEffect({ brightness: -0.03, contrast: 0.1 }),
     new HueSaturationEffect({ saturation: 0.08 }),
     new ToneMappingEffect({ mode: ToneMappingMode.NEUTRAL }),
     new VignetteEffect({ offset: 0.32, darkness: 0.42 }),
-    new SMAAEffect()));
+    new SMAAEffect());
+  grade.dithering = true; // smoke's soft gradients band in 8 bits without it
+  composer.addPass(grade);
   addEventListener("resize", () => composer.setSize(innerWidth, innerHeight));
   return { composer, ao, bloom };
+}
+
+/** The solid scene's depth, without particles or fog, at half resolution: what soft particles fade against.
+ * A separate render because the main pass can't read the depth buffer it's drawing into. */
+export class DepthPrepass {
+  constructor(renderer) {
+    this.renderer = renderer;
+    this.rt = new THREE.WebGLRenderTarget(1, 1, { depthBuffer: true, depthTexture: new THREE.DepthTexture(1, 1) });
+    this.mat = new THREE.MeshBasicMaterial({ colorWrite: false });
+    this.size = new THREE.Vector2();
+  }
+  get texture() { return this.rt.depthTexture; }
+  render(scene, camera, hide) {
+    const r = this.renderer; r.getDrawingBufferSize(this.size);
+    const w = Math.max(1, Math.ceil(this.size.x / 2)), h = Math.max(1, Math.ceil(this.size.y / 2));
+    if (this.rt.width !== w || this.rt.height !== h) this.rt.setSize(w, h);
+    const shown = hide.map((o) => o.visible); hide.forEach((o) => { o.visible = false; });
+    const om = scene.overrideMaterial, auto = r.shadowMap.autoUpdate, prev = r.getRenderTarget();
+    scene.overrideMaterial = this.mat; r.shadowMap.autoUpdate = false; // the shadows are drawn once, by the main pass
+    r.setRenderTarget(this.rt); r.clear(); r.render(scene, camera); r.setRenderTarget(prev);
+    scene.overrideMaterial = om; r.shadowMap.autoUpdate = auto; hide.forEach((o, i) => { o.visible = shown[i]; });
+  }
 }
 
 // A soft sky for reflections on metal and glass (Look.cs SkyCube: zenith, upper, horizon, ground).
@@ -59,6 +83,9 @@ const mat = (map, additive) => new THREE.MeshBasicMaterial({ map, transparent: t
 const MAT = { smoke: mat(puff, false), steam: mat(puff, false), fire: mat(flame, true), glow: mat(softDot, true), spark: mat(softDot, true) };
 // Fire, flashes and sparks are brighter than white (HDR) so the bloom catches them, as Unity's do.
 MAT.fire.color.setRGB(3.2, 1.9, 1.1); MAT.glow.color.setRGB(4, 3, 1.8); MAT.spark.color.setRGB(4, 2.6, 1.2);
+// Soft particles: each sprite fades out where it meets a roof, wall or the ground instead of being cut off in a hard line.
+// Needs the solid scene's depth (DepthPrepass); fades over the last 0.7 units before a surface.
+const SOFT = { softParticles: true, softNearFade: 0, softFarFade: 0.7 };
 const V4 = (r, g, b, a) => new Vector4(r, g, b, a);
 const fadeOut = () => new PiecewiseBezier([[new Bezier(1, 0.9, 0.5, 0), 0]]);
 const grow = (a, b) => new PiecewiseBezier([[new Bezier(a, (a + b) / 2, b, b), 0]]);
@@ -90,7 +117,7 @@ export class Particles {
 
   // Steam off a power plant stack: pale, slow, rising and spreading, drifting downwind (FxSystems.Wind).
   steam() {
-    return new ParticleSystem({
+    return new ParticleSystem({ ...SOFT,
       duration: 1, looping: true, worldSpace: true, startLife: new IntervalValue(2.2, 3.4), startSpeed: new IntervalValue(0.35, 0.6),
       startSize: new IntervalValue(0.35, 0.55), startColor: new ColorRange(V4(0.92, 0.9, 0.86, 0.55), V4(1, 1, 1, 0.4)),
       emissionOverTime: new ConstantValue(5), shape: new ConeEmitter({ radius: 0.08, angle: 0.18 }), material: MAT.steam, renderMode: RenderMode.BillBoard,
@@ -102,13 +129,13 @@ export class Particles {
   // A building on fire, by how hurt it is (BuildingFire: smoulder, standing, raging): flames, then dark smoke.
   fire(level, footprint = 2) { // level 0..1 (smouldering .. raging), footprint in tiles
     const rate = (10 + level * 55) * footprint / 2, size = 0.45 + level * 0.9;
-    const f = new ParticleSystem({
+    const f = new ParticleSystem({ ...SOFT,
       duration: 1, looping: true, worldSpace: true, startLife: new IntervalValue(0.35, 0.8), startSpeed: new IntervalValue(0.5, 1.1 + level),
       startSize: new IntervalValue(size * 0.6, size), startColor: new ColorRange(V4(1, 0.75, 0.35, 1), V4(1, 0.45, 0.15, 1)),
       emissionOverTime: new ConstantValue(rate), shape: new SphereEmitter({ radius: footprint * 0.35 * (0.5 + level * 0.5), thickness: 1 }), material: MAT.fire, renderMode: RenderMode.BillBoard,
       behaviors: [new SizeOverLife(grow(1, 0.2)), new ColorOverLife(new Gradient([[new QV3(1, 0.9, 0.6), 0], [new QV3(1, 0.35, 0.08), 1]], [[1, 0], [0, 1]]))],
     });
-    const s = new ParticleSystem({
+    const s = new ParticleSystem({ ...SOFT,
       duration: 1, looping: true, worldSpace: true, startLife: new IntervalValue(2, 3.5), startSpeed: new IntervalValue(0.5, 0.9),
       startSize: new IntervalValue(0.7, 1.1 + level * 0.9), startColor: new ColorRange(V4(0.12, 0.1, 0.09, 0.85), V4(0.24, 0.21, 0.19, 0.75)),
       emissionOverTime: new ConstantValue((5 + level * 18) * footprint / 2), shape: new SphereEmitter({ radius: footprint * 0.3, thickness: 1 }), material: MAT.smoke, renderMode: RenderMode.BillBoard,
@@ -134,21 +161,21 @@ export class Particles {
   // A blast: fireball, sparks, rolling smoke, a shockwave of dust (FxSystems.Blast), sized by what died.
   explosion(at, size = 1) {
     const life = 2.8;
-    const ball = new ParticleSystem({
+    const ball = new ParticleSystem({ ...SOFT,
       duration: 0.15, looping: false, worldSpace: true, startLife: new IntervalValue(0.25, 0.55), startSpeed: new IntervalValue(0.8 * size, 2.2 * size),
       startSize: new IntervalValue(0.5 * size, 1.1 * size), startColor: new ColorRange(V4(1, 0.85, 0.5, 1), V4(1, 0.5, 0.15, 1)),
       emissionOverTime: new ConstantValue(0), emissionBursts: [{ time: 0, count: new ConstantValue(Math.round(14 * size)), cycle: 1, interval: 0.01, probability: 1 }],
       shape: new SphereEmitter({ radius: 0.2 * size, thickness: 1 }), material: MAT.fire, renderMode: RenderMode.BillBoard,
       behaviors: [new SizeOverLife(grow(0.6, 1.6)), new ColorOverLife(new Gradient([[new QV3(1, 0.95, 0.75), 0], [new QV3(1, 0.3, 0.05), 1]], [[1, 0], [0, 1]]))],
     });
-    const sparks = new ParticleSystem({
+    const sparks = new ParticleSystem({ ...SOFT,
       duration: 0.1, looping: false, worldSpace: true, startLife: new IntervalValue(0.3, 0.8), startSpeed: new IntervalValue(3 * size, 6 * size),
       startSize: new IntervalValue(0.06, 0.12), startColor: new ColorRange(V4(1, 0.9, 0.6, 1), V4(1, 0.6, 0.2, 1)),
       emissionOverTime: new ConstantValue(0), emissionBursts: [{ time: 0, count: new ConstantValue(Math.round(18 * size)), cycle: 1, interval: 0.01, probability: 1 }],
       shape: new SphereEmitter({ radius: 0.1, thickness: 1 }), material: MAT.spark, renderMode: RenderMode.StretchedBillBoard, speedFactor: 0.08,
       behaviors: [new ApplyForce(new QV3(0, -1, 0), new ConstantValue(6)), new ColorOverLife(new Gradient([[new QV3(1, 1, 1), 0], [new QV3(1, 0.4, 0.1), 1]], [[1, 0], [0, 1]]))],
     });
-    const smoke = new ParticleSystem({
+    const smoke = new ParticleSystem({ ...SOFT,
       duration: 0.3, looping: false, worldSpace: true, startLife: new IntervalValue(1.4, 2.6), startSpeed: new IntervalValue(0.4, 1.2 * size),
       startSize: new IntervalValue(0.6 * size, 1.1 * size), startColor: new ColorRange(V4(0.16, 0.13, 0.11, 0.85), V4(0.32, 0.28, 0.24, 0.7)),
       emissionOverTime: new ConstantValue(0), emissionBursts: [{ time: 0.05, count: new ConstantValue(Math.round(10 * size)), cycle: 1, interval: 0.01, probability: 1 }],
@@ -160,7 +187,7 @@ export class Particles {
 
   // Muzzle flash: one bright blip at the barrel.
   flash(at, color = 0xffd27a, size = 0.35) {
-    const sys = new ParticleSystem({
+    const sys = new ParticleSystem({ ...SOFT,
       duration: 0.05, looping: false, worldSpace: true, startLife: new ConstantValue(0.09), startSpeed: new ConstantValue(0),
       startSize: new ConstantValue(size), startColor: new ColorRange(V4(1, 0.85, 0.5, 1), V4(1, 0.95, 0.7, 1)),
       emissionOverTime: new ConstantValue(0), emissionBursts: [{ time: 0, count: new ConstantValue(1), cycle: 1, interval: 0.01, probability: 1 }],
@@ -171,7 +198,7 @@ export class Particles {
 
   // Dust kicked up behind a moving vehicle.
   dust() {
-    return new ParticleSystem({
+    return new ParticleSystem({ ...SOFT,
       duration: 1, looping: true, worldSpace: true, startLife: new IntervalValue(0.6, 1.1), startSpeed: new IntervalValue(0.1, 0.3),
       startSize: new IntervalValue(0.2, 0.35), startColor: new ColorRange(V4(0.62, 0.53, 0.4, 0.45), V4(0.7, 0.6, 0.46, 0.3)),
       emissionOverTime: new ConstantValue(9), shape: new SphereEmitter({ radius: 0.15, thickness: 1 }), material: MAT.smoke, renderMode: RenderMode.BillBoard,

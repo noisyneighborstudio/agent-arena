@@ -153,7 +153,8 @@ var soft_pars_fragment = `
 
     float linearize_depth(float d)
     {
-        return (zFar * zNear) / (zFar - d * (zFar - zNear));
+        // Pezz: an orthographic camera's depth is linear (projParams.z = 1); the original assumed perspective.
+        return projParams.z > 0.5 ? zNear + d * (zFar - zNear) : (zFar * zNear) / (zFar - d * (zFar - zNear));
     }
 
 #endif
@@ -2051,7 +2052,7 @@ class SpriteBatch extends VFXBatch {
             uniforms['depthTexture'] = new Uniform(null);
             const projParams = (uniforms['projParams'] = new Uniform(new Vector4()));
             onBeforeRender = (_renderer, _scene, camera) => {
-                projParams.value.set(camera.near, camera.far, 0, 0);
+                projParams.value.set(camera.near, camera.far, camera.isOrthographicCamera ? 1 : 0, 0);
             };
         }
         let needLights = false;

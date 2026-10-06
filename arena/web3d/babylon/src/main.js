@@ -350,6 +350,7 @@ function upsert(e, now) {
         }
       } else { body = CreateBox("ph", { width: 0.6, height: 0.4, depth: 0.8 }, scene); body.position.y = 0.2; const pm = new PBRMaterial("ph", scene); pm.albedoColor = team >= 0 ? TEAM[team % TEAM.length] : NEUTRAL; body.material = pm; body.metadata = { id }; }
       body.parent = s.root; s.body = body;
+      s.top = body.getHierarchyBoundingVectors(true).max.y; // its roof: fires burn on top, not inside
     });
   }
   if (s.team !== team && s.body) { for (const m of s.body.getChildMeshes(false)) if (m.material?.name?.startsWith("M_Team")) m.material = teamMat(m.material, team); s.team = team; }
@@ -469,7 +470,7 @@ scene.onBeforeRenderObservable.add(() => {
       s.stages.forEach((st, i) => { if (!st) return; const [a, b] = WINDOWS[i], k = Math.min(1, Math.max(0, (s.shown - a) / (b - a))); st.n.position.y = st.y0 - st.h * (1 - easeOut(k)); st.n.setEnabled(k > 0 || i === 0); });
     }
     if (s.vents && (s.build < 0 || s.build >= 100)) s.vents.forEach((v, i) => loop(`v${id}:${i}`, steam, Vector3.TransformCoordinates(v, s.root.computeWorldMatrix(true))));
-    if (s.size > 0 && s.build >= 100 && s.hp < 30) fireAt(`f${id}`, Math.min(1, (30 - s.hp) / 30), new Vector3(x, 0.5, y), s.size);
+    if (s.size > 0 && s.build >= 100 && s.hp < 30) fireAt(`f${id}`, Math.min(1, (30 - s.hp) / 30), new Vector3(x, (s.top ?? 1) * 0.85, y), s.size);
     const speed = Math.hypot(s.b.x - s.a.x, s.b.y - s.a.y) / Math.max(0.05, (s.b.t - s.a.t) / 1000);
     if (s.size === 0 && !AIR.has(s.key) && !INFANTRY.test(s.key) && speed > 0.25) loop(`d${id}`, dust, new Vector3(x, 0.1, y));
     if (id === view.followId) { view.x += (x - view.x) * Math.min(1, dt * 6); view.y += (y - view.y) * Math.min(1, dt * 6); }

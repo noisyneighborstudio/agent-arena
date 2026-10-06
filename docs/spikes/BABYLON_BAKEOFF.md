@@ -70,6 +70,11 @@ Both are far below the 0.5–0.8 MB/s of the MJPEG video.
   every fire, smoke and steam system that shared the sprite, so a busy scene showed none of them. It took a wrapper
   to stop.
 
+- **It has no soft particles.** Fire and smoke cards cut into roofs in hard horizontal lines, as the user saw on a
+  phone. three.quarks has soft particles: they needed a patch for the orthographic camera and a depth pre-pass. In
+  Babylon it would take a custom particle shader written twice (GLSL and WGSL). With fires on the roof and the 162
+  things of the kitchen sink, Babylon also fell to 28 fps under the phone profile; three.js held 60 with the pre-pass.
+
 ## Where three.js didn't win
 
 - **Babylon is left-handed like Unity**, so it needs no mirroring. The mirroring in three.js hid its 180° glTF bug
