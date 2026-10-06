@@ -37,6 +37,7 @@ import { ParticleSystem } from "@babylonjs/core/Particles/particleSystem";
 import "@babylonjs/core/Particles/particleSystemComponent";
 import { LoadAssetContainerAsync } from "@babylonjs/core/Loading/sceneLoader";
 import "@babylonjs/loaders/glTF/2.0";
+import * as sprites from "../../sprites.js";
 import "@babylonjs/core/Culling/ray";
 import "@babylonjs/core/Engines/Extensions/engine.multiRender";
 import "@babylonjs/core/Engines/WebGPU/Extensions/engine.multiRender";
@@ -250,17 +251,12 @@ function teamMat(base, team) {
 }
 
 // ---------------------------------------------------------------- particles (FxSystems): textures drawn once
-// Drawn on a canvas, uploaded as raw pixels (a DynamicTexture never reported ready to the particle systems here).
-function spriteTex(name, draw) {
-  const c = document.createElement("canvas"); c.width = c.height = 128; const g = c.getContext("2d"); draw(g, 128);
-  const t = RawTexture.CreateRGBATexture(new Uint8Array(g.getImageData(0, 0, 128, 128).data.buffer), 128, 128, scene, true, false, Texture.TRILINEAR_SAMPLINGMODE);
+// Computed pixel by pixel (../sprites.js: Safari's dithered canvas gradients showed as grain), uploaded as raw pixels.
+function spriteTex(name, px) {
+  const t = RawTexture.CreateRGBATexture(px, sprites.SIZE, sprites.SIZE, scene, true, false, Texture.TRILINEAR_SAMPLINGMODE);
   t.hasAlpha = true; t.name = name; return t;
 }
-const TX = {
-  dot: spriteTex("dot", (g, n) => { const r = g.createRadialGradient(n / 2, n / 2, 0, n / 2, n / 2, n / 2); r.addColorStop(0, "rgba(255,255,255,1)"); r.addColorStop(0.4, "rgba(255,255,255,.5)"); r.addColorStop(1, "rgba(255,255,255,0)"); g.fillStyle = r; g.fillRect(0, 0, n, n); }),
-  puff: spriteTex("puff", (g, n) => { for (let i = 0; i < 9; i++) { const a = Math.random() * 6.28, d = Math.random() * n * 0.18, x = n / 2 + Math.cos(a) * d, y = n / 2 + Math.sin(a) * d, rr = n * (0.18 + Math.random() * 0.16); const r = g.createRadialGradient(x, y, 0, x, y, rr); r.addColorStop(0, "rgba(255,255,255,.55)"); r.addColorStop(1, "rgba(255,255,255,0)"); g.fillStyle = r; g.fillRect(0, 0, n, n); } }),
-  flame: spriteTex("flame", (g, n) => { const r = g.createRadialGradient(n / 2, n * 0.62, 0, n / 2, n * 0.55, n * 0.48); r.addColorStop(0, "rgba(255,255,230,1)"); r.addColorStop(0.3, "rgba(255,200,90,.9)"); r.addColorStop(0.7, "rgba(255,90,20,.35)"); r.addColorStop(1, "rgba(255,40,0,0)"); g.fillStyle = r; g.fillRect(0, 0, n, n); }),
-};
+const TX = { dot: spriteTex("dot", sprites.dot()), puff: spriteTex("puff", sprites.puff()), flame: spriteTex("flame", sprites.flame()) };
 function ps(name, cap, tex, additive) {
   const p = new ParticleSystem(name, cap, scene); p.particleTexture = tex; p.blendMode = additive ? ParticleSystem.BLENDMODE_ADD : ParticleSystem.BLENDMODE_STANDARD;
   p.isLocal = false; p.updateSpeed = 1 / 60;

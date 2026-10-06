@@ -4,6 +4,8 @@ import * as THREE from "three";
 import { EffectComposer, RenderPass, EffectPass, BloomEffect, SMAAEffect, VignetteEffect, ToneMappingEffect, ToneMappingMode, HueSaturationEffect, BrightnessContrastEffect } from "postprocessing";
 import { N8AOPostPass } from "n8ao";
 import { BatchedRenderer, ParticleSystem, RenderMode } from "three.quarks";
+import * as sprites from "./sprites.js";
+const SPRITE_SIZE = sprites.SIZE;
 import { ConstantValue, IntervalValue, ColorRange, Vector4, Vector3 as QV3, SphereEmitter, ConeEmitter, PointEmitter, SizeOverLife, ColorOverLife, PiecewiseBezier, Bezier, ApplyForce, Gradient, RotationOverLife } from "quarks.core";
 
 // ---------------------------------------------------------------- post-processing (PezPost: AO, bloom, a light grade)
@@ -64,21 +66,12 @@ export function skyEnvironment(renderer) {
 }
 
 // ---------------------------------------------------------------- particle textures (drawn once)
-function sprite(draw, size = 128) {
-  const c = document.createElement("canvas"); c.width = c.height = size;
-  draw(c.getContext("2d"), size);
-  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+// Sprites computed pixel by pixel (sprites.js), in canvas order: row 0 at the top, so flipY as a canvas texture has.
+function sprite(px) {
+  const t = new THREE.DataTexture(px, SPRITE_SIZE, SPRITE_SIZE); t.colorSpace = THREE.SRGBColorSpace; t.flipY = true;
+  t.generateMipmaps = true; t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter; t.needsUpdate = true; return t;
 }
-const softDot = sprite((g, n) => { const r = g.createRadialGradient(n / 2, n / 2, 0, n / 2, n / 2, n / 2); r.addColorStop(0, "rgba(255,255,255,1)"); r.addColorStop(0.35, "rgba(255,255,255,.55)"); r.addColorStop(1, "rgba(255,255,255,0)"); g.fillStyle = r; g.fillRect(0, 0, n, n); });
-const puff = sprite((g, n) => {
-  // a lumpy smoke puff: overlapping soft blobs
-  for (let i = 0; i < 9; i++) {
-    const a = Math.random() * 6.28, d = Math.random() * n * 0.18, x = n / 2 + Math.cos(a) * d, y = n / 2 + Math.sin(a) * d, rr = n * (0.18 + Math.random() * 0.16);
-    const r = g.createRadialGradient(x, y, 0, x, y, rr); r.addColorStop(0, "rgba(255,255,255,.55)"); r.addColorStop(1, "rgba(255,255,255,0)"); g.fillStyle = r; g.fillRect(0, 0, n, n);
-  }
-});
-const flame = sprite((g, n) => { const r = g.createRadialGradient(n / 2, n * 0.62, 0, n / 2, n * 0.55, n * 0.48); r.addColorStop(0, "rgba(255,255,230,1)"); r.addColorStop(0.3, "rgba(255,200,90,.9)"); r.addColorStop(0.7, "rgba(255,90,20,.35)"); r.addColorStop(1, "rgba(255,40,0,0)"); g.fillStyle = r; g.fillRect(0, 0, n, n); });
-
+const softDot = sprite(sprites.dot()), puff = sprite(sprites.puff()), flame = sprite(sprites.flame());
 const mat = (map, additive) => new THREE.MeshBasicMaterial({ map, transparent: true, depthWrite: false, blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending, color: 0xffffff });
 const MAT = { smoke: mat(puff, false), steam: mat(puff, false), fire: mat(flame, true), glow: mat(softDot, true), spark: mat(softDot, true) };
 // Fire, flashes and sparks are brighter than white (HDR) so the bloom catches them, as Unity's do.
