@@ -215,7 +215,7 @@ function tint(obj, team) {
         if (!teamMats.has(k)) { const c = m.clone(); c.color = (team >= 0 ? TEAM[team % TEAM.length] : NEUTRAL).clone(); teamMats.set(k, c); }
         return teamMats.get(k);
       }
-      if (m.name?.startsWith("M_E_") && !m.userData.glow) { m.emissive = m.color.clone(); m.emissiveIntensity = 2.2; m.userData.glow = true; }
+      if (m.name?.startsWith("M_E_") && !m.userData.glow) { m.emissive = m.color.clone(); m.emissiveIntensity = +(new URLSearchParams(location.search).get("emk") ?? 6); m.userData.glow = true; }
       return m;
     });
     if (o.material.length === 1) o.material = o.material[0];
@@ -451,7 +451,7 @@ window.__fxdbg = () => JSON.stringify({ loops: particles.loops.size, bursts: par
 // ?fx=off|noao|nobloom for measuring what each effect costs
 const FXQ = Q.get("fx") ?? "";
 const worldInv = new THREE.Matrix4();
-const post = makeComposer(renderer, scene, cam);
+const post = makeComposer(renderer, scene, cam); window.__post = post;
 if (FXQ.includes("noao")) post.ao.enabled = false;
 if (FXQ.includes("nobloom")) post.bloom.intensity = 0;
 world.updateMatrixWorld(true); worldInv.copy(world.matrixWorld).invert();

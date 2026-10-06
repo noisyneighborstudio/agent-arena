@@ -15,7 +15,7 @@ export function makeComposer(renderer, scene, camera) {
   Object.assign(ao.configuration, { aoRadius: 1.6, distanceFalloff: 0.8, intensity: 4.5, color: new THREE.Color(0x1a120c), halfRes: true, depthAwareUpsampling: true });
   ao.setQualityMode("Medium");
   composer.addPass(ao);
-  const bloom = new BloomEffect({ intensity: 1.1, luminanceThreshold: 1.0, luminanceSmoothing: 0.12, mipmapBlur: true, radius: 0.62 });
+  const bloom = new BloomEffect({ intensity: 1.8, luminanceThreshold: 1.6, luminanceSmoothing: 0.15, mipmapBlur: true, radius: 0.85 }); // above any sunlit wall, so only the glowing parts bloom (like Babylon's GlowLayer)
   composer.addPass(new EffectPass(camera,
     bloom,
     new BrightnessContrastEffect({ brightness: -0.03, contrast: 0.1 }),
