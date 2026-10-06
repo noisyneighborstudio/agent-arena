@@ -13,8 +13,8 @@
 <script type="importmap">{"imports":{"three":"./vendor/three.module.js","three/addons/":"./vendor/addons/","three/examples/jsm/":"./vendor/addons/",
   "postprocessing":"./vendor/libs/postprocessing.js","n8ao":"./vendor/libs/n8ao.js","three.quarks":"./vendor/libs/three.quarks.js","quarks.core":"./vendor/libs/quarks.core.js"}}</script>
 </head><body>
-<div id="hud"><b>Pezz · browser 3D · next</b> <span id="who"></span><br><span id="stats">loading…</span></div>
+<div id="hud"><b>Pezz · browser 3D · next</b> <span id="who"></span><br><span id="stats">…</span></div>
 <div id="pad"><button data-z="0.8">+</button><button data-z="1.25">−</button><button data-y="-15">⟲</button><button data-y="15">⟳</button></div>
 <div id="fol"></div>
-<script type="module" src="./next.js"></script>
+<script src="./boot.js" data-main="./next.js" data-files="./vendor/three.module.js,./vendor/three.core.js,./vendor/libs/postprocessing.js,./vendor/libs/n8ao.js,./vendor/libs/three.quarks.js,./vendor/libs/quarks.core.js"></script>
 </body></html>

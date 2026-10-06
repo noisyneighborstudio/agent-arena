@@ -264,12 +264,19 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
-    def send(self, code, body, ctype="text/html; charset=utf-8"):
+    def send(self, code, body, ctype="text/html; charset=utf-8", cache=None):
         b = body.encode() if isinstance(body, str) else body
+        # gzip text and models when the browser takes it: three.js shrinks to about a quarter (slow links, phones)
+        gz = len(b) > 1024 and "gzip" in self.headers.get("Accept-Encoding", "") and not ctype.startswith("image/")
+        if gz:
+            import gzip
+            b = gzip.compress(b, 6)
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(b)))
-        self.send_header("Cache-Control", "no-store")
+        if gz:
+            self.send_header("Content-Encoding", "gzip")
+        self.send_header("Cache-Control", cache or "no-store")
         self.end_headers()
         self.wfile.write(b)
 
@@ -355,18 +362,26 @@ class Handler(BaseHTTPRequestHandler):
                     base = f"http://127.0.0.1:{api}"
             except (KeyError, ValueError):
                 return self.send(400, "api (or host and room) and team are required", "text/plain")
-            return self.relay(f"{base}/api/view/{rest[5:]}?team={team}")
+            # Read it whole and send it gzipped: these polls are small and frequent, and compress ~8x.
+            try:
+                body = urllib.request.urlopen(f"{base}/api/view/{rest[5:]}?team={team}", timeout=8).read()
+            except urllib.error.HTTPError as e:
+                return self.send(e.code, e.read() or b"", "application/json")
+            except Exception as e:
+                return self.send(502, json.dumps({"ok": False, "error": f"game not answering: {e}"}), "application/json")
+            return self.send(200, body, "application/json")
         if rest.startswith("models/"):
             name = os.path.basename(rest[7:])
             f = os.path.join(repo, "unity/Assets/Pez/Resources/PezModels", name)
             if not name.endswith(".glb") or not os.path.isfile(f):
                 return self.send(404, "no such model", "text/plain")
-            return self.send(200, open(f, "rb").read(), "model/gltf-binary")
+            return self.send(200, open(f, "rb").read(), "model/gltf-binary", cache="public, max-age=86400")
         f = os.path.normpath(os.path.join(repo, "arena/web3d", rest))
         if not f.startswith(os.path.join(repo, "arena/web3d")) or not os.path.isfile(f):
             return self.send(404, "not found", "text/plain")
         ctype = "text/html; charset=utf-8" if f.endswith(".html") else "text/javascript; charset=utf-8" if f.endswith(".js") else "application/octet-stream"
-        return self.send(200, open(f, "rb").read(), ctype)
+        # The vendored libraries never change under a name: let the browser keep them (a reload is then near-instant).
+        return self.send(200, open(f, "rb").read(), ctype, cache="public, max-age=86400" if "/vendor/" in f else None)
 
     def pv_start(self):
         """A player's own viewer page, as their human sees it, but on an observer camera: lease a camera, aim its

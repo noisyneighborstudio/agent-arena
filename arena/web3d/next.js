@@ -9,6 +9,10 @@ import { toCreasedNormals } from "three/addons/utils/BufferGeometryUtils.js";
 import { makeComposer, skyEnvironment, Particles } from "./fx.js";
 
 const Q = new URLSearchParams(location.search);
+// The loading screen (boot.js): what's happening, step by step. A no-op if the page was opened without it.
+const BOOT = window.__boot ?? { step() {}, fail() {}, ready() {} };
+BOOT.step("start", "ok"); BOOT.step("data", "run");
+let booted = false, modelsAsked = 0, modelsDone = 0;
 const DATA = (p) => `./data/${p}?${Q.has("host") ? `host=${Q.get("host")}&room=${Q.get("room")}` : `api=${Q.get("api") ?? 7957}`}&team=${Q.get("team") ?? 0}`;
 const POLL_MS = 250, DELAY_MS = 350; // poll rate, and how far in the past positions are drawn (interpolation)
 
@@ -185,7 +189,9 @@ const models = new Map(); // key -> Promise<THREE.Object3D | null>
 let modelBytes = 0;
 function model(key) {
   const file = MODEL_AS[key] ?? key;
-  if (!models.has(file)) models.set(file, new Promise((res) => {
+  if (!models.has(file)) { modelsAsked++; if (!booted) BOOT.step("models", "run", `${modelsDone} of ${modelsAsked}`); }
+  if (!models.has(file)) models.set(file, new Promise((done) => {
+    const res = (v) => { modelsDone++; if (!booted) BOOT.step("models", modelsDone >= modelsAsked ? "ok" : "run", `${modelsDone} of ${modelsAsked} · ${(modelBytes / 1024).toFixed(0)} KB`); done(v); };
     fetch(`./models/${file}.glb`).then((r) => r.ok ? r.arrayBuffer() : null).then((buf) => {
       if (!buf) return res(null);
       modelBytes += buf.byteLength;
@@ -292,7 +298,8 @@ async function poll() {
     const txt = await r.text(); bytesIn += txt.length; bytesWindow.push([performance.now(), txt.length]);
     const f = JSON.parse(txt);
     if (f.ok === false) throw new Error(f.error);
-    if (!terrain || f.ore_version !== oreVersion) { const m = await (await fetch(DATA("map"), { cache: "no-store" })).json(); bytesIn += 1; buildTerrain(m); oreVersion = f.ore_version; if (!frames) {
+    if (!booted) BOOT.step("data", "ok", `${(txt.length / 1024).toFixed(0)} KB per update · ${f.entities.length} things`);
+    if (!terrain || f.ore_version !== oreVersion) { if (!booted) BOOT.step("map", "run"); const m = await (await fetch(DATA("map"), { cache: "no-store" })).json(); bytesIn += 1; buildTerrain(m); if (!booted) BOOT.step("map", "ok", `${m.w}×${m.h} tiles`); oreVersion = f.ore_version; if (!frames) {
       // Start on ?x=&y=, else this team's command center, else anything of theirs, else anything at all.
       const team = Number(Q.get("team") ?? 0), mine = f.entities.filter((e) => e[2] === team);
       const at = Q.has("x") ? [0, 0, 0, +Q.get("x"), +Q.get("y")] : mine.find((e) => e[1] === "command_center") ?? mine[0] ?? f.entities[0];
@@ -311,7 +318,10 @@ async function poll() {
       frames++;
       document.getElementById("who").textContent = `· ${f.you?.flavor ?? ""} · game ${Math.floor(f.time_s / 60)}:${String(Math.floor(f.time_s % 60)).padStart(2, "0")}`;
     }
-  } catch (err) { document.getElementById("stats").textContent = "data: " + err.message; }
+  } catch (err) {
+    document.getElementById("stats").textContent = "data: " + err.message;
+    if (!booted) BOOT.step("data", "run", `retrying: ${err.message}`);
+  }
   setTimeout(poll, POLL_MS);
 }
 
@@ -369,7 +379,9 @@ function emerge(s, target, dt) {
 // ---------------------------------------------------------------- frame loop
 const clock = new THREE.Clock(); let fpsN = 0, fpsT = 0, fps = 0;
 function lerpAngle(a, b, t) { let d = b - a; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; return a + d * t; }
+const bootT0 = performance.now();
 function tick() {
+  if (!booted && terrain && (modelsDone >= modelsAsked || performance.now() - bootT0 > 15000)) { booted = true; if (modelsAsked === 0) BOOT.step("models", "ok", "none needed yet"); BOOT.ready(); }
   const dt = clock.getDelta(), now = performance.now(), at = now - DELAY_MS;
   for (const [id, s] of ents) {
     const span = Math.max(1, s.b.t - s.a.t), t = Math.min(1, Math.max(0, (at - s.a.t) / span));
