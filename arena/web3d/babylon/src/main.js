@@ -252,14 +252,21 @@ function teamMat(base, team) {
 
 // ---------------------------------------------------------------- particles (FxSystems): textures drawn once
 // Computed pixel by pixel (../sprites.js: Safari's dithered canvas gradients showed as grain), uploaded as raw pixels.
-function spriteTex(name, px) {
-  const t = RawTexture.CreateRGBATexture(px, sprites.SIZE, sprites.SIZE, scene, true, false, Texture.TRILINEAR_SAMPLINGMODE);
-  t.hasAlpha = true; t.name = name; return t;
+function spriteTex(name, a) {
+  const t = RawTexture.CreateRGBATexture(a.px, a.width, a.height, scene, true, false, Texture.TRILINEAR_SAMPLINGMODE);
+  t.hasAlpha = true; t.name = name; t.__sheet = a; return t;
 }
-const TX = { dot: spriteTex("dot", sprites.dot()), puff: spriteTex("puff", sprites.puff()), flame: spriteTex("flame", sprites.flame()) };
+const TX = { dot: spriteTex("dot", sprites.dot()), puff: spriteTex("puff", sprites.smoke()), flame: spriteTex("flame", sprites.flame()) };
 function ps(name, cap, tex, additive) {
   const p = new ParticleSystem(name, cap, scene); p.particleTexture = tex; p.blendMode = additive ? ParticleSystem.BLENDMODE_ADD : ParticleSystem.BLENDMODE_STANDARD;
   p.isLocal = false; p.updateSpeed = 1 / 60;
+  // Atlases (sprites.js): a puff keeps one of its four variants; a flame plays its flipbook once over its life.
+  const sh = tex.__sheet;
+  if (sh.cols > 1) {
+    p.isAnimationSheetEnabled = true; p.spriteCellWidth = sh.width / sh.cols; p.spriteCellHeight = sh.height / sh.rows;
+    p.startSpriteCellID = 0; p.endSpriteCellID = sh.cols * sh.rows - 1; p.spriteCellLoop = false;
+    if (tex === TX.flame) p.spriteCellChangeSpeed = 1; else { p.spriteRandomStartCell = true; p.spriteCellChangeSpeed = 0; }
+  }
   // The sprites are shared: a finished burst disposing "its" texture (Babylon's default) blanked every other system.
   const dispose = p.dispose.bind(p); p.dispose = (_tex, ...rest) => dispose(false, ...rest); return p;
 }
@@ -280,7 +287,7 @@ function fire(level, footprint) {
   f.minLifeTime = 0.35; f.maxLifeTime = 0.8; f.emitRate = (10 + level * 55) * footprint / 2; f.minSize = (0.45 + level * 0.9) * 0.6; f.maxSize = 0.45 + level * 0.9;
   f.minEmitPower = 0.5; f.maxEmitPower = 1.1 + level; f.direction1 = new Vector3(-0.15, 1, -0.15); f.direction2 = new Vector3(0.15, 1, 0.15);
   f.createSphereEmitter(footprint * 0.35 * (0.5 + level * 0.5));
-  f.color1 = new Color4(3.2, 1.9, 1.1, 1); f.color2 = new Color4(3, 1.2, 0.5, 1); f.colorDead = new Color4(1, 0.2, 0, 0);
+  f.color1 = new Color4(1.7, 0.85, 0.3, 1); f.color2 = new Color4(1.5, 0.55, 0.15, 1); // the flipbook's own core is white-hot f.colorDead = new Color4(1, 0.2, 0, 0);
   f.addSizeGradient(0, 1); f.addSizeGradient(1, 0.2);
   const s = ps("smoke", 400, TX.puff, false);
   s.minLifeTime = 2; s.maxLifeTime = 3.5; s.emitRate = (5 + level * 18) * footprint / 2; s.minSize = 0.7; s.maxSize = 1.1 + level * 0.9; s.minEmitPower = 0.5; s.maxEmitPower = 0.9;
@@ -291,13 +298,13 @@ function fire(level, footprint) {
 }
 function fireAt(key, level, at, footprint) {
   const k = `${key}:${Math.round(level * 3)}`;
-  const f = loop(k, () => { const x = fire(level, footprint); x.__light = new PointLight("firelight", at.add(new Vector3(0, 0.8, 0)), scene); x.__light.diffuse = new Color3(1, 0.54, 0.23); x.__light.range = 3 + footprint * 2; x.__level = level; return x; }, at);
+  const f = loop(k, () => { const x = fire(level, footprint); x.__light = new PointLight("firelight", at.add(new Vector3(0, -0.25, 0)), scene); /* under the roof: lights the ground, no hotspot */ x.__light.diffuse = new Color3(1, 0.54, 0.23); x.__light.range = 3 + footprint * 2; x.__level = level; return x; }, at);
   loop(k + ":s", () => f.__smoke, at.add(new Vector3(0, 0.4, 0)));
   if (f.__light) f.__light.intensity = (2 + f.__level * 6) * (0.75 + 0.25 * Math.sin(performance.now() * 0.023) * Math.sin(performance.now() * 0.011));
 }
 function burst(make, at, life) { const p = make(); p.emitter = at.clone(); p.targetStopDuration = 0.12; p.disposeOnStop = true; p.start(); }
 function explosion(at, size) {
-  burst(() => { const p = ps("blast", 80, TX.flame, true); p.minLifeTime = 0.25; p.maxLifeTime = 0.55; p.minSize = 0.5 * size; p.maxSize = 1.1 * size; p.minEmitPower = 0.8 * size; p.maxEmitPower = 2.2 * size; p.createSphereEmitter(0.2 * size); p.manualEmitCount = Math.round(16 * size); p.color1 = new Color4(4, 3, 1.6, 1); p.color2 = new Color4(3.5, 1.5, 0.5, 1); p.colorDead = new Color4(0.5, 0.1, 0, 0); p.addSizeGradient(0, 0.6); p.addSizeGradient(1, 1.6); return p; }, at);
+  burst(() => { const p = ps("blast", 80, TX.puff, true); p.minLifeTime = 0.25; p.maxLifeTime = 0.55; p.minSize = 0.5 * size; p.maxSize = 1.1 * size; p.minEmitPower = 0.8 * size; p.maxEmitPower = 2.2 * size; p.createSphereEmitter(0.2 * size); p.manualEmitCount = Math.round(16 * size); p.color1 = new Color4(4, 3, 1.6, 1); p.color2 = new Color4(3.5, 1.5, 0.5, 1); p.colorDead = new Color4(0.5, 0.1, 0, 0); p.addSizeGradient(0, 0.6); p.addSizeGradient(1, 1.6); return p; }, at);
   burst(() => { const p = ps("sparks", 80, TX.dot, true); p.minLifeTime = 0.3; p.maxLifeTime = 0.8; p.minSize = 0.06; p.maxSize = 0.12; p.minEmitPower = 3 * size; p.maxEmitPower = 6 * size; p.createSphereEmitter(0.1); p.manualEmitCount = Math.round(18 * size); p.gravity = new Vector3(0, -6, 0); p.color1 = new Color4(4, 3, 1.5, 1); p.color2 = new Color4(4, 2, 0.8, 1); p.colorDead = new Color4(1, 0.3, 0, 0); p.billboardMode = ParticleSystem.BILLBOARDMODE_STRETCHED; return p; }, at);
   burst(() => { const p = ps("blastsmoke", 60, TX.puff, false); p.minLifeTime = 1.4; p.maxLifeTime = 2.6; p.minSize = 0.6 * size; p.maxSize = 1.1 * size; p.minEmitPower = 0.4; p.maxEmitPower = 1.2 * size; p.createSphereEmitter(0.3 * size); p.manualEmitCount = Math.round(10 * size); p.gravity = new Vector3(0.2, 0.5, 0.1); p.color1 = new Color4(0.16, 0.13, 0.11, 0.85); p.color2 = new Color4(0.32, 0.28, 0.24, 0.7); p.colorDead = new Color4(0.3, 0.3, 0.3, 0); p.addSizeGradient(0, 0.8); p.addSizeGradient(1, 2.6); return p; }, at);
   const l = new PointLight("blastlight", at.add(new Vector3(0, 1.2, 0)), scene); l.diffuse = new Color3(1, 0.6, 0.23); l.range = size > 1.4 ? 9 : 6;
