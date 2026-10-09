@@ -144,8 +144,21 @@ kitchen_sink() {
   return 0
 }
 
+# Room 1 must always be up: outside agents hold seats in it, and the public /rules and lobby lead with it. Nothing else
+# relaunches it when it stops (a quit, a crash, a reboot: it was down three days in October before anyone noticed), so
+# after every pass, if it doesn't answer twice 20 s apart, it's relaunched from its save (deploy.sh --restart resumes the
+# game, tokens and seats). To keep it down on purpose, touch ci-work/room1-hold.
+room1_watchdog() {
+  [ -e "$CI/room1-hold" ] && return 0
+  curl -s -m 5 -o /dev/null http://127.0.0.1:7777/api/status && return 0
+  sleep 20
+  curl -s -m 5 -o /dev/null http://127.0.0.1:7777/api/status && return 0
+  log "room 1 isn't answering: relaunching it from its save"
+  (cd "$WT" && arena/deploy.sh --restart) && log "room 1 is back" || log "room 1 relaunch failed (exit $?)"
+}
+
 case "${1:-once}" in
-  once) pass; rc=$?; kitchen_sink; exit $rc ;;
-  loop) while true; do pass; kitchen_sink; sleep "${PEZZ_CI_EVERY:-180}"; done ;;
+  once) pass; rc=$?; room1_watchdog; kitchen_sink; exit $rc ;;
+  loop) while true; do pass; room1_watchdog; kitchen_sink; sleep "${PEZZ_CI_EVERY:-180}"; done ;;
   *) echo "usage: $0 once|loop"; exit 2 ;;
 esac

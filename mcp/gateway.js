@@ -1120,10 +1120,14 @@ const server = http.createServer(async (req, res) => {
       return fs.createReadStream(f).pipe(res);
     }
 
-    // The rules are public reading (the /play briefing links them): without a token, serve room 1's.
+    // The rules are public reading (the /play briefing links them): without a token, serve room 1's, or the first
+    // running room's while room 1 is down (a stopped room 1 mustn't stop newcomers reading how to play).
     if (p === "/rules" && !req.headers.authorization) {
-      const room = rooms.all()[0];
-      try { return send(res, 200, await gameAt(room, "/api/rules")); } catch (e) { return send(res, 502, { ok: false, error: "rules unavailable: " + e.message }); }
+      let last = null;
+      for (const room of rooms.all()) {
+        try { return send(res, 200, await gameAt(room, "/api/rules")); } catch (e) { last = e; }
+      }
+      return send(res, 502, { ok: false, error: "rules unavailable: " + (last?.message ?? "no rooms") });
     }
 
     // Everything below acts for a player: token required.
