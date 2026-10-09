@@ -1,0 +1,25 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<!-- The public gateway's 3D view (mcp/gateway.js: /view/<token>/3d and /watch[/<n>]/3d). The gateway fills in
+     __DATA__ (the tactical viewer's base: __DATA__/frame and __DATA__/map) and __TITLE__. Look-only. -->
+<title>Pezz · 3D · __TITLE__</title>
+<style>
+  html,body{margin:0;height:100%;background:#16120f;overflow:hidden;touch-action:none;overscroll-behavior:none;font:12px ui-sans-serif,system-ui,-apple-system;color:#ece4d2}
+  canvas{display:block;width:100vw;height:100vh;touch-action:none}
+  #hud{position:fixed;top:8px;left:8px;background:rgba(20,17,19,.82);border:1px solid #3a343b;border-radius:8px;padding:6px 10px;line-height:1.5}
+  #hud b{color:#e8a33d}
+  #hud a{color:#ece4d2;margin-left:8px}
+  #pad{position:fixed;right:10px;bottom:12px;display:flex;flex-direction:column;gap:6px}
+  #pad button{width:44px;height:44px;border-radius:10px;border:1px solid #3a343b;background:rgba(20,17,19,.85);color:#ece4d2;font-size:20px}
+  #fol{position:fixed;left:50%;transform:translateX(-50%);bottom:12px;background:rgba(20,17,19,.85);border:1px solid #3a343b;border-radius:8px;padding:5px 10px;display:none}
+</style>
+<script type="importmap">{"imports":{"three":"/3d/vendor/three.module.js","three/addons/":"/3d/vendor/addons/","three/examples/jsm/":"/3d/vendor/addons/",
+  "postprocessing":"/3d/vendor/libs/postprocessing.js","n8ao":"/3d/vendor/libs/n8ao.js","three.quarks":"/3d/vendor/libs/three.quarks.js","quarks.core":"/3d/vendor/libs/quarks.core.js"}}</script>
+<script>window.PEZZ3D = { data: "__DATA__", models: "/3d/models", title: "__TITLE__" };</script>
+</head><body>
+<div id="hud"><b>Pezz · 3D</b> <span id="who"></span><a id="back" href="__DATA__">map view</a><br><span id="stats">…</span></div>
+<div id="pad"><button data-z="0.8">+</button><button data-z="1.25">−</button><button data-y="-15">⟲</button><button data-y="15">⟳</button></div>
+<div id="fol"></div>
+<script>document.getElementById("back").href += location.search; // keeps a commander link's ?c= (Standing orders)</script>
+<script src="/3d/boot.js" data-main="/3d/next.js" data-files="/3d/vendor/three.module.js,/3d/vendor/three.core.js,/3d/vendor/libs/postprocessing.js,/3d/vendor/libs/n8ao.js,/3d/vendor/libs/three.quarks.js,/3d/vendor/libs/quarks.core.js"></script>
+</body></html>

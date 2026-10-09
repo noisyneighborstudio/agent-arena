@@ -13,7 +13,12 @@ const Q = new URLSearchParams(location.search);
 const BOOT = window.__boot ?? { step() {}, fail() {}, ready() {} };
 BOOT.step("start", "ok"); BOOT.step("data", "run");
 let booted = false, modelsAsked = 0, modelsDone = 0;
-const DATA = (p) => `./data/${p}?${Q.has("host") ? `host=${Q.get("host")}&room=${Q.get("room")}` : `api=${Q.get("api") ?? 7957}`}&team=${Q.get("team") ?? 0}`;
+// Where the view data and models come from. The public gateway's pages (/view/<token>/3d, /watch/3d) set
+// window.PEZZ3D = { data, models }: data is the tactical viewer's own base (<data>/frame, <data>/map). Without it, the
+// sessions dashboard's proxy: ./data/<frame|map>?api=<port>|host=&room=, &team=.
+const SRC = window.PEZZ3D ?? null;
+const DATA = (p) => SRC ? `${SRC.data}/${p}` : `./data/${p}?${Q.has("host") ? `host=${Q.get("host")}&room=${Q.get("room")}` : `api=${Q.get("api") ?? 7957}`}&team=${Q.get("team") ?? 0}`;
+const MODELS = SRC?.models ?? "./models";
 const POLL_MS = 250, DELAY_MS = 350; // poll rate, and how far in the past positions are drawn (interpolation)
 
 // ---------------------------------------------------------------- palette (PezPalette in Unity)
@@ -193,7 +198,7 @@ function model(key) {
   if (!models.has(file)) { modelsAsked++; if (!booted) BOOT.step("models", "run", `${modelsDone} of ${modelsAsked}`); }
   if (!models.has(file)) models.set(file, new Promise((done) => {
     const res = (v) => { modelsDone++; if (!booted) BOOT.step("models", modelsDone >= modelsAsked ? "ok" : "run", `${modelsDone} of ${modelsAsked} · ${(modelBytes / 1024).toFixed(0)} KB`); done(v); };
-    fetch(`./models/${file}.glb`).then((r) => r.ok ? r.arrayBuffer() : null).then((buf) => {
+    fetch(`${MODELS}/${file}.glb`).then((r) => r.ok ? r.arrayBuffer() : null).then((buf) => {
       if (!buf) return res(null);
       modelBytes += buf.byteLength;
       loader.parse(buf, "", (g) => {
@@ -306,10 +311,10 @@ function applyFrame(f, size) {
   for (const [id, s] of ents) if (!live.has(id)) { world.remove(s.obj); ents.delete(id); }
   if (f.shroud !== undefined) updateFog(f.shroud);
   frames++;
-  if (f.you || f.time_s != null) document.getElementById("who").textContent = `· ${f.you?.flavor ?? lastWho} · game ${Math.floor(f.time_s / 60)}:${String(Math.floor(f.time_s % 60)).padStart(2, "0")}${FEED ? " · live feed" : ""}`;
+  if (f.you || f.time_s != null) document.getElementById("who").textContent = `· ${f.you?.flavor ?? (lastWho || SRC?.title || "")} · game ${Math.floor(f.time_s / 60)}:${String(Math.floor(f.time_s % 60)).padStart(2, "0")}${FEED ? " · live feed" : ""}`;
   if (f.you?.flavor) lastWho = f.you.flavor;
 }
-let lastWho = "";
+let lastWho = "", lastYou = null;
 function applyMap(m, entities) {
   if (!booted) BOOT.step("map", "run");
   buildTerrain(m);
@@ -317,7 +322,7 @@ function applyMap(m, entities) {
   oreVersion = m.ore_version;
   if (!frames && entities) {
     // Start on ?x=&y=, else this team's command center, else anything of theirs, else anything at all.
-    const team = Number(Q.get("team") ?? 0), mine = entities.filter((e) => e[2] === team);
+    const team = Number(lastYou?.team ?? Q.get("team") ?? 0), mine = entities.filter((e) => e[2] === team);
     const at = Q.has("x") ? [0, 0, 0, +Q.get("x"), +Q.get("y")] : mine.find((e) => e[1] === "command_center") ?? mine[0] ?? entities[0];
     if (at) { view.x = at[3]; view.y = at[4]; }
     if (Q.has("size")) view.size = +Q.get("size");
@@ -331,6 +336,8 @@ async function poll() {
     const txt = await r.text(); bytesIn += txt.length; bytesWindow.push([performance.now(), txt.length]);
     const f = JSON.parse(txt);
     if (f.ok === false) throw new Error(f.error);
+    if (!f.entities) throw new Error(f.waiting ?? f.error ?? "no picture yet");
+    lastYou = f.you ?? lastYou;
     if (!terrain || f.ore_version !== oreVersion) applyMap(await (await fetch(DATA("map"), { cache: "no-store" })).json(), f.entities);
     applyFrame(f, txt.length);
   } catch (err) {

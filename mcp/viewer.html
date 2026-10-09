@@ -154,7 +154,7 @@
   <div class="panel" id="brand"><span class="word">PEZ</span><span class="rule"></span><span id="clock">0:00</span><span id="where">Connecting…</span></div>
   <div id="teams"><div id="own"></div><div id="tick"><div id="track"><div class="set" id="setA"></div><div class="set" id="setB" aria-hidden="true"></div></div></div></div>
   <div class="panel" id="modes">
-    <button id="bLive" title="Live view (L)">Live</button><button id="bMap" class="on" title="Tactical map (L)">Map</button><button id="bReplay" title="Replay the game so far">Replay</button>
+    <button id="bLive" title="Live view (L)">Live</button><button id="bMap" class="on" title="Tactical map (L)">Map</button><button id="bReplay" title="Replay the game so far">Replay</button><button id="b3d" title="The game in 3D, drawn in your browser (opens a new tab)">3D</button>
     <span class="rule"></span><span id="mode">Map view</span>
   </div>
 </div>
@@ -888,6 +888,7 @@ cv.addEventListener("wheel", (e) => { e.preventDefault(); cam.scale = Math.max(2
 document.getElementById("alert").addEventListener("click", (e) => { const d = e.currentTarget.dataset; if (d.x && d.x !== "NaN") lookAt(Number(d.x), Number(d.y)); });
 document.getElementById("bLive").addEventListener("click", () => setMode(true));
 document.getElementById("bMap").addEventListener("click", () => setMode(false));
+document.getElementById("b3d").addEventListener("click", () => window.open(`${BASE}/3d${location.search}`, "_blank"));
 addEventListener("keydown", (e) => { if (e.key === "f" || e.key === "F") focusBase(); if (e.key === "m" || e.key === "M") fitAll(); });
 // High-res live stream of this player's own view, rendered by the game host (when it has a renderer). It arrives as
 // MJPEG at up to 60fps over one long request; frames are decoded off the main thread, and any that arrive while the
@@ -921,7 +922,7 @@ function liveLabel() {
   b.textContent = !SPECTATOR ? "Live"
     : !liveOk && specLive?.starts_in_s != null ? `Live in ${specLive.starts_in_s}s`
     : d ? (phone ? `Live · ${d}s` : `Live · ${d} s delay`) : "Live";
-  b.title = !SPECTATOR ? "Live view (L)" : specLive === null ? "This room has no 3D renderer: map view only"
+  b.title = !SPECTATOR ? "Live view (L)" : specLive === null ? "This room has no live video: try 3D"
     : `The game in 3D, ${d ?? 45} seconds behind (L)`;
 }
 setInterval(() => { liveFps = liveShown; liveShown = 0; if (liveMode) setMode(true); }, 1000);

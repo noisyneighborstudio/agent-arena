@@ -24,7 +24,8 @@ import { Readable } from "node:stream";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { randomUUID, randomBytes } from "node:crypto";
+import { randomUUID, randomBytes, createHash } from "node:crypto";
+import zlib from "node:zlib";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -41,6 +42,11 @@ const PORT = Number(process.env.PEZZ_GATEWAY_PORT || 7790);
 const HOST = process.env.PEZZ_GATEWAY_HOST || "127.0.0.1";
 const ICONS = path.resolve(HERE, "../unity/Assets/Pez/Resources/PezIcons");
 const VIEWER = fs.readFileSync(path.join(HERE, "viewer.html"), "utf8");
+// The 3D view (arena/web3d, three.js): draws a room from the same frame and map data as the tactical viewer, so every
+// room has one, including room hosts' rooms, which have no renderer for live video. Look-only.
+const WEB3D = path.resolve(HERE, "../arena/web3d");
+const MODELS = path.resolve(HERE, "../unity/Assets/Pez/Resources/PezModels");
+const VIEW3D = fs.readFileSync(path.join(WEB3D, "view.html"), "utf8");
 const MAX_BODY = 64 * 1024;
 const WATCH_DELAY_S = Number(process.env.PEZZ_WATCH_DELAY || 45);
 // The Unity host's frame server: renders each player's own high-res live stream (absent on headless servers).
@@ -304,6 +310,27 @@ function send(res, status, body, type = "application/json") {
   const data = typeof body === "string" ? body : JSON.stringify(body, null, 1);
   res.writeHead(status, { "content-type": `${type}; charset=utf-8`, "cache-control": "no-store", "x-content-type-options": "nosniff" });
   res.end(data);
+}
+
+// The 3D view's files: read once, gzipped once (three.js is ~4 MB raw, ~0.8 MB gzipped), served with an ETag. The
+// vendored libraries never change under a name, so browsers keep them a day; our own scripts revalidate each load.
+const statics = new Map(); // file -> { raw, gz, etag, mtime }
+function sendStatic(req, res, file, type, maxAge) {
+  let st; try { st = fs.statSync(file); } catch { return send(res, 404, { ok: false, error: "not found" }); }
+  let e = statics.get(file);
+  if (!e || e.mtime !== st.mtimeMs) {
+    const raw = fs.readFileSync(file);
+    e = { raw, gz: zlib.gzipSync(raw, { level: 6 }), etag: `"${createHash("sha1").update(raw).digest("hex").slice(0, 16)}"`, mtime: st.mtimeMs };
+    statics.set(file, e);
+  }
+  const head = { "content-type": type, "cache-control": maxAge ? `public, max-age=${maxAge}` : "no-cache", etag: e.etag, vary: "accept-encoding", "x-content-type-options": "nosniff" };
+  if (req.headers["if-none-match"] === e.etag) { res.writeHead(304, head); return res.end(); }
+  const gz = /\bgzip\b/.test(req.headers["accept-encoding"] ?? "");
+  res.writeHead(200, { ...head, ...(gz ? { "content-encoding": "gzip" } : {}), "content-length": (gz ? e.gz : e.raw).length });
+  res.end(gz ? e.gz : e.raw);
+}
+function send3d(res, data, title) {
+  return send(res, 200, VIEW3D.replaceAll("__DATA__", data).replaceAll("__TITLE__", title), "text/html");
 }
 
 function readBody(req) {
@@ -1046,8 +1073,20 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, await join(b.name, b.room ?? b.invite, base, region, ip));
     }
 
+    // The 3D view's code (/3d/next.js, fx.js, sprites.js, boot.js, vendor/...) and models (/3d/models/<name>.glb).
+    const s3 = p.match(/^\/3d\/((?:vendor\/)?[a-zA-Z0-9_./-]+\.js|models\/[A-Za-z0-9_-]+\.glb)$/);
+    if (s3) {
+      if (s3[1].includes("..")) return send(res, 404, { ok: false, error: "not found" });
+      if (s3[1].startsWith("models/")) return sendStatic(req, res, path.join(MODELS, s3[1].slice(7)), "model/gltf-binary", 86400);
+      if (!/^(next|fx|sprites|boot)\.js$|^vendor\//.test(s3[1])) return send(res, 404, { ok: false, error: "not found" });
+      return sendStatic(req, res, path.join(WEB3D, s3[1]), "text/javascript; charset=utf-8", s3[1].startsWith("vendor/") ? 86400 : 0);
+    }
+
     // Read-only personal web view: /view/<view token>[/map|/frame]
     const V = "((?:r\\d{1,3}-)?[a-f0-9]{48})";
+    // ...and the same view in 3D: /view/<view token>/3d (the player's own fogged view, live).
+    const v3 = p.match(new RegExp(`^/view/${V}/3d$`));
+    if (v3) return send3d(res, `/view/${v3[1]}`, "your team");
     const lm = p.match(new RegExp(`^/view/${V}/live\\.jpg$`));
     if (lm) return await liveFrame(res, lm[1]);
     const sm = p.match(new RegExp(`^/view/${V}/live\\.mjpg$`));
@@ -1102,6 +1141,13 @@ const server = http.createServer(async (req, res) => {
       const room = rooms.get(lw[1] ?? 1);
       if (!room) return send(res, 404, { ok: false, error: "no such room (see /lobby)" });
       return lw[2] === "mjpg" ? watchStream(res, room, ip) : watchStill(res, room);
+    }
+    // The spectator view in 3D: /watch[/<n>]/3d (the whole room, delayed like /watch).
+    const w3 = p.match(/^\/watch(?:\/(\d{1,3}))?\/3d$/);
+    if (w3) {
+      const room = rooms.get(w3[1] ?? 1);
+      if (!room) return send(res, 404, { ok: false, error: "no such room (see /lobby)" });
+      return send3d(res, w3[1] ? `/watch/${room.id}` : "/watch", `spectator · room ${room.id}`);
     }
     const wm = p.match(/^\/watch(?:\/(\d{1,3}))?(\/map|\/frame)?$/);
     if (wm) {
