@@ -99,7 +99,7 @@ namespace Pez.View
         }
 
         /// <summary>Camera input from a stream viewer: team -1 is the host's main view, 0-7 a player's own stream.</summary>
-        public struct CamOp { public int Team; public float Dx, Dy, Zoom, Yaw, X, Y; public int Follow, Pov; } // X/Y: absolute focus (NaN = keep); Follow: entity id to ride along with (0 = stop, -1 = no change); Pov (observers): team whose sight to show, -1 everything, -2 no change
+        public struct CamOp { public int Team; public float Dx, Dy, Zoom, Yaw, X, Y; public int Follow, Pov; public bool Hold, Auto; } // X/Y: absolute focus (NaN = keep); Follow: entity id to ride along with (0 = stop, -1 = no change); Pov (observers): team whose sight to show, -1 everything, -2 no change; Hold: a look at X/Y stays put (a viewer's, not an agent's glance); Auto: hand the camera back to the director
 
         /// <summary>"What's under this point of team N's stream?" Answered on the main thread, where the stream camera lives.</summary>
         public class PickReq { public int Team; public float U, V; public string Result; public readonly System.Threading.ManualResetEventSlim Done = new System.Threading.ManualResetEventSlim(false); }
@@ -280,6 +280,7 @@ img.onerror=()=>setTimeout(()=>img.src='stream?'+Date.now(),1000);img.src='strea
                             X = Q(q, "x", float.NaN), Y = Q(q, "y", float.NaN),
                             Follow = (int)Q(q, "follow", -1),
                             Pov = (int)Q(q, "pov", -2),
+                            Hold = Q(q, "hold", 0) > 0, Auto = Q(q, "auto", 0) > 0,
                         });
                         body = Encoding.ASCII.GetBytes("{\"ok\":true}"); type = "application/json";
                     }

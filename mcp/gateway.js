@@ -659,12 +659,15 @@ async function liveStream(res, view) {
 }
 
 async function liveCam(res, view, q) {
-  // Look-around input for a player's own stream; only the owner of the view link can steer it.
+  // Look-around input for a player's own stream; only the owner of the view link can steer it. Where they put it, it
+  // stays, until they hand it back (auto=1).
   const who = await whoIs(view);
   if (!who.room.frames) return send(res, 200, { ok: false });
   const n = (k, d) => { const v = Number(q.get(k)); return Number.isFinite(v) ? v : d; };
   let at = q.has("x") && q.has("y") ? `x=${n("x", 0)}&y=${n("y", 0)}` : `dx=${n("dx", 0)}&dy=${n("dy", 0)}&zoom=${n("zoom", 1)}&yaw=${n("yaw", 0)}`;
   if (q.has("follow")) at += `&follow=${Math.max(0, Math.floor(n("follow", 0)))}`; // ride along with a unit (0 = stop)
+  if (q.get("hold") === "1") at += "&hold=1"; // a look the viewer chose: it stays put (an agent's glance doesn't)
+  if (q.get("auto") === "1") at = "auto=1"; // hand the camera back to the director
   try { await fetch(`${who.room.frames}/team/${who.team}/cam?${at}`); } catch {}
   return send(res, 200, { ok: true });
 }

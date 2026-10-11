@@ -190,15 +190,15 @@ select,button{font:inherit;cursor:pointer}button{background:#2a262b}
 #help{position:fixed;bottom:8px;right:10px;color:#9a9184;background:rgba(20,17,19,.8);padding:6px 10px;border-radius:8px;font-size:12px}
 #note{color:#e8a33d}
 </style></head><body><div id=wrap><img id=f draggable=false></div>
-<div id=bar><span>👁 observer · look only</span><label>sees as <select id=pov></select></label><span id=fol>click a unit to follow it</span><button id=unf style="display:none">stop following</button><span id=note></span></div>
+<div id=bar><span>👁 observer · look only</span><label>sees as <select id=pov></select></label><span id=fol>click a unit to follow it</span><button id=unf style="display:none">stop following</button><button id=auto title="The camera stays where you put it; this hands it back to the director (alerts, fights, the base)">auto camera</button><span id=note></span></div>
 <div id=pad><button data-z="0.8">+</button><button data-z="1.25">−</button><button data-y="15">⟲</button><button data-y="-15">⟳</button></div>
-<div id=help>drag: pan · pinch or wheel: zoom · buttons or Q/E: rotate · tap a unit: follow · Esc: stop following</div>
+<div id=help>drag: pan · pinch or wheel: zoom · buttons or Q/E: rotate · tap a unit: follow · Esc: stop following · the camera stays put until you press auto camera</div>
 <script>
 const q=new URLSearchParams(location.search),FR=q.get('frames'),API=q.get('api');let slot=null,pov=+(q.get('pov')??-1);
 const img=document.getElementById('f'),base=()=>`/frames/${FR}/team/${slot}`;
 const cam=qs=>slot!=null&&fetch(`${base()}/cam?${qs}`);
 async function lease(){const r=await fetch(`/api/observe?frames=${FR}`+(slot!=null?`&slot=${slot}`:''));const d=await r.json();
-  if(!d.ok){note.textContent=d.error;return false}const first=slot==null;slot=d.slot;if(first){cam(`pov=${pov}`);img.src=`${base()}/stream`;watchdog()}return true}
+  if(!d.ok){note.textContent=d.error;return false}const first=slot==null;slot=d.slot;if(first){cam(`pov=${pov}&auto=1`);img.src=`${base()}/stream`;watchdog()}return true}
 setInterval(lease,10000);
 // Teams to see as.
 fetch('/api/sessions').then(r=>r.json()).then(d=>{const s=d.sessions.find(x=>String(x.frames)===FR);const o=[['-1','everything (no fog)']].concat((s?.seats||[]).map(t=>[String(t.team),`${t.name} (${t.player||t.controller||''})${t.out?' · out':''}`]));
@@ -228,6 +228,7 @@ async function pick(e){const r=img.getBoundingClientRect();const u=(e.clientX-r.
   if(d.id&&!d.structure){cam(`follow=${d.id}`);fol.textContent=`following ${d.type} #${d.id} (team ${d.team})`;unf.style.display=''}}
 function stopF(){cam('follow=0');fol.textContent='click a unit to follow it';unf.style.display='none'}
 unf.onclick=stopF;
+document.getElementById('auto').onclick=()=>{cam('auto=1');fol.textContent='click a unit to follow it';unf.style.display='none'};
 // Streams drop when a game restarts: reconnect. A build without observer cameras sends nothing: say so.
 img.onerror=()=>setTimeout(()=>img.src=`${base()}/stream?${Date.now()}`,1000);
 function watchdog(){setTimeout(()=>{if(!img.naturalWidth)note.textContent='no picture yet: this session\'s build may predate observer cameras (they arrive with the next deploy)'},6000)}
@@ -399,7 +400,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(503, "all 4 observer cameras on this session are in use: close another viewer", "text/plain")
         try:
             vt = get(f"http://127.0.0.1:{api}/api/admin/viewlink?team={team}")["view_token"]
-            urllib.request.urlopen(f"http://127.0.0.1:{frames}/team/{slot}/cam?pov={team}&follow=0", timeout=3).read()
+            urllib.request.urlopen(f"http://127.0.0.1:{frames}/team/{slot}/cam?pov={team}&follow=0&auto=1", timeout=3).read()
         except Exception as e:
             return self.send(502, f"couldn't open that seat's view: {e}", "text/plain")
         self.send_response(302)
@@ -425,6 +426,9 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 return self.send(502, f"gateway not answering: {e}", "text/plain")
             html = html.replace(f'const BASE = "/view/{tok}"', f'const BASE = "{base}"')
+            # The page tells a player's view from the spectator's by BASE starting with /view/; ours doesn't, so say
+            # it outright, or it falls back to the spectator's map with Live disabled.
+            html = html.replace('const SPECTATOR = !BASE.startsWith("/view/");', "const SPECTATOR = false;")
             badge = (f'<div style="position:fixed;left:50%;transform:translateX(-50%);bottom:8px;z-index:99;background:rgba(20,17,19,.85);'
                      f'color:#e8a33d;border:1px solid #3a343b;border-radius:8px;padding:4px 10px;font:12px system-ui">👁 observer: '
                      f'everything this player sees, on your own camera · look only</div>'

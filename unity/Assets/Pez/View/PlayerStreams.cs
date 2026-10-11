@@ -33,8 +33,11 @@ namespace Pez.View
         readonly Dictionary<int, (Vector3 focus, float last, int seat)> state = new Dictionary<int, (Vector3, float, int)>();
         // The director's target is a scan over every entity: refresh it a few times a second, not every frame.
         readonly Dictionary<int, (Vector3 target, float at)> directed = new Dictionary<int, (Vector3, float)>();
-        // A viewer looking around takes over the stream camera; the director returns after 20 seconds of no input.
+        // A viewer looking around takes over the stream camera and keeps it where they left it (until = Pinned) until they
+        // hand it back (auto), or nobody has watched the stream for a minute. An agent's glance (look at x,y without
+        // hold) only borrows it for 20 seconds.
         readonly Dictionary<int, (Vector3 focus, float size, float yaw, float until)> manual = new Dictionary<int, (Vector3, float, float, float)>();
+        const float Pinned = float.PositiveInfinity, Glance = 20f, Abandoned = 60f;
         // A unit the viewer clicked: the stream rides along with it until they deselect it (or it dies or vanishes).
         readonly Dictionary<int, int> follow = new Dictionary<int, int>();
         // Observer cameras (FrameServer.ObserverBase..): whose sight each shows (-1: everything, no fog).
@@ -82,16 +85,19 @@ namespace Pez.View
                 }
                 if (op.Follow == 0) follow.Remove(op.Team);
                 else if (op.Follow > 0) follow[op.Team] = op.Follow;
+                if (op.Auto) { manual.Remove(op.Team); follow.Remove(op.Team); directed.Remove(op.Team); continue; }
                 if (!state.TryGetValue(op.Team, out var st)) continue;
+                bool look = !float.IsNaN(op.X) && !float.IsNaN(op.Y);
+                if (!look && op.Dx == 0 && op.Dy == 0 && op.Zoom == 1 && op.Yaw == 0) continue; // a point of view or a follow: the camera stays as it is
                 (Vector3 focus, float size, float yaw, float until) m = manual.TryGetValue(op.Team, out var cur) && Time.unscaledTime < cur.until ? cur : (st.focus, DefaultSize, 45f, 0f);
                 var right = Quaternion.Euler(0, m.yaw, 0) * Vector3.right;
                 var fwd = Quaternion.Euler(0, m.yaw, 0) * Vector3.forward;
                 m.focus += right * op.Dx * m.size * 2f * Width / Height + fwd * op.Dy * m.size * 2f / Mathf.Sin(StreamPitch * Mathf.Deg2Rad);
-                if (!float.IsNaN(op.X) && !float.IsNaN(op.Y)) m.focus = new Vector3(op.X, 0, op.Y); // "look at x,y"
+                if (look) m.focus = new Vector3(op.X, 0, op.Y); // "look at x,y"
                 m.size = Mathf.Clamp(m.size * op.Zoom, 8f, 40f); // the art pack's zoom range
                 m.yaw += op.Yaw;
                 m.focus = OnMap(w, m.focus); // looking around reaches the corners
-                m.until = Time.unscaledTime + 20f;
+                m.until = look && !op.Hold ? Mathf.Max(m.until, Time.unscaledTime + Glance) : Pinned;
                 manual[op.Team] = m;
                 state[op.Team] = (m.focus, st.last - SnapshotInterval, st.seat); // render the change right away
             }
@@ -240,6 +246,7 @@ namespace Pez.View
         void Render(World w, WorldView view, int team)
         {
             var s = state[team];
+            if (s.last > 0 && Time.unscaledTime - s.last > Abandoned) { manual.Remove(team); follow.Remove(team); } // the next viewer starts with the director
             int pov = PovOf(team); // a team's stream sees as that team; an observer as its chosen team, or everything
             float size = DefaultSize, yaw = 45f;
             Vector3 focus;
@@ -251,7 +258,7 @@ namespace Pez.View
             {
                 float fdt = s.last == 0 ? 10f : Time.unscaledTime - s.last;
                 focus = Vector3.Lerp(s.focus, OnMap(w, WorldView.W(followed.Pos)), 1f - Mathf.Exp(-fdt * 6f));
-                if (manual.ContainsKey(team)) manual[team] = (focus, size, yaw, Time.unscaledTime + 20f); // keep the viewer's zoom while following
+                manual[team] = (focus, size, yaw, Pinned); // keep the viewer's zoom while following, and stay where the ride ends
             }
             else if (manual.TryGetValue(team, out m) && Time.unscaledTime < m.until) { focus = m.focus; size = m.size; yaw = m.yaw; }
             else

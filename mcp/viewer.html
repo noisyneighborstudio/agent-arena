@@ -56,6 +56,7 @@
   #modes button { min-width:64px; height:44px; padding:0 12px; white-space:nowrap; border:0; border-radius:8px; background:var(--btn); font-family:"IBM Plex Mono",monospace; font-size:15px; cursor:pointer; }
   #modes button.on { background:var(--cream); color:#101317; font-weight:500; }
   #modes button:disabled { opacity:.35; cursor:default; }
+  #bAuto { display:none; } body.live #bAuto.pinned { display:inline-block; }
   #modes .rule { width:1px; height:28px; background:var(--border); margin:0 6px; }
   #mode { font-size:14px; color:var(--muted); padding-right:8px; white-space:nowrap; }
 
@@ -154,7 +155,7 @@
   <div class="panel" id="brand"><span class="word">PEZ</span><span class="rule"></span><span id="clock">0:00</span><span id="where">Connecting…</span></div>
   <div id="teams"><div id="own"></div><div id="tick"><div id="track"><div class="set" id="setA"></div><div class="set" id="setB" aria-hidden="true"></div></div></div></div>
   <div class="panel" id="modes">
-    <button id="bLive" title="Live view (L)">Live</button><button id="bMap" class="on" title="Tactical map (L)">Map</button><button id="bReplay" title="Replay the game so far">Replay</button><button id="b3d" title="The game in 3D, drawn in your browser (opens a new tab)">3D</button>
+    <button id="bLive" title="Live view (L)">Live</button><button id="bMap" class="on" title="Tactical map (L)">Map</button><button id="bReplay" title="Replay the game so far">Replay</button><button id="b3d" title="The game in 3D, drawn in your browser (opens a new tab)">3D</button><button id="bAuto" title="The live camera stays where you put it; this hands it back to the director (alerts, fights, the base)">Auto cam</button>
     <span class="rule"></span><span id="mode">Map view</span>
   </div>
 </div>
@@ -296,7 +297,7 @@ function focusBase() {
 }
 function lookAt(x, y) {
   if (liveMode && SPECTATOR) { setMode(false); cam.x = x + 0.5; cam.y = y + 0.5; cam.scale = Math.max(cam.scale, 14); return; } // the spectator camera directs itself: look there on the map
-  if (liveMode) fetch(`${BASE}/cam?x=${x}&y=${y}`);
+  if (liveMode) { fetch(`${BASE}/cam?x=${x}&y=${y}&hold=1`); camPinned(true); }
   else { cam.x = x + 0.5; cam.y = y + 0.5; cam.scale = Math.max(cam.scale, 14); }
 }
 
@@ -598,6 +599,7 @@ function select(id) {
   selected = id; details = null;
   const e = id && frame?.entities.find((x) => x[0] === id);
   if (!SPECTATOR) fetch(`${BASE}/cam?follow=${e && e[8] === 0 ? id : 0}`).catch(() => {});
+  if (!SPECTATOR && liveMode && e && e[8] === 0) camPinned(true); // the camera stays where the ride ends
 }
 function deselect() { if (!selected) return; selected = 0; details = null; if (!SPECTATOR) fetch(`${BASE}/cam?follow=0`).catch(() => {}); }
 addEventListener("keydown", (e) => { if (e.key === "Escape") deselect(); });
@@ -998,11 +1000,15 @@ async function showFrame(jpg) {
   }
   decoding = false;
 }
-// In live mode, dragging and scrolling steer the stream's camera (it returns to following the action after 20s).
+// In live mode, dragging and scrolling steer the stream's camera, and it stays where it's put (Auto cam hands it back).
 let camAcc = { dx: 0, dy: 0, zoom: 1, yaw: 0 }, camBusy = false, camDrag = null;
+// Where the viewer puts the camera, it stays: Auto cam hands it back to the director.
+function camPinned(on) { document.getElementById("bAuto").classList.toggle("pinned", on); }
+document.getElementById("bAuto").addEventListener("click", () => { fetch(`${BASE}/cam?auto=1`).catch(() => {}); camPinned(false); if (selected) { selected = 0; details = null; } });
 function camFlush() {
   if (camBusy) return; const a = camAcc;
   if (!a.dx && !a.dy && a.zoom === 1 && !a.yaw) return;
+  camPinned(true);
   camAcc = { dx: 0, dy: 0, zoom: 1, yaw: 0 }; camBusy = true;
   fetch(`${BASE}/cam?dx=${a.dx.toFixed(4)}&dy=${a.dy.toFixed(4)}&zoom=${a.zoom.toFixed(3)}&yaw=${a.yaw}`).finally(() => { camBusy = false; setTimeout(camFlush, 30); });
 }
