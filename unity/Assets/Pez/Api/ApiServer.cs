@@ -20,6 +20,8 @@ namespace Pez.Api
         {
             public HttpListenerContext Ctx;
             public string Body;
+            /// <summary>Set by a handler for a big read-only payload: gzipped when the client accepts it, never cached.</summary>
+            public bool Bulk;
         }
 
         /// <summary>A parked /api/wait request: answered at its deadline, or early when a priority alert arrives.</summary>
@@ -110,7 +112,7 @@ namespace Pez.Api
                     status = 400;
                     payload = Json.Write(new JObj().Set("ok", false).Set("error", ex.Message));
                 }
-                if (payload != null) Respond(p.Ctx, status, payload, contentType); // null = parked waiter
+                if (payload != null) Respond(p.Ctx, status, payload, contentType, p.Bulk); // null = parked waiter
             }
             ServiceWaiters(game);
         }
@@ -232,7 +234,7 @@ namespace Pez.Api
                 case "":
                 case "/api":
                     contentType = "text/plain";
-                    return "Pezz RTS control API\n\nGET  /api/rules\nGET  /api/state?team=N[&since=SEQ]\nGET  /api/map?team=N\nGET  /api/alerts?team=N[&since=SEQ&min=medium|high|critical]\nGET  /api/wait?team=N&seconds=S[&since=ALERT_SEQ&events_since=SEQ&min=high|critical|none]  (returns early on a new priority alert)\nPOST /api/command?team=N   body: {\"commands\":[...]} | [...] | {...}\nPOST /api/join?team=N      body: {\"name\":\"Claude\"}\nGET  /api/status\nPOST /api/admin/restart    body: {\"seed\":1,\"map_size\":112,\"controllers\":[\"llm\",\"llm\"],\"speed\":1,\"match_hours\":4}\nPOST /api/admin/speed      body: {\"speed\":0.5}\nPOST /api/admin/save       (saves the game now; a restarted host resumes it)\nGET  /api/admin/inventions (every agent-invented unit in this game, with its record)\nPOST /api/admin/orders?team=N  body: {\"text\":\"standing orders for that team's commander\"}\n\n" + Commands.Help;
+                    return "Pezz RTS control API\n\nGET  /api/rules\nGET  /api/state?team=N[&since=SEQ]\nGET  /api/map?team=N\nGET  /api/alerts?team=N[&since=SEQ&min=medium|high|critical]\nGET  /api/wait?team=N&seconds=S[&since=ALERT_SEQ&events_since=SEQ&min=high|critical|none]  (returns early on a new priority alert)\nPOST /api/command?team=N   body: {\"commands\":[...]} | [...] | {...}\nPOST /api/join?team=N      body: {\"name\":\"Claude\"}\nGET  /api/status\nGET  /api/view/snapshot  (spectator: the whole world as a saved-game snapshot, no tokens or orders)\nPOST /api/admin/restart    body: {\"seed\":1,\"map_size\":112,\"controllers\":[\"llm\",\"llm\"],\"speed\":1,\"match_hours\":4}\nPOST /api/admin/speed      body: {\"speed\":0.5}\nPOST /api/admin/save       (saves the game now; a restarted host resumes it)\nGET  /api/admin/inventions (every agent-invented unit in this game, with its record)\nPOST /api/admin/orders?team=N  body: {\"text\":\"standing orders for that team's commander\"}\n\n" + Commands.Help;
                 case "/api/rules":
                     return Json.Write(StateView.Rules());
                 case "/api/state":
@@ -334,6 +336,15 @@ namespace Pez.Api
                     return Json.Write(ViewMap(w, ViewTeam(req, w)));
                 case "/api/view/frame":
                     return Json.Write(ViewFrame(w, ViewTeam(req, w)));
+                case "/api/view/snapshot":
+                    {
+                        // The whole world for a client that renders it itself (the browser build). Spectator only: like
+                        // team=-1 frames it has no fog, so the gateway serves it delayed (/watch/snapshot) and never raw.
+                        // TODO team=N: filter through ViewFrame's fog rules (shroud, IsVisibleTo, KnownEnemyStructures) before a player can use it.
+                        if (ViewTeam(req, w) >= 0) { status = 400; return Json.Write(new JObj().Set("ok", false).Set("error", "snapshots are spectator-only for now")); }
+                        p.Bulk = true;
+                        return Json.Write(ViewSnapshot(game));
+                    }
                 case "/api/viewlink":
                     {
                         // A player's own read-only watch-link token (for links made after joining, e.g. the commander link).
@@ -541,6 +552,23 @@ namespace Pez.Api
             return o;
         }
 
+        /// <summary>The saved-game snapshot minus what a spectator must not read: no API section (tokens), no orders text.</summary>
+        public static JObj ViewSnapshot(Game game)
+        {
+            var snap = Snapshot.Write(game); // the host's `api` (tokens) section is added by RoomSaver, never here
+            snap.Remove("api");
+            if (snap["config"] is JObj cfg && cfg["orders"] is List<object> orders)
+                cfg["orders"] = orders.Select(_ => (object)"").ToList();
+            if (snap["world"] is JObj world)
+            {
+                if (world["teams"] is List<object> teams)
+                    foreach (var t in teams.OfType<JObj>()) t.Remove("standing_orders"); // a commander's orders are the team's plan
+                if (world["events"] is List<object> events)
+                    foreach (var e in events.OfType<JObj>()) if ((e["type"] as string) == "orders") e.Remove("text"); // World.SetOrders logs the text as an event
+            }
+            return snap;
+        }
+
         static JObj ViewFrame(World w, int team)
         {
             var m = w.Map;
@@ -638,11 +666,25 @@ namespace Pez.Api
                     .Select(e => $"[{e.Tick * World.Dt:0}s] {(e.Team >= 0 ? w.Teams[e.Team].Name : "server")}: {e.Text}").ToList());
         }
 
-        static void Respond(HttpListenerContext ctx, int status, string payload, string contentType)
+        static void Respond(HttpListenerContext ctx, int status, string payload, string contentType, bool bulk = false)
         {
             try
             {
                 var bytes = Encoding.UTF8.GetBytes(payload);
+                if (bulk)
+                {
+                    ctx.Response.AddHeader("Cache-Control", "no-store");
+                    if ((ctx.Request.Headers["Accept-Encoding"] ?? "").Contains("gzip"))
+                    {
+                        using (var ms = new MemoryStream())
+                        {
+                            using (var gz = new System.IO.Compression.GZipStream(ms, System.IO.Compression.CompressionLevel.Fastest)) gz.Write(bytes, 0, bytes.Length);
+                            bytes = ms.ToArray();
+                        }
+                        ctx.Response.AddHeader("Content-Encoding", "gzip");
+                    }
+                    ctx.Response.AddHeader("Vary", "Accept-Encoding");
+                }
                 ctx.Response.StatusCode = status;
                 ctx.Response.ContentType = contentType + "; charset=utf-8";
                 ctx.Response.AddHeader("Access-Control-Allow-Origin", "*");

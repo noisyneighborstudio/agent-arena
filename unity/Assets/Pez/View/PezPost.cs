@@ -48,7 +48,7 @@ namespace Pez.View
 
         static Tier Arg(string name, Tier def)
         {
-            var args = System.Environment.GetCommandLineArgs();
+            var args = GameRunner.Args;
             int i = System.Array.IndexOf(args, name);
             if (i < 0 || i + 1 >= args.Length) return def;
             return args[i + 1].ToLowerInvariant() switch { "off" => Tier.Off, "light" => Tier.Light, "full" => Tier.Full, _ => def };

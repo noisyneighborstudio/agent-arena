@@ -46,6 +46,9 @@ namespace Pez.View
         static Color? fogTint;
         static Color FogTint => fogTint ??= ((Color)PezPalette.MaterialsLicorice).linear;
 
+        /// <summary>The same ground, read from a newer copy of the map (ore and tiles are polled from it; nothing is rebuilt).</summary>
+        public void Rebind(Map m) { map = m; }
+
         public void Build(Map m)
         {
             map = m;

@@ -23,7 +23,7 @@ namespace Pez.View
         {
             get
             {
-                var args = System.Environment.GetCommandLineArgs();
+                var args = GameRunner.Args;
                 int i = System.Array.IndexOf(args, "-streammsaa");
                 return i >= 0 && i + 1 < args.Length && int.TryParse(args[i + 1], out var n) && (n == 1 || n == 2 || n == 4 || n == 8) ? n : 2;
             }

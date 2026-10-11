@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, user-scalable=no">
+    <title>Pezz</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #14110d; overflow: hidden; }
+      #unity-canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; outline: none; }
+      #load { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 320px; font: 13px system-ui, sans-serif; color: #d8c9b0; text-align: center; }
+      #bar { height: 4px; margin-top: 10px; background: #2b241b; } #bar > div { height: 100%; width: 0; background: #f5a623; }
+    </style>
+  </head>
+  <body>
+    <canvas id="unity-canvas" tabindex="-1"></canvas>
+    <div id="load">Loading Pezz…<div id="bar"><div></div></div></div>
+    <script src="Build/{{{ LOADER_FILENAME }}}"></script>
+    <script>
+      // ?dpr=<n> overrides the render scale (default: the screen's, capped at 2) so a slow GPU can trade sharpness for frames.
+      const q = new URLSearchParams(location.search);
+      const t0 = performance.now();
+      createUnityInstance(document.querySelector("#unity-canvas"), {
+        arguments: [],
+        dataUrl: "Build/{{{ DATA_FILENAME }}}",
+        frameworkUrl: "Build/{{{ FRAMEWORK_FILENAME }}}",
+#if USE_WASM
+        codeUrl: "Build/{{{ CODE_FILENAME }}}",
+#endif
+        streamingAssetsUrl: "StreamingAssets",
+        companyName: {{{ JSON.stringify(COMPANY_NAME) }}},
+        productName: {{{ JSON.stringify(PRODUCT_NAME) }}},
+        productVersion: {{{ JSON.stringify(PRODUCT_VERSION) }}},
+        devicePixelRatio: Math.min(Number(q.get("dpr")) || window.devicePixelRatio || 1, 2),
+      }, (p) => { document.querySelector("#bar > div").style.width = (100 * p) + "%"; }).then((unityInstance) => {
+        window.unityInstance = unityInstance;
+        window.pezLoadMs = Math.round(performance.now() - t0);
+        console.log("pez: engine ready in " + window.pezLoadMs + " ms");
+        document.getElementById("load").remove();
+      }).catch((message) => { document.getElementById("load").textContent = "Pezz failed to start: " + message; });
+    </script>
+  </body>
+</html>

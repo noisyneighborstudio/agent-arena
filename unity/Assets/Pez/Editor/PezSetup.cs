@@ -105,5 +105,47 @@ namespace Pez.EditorTools
             Debug.Log($"Pez build: {report.summary.result}, {report.summary.totalErrors} errors, {report.summary.totalSize / (1024 * 1024)} MB");
             if (Application.isBatchMode) EditorApplication.Exit(report.summary.result == UnityEditor.Build.Reporting.BuildResult.Succeeded ? 0 : 1);
         }
+
+        /// <summary>
+        /// The browser build: the same scene and view, WebGL2 only (6.3's WebGPU backend needs URP; we're on Built-in).
+        /// Never into unity/Build, which is the live arena's:
+        ///   Unity -batchmode -buildTarget WebGL -projectPath unity -executeMethod Pez.EditorTools.PezSetup.BuildWeb -pezOut ../build/web -quit
+        /// -pezDev makes a development build with full stack traces and magenta for any shader variant the build stripped.
+        /// </summary>
+        [MenuItem("Pez/Build Web")]
+        public static void BuildWeb()
+        {
+            Setup();
+            var args = System.Environment.GetCommandLineArgs();
+            int o = System.Array.IndexOf(args, "-pezOut");
+            bool dev = System.Array.IndexOf(args, "-pezDev") >= 0;
+            var web = UnityEditor.Build.NamedBuildTarget.WebGL;
+            PlayerSettings.SetUseDefaultGraphicsAPIs(BuildTarget.WebGL, false);
+            PlayerSettings.SetGraphicsAPIs(BuildTarget.WebGL, new[] { UnityEngine.Rendering.GraphicsDeviceType.OpenGLES3 });
+            PlayerSettings.SetManagedStrippingLevel(web, ManagedStrippingLevel.Minimal); // LookTune reflects over fields
+            PlayerSettings.stripEngineCode = false; // models are built from primitives at runtime (their colliders), which no scene references
+            PlayerSettings.runInBackground = true;
+            PlayerSettings.WebGL.template = "PROJECT:PezWeb";
+            PlayerSettings.WebGL.compressionFormat = WebGLCompressionFormat.Brotli;
+            PlayerSettings.WebGL.decompressionFallback = false;
+            PlayerSettings.WebGL.exceptionSupport = dev ? WebGLExceptionSupport.FullWithStacktrace : WebGLExceptionSupport.ExplicitlyThrownExceptionsOnly;
+            PlayerSettings.WebGL.linkerTarget = WebGLLinkerTarget.Wasm;
+            PlayerSettings.WebGL.threadsSupport = false;
+            PlayerSettings.WebGL.dataCaching = true;
+            PlayerSettings.WebGL.initialMemorySize = 256;
+            PlayerSettings.WebGL.maximumMemorySize = 2048;
+            PlayerSettings.WebGL.memoryGrowthMode = WebGLMemoryGrowthMode.Geometric;
+            PlayerSettings.strictShaderVariantMatching = dev;
+            var t = System.Diagnostics.Stopwatch.StartNew();
+            var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
+            {
+                scenes = new[] { ScenePath },
+                locationPathName = o >= 0 && o + 1 < args.Length ? args[o + 1] : "../build/web",
+                target = BuildTarget.WebGL,
+                options = dev ? BuildOptions.Development : BuildOptions.None,
+            });
+            Debug.Log($"Pez build: {report.summary.result}, {report.summary.totalErrors} errors, {report.summary.totalSize / (1024 * 1024)} MB, {t.Elapsed.TotalMinutes:F1} min");
+            if (Application.isBatchMode) EditorApplication.Exit(report.summary.result == UnityEditor.Build.Reporting.BuildResult.Succeeded ? 0 : 1);
+        }
     }
 }

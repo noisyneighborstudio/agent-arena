@@ -328,6 +328,22 @@ namespace Pez.Headless
             var state = Call(7794, "/api/state?format=json", token);
             Check(state.Obj("you") != null, "the resumed seat can read its state");
             Check(h2.game.World.Events.Any(e => e.Type == "chat" && e.Text.StartsWith("Back online: your game has been resumed")), "the arena chat says the game is back");
+            // The browser client's feed: the whole world, loadable by a reader, with no tokens and no orders text.
+            Call(7794, $"/api/admin/orders?team={team}", body: "{\"text\":\"Secret plan: flank west at dawn.\"}");
+            var vreq = new HttpRequestMessage(HttpMethod.Get, "http://127.0.0.1:7794/api/view/snapshot");
+            vreq.Headers.Add("Accept-Encoding", "gzip");
+            var vres = http.SendAsync(vreq).Result;
+            string vjson;
+            using (var gz = new System.IO.Compression.GZipStream(vres.Content.ReadAsStreamAsync().Result, System.IO.Compression.CompressionMode.Decompress))
+            using (var rd = new StreamReader(gz)) vjson = rd.ReadToEnd();
+            var vsnap = Snapshot.Parse(vjson);
+            var vgame = Resume(vjson);
+            Check(vres.Content.Headers.ContentEncoding.Contains("gzip") && vres.Headers.CacheControl?.NoStore == true && vgame.World.Teams.Count == h2.game.World.Teams.Count && vgame.World.Entities.Count > 0,
+                  $"/api/view/snapshot is gzipped, uncacheable, and loads back into a game ({vgame.World.Entities.Count} entities, {vjson.Length / 1024} KB)");
+            Check(!vjson.Contains("\"token\"") && !vjson.Contains("view_token") && !vjson.Contains(token) && !vjson.Contains(view) && !vsnap.ContainsKey("api"), "the spectator snapshot carries no tokens or api section");
+            Check(!vjson.Contains("flank west") && vgame.World.Teams.All(t => string.IsNullOrEmpty(t.StandingOrders)) && vsnap.Obj("config").Arr("orders").All(o => string.IsNullOrEmpty(o as string)),
+                  "the spectator snapshot carries no standing orders or commander orders");
+            Check(Convert.ToInt32(Call(7794, $"/api/view/snapshot?team={team}")["_status"]) == 400, "a per-team snapshot is refused until it is fog-filtered");
             Call(7794, "/api/admin/restart", body: "{}");
             Thread.Sleep(200);
             Check(!File.Exists(file) && Convert.ToInt32(Call(7794, "/api/whoami", token)["_status"]) == 401, "an admin restart starts a fresh game and drops the saved one (old tokens end)");

@@ -21,7 +21,8 @@ namespace Pez.View
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         static void Boot()
         {
-            var args = System.Environment.GetCommandLineArgs();
+            if (GameRunner.IsWeb) return;
+            var args = GameRunner.Args;
             int i = System.Array.IndexOf(args, "-perfprobe");
             if (i < 0) return;
             var probe = new GameObject("PerfProbe").AddComponent<PerfProbe>();
@@ -55,7 +56,7 @@ namespace Pez.View
                 System.DateTime.Now, ms.Count, avg, ms[ms.Count / 2], ms[(int)(ms.Count * 0.95f)], ms[ms.Count - 1], ms.Count / span, g, streams / span,
                 Screen.width, Screen.height, UnityEngine.Profiling.Profiler.GetMonoUsedSizeLong() / 1048576.0, Bars.Count, FxParticles(),
                 Object.FindObjectsByType<Transform>(FindObjectsSortMode.None).Length, spectators / span);
-            if (System.Array.IndexOf(System.Environment.GetCommandLineArgs(), "-perfnames") >= 0)
+            if (System.Array.IndexOf(GameRunner.Args, "-perfnames") >= 0)
             {
                 var names = new Dictionary<string, int>();
                 foreach (var t in Object.FindObjectsByType<Transform>(FindObjectsSortMode.None)) { names.TryGetValue(t.name, out int c); names[t.name] = c + 1; }

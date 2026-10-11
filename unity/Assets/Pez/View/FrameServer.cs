@@ -32,7 +32,7 @@ namespace Pez.View
         public static readonly int SpectatorFps = Arg("-spectatorfps", 12, 1, 30);
         static int Arg(string name, int def, int min, int max)
         {
-            var args = System.Environment.GetCommandLineArgs();
+            var args = GameRunner.Args;
             int i = System.Array.IndexOf(args, name);
             return i >= 0 && i + 1 < args.Length && int.TryParse(args[i + 1], out var n) ? Mathf.Clamp(n, min, max) : def;
         }

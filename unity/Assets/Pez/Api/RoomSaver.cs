@@ -147,12 +147,14 @@ namespace Pez.Api
         {
 #if NET7_0_OR_GREATER
             if (!OperatingSystem.IsWindows()) System.IO.File.SetUnixFileMode(path, (UnixFileMode)mode);
+#elif UNITY_WEBGL && !UNITY_EDITOR
+            // The web player has no libc to link (and no saves: GameRunner never makes a RoomSaver there).
 #else
             try { chmod(path, mode); } catch { } // Unity (Mono): libc directly; best effort
 #endif
         }
 
-#if !NET7_0_OR_GREATER
+#if !NET7_0_OR_GREATER && !(UNITY_WEBGL && !UNITY_EDITOR)
         [System.Runtime.InteropServices.DllImport("libc", SetLastError = true)]
         static extern int chmod(string path, int mode);
 #endif

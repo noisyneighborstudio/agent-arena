@@ -36,6 +36,11 @@ namespace Pez.View
         public string GatewayUrl;
         public int GatewayPort = 7790;
         public string Invite;
+        /// <summary>The web build: a view of a game the server owns (WebClient). No API, saves, streams or agent processes.</summary>
+        public static bool IsWeb => Application.platform == RuntimePlatform.WebGLPlayer;
+        /// <summary>The command line, empty in the browser.</summary>
+        public static string[] Args => IsWeb ? new string[0] : System.Environment.GetCommandLineArgs();
+        public WebClient Web { get; private set; }
         World viewWorld;
         bool startingFromMenu;
         bool firstView = true;
@@ -45,16 +50,25 @@ namespace Pez.View
         void Awake()
         {
             Application.runInBackground = true; // LLMs drive the game while the window is unfocused
-            Application.targetFrameRate = 60;
-            QualitySettings.vSyncCount = 0;
+            if (IsWeb) WebClient.ApplyQuality(); // before SetupScene, whose lighting and AA settings then override the level's
+            Application.targetFrameRate = IsWeb ? -1 : 60; // the browser's own frame callback
+            if (!IsWeb) QualitySettings.vSyncCount = 0;
             MenuConfig = ParseArgs(out bool autostart);
             if (MenuConfig.KitchenSink) Application.targetFrameRate = KitchenSinkView.Fps; // it shares the machine with the live arena
             Game = new Game(MenuConfig);
             InMenu = !autostart;
             SetupScene();
+            if (IsWeb)
+            {
+                // Nothing to show or run until the first snapshot arrives; WebClient draws "Loading game" meanwhile.
+                Hud.enabled = Input.enabled = false;
+                Web = gameObject.AddComponent<WebClient>();
+                Web.Runner = this;
+                return;
+            }
             StartApi();
             // A saved game for this port (a new build swapped in, or the app restarted): carry on with it.
-            var args = System.Environment.GetCommandLineArgs();
+            var args = GameRunner.Args;
             int si = System.Array.IndexOf(args, "-snapshot");
             // The kitchen sink is rebuilt from code every launch: nothing to save or resume.
             if (!MenuConfig.KitchenSink)
@@ -73,9 +87,10 @@ namespace Pez.View
 
         GameConfig ParseArgs(out bool autostart)
         {
-            var args = System.Environment.GetCommandLineArgs();
+            var args = GameRunner.Args;
             string Arg(string name, string def) { int i = System.Array.IndexOf(args, name); return i >= 0 && i + 1 < args.Length ? args[i + 1] : def; }
             autostart = args.Contains("-autostart");
+            if (IsWeb) return new GameConfig { MapSize = Map.MinSize, Controllers = new[] { "llm", "llm" }, Orders = new string[2], MatchHours = 0 }; // a stand-in world, replaced by the first snapshot
             Port = int.Parse(Arg("-port", "7777"));
             if (args.Contains("-kitchensink"))
             {
@@ -193,11 +208,11 @@ namespace Pez.View
             Input.Runner = this;
             Hud = gameObject.AddComponent<Hud>();
             Hud.Runner = this;
-            gameObject.AddComponent<FrameServer>().Port = Port + 1;
+            if (!IsWeb) gameObject.AddComponent<FrameServer>().Port = Port + 1;
             // Per-team fog overlays are for the player streams only; bars are drawn after post-processing (PezPost).
             cam.cullingMask = ~TerrainView.TeamFogMask & ~(1 << Bars.Layer);
             if (camGo.GetComponent<PezPost>() == null) camGo.AddComponent<PezPost>();
-            gameObject.AddComponent<PlayerStreams>().Runner = this;
+            if (!IsWeb) gameObject.AddComponent<PlayerStreams>().Runner = this;
             if (MenuConfig.KitchenSink)
             {
                 // The showcase room: no HUD over the exhibits (the viewer page labels them), and it idles when nobody watches.
@@ -224,7 +239,7 @@ namespace Pez.View
         /// <summary>Repo root (for arena/battle.mjs): -repo arg, else derived from the app or editor location.</summary>
         static string RepoRoot()
         {
-            var args = System.Environment.GetCommandLineArgs();
+            var args = GameRunner.Args;
             int i = System.Array.IndexOf(args, "-repo");
             if (i >= 0 && i + 1 < args.Length) return args[i + 1];
             foreach (var up in new[] { "../../../..", "../.." }) // Build/Pezz.app/Contents, or unity/Assets
@@ -241,7 +256,7 @@ namespace Pez.View
             if (root == null) { AgentStatus = "Can't find arena/battle.mjs; launch with -repo /path/to/pez"; Debug.LogError(AgentStatus); return; }
             var players = string.Join(" ", controllers.Select(c => c == "llm" ? "external" : c));
             // Per-team model/effort (-model0 sonnet -effort0 medium) map to the arena's per-player flags.
-            var args = System.Environment.GetCommandLineArgs();
+            var args = GameRunner.Args;
             string Arg(string name) { int i = System.Array.IndexOf(args, name); return i >= 0 && i + 1 < args.Length ? args[i + 1] : null; }
             var extra = "";
             for (int t = 0; t < controllers.Length; t++)
@@ -271,7 +286,7 @@ namespace Pez.View
             if (root == null) { AgentStatus = "Can't find the repo to start the arena gateway; launch with -repo /path/to/pez"; return; }
             var log = System.IO.Path.Combine(root, "arena", "logs", "gateway.log");
             System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(log));
-            var args = System.Environment.GetCommandLineArgs();
+            var args = GameRunner.Args;
             int gi = System.Array.IndexOf(args, "-gatewayport");
             if (gi >= 0 && gi + 1 < args.Length && int.TryParse(args[gi + 1], out var gp)) GatewayPort = gp;
             int ui = System.Array.IndexOf(args, "-gatewayurl"); // the public (e.g. tailnet) URL to show and to put in links
@@ -343,7 +358,7 @@ namespace Pez.View
             Game.World.ErrorLog = msg => Debug.LogError("Sim error (game continues): " + msg);
             if (View != null) Destroy(View.gameObject);
             viewWorld = Game.World;
-            HumanTeam = System.Array.IndexOf(Game.Config.Controllers, "human");
+            HumanTeam = Web != null ? Web.Team : System.Array.IndexOf(Game.Config.Controllers, "human");
             View = new GameObject("World").AddComponent<WorldView>();
             View.Init(viewWorld, HumanTeam);
             Camera.Bounds = new Vector2(viewWorld.Map.W, viewWorld.Map.H);
@@ -352,11 +367,26 @@ namespace Pez.View
             // spectator the first seated team's; the map centre if nobody has a base yet. RtsCamera keeps it over the map.
             Camera.LookAt(WorldView.W(OpeningFocus(viewWorld, HumanTeam)));
             Camera.Distance = Camera.DefaultDist;
+            Web?.OnViewBuilt(Camera);
             CommandFeed.Clear();
             // A restart that came from the API (e.g. the LLM arena) should start playing immediately.
             if (!startingFromMenu && !firstView) InMenu = false;
             firstView = false;
             startingFromMenu = false;
+        }
+
+        /// <summary>
+        /// WebClient has restored a fresher snapshot into Game. If it's the game on screen, point the view at the new
+        /// world (camera, selection and effects stay) instead of rebuilding it; a different game is rebuilt by Update.
+        /// </summary>
+        public bool AdoptWorld(World w)
+        {
+            if (View == null || viewWorld == null || viewWorld.GameId != w.GameId) return false;
+            w.ErrorLog = viewWorld.ErrorLog;
+            View.Rebind(w);
+            viewWorld = w;
+            Camera.Bounds = new Vector2(w.Map.W, w.Map.H);
+            return true;
         }
 
         static Vec2 OpeningFocus(World w, int team)
@@ -387,6 +417,7 @@ namespace Pez.View
 
         void Update()
         {
+            if (Web != null && !Web.Loaded) return;
             Api?.Pump(Game);
             if (Game.World != viewWorld) RebuildView();
             if (!InMenu)

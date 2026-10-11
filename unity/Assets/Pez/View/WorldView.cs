@@ -24,6 +24,7 @@ namespace Pez.View
             public float LandK;          // aircraft: 0 flying, 1 parked on its pad (eases between)
             // Hull feel (MOTION.md): nose-up under acceleration, dip when braking, kick back on firing.
             public float HullSpeed, HullPitch, HullPitchVel;
+            public Vector3? EaseFrom; public Vector3 EaseOff; // a resync moved the entity: where it was drawn, and the offset from where it now is (bleeds off)
             // Mass in motion: the heavy's start squat, artillery deployed (0..1) and whether it has rammed this cycle.
             public float StartSquat, Deploy;
             public float Elev;           // artillery: the gun's elevation, 0 stowed on the bow lock .. 1 raised to fire
@@ -209,6 +210,40 @@ namespace Pez.View
         }
 
         public System.Action MapRebuilt;
+
+        /// <summary>
+        /// A fresher world of the same game replaces the one on screen (the web client's snapshot resync). Entity ids are
+        /// stable, so each view moves to its entity in the new world and keeps its model, animation state and effects;
+        /// whatever is gone from the new world is retired by the next Sync like any death, and new arrivals get views then.
+        /// </summary>
+        public void Rebind(World w)
+        {
+            bool sameMap = w.Map.W == World.Map.W && w.Map.H == World.Map.H && w.MapVersion == mapVersion;
+            // Shells in flight keep their views (and trails) when both worlds numbered them alike: same id, shooter and target. The rest are redrawn.
+            var shots = new Dictionary<int, Projectile>(); foreach (var p in World.Projectiles) shots[p.Id] = p;
+            var keep = new HashSet<int>(); foreach (var p in w.Projectiles) if (shots.TryGetValue(p.Id, out var o) && o.SourceId == p.SourceId && o.TargetId == p.TargetId) keep.Add(p.Id);
+            var drop = new List<int>(); foreach (var id in projectiles.Keys) if (!keep.Contains(id)) drop.Add(id);
+            foreach (var id in drop)
+            {
+                Destroy(projectiles[id].gameObject); projectiles.Remove(id); projectileStart.Remove(id);
+                if (shellShadows.TryGetValue(id, out var sh)) { Destroy(sh.gameObject); shellShadows.Remove(id); }
+            }
+            World = w;
+            foreach (var v in Views.Values)
+                if (w.ById.TryGetValue(v.E.Id, out var ne) && !ne.Dead)
+                {
+                    v.E = ne; // the rest keep their old entity until Sync retires them
+                    if (!ne.IsStructure && v.Rig.Root.gameObject.activeSelf) v.EaseFrom = v.Rig.Root.position; // the next Sync eases over from here
+                }
+            foreach (var t in shields.Values) Destroy(t.gameObject); // the newcomer domes are keyed by team: redrawn
+            shields.Clear();
+            if (sameMap) Terrain.Rebind(w.Map); else RebuildTerrain(); // the arena grew or changed hands: a new ground
+            Deposits.Init(w);
+            mapVersion = w.MapVersion;
+            lastSeq = w.Events.Count > 0 ? w.Events[w.Events.Count - 1].Seq : 0; // what happened before the snapshot isn't replayed
+            nextFog = 0;
+            if (PovTeam >= w.Teams.Count) PovTeam = -1;
+        }
 
         public void Sync(float alpha)
         {
@@ -672,6 +707,9 @@ namespace Pez.View
                 }
                 // Ground units ride up onto a structure's plinth and down its driveway ramp (leaving a producer, docking).
                 if (!e.IsAir) { var rp = rig.Root.position; float py = Plinths.HeightAt(rp); if (py > 0f) { rp.y += py; rig.Root.position = rp; } }
+                // A resync can move it (a command the local sim never saw, a tick of clock skew): the drawn position eases to the new one (~0.2 s), no jump.
+                if (v.EaseFrom is Vector3 was) { v.EaseOff = was - rig.Root.position; v.EaseFrom = null; if (v.EaseOff.sqrMagnitude > 16f) v.EaseOff = Vector3.zero; } // far = a teleport (unloaded, deployed): let it
+                if (v.EaseOff != Vector3.zero) { v.EaseOff *= Mathf.Exp(-Time.deltaTime * 14f); if (v.EaseOff.sqrMagnitude < 1e-4f) v.EaseOff = Vector3.zero; rig.Root.position += v.EaseOff; }
                 var targetRot = Quaternion.Euler(0, Yaw(e.Facing), 0);
                 rig.Root.rotation = Quaternion.Slerp(rig.Root.rotation, targetRot, Time.deltaTime * 14f);
                 if (!e.IsAir && e.Def.Armor != Armor.Infantry) HullFeel(v);
@@ -898,7 +936,7 @@ namespace Pez.View
         /// </summary>
         void HullFeel(EV v)
         {
-            float dt = Time.deltaTime;
+            float dt = Mathf.Min(Time.deltaTime, 0.03f); // the spring below is explicit: it diverges at ~0.2 s frames and goes NaN (for good) within a minute of them (seen in the 1 fps dev build)
             if (dt <= 0) return;
             var e = v.E;
             var hc = ClassOf(e);
@@ -911,6 +949,7 @@ namespace Pez.View
             float w = 6.2831853f / hc.Period;
             v.HullPitchVel += (w * w * (target - v.HullPitch) - 2f * hc.Damping * w * v.HullPitchVel) * dt;
             v.HullPitch = Mathf.Clamp(v.HullPitch + v.HullPitchVel * dt, -hc.Up * 1.6f, hc.Down * 1.6f);
+            if (!(Mathf.Abs(v.HullPitch) < 30f)) v.HullPitch = v.HullPitchVel = 0f; // NaN / runaway: start over
             v.Rig.Body.localRotation = Quaternion.Euler(v.HullPitch, 0, 0);
             if (e.Def.Key == "heavy_tank") v.StartSquat = Mathf.MoveTowards(v.StartSquat, accel > 0.4f ? 1f : 0f, dt / 0.25f);
             if (e.Def.Key == "heavy_tank" || Models.IsArtillery(e.Def.Key))

@@ -16,7 +16,8 @@ namespace Pez.View
 
         public static void Start()
         {
-            var args = System.Environment.GetCommandLineArgs();
+            if (GameRunner.IsWeb) return;
+            var args = GameRunner.Args;
             int i = System.Array.IndexOf(args, "-looktune");
             if (i < 0 || i + 1 >= args.Length || Object.FindFirstObjectByType<LookTune>() != null) return;
             var go = new GameObject("LookTune");

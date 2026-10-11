@@ -26,3 +26,4 @@ __pycache__/
 arena/web3d/bab.js
 arena/web3d/three-bundle.js
 arena/web3d/babylon/meta.json
+/build/

@@ -46,6 +46,7 @@ namespace Pez.View
             {
                 if (loaded) return ok;
                 loaded = true;
+                if (GameRunner.IsWeb) return ok = false; // WebGL2 has no compute shaders, and the voxelizer needs a worker thread
                 if (!SystemInfo.supportsComputeShaders || !SystemInfo.supports3DRenderTextures || !SystemInfo.supportsAsyncGPUReadback) return ok = false;
                 cs = Resources.Load<ComputeShader>("PezShaders/PezFireSim");
                 var vs = Resources.Load<Shader>("PezShaders/PezFireVolume");
@@ -61,7 +62,7 @@ namespace Pez.View
                 cube = go.GetComponent<MeshFilter>().sharedMesh;
                 Object.Destroy(go);
                 noise = NoiseTexture();
-                var args = System.Environment.GetCommandLineArgs();
+                var args = GameRunner.Args;
                 int di = System.Array.IndexOf(args, "-firedebug");
                 if (di >= 0 && di + 1 < args.Length)
                 {

@@ -109,13 +109,25 @@ namespace Pez.Sim
             while (accumulator >= World.Dt && steps < 100)
             {
                 accumulator -= World.Dt;
-                foreach (var ai in ais.ToList()) ai.Update(World);
-                World.Step();
-                HousePolicy();
+                Step();
                 steps++;
             }
             if (steps == 100) accumulator = 0; // don't spiral if we fall far behind
             return steps;
+        }
+
+        void Step()
+        {
+            foreach (var ai in ais.ToList()) ai.Update(World);
+            World.Step();
+            HousePolicy();
+        }
+
+        /// <summary>A restored world that was a fetch behind the view: run it up to `tick` (no clock, at most 60) and keep the view's 0..1 fraction of a tick.</summary>
+        public void CatchUp(int tick, float alpha)
+        {
+            for (int n = 0; World.Tick < tick && n < 60 && !World.GameOver; n++) Step();
+            accumulator = alpha * World.Dt;
         }
 
         /// <summary>0..1 fraction between the last two ticks, for view interpolation.</summary>

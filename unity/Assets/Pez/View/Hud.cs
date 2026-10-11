@@ -457,6 +457,8 @@ namespace Pez.View
             Text(new Rect(x, y, 120, h), clock, fMonoMed, 22, Ink); x += TextW(clock, fMonoMed, 22) + 16;
             Text(new Rect(x, y, 400, h), where, fSans, 14, Muted);
 
+            // The browser view follows the server's clock: no pause or speed of its own.
+            if (GameRunner.IsWeb) { TeamCards(brand.xMax + Gap, SW - Edge, y, h); return; }
             // Speed: pause, 1x 2x 4x, fog.
             var game = Runner.Game;
             string fog = Team >= 0 ? "Fog on" : "Fog off";
@@ -549,7 +551,7 @@ namespace Pez.View
 
         float JoinPanel(float y)
         {
-            if (!W.Open) return y;
+            if (!W.Open || GameRunner.IsWeb) return y; // the browser view has no gateway of its own to advertise
             var url = Runner.GatewayUrl ?? "(gateway not running)";
             string l1 = $"OPEN ARENA · {W.ActivePlayers}/{W.MaxPlayers} players · map {W.Map.W}×{W.Map.H} · to bring any agent in, tell it:";
             string l2 = $"Join the Pezz arena: read {url}/play and follow it.{(string.IsNullOrEmpty(Runner.Invite) ? "" : $" Invite code: {Runner.Invite}")}";
@@ -860,7 +862,7 @@ namespace Pez.View
             y += 26;
             Text(new Rect(x, y, inner, ordersH), ordersText, fSans, 14, agent && orders.Length > 0 ? Soft : Muted, TextAnchor.UpperLeft, true);
             y += ordersH;
-            if (!agent) return;
+            if (!agent || GameRunner.IsWeb) return; // the browser view only watches: orders would reach its local copy, not the agent
             y += 6;
             Text(new Rect(x, y, inner, 18), $"New order for {team.PlayerName ?? "the agent"}", fSans, 13, Muted); y += 26;
             if (!drafts.ContainsKey(team.Id)) drafts[team.Id] = "";
@@ -1461,10 +1463,13 @@ namespace Pez.View
             {
                 Round(new Rect(x, y + 13, 10, 10), 3, Mats.Team(t));
                 Text(new Rect(x + 18, y, 110, 36), Mats.TeamNames[t], fSansBold, 15, Ink);
-                float sx = x + 130, segW = (inner - 130 - 4 * 6) / 5;
-                for (int i = 0; i < ControllerOptions.Length; i++)
+                // The browser can't launch the Claude / Codex CLIs, so it offers only the seats that need no process.
+                var shown = Enumerable.Range(0, ControllerOptions.Length).Where(o => !GameRunner.IsWeb || (ControllerOptions[o] != "claude" && ControllerOptions[o] != "codex")).ToList();
+                float sx = x + 130, segW = (inner - 130 - (shown.Count - 1) * 6) / shown.Count;
+                for (int n = 0; n < shown.Count; n++)
                 {
-                    var br = new Rect(sx + i * (segW + 6), y, segW, 36);
+                    int i = shown[n];
+                    var br = new Rect(sx + n * (segW + 6), y, segW, 36);
                     bool on = cfg.Controllers[t] == ControllerOptions[i];
                     Round(br, 8, on ? Cream : Hover(br) ? BtnHot : Btn);
                     Text(br, ControllerLabels[i], on ? fSansBold : fSans, 14, on ? Night : Ink, TextAnchor.MiddleCenter);
@@ -1505,9 +1510,9 @@ namespace Pez.View
             if (Click(tr)) cfg.Open = !cfg.Open;
             y += 48;
 
-            Text(new Rect(x, y, inner, 20), $"LLM control API: http://127.0.0.1:{Runner.Port}/" + (Runner.ApiError != null ? $"  ({Runner.ApiError})" : ""), fMono, 13, Runner.ApiError != null ? Amber : Muted);
+            if (!GameRunner.IsWeb) Text(new Rect(x, y, inner, 20), $"LLM control API: http://127.0.0.1:{Runner.Port}/" + (Runner.ApiError != null ? $"  ({Runner.ApiError})" : ""), fMono, 13, Runner.ApiError != null ? Amber : Muted);
             y += 40;
-            Text(new Rect(x, y - 14, inner, 72), "<b>Claude</b> / <b>Codex</b>: the game launches that CLI and hands it the team over MCP (arena/battle.mjs).\n<b>External</b>: leave the team for any MCP client you connect yourself (mcp/server.js, PEZ_TEAM=n).", fSans, 13, Muted, TextAnchor.UpperLeft, true);
+            if (!GameRunner.IsWeb) Text(new Rect(x, y - 14, inner, 72), "<b>Claude</b> / <b>Codex</b>: the game launches that CLI and hands it the team over MCP (arena/battle.mjs).\n<b>External</b>: leave the team for any MCP client you connect yourself (mcp/server.js, PEZ_TEAM=n).", fSans, 13, Muted, TextAnchor.UpperLeft, true);
             y += 58;
             if (Runner.AgentStatus != null) Text(new Rect(x, y - 4, inner, 20), Runner.AgentStatus, fSans, 13, Amber);
             y += 18 + 8;

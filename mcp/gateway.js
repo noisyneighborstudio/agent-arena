@@ -175,6 +175,47 @@ function delayedFrame(room) {
   return best ? { ...best.frame, delay_s: WATCH_DELAY_S } : { waiting: `Spectator feed starts in ${Math.ceil((w.frames.length ? w.frames[0].at - cutoff : WATCH_DELAY_S * 1000) / 1000)}s (it runs ${WATCH_DELAY_S}s behind the game).` };
 }
 
+// The browser client's feed: the room's whole-world snapshot (GET /watch[/n]/snapshot), buffered and served
+// WATCH_DELAY_S late like the frames above so it can't be used to see through fog. Sampled every ~2 s, only while
+// someone has polled in the last minute, kept gzipped (the game builds the JSON; builds without the endpoint 4xx and are skipped).
+const SNAP_EVERY_MS = 2000, SNAP_WANTED_MS = 60000;
+const snaps = new Map(); // room id -> { items: [{ at, gz }], wantedAt, busy }
+setInterval(async () => {
+  for (const [id, w] of snaps) {
+    const room = rooms.get(id);
+    if (!room) { snaps.delete(id); continue; }
+    if (Date.now() - w.wantedAt > SNAP_WANTED_MS) { w.items.length = 0; continue; }
+    if (w.busy) continue;
+    w.busy = true;
+    try {
+      const r = await fetch(room.game + "/api/view/snapshot", { signal: AbortSignal.timeout(8000) });
+      if (r.ok) {
+        w.items.push({ at: Date.now(), gz: zlib.gzipSync(Buffer.from(await r.text()), { level: 6 }) });
+        while (w.items.length && Date.now() - w.items[0].at > (WATCH_DELAY_S + 10) * 1000) w.items.shift();
+      }
+    } catch {}
+    w.busy = false;
+  }
+}, SNAP_EVERY_MS).unref();
+function delayedSnapshot(room) {
+  let w = snaps.get(room.id);
+  if (!w) { w = { items: [], wantedAt: 0, busy: false }; snaps.set(room.id, w); }
+  w.wantedAt = Date.now();
+  const cutoff = Date.now() - WATCH_DELAY_S * 1000;
+  let best = null;
+  for (const f of w.items) if (f.at <= cutoff) best = f;
+  return { best, wait: Math.ceil((w.items.length ? w.items[0].at - cutoff : WATCH_DELAY_S * 1000) / 1000) };
+}
+function sendSnapshot(req, res, room) {
+  const { best, wait } = delayedSnapshot(room);
+  if (!best) { res.setHeader("retry-after", "3"); return send(res, 503, { ok: false, waiting: `Snapshot feed starts in ${Math.max(wait, 1)}s (it runs ${WATCH_DELAY_S}s behind the game).` }); }
+  const gz = /\bgzip\b/.test(req.headers["accept-encoding"] ?? "");
+  const body = gz ? best.gz : zlib.gunzipSync(best.gz);
+  res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", vary: "accept-encoding", "x-content-type-options": "nosniff",
+    "x-pezz-delay-s": String(WATCH_DELAY_S), "x-pezz-snapshot-age-s": String(Math.round((Date.now() - best.at) / 1000)), ...(gz ? { "content-encoding": "gzip" } : {}), "content-length": body.length });
+  res.end(body);
+}
+
 // ------------------------------------------------------------------ the public spectator's live video, delayed
 // Rooms with a renderer (the Unity host) have a spectator camera: the whole map, no fog, with its own director. The
 // gateway holds one upstream connection to it per room, keeps about WATCH_FPS frames a second in a ring a little
@@ -1160,6 +1201,13 @@ const server = http.createServer(async (req, res) => {
       const room = rooms.get(w3[1] ?? 1);
       if (!room) return send(res, 404, { ok: false, error: "no such room (see /lobby)" });
       return send3d(res, w3[1] ? `/watch/${room.id}` : "/watch", `spectator · room ${room.id}`);
+    }
+    // The browser client's snapshot feed (spike; not linked from any page): /watch[/<n>]/snapshot, delayed like /watch.
+    const sn = p.match(/^\/watch(?:\/(\d{1,3}))?\/snapshot$/);
+    if (sn) {
+      const room = rooms.get(sn[1] ?? 1);
+      if (!room) return send(res, 404, { ok: false, error: "no such room (see /lobby)" });
+      return sendSnapshot(req, res, room);
     }
     const wm = p.match(/^\/watch(?:\/(\d{1,3}))?(\/map|\/frame)?$/);
     if (wm) {

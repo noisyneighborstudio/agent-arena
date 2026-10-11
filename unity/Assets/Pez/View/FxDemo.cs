@@ -21,7 +21,8 @@ namespace Pez.View
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         static void Boot()
         {
-            var args = System.Environment.GetCommandLineArgs();
+            if (GameRunner.IsWeb) return;
+            var args = GameRunner.Args;
             for (int i = 0; i < args.Length; i++)
                 if (args[i] == "-fxdemo")
                 {
