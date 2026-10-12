@@ -564,8 +564,10 @@ namespace Pez.Sim
         /// 35: vehicles from a light tank up run over infantry (enemies by driving over them, and armed ones drive at enemy
         ///     infantry within 5 tiles); soldiers dodge; a vehicle waits on its own soldiers. The alert log's trim no longer
         ///     leaves trimmed alerts open.
+        /// 36: the observation feed (/api/observe, Observations.cs): a team's fogged view as an event log with cursors; commands
+        ///     get ids (cmd), the units they affected, and tracked outcomes; optional command-controller leases (/api/controller).
         /// </summary>
-        public const int RulesVersion = 35;
+        public const int RulesVersion = 36;
 
         public static JObj Rules()
         {

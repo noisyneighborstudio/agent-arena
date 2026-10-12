@@ -41,6 +41,39 @@ namespace Pez.Api
 
         readonly List<Waiter> waiters = new List<Waiter>();
 
+        /// <summary>A parked /api/observe long-poll: answered when something it wakes on arrives (after min_wait), or at its deadline.</summary>
+        class ObsWaiter
+        {
+            public HttpListenerContext Ctx;
+            public World World;
+            public int Team, Limit;
+            public string Stream;
+            public long Cursor;
+            public ObsFilter Filter;
+            public bool Snapshot;
+            public DateTime Started, MinUntil, Deadline;
+            public long CheckedHead = -1;
+        }
+        readonly List<ObsWaiter> obsWaiters = new List<ObsWaiter>();
+
+        /// <summary>
+        /// One command controller per team: a lease a client claims. While one is live, commands must carry it
+        /// (X-Pezz-Controller header or controller= query); read-only observers never need one. Leases lapse after
+        /// their TTL without use, and force:true takes over (the feed tells everyone it changed hands).
+        /// </summary>
+        class Lease { public string Id, Holder; public int Seat; public DateTime Expires; public float Ttl; }
+        readonly Dictionary<(World, int), Lease> leases = new Dictionary<(World, int), Lease>();
+
+        Lease LiveLease(World w, int team)
+        {
+            if (!leases.TryGetValue((w, team), out var l)) return null;
+            if (l.Expires < DateTime.UtcNow || l.Seat != w.Teams[team].Seat) { leases.Remove((w, team)); return null; }
+            return l;
+        }
+
+        static JObj LeaseJson(Lease l) => l == null ? new JObj().Set("held", false)
+            : new JObj().Set("held", true).Set("holder", l.Holder).Set("expires_in_s", (float)Math.Round((l.Expires - DateTime.UtcNow).TotalSeconds, 1)).Set("ttl_s", l.Ttl);
+
         readonly HttpListener listener = new HttpListener();
         readonly ConcurrentQueue<Pending> queue = new ConcurrentQueue<Pending>();
         Thread thread;
@@ -117,6 +150,35 @@ namespace Pez.Api
                 if (payload != null) Respond(p.Ctx, status, payload, contentType, p.Bulk); // null = parked waiter
             }
             ServiceWaiters(game);
+            ServiceObsWaiters(game);
+        }
+
+        void ServiceObsWaiters(Game game)
+        {
+            var now = DateTime.UtcNow;
+            for (int i = obsWaiters.Count - 1; i >= 0; i--)
+            {
+                var o = obsWaiters[i];
+                var w = game.World;
+                bool done = w != o.World || now >= o.Deadline || o.Team >= w.Teams.Count;
+                if (!done)
+                {
+                    var log = w.Observe.Log(o.Team);
+                    if (log.Stream != o.Stream) done = true; // a new seat or game since the poll began: answer with the gap
+                    else if (log.Head != o.CheckedHead || now >= o.MinUntil)
+                    {
+                        o.CheckedHead = log.Head;
+                        var (wake, immediate) = log.Wakes(o.Cursor, o.Filter);
+                        done = wake && (immediate || now >= o.MinUntil);
+                    }
+                }
+                if (!done) continue;
+                obsWaiters.RemoveAt(i);
+                if (o.Team >= w.Teams.Count) { Respond(o.Ctx, 410, Json.Write(new JObj().Set("ok", false).Set("error", "that seat no longer exists in this game")), "application/json"); continue; }
+                var r = w.Observe.Log(o.Team).Read(o.Stream, o.Cursor, o.Filter, o.Limit, o.Snapshot);
+                r.Set("waited_s", (float)Math.Round((now - o.Started).TotalSeconds, 2));
+                Respond(o.Ctx, 200, Json.Write(r), "application/json");
+            }
         }
 
         void ServiceWaiters(Game game)
@@ -250,7 +312,7 @@ namespace Pez.Api
                 case "":
                 case "/api":
                     contentType = "text/plain";
-                    return "Pezz RTS control API\n\nGET  /api/rules\nGET  /api/state?team=N[&since=SEQ]\nGET  /api/map?team=N\nGET  /api/alerts?team=N[&since=SEQ&min=medium|high|critical]\nGET  /api/wait?team=N&seconds=S[&since=ALERT_SEQ&events_since=SEQ&min=high|critical|none]  (returns early on a new priority alert)\nPOST /api/command?team=N   body: {\"commands\":[...]} | [...] | {...}\nPOST /api/join?team=N      body: {\"name\":\"Claude\"}\nGET  /api/status\nGET  /api/view/snapshot[?view=V]  (the world as a saved-game snapshot, no tokens or orders; with a view token, that team's fogged copy)\nPOST /api/admin/restart    body: {\"seed\":1,\"map_size\":112,\"controllers\":[\"llm\",\"llm\"],\"speed\":1,\"match_hours\":4}\nPOST /api/admin/speed      body: {\"speed\":0.5}\nPOST /api/admin/save       (saves the game now; a restarted host resumes it)\nGET  /api/admin/inventions (every agent-invented unit in this game, with its record)\nPOST /api/admin/orders?team=N  body: {\"text\":\"standing orders for that team's commander\"}\n\n" + Commands.Help;
+                    return "Pezz RTS control API\n\nGET  /api/rules\nGET  /api/state?team=N[&since=SEQ]\nGET  /api/map?team=N\nGET  /api/alerts?team=N[&since=SEQ&min=medium|high|critical]\nGET  /api/wait?team=N&seconds=S[&since=ALERT_SEQ&events_since=SEQ&min=high|critical|none]  (returns early on a new priority alert)\nPOST /api/command?team=N   body: {\"commands\":[...]} | [...] | {...}\nPOST /api/join?team=N      body: {\"name\":\"Claude\"}\nGET  /api/observe?team=N[&cursor=SEQ&stream=ID&wait=S&min_wait=S&cats=..&exclude=..&kinds=..&min=info|notice|warning|critical&wake=..&wake_kinds=..&detail=compact|full&limit=N]  (one team's fogged observation feed; long-polls with wait)\nGET  /api/observe/snapshot?team=N\nGET|POST /api/controller?team=N  body: {\"action\":\"claim|renew|release\",\"holder\":\"name\",\"ttl_s\":120,\"force\":false}\nGET  /api/status\nGET  /api/view/snapshot[?view=V]  (the world as a saved-game snapshot, no tokens or orders; with a view token, that team's fogged copy)\nPOST /api/admin/restart    body: {\"seed\":1,\"map_size\":112,\"controllers\":[\"llm\",\"llm\"],\"speed\":1,\"match_hours\":4}\nPOST /api/admin/speed      body: {\"speed\":0.5}\nPOST /api/admin/save       (saves the game now; a restarted host resumes it)\nGET  /api/admin/inventions (every agent-invented unit in this game, with its record)\nPOST /api/admin/orders?team=N  body: {\"text\":\"standing orders for that team's commander\"}\n\n" + Commands.Help;
                 case "/api/rules":
                     return Json.Write(StateView.Rules());
                 case "/api/state":
@@ -426,6 +488,16 @@ namespace Pez.Api
                     {
                         if (method != "POST") { status = 405; return "{\"ok\":false,\"error\":\"POST required\"}"; }
                         int team = TeamParam(req, w);
+                        var lease = LiveLease(w, team);
+                        var given = req.Headers["X-Pezz-Controller"] ?? req.QueryString["controller"];
+                        if (lease != null && given != lease.Id)
+                        {
+                            status = 409;
+                            return Json.Write(new JObj().Set("ok", false).Set("code", "controller_conflict")
+                                .Set("error", $"another client ({lease.Holder}) is this team's command controller; send its lease as X-Pezz-Controller, wait for it to lapse, or claim with force:true at /api/controller")
+                                .Set("controller", LeaseJson(lease)));
+                        }
+                        if (lease != null) lease.Expires = DateTime.UtcNow.AddSeconds(lease.Ttl);
                         w.Teams[team].LastActiveAt = w.Time;
                         var parsed = Json.Parse(p.Body ?? "[]");
                         List<object> cmds = parsed is List<object> l ? l
@@ -434,11 +506,94 @@ namespace Pez.Api
                         var results = new List<object>();
                         foreach (var cmd in cmds)
                         {
-                            var r = cmd is Dictionary<string, object> cd ? game.Execute(team, cd) : new JObj().Set("ok", false).Set("error", "each command must be an object");
+                            // Tracked: each command gets an id (cmd), the units it affected, and observations of what they then do.
+                            var r = cmd is Dictionary<string, object> cd ? w.Observe.Track(team, cd, () => game.Execute(team, cd)) : new JObj().Set("ok", false).Set("error", "each command must be an object");
                             results.Add(r);
                             OnCommand?.Invoke(team, Json.Write(cmd), Json.Write(r));
                         }
                         return Json.Write(new JObj().Set("results", results).Set("stockpile", StateView.Stockpile(w.Teams[team])).Set("time_s", (float)Math.Round(w.Time, 1)));
+                    }
+                case "/api/observe":
+                case "/api/observe/snapshot":
+                    {
+                        // One team's observation feed (Observations.cs). A control token or a view token: the feed is that
+                        // team's own fogged view, so there is no spectator (all-seeing) feed. Readers keep their own cursors.
+                        int team = ViewTeam(req, w);
+                        if (team < 0) { status = 400; return Json.Write(new JObj().Set("ok", false).Set("error", "observe is one team's view: send a player token, a view token (view=) or team=N")); }
+                        if (TokenFrom(req) != null) w.Teams[team].LastActiveAt = w.Time; // a player observing is playing
+                        var log = w.Observe.Log(team);
+                        if (path == "/api/observe/snapshot") return Json.Write(new JObj().Set("ok", true).Set("stream", log.Stream).Set("cursor", log.Head).Set("snapshot", log.Snapshot()));
+                        var q = req.QueryString;
+                        float F(string k, float def, float lo, float hi) => Math.Max(lo, Math.Min(hi, float.TryParse(q[k], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : def));
+                        long cursor = long.TryParse(q["cursor"], out var cv) ? cv : -1;
+                        var ow = new ObsWaiter
+                        {
+                            Ctx = p.Ctx, World = w, Team = team, Stream = q["stream"], Cursor = cursor,
+                            Filter = ObsFilter.Parse(k => q[k]), Limit = (int)F("limit", 500, 1, 2000), Snapshot = q["snapshot"] != "0",
+                            Started = DateTime.UtcNow,
+                        };
+                        float wait = F("wait", 0, 0, 60);
+                        ow.MinUntil = ow.Started.AddSeconds(F("min_wait", 0, 0, 60));
+                        ow.Deadline = ow.Started.AddSeconds(Math.Max(wait, (float)(ow.MinUntil - ow.Started).TotalSeconds));
+                        // Answer now: no wait asked, a fresh start, or a cursor that isn't on this stream (the gap is news).
+                        bool gap = cursor < 0 || (ow.Stream != null && ow.Stream != log.Stream) || cursor > log.Head || cursor < log.First - 1;
+                        if (wait <= 0 || gap || (log.Wakes(cursor, ow.Filter) is var wk && wk.wake && (wk.now || ow.MinUntil <= ow.Started)))
+                            return Json.Write(log.Read(ow.Stream, cursor, ow.Filter, ow.Limit, ow.Snapshot).Set("waited_s", 0));
+                        if (ow.Stream == null) ow.Stream = log.Stream;
+                        obsWaiters.Add(ow);
+                        return null;
+                    }
+                case "/api/controller":
+                    {
+                        // GET: who holds this team's command lease. POST {"action":"claim"|"renew"|"release","holder":"name","ttl_s":120,"force":false,"lease":"..."}.
+                        int team = TeamParam(req, w);
+                        var lease = LiveLease(w, team);
+                        if (method != "POST") return Json.Write(new JObj().Set("ok", true).Set("controller", LeaseJson(lease)));
+                        var d = Json.Parse(p.Body ?? "{}") as Dictionary<string, object> ?? new Dictionary<string, object>();
+                        var action = d.Str("action", "claim");
+                        var mine = d.Str("lease") ?? req.Headers["X-Pezz-Controller"];
+                        float ttl = Math.Max(10f, Math.Min(3600f, d.Num("ttl_s", 120)));
+                        var holder = Text.Clean(d.Str("holder", "controller") ?? "controller", 40);
+                        if (action == "release")
+                        {
+                            if (lease != null && lease.Id == mine) { leases.Remove((w, team)); w.Observe.Note(team, "match", "controller_changed", Sev.Notice, "server", new JObj().Set("from", lease.Holder).Set("to", null), $"{lease.Holder} released command of this team"); }
+                            return Json.Write(new JObj().Set("ok", true).Set("controller", LeaseJson(LiveLease(w, team))));
+                        }
+                        if (action == "renew")
+                        {
+                            if (lease == null || lease.Id != mine) { status = 409; return Json.Write(new JObj().Set("ok", false).Set("code", "controller_conflict").Set("error", "that lease isn't live; claim again").Set("controller", LeaseJson(lease))); }
+                            lease.Expires = DateTime.UtcNow.AddSeconds(lease.Ttl);
+                            return Json.Write(new JObj().Set("ok", true).Set("lease", lease.Id).Set("controller", LeaseJson(lease)));
+                        }
+                        bool force = d.TryGetValue("force", out var fo) && fo is bool fb && fb;
+                        if (lease != null && lease.Id != mine && !force)
+                        {
+                            status = 409;
+                            return Json.Write(new JObj().Set("ok", false).Set("code", "controller_conflict").Set("error", $"{lease.Holder} holds command of this team; force:true takes over").Set("controller", LeaseJson(lease)));
+                        }
+                        var nl = new Lease { Id = lease != null && lease.Id == mine ? lease.Id : NewToken().Substring(0, 24), Holder = holder, Seat = w.Teams[team].Seat, Ttl = ttl, Expires = DateTime.UtcNow.AddSeconds(ttl) };
+                        leases[(w, team)] = nl;
+                        if (lease == null || lease.Id != nl.Id)
+                            w.Observe.Note(team, "match", "controller_changed", Sev.Warning, "server", new JObj().Set("from", lease?.Holder).Set("to", holder).Set("forced", lease != null),
+                                lease != null ? $"{holder} took command of this team from {lease.Holder}" : $"{holder} is now this team's command controller");
+                        return Json.Write(new JObj().Set("ok", true).Set("lease", nl.Id).Set("controller", LeaseJson(nl))
+                            .Set("note", "Send the lease as the X-Pezz-Controller header on every command. Commands renew it; it lapses after ttl_s without one."));
+                    }
+                case "/api/admin/observe":
+                    {
+                        // Host: the feed's sampling cadence, heartbeat and retention for this game.
+                        var f = w.Observe;
+                        if (method == "POST")
+                        {
+                            var d = Json.Parse(p.Body ?? "{}") as Dictionary<string, object>;
+                            if (d != null)
+                            {
+                                if (!float.IsNaN(d.Num("interval_s"))) f.IntervalS = Math.Max(0.25f, Math.Min(10f, d.Num("interval_s")));
+                                if (!float.IsNaN(d.Num("heartbeat_s"))) f.HeartbeatS = Math.Max(1f, Math.Min(300f, d.Num("heartbeat_s")));
+                                if (!float.IsNaN(d.Num("retention"))) f.Retention = (int)Math.Max(50, Math.Min(100000, d.Num("retention")));
+                            }
+                        }
+                        return Json.Write(new JObj().Set("ok", true).Set("interval_s", f.IntervalS).Set("heartbeat_s", f.HeartbeatS).Set("retention", f.Retention));
                     }
                 case "/api/admin/restart":
                     {

@@ -8,6 +8,7 @@ namespace Pez.Sim
     {
         public string Key;
         public float Progress;   // seconds of work done
+        public long CmdId;       // the API command that queued it (observation feed), 0 = none
         public int StructureId;  // structures: the foundation entity being built; units: the building chosen to train it (0 = the first)
     }
 
@@ -743,7 +744,12 @@ namespace Pez.Sim
         public GameEvent Emit(string type, int team = -1, int a = 0, int b = 0, Vec2 pos = default, Vec2 pos2 = default, string key = null, string text = null)
         {
             var ev = new GameEvent { Seq = nextSeq++, Tick = Tick, Type = type, Team = team, A = a, B = b, Pos = pos, Pos2 = pos2, Key = key, Text = text };
+            // Which teams saw it go: only they may be told it was destroyed (the observation feed never reports deaths in the fog).
+            if (type == "destroyed" && Feed != null && ById.TryGetValue(a, out var gone))
+                for (int t = 0; t < Teams.Count && t < 31; t++)
+                    if (t != gone.Team && !gone.IsCarried && IsVisibleTo(t, gone)) ev.SeenBy |= 1 << t;
             Events.Add(ev);
+            Feed?.OnEmit(ev);
             EventCounts[type] = (EventCounts.TryGetValue(type, out var n) ? n : 0) + 1;
             if (Events.Count > MaxEvents) Events.RemoveRange(0, Events.Count - MaxEvents);
             return ev;
@@ -857,6 +863,7 @@ namespace Pez.Sim
 
         public void SetOrder(Entity e, Order o, Vec2 pos, int target = 0)
         {
+            Touched?.Add(e);
             e.Order = o;
             e.OrderPos = pos;
             e.TargetId = target;
@@ -934,7 +941,14 @@ namespace Pez.Sim
             Guard("regrowth", Regrow);
             TickOreVersion();
             if (Showcase != null) Guard("showcase", Showcase.Hold); // the kitchen sink room only (KitchenSink.cs)
+            if (!Mirror) Guard("observe", Observe.Tick);
         }
+
+        /// <summary>Each team's observation feed (Observations.cs): what its commander could notice, logged as it happens.</summary>
+        public ObservationFeed Feed;
+        public ObservationFeed Observe => Feed ??= new ObservationFeed(this);
+        /// <summary>While a tracked command runs: every unit whose order it set (the feed stamps them with the command's id).</summary>
+        public List<Entity> Touched;
 
         void UpdatePower()
         {
@@ -1075,6 +1089,7 @@ namespace Pez.Sim
                         team.Stats.UnitsBuilt++;
                         team.Stats.Count(item.Key);
                         if (u.Def.OwnerTeam >= 0 && Inventions.TryGetValue(item.Key, out var inv)) inv.Built++;
+                        u.CmdId = item.CmdId; // the observation feed credits its train command, then clears it
                         Emit("trained", team.Id, u.Id, pos: u.Pos, key: u.Def.Key);
                     }
                 }

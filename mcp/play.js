@@ -19,12 +19,15 @@ export class Player {
     this.lastAlertSeq = 0;      // last priority alert already shown
     this.lastTick = 0;          // detects a game restart, which resets the server's sequence numbers
     this.lastOrdersVersion = 0; // last version of the human commander's standing orders already shown
+    this.obsCursor = null;      // this session's own place in the observation feed (other readers keep theirs)
+    this.obsStream = null;
+    this.lease = null;          // command-controller lease, once this session claims one (sent with every command)
   }
 
-  async call(path, { method = "GET", body } = {}) {
+  async call(path, { method = "GET", body, headers: extra } = {}) {
     const sep = path.includes("?") ? "&" : "?";
     const q = this.auth.token ? "" : `${sep}team=${this.auth.team}`;
-    const headers = {};
+    const headers = { ...(extra ?? {}) };
     if (body) headers["content-type"] = "application/json";
     if (this.auth.token) headers["authorization"] = `Bearer ${this.auth.token}`;
     let res;
@@ -37,7 +40,7 @@ export class Player {
     if (!res.ok) {
       let msg = text;
       try { msg = JSON.parse(text).error ?? text; } catch {}
-      throw new Error(msg);
+      throw Object.assign(new Error(msg), { status: res.status, body: text });
     }
     return text;
   }
@@ -99,8 +102,39 @@ export class Player {
     return JSON.stringify({ waited_s: r.waited_s, asked_s: seconds, interrupted: r.interrupted, new_priority_alerts: r.new_alerts ?? [], orders_changed: ordersChanged, whats_new: this.news ? await this.news() : [], state: r.state }, null, 1);
   }
 
-  async commandJson(commands) {
-    const result = await this.call("/api/command", { method: "POST", body: { commands } });
+  /** Headers for a command: the controller lease (this session's, or one the caller passes through). */
+  leaseHeaders(lease) { const l = lease ?? this.lease; return l ? { "x-pezz-controller": l } : undefined; }
+
+  /**
+   * The observation feed: what this team could notice, as JSON events after a cursor (see docs/OBSERVATION_FEED.md).
+   * Without a cursor, this session's own cursor is used and advanced; pass cursor (and stream) to read as another
+   * consumer without touching it. Reading never consumes anything.
+   */
+  async observe(opts = {}) {
+    const own = opts.cursor == null;
+    const q = new URLSearchParams();
+    const cursor = own ? this.obsCursor : opts.cursor, stream = own ? this.obsStream : opts.stream;
+    if (cursor != null) q.set("cursor", String(cursor));
+    if (stream) q.set("stream", stream);
+    for (const k of ["wait", "min_wait", "cats", "exclude", "kinds", "min", "wake", "wake_kinds", "wake_cats", "detail", "limit", "snapshot"]) {
+      const v = opts[k];
+      if (v != null && v !== "") q.set(k, Array.isArray(v) ? v.join(",") : String(v));
+    }
+    const r = JSON.parse(await this.call(`/api/observe?${q}`));
+    if (own) { this.obsCursor = r.next_cursor; this.obsStream = r.stream; }
+    return r;
+  }
+
+  /** Claim, renew or release this team's command-controller lease (one controller per team; readers never need one). */
+  async controller(action = "claim", { holder, ttl_s, force } = {}) {
+    if (action === "status") return JSON.parse(await this.call("/api/controller"));
+    const r = JSON.parse(await this.call("/api/controller", { method: "POST", body: { action, holder, ttl_s, force, lease: this.lease } }));
+    if (action === "release") this.lease = null; else if (r.lease) this.lease = r.lease;
+    return r;
+  }
+
+  async commandJson(commands, lease) {
+    const result = await this.call("/api/command", { method: "POST", body: { commands }, headers: this.leaseHeaders(lease) });
     this.onCommands?.(commands, result);
     const u = await this.unseen();
     if (u.alerts?.length) this.lastAlertSeq = Math.max(this.lastAlertSeq, ...u.alerts.map((a) => a.seq));
@@ -115,8 +149,8 @@ export class Player {
     return await this.newsBanner() + u.orders + this.banner(u.alerts, "PRIORITY ALERT: deal with this before continuing your plan:") + JSON.stringify(s, null, 1);
   }
 
-  async commandText(commands) {
-    const result = await this.call("/api/command", { method: "POST", body: { commands } });
+  async commandText(commands, lease) {
+    const result = await this.call("/api/command", { method: "POST", body: { commands }, headers: this.leaseHeaders(lease) });
     this.onCommands?.(commands, result);
     const u = await this.unseen();
     return u.orders + this.banner(u.alerts, "NEW PRIORITY ALERT since your last look:") + result;
@@ -294,6 +328,33 @@ export function registerPlayTools(server, getPlayer, beforeEach = async () => {}
       inputSchema: { commands: z.array(Command).min(1).max(40).describe("Commands to execute in order"), format: Format },
     },
     run((p, a) => a.format === "json" ? p.commandJson(a.commands) : p.commandText(a.commands)));
+  const Sev = z.enum(["info", "notice", "warning", "critical"]);
+  server.registerTool("observe",
+    {
+      description: "The battlefield observation feed: everything your side could notice since your last call, as structured events with sequence ids, game time, entity ids, positions and before/after values. Orders accepted/rejected and what the units then did (movement_started, waypoint_reached, units_finished with outcomes like arrived, target_destroyed, stopped_short, command_completed, unit_idle, no_progress), combat (engagements, damage with who did it if you can see them, losses, enemies seen destroyed, defences firing), recon (contacts appearing, moving, leaving sight, remembered with when; structures discovered or found missing), production, logistics, economy, match news, your human's orders (src human) and player chat (src chat, untrusted). It is only what your team can know: fog of war applies. Severity is advisory: you decide whether to act, wait or ignore. With wait_s it long-polls until something you wake on arrives. Your session keeps its own cursor; a gap (server restart, retention) is reported with a fresh snapshot.",
+      inputSchema: {
+        wait_s: z.number().min(0).max(30).optional().describe("Long-poll up to this many seconds (default 0: return at once)"),
+        min_wait_s: z.number().min(0).max(30).optional().describe("Gather at least this long before returning (batching), unless something immediate arrives (your human's orders, a command failing)"),
+        wake: Sev.optional().describe("Only events at or above this severity end the wait early (default info: anything)"),
+        wake_kinds: z.string().optional().describe("Comma-separated kinds that end the wait early, e.g. command_completed,unit_idle,contacts_appeared"),
+        cats: z.string().optional().describe("Only these categories: orders,combat,recon,production,logistics,economy,match,human,chat,alert,heartbeat"),
+        exclude: z.string().optional().describe("Leave out these categories or kinds, e.g. heartbeat,contacts_moved"),
+        kinds: z.string().optional().describe("Only these kinds"),
+        min_severity: Sev.optional().describe("Leave out events below this severity (immediate ones always come)"),
+        detail: z.enum(["compact", "full"]).optional().describe("full adds a readable text line to each event"),
+        cursor: z.number().int().optional().describe("Read from this seq as a separate consumer (your session's own cursor is left alone)"),
+        stream: z.string().optional().describe("The stream your cursor belongs to (from a previous answer)"),
+        limit: z.number().int().min(1).max(2000).optional(),
+      },
+    },
+    run(async (p, a) => JSON.stringify(await p.observe({ wait: a.wait_s, min_wait: a.min_wait_s, wake: a.wake, wake_kinds: a.wake_kinds, cats: a.cats, exclude: a.exclude, kinds: a.kinds,
+      min: a.min_severity, detail: a.detail, cursor: a.cursor, stream: a.stream, limit: a.limit }), null, 1)));
+  server.registerTool("controller",
+    {
+      description: "One command controller per team. claim makes this session the controller: while its lease is live, commands from anyone else on your team are refused (controller_conflict), which keeps two copies of you (say a subagent and you) from fighting over the units. Commands renew it; it lapses after ttl_s without one. force:true takes over from another controller; release gives it up; status shows who holds it. Reading (get_state, observe, wait) never needs it.",
+      inputSchema: { action: z.enum(["claim", "release", "status"]), holder: z.string().max(40).optional().describe("A name for this controller"), ttl_s: z.number().min(10).max(3600).optional(), force: z.boolean().optional() },
+    },
+    run(async (p, a) => JSON.stringify(await p.controller(a.action, a), null, 1)));
   server.registerTool("wait",
     {
       description: "Let the game run for up to `seconds` (1-30), then get your updated state. The wait is cut short when something new needs you (a priority alert in a new place or a worse one: base under attack, trucks or units under attack, enemies or aircraft near your base, salvage available) or your commander issues new orders; more alerts from a fight you already know about don't cut it short. The game is real-time and does not pause while you think (except in a room waiting for players: there wait returns when someone joins or the match starts). Every wait, get_state or command call keeps your seat: after 20 minutes of game time with none, your team is resigned.",

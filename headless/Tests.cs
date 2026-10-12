@@ -37,6 +37,7 @@ namespace Pez.Headless
             Medic();
             Alerts();
             InterruptibleWait();
+            Observe();
             CommanderOrders();
             Transports();
             Engineers();
