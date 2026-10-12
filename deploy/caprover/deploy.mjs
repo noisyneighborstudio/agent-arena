@@ -32,7 +32,8 @@ const DOMAIN = opt("domain", "pezz-staging.sethwebster.com");
 const WEB = path.resolve(opt("web", path.join(ROOT, "build", "web")));
 const DRY = opt("dry-run", "");
 const log = (s) => console.log(`${new Date().toISOString().replace("T", " ").slice(0, 19)} caprover: ${s}`);
-const die = (s) => { log(s); process.exit(1); };
+const temp = []; // the staged bundle, removed however this ends
+const die = (s) => { log(s); for (const f of temp) fs.rmSync(f, { recursive: true, force: true }); process.exit(1); };
 const sh = (cmd, a, o = {}) => execFileSync(cmd, a, { cwd: ROOT, encoding: "utf8", ...o });
 
 // ------------------------------------------------------------------ 1. the bundle
@@ -43,6 +44,7 @@ const build = `${commit.slice(0, 7)} ${new Date().toISOString().slice(0, 16)}Z`;
 const stage = DRY ? path.resolve(DRY) : fs.mkdtempSync(path.join(os.tmpdir(), "pezz-caprover-"));
 fs.rmSync(stage, { recursive: true, force: true });
 fs.mkdirSync(stage, { recursive: true });
+if (!DRY) temp.push(stage);
 log(`staging ${commit.slice(0, 7)} in ${stage}`);
 const tracked = sh("git", ["ls-files", "-z", "--", "mcp", "arena/web3d", "unity/Assets/Pez/Resources/PezIcons", "unity/Assets/Pez/Resources/PezModels", "deploy/caprover"])
   .split("\0").filter((f) => f && !/(^|\/)(node_modules|\.DS_Store)|\.meta$|\.test\.js$/.test(f));
@@ -53,6 +55,7 @@ fs.writeFileSync(path.join(stage, "BUILD_INFO"), build + "\n");
 sh("chmod", ["-R", "a+rX,go-w", stage]); // the container's user reads the files root owns (Unity writes the build owner-only)
 fs.writeFileSync(path.join(stage, "captain-definition"), JSON.stringify({ schemaVersion: 2, dockerfilePath: "./deploy/caprover/Dockerfile" }, null, 1));
 const tar = path.join(os.tmpdir(), `pezz-${APP}-${commit.slice(0, 7)}.tar`);
+if (!DRY) temp.push(tar);
 sh("tar", ["-cf", tar, "-C", stage, "."], { env: { ...process.env, COPYFILE_DISABLE: "1" } });
 log(`bundle ${(fs.statSync(tar).size / 1e6).toFixed(1)} MB (${tracked.length} files, engine, browser build)`);
 if (DRY) { log(`dry run: bundle at ${tar}, staged files in ${stage}`); process.exit(0); }
