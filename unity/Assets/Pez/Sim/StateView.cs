@@ -166,7 +166,7 @@ namespace Pez.Sim
                 .Set("defeated", x.Defeated)).ToList();
             o.Set("opponents", enemies);
             int explored = t.Explored.Count(b => b);
-            o.Set("explored", $"{explored * 100 / t.Explored.Length}% of the map. Enemy bases are hidden until you scout them; bases start near map corners.");
+            o.Set("explored", $"{explored * 100 / t.Explored.Length}% of the map. Enemy bases are hidden until you scout them; bases start near map corners. ore_fields lists only the fields you've explored: scout the rest to find more surface ore.");
 
             o.Set("converters", w.Owned(team).Where(e => e.IsStructure && e.IsComplete && (e.Def.Recipes.Length > 0 || e.Def.Key == "fusion_reactor"))
                 .Select(e => $"#{e.Id} {e.Def.Key}: {(e.Working ? "working" : "IDLE (missing inputs)")}").ToList());
@@ -246,7 +246,7 @@ namespace Pez.Sim
             o.Set("ore_fields", OreFields(w, t.Explored).Select(f => $"{f.type} around {f.cx},{f.cy}: {f.tiles} tiles, {f.total} units").ToList());
             var deep = w.Map.Deep.Where(d => t.Surveyed.Contains(d.Id)).ToList();
             o.Set("mining_zones", deep.Count == 0
-                ? (object)(t.SurveySites.Count == 0 ? "none flagged yet: when surface ore runs low, train a geological_surveyor and 'prospect' (or 'survey' a spot): it flags every deep deposit it finds as a mining zone" : $"none found yet ({t.SurveySites.Count} survey(s) done): prospect further out")
+                ? (object)(t.SurveySites.Count == 0 ? "none flagged yet: when surface ore runs low, train a geological_surveyor and 'prospect' (or 'survey' a spot): it flags every deep deposit it finds as a mining zone (the other way on is exploring for more surface fields)" : $"none found yet ({t.SurveySites.Count} survey(s) done): prospect further out")
                 : deep.Select(d => ZoneLine(w, d, team)).ToList());
 
             o.Set("stats", new JObj()
@@ -549,8 +549,9 @@ namespace Pez.Sim
         /// 26: aircraft bingo margin 5% + 6 s (was 15% + 8 s); loss alerts stay 2 minutes; counters tip.
         /// 27: save_for (save up for one purchase); each home ore warns on its own.
         /// 28: agents can name their own team when they join (team_name).
+        /// 29: surface-ore alerts and rules spell out the only two ways on once home ore is gone: survey underground, or explore for fields.
         /// </summary>
-        public const int RulesVersion = 28;
+        public const int RulesVersion = 29;
 
         public static JObj Rules()
         {
@@ -577,6 +578,7 @@ namespace Pez.Sim
                 "Building: a command center builds one structure at a time (the rest queue; build says how many are ahead), and the cost is paid when you place it. Stockpile rates (+N/s) are net: income minus what converters and purchases use, averaged over about 15 s.",
                 "Counters (equal-cost tests): heavy tanks shred scout-buggy swarms; rocket soldiers shred tanks; buggies and riflemen shred rocket soldiers. A single-type army walks into its counter: bring a mix, and scout what you're facing first.",
                 "Infantry walk (0.8-1.05 tiles/s); every vehicle is faster. Use APCs, transport choppers or together:true to keep mixed groups together.",
+                "When the surface ore near your drop-offs runs out, " + World.OreWaysOn + ". Start on one before it does.",
                 "Deep mining: surface ore runs out, and fast: the fields by your base last about 5-10 minutes of hard mining. Start surveying before then, so a drill_rig is ready when they go dry. A geological_surveyor (factory) surveys for deep deposits: wherever it finds one (within 12 tiles of where it stops for 8s) it plants a flag, and that deposit becomes one of your mining zones (mining_zones in state: id, ore, position, amount left, status free/yours/taken/exhausted, who flagged it and when; only your team sees them). 'survey' checks one spot; 'prospect' sets surveyors roaming on their own: survey, flag, move on to the nearest unsurveyed spot, until nothing is left in the area (x, y, radius) or you give another order. They refuel by themselves and steer clear of enemy bases you know about. Each surveyor shows its survey phase in my_units (traveling with distance and ETA, surveying with seconds left, refuelling, stranded, failed) and, when a survey can't be done, why (unreachable site, out of fuel, off the map). Then 'drill' sends a drill_rig to a zone ({\"type\":\"drill\",\"units\":[RIG],\"zone\":ID}, or omit zone for the nearest free one): it drives there and deploys into a deep_mine on arrival, which pumps 4 ore/s of that zone's ore straight into your stockpile (no trucks needed) until it runs dry (it needs 50 power). One mine per zone. A rig parked within 3 tiles of a zone can also just 'deploy'.",
                 "Radar: a radar_dome lists enemy aircraft within 28 tiles as radar_contacts (even beyond its sight) and raises an 'enemy aircraft on radar' alert, high priority when they're near your base.",
                 "Orders: move and attack_move take \"waypoints\" (and \"loop\":true to patrol), \"together\":true (keep the slowest unit's pace; leaders wait for stragglers) and \"spread\":3 (tiles between units, against splash). set_retreat makes units pull back to base on their own below an HP %. train takes \"structure_id\" to pick which barracks or factory the units come out of.",
@@ -591,7 +593,7 @@ namespace Pez.Sim
                 "Rockets beat vehicles, rifles beat infantry, tanks are all-round. Heavy tanks splash.",
                 "Use attack_move to send armies; units fight what they meet. Use 'all' or 'idle' for units.",
                 "Omit x,y on build to auto-place near your base.",
-                "The map starts shrouded. Your base reveals a radius around it; units and harvesters reveal what they pass. Scout to find the enemy (bases start near corners). A radar_dome reveals 16 tiles around it.",
+                "The map starts shrouded. Your base reveals a radius around it; units and harvesters reveal what they pass. Scout to find the enemy (bases start near corners) and more ore: ore_fields lists only fields you've explored. A radar_dome reveals 16 tiles around it.",
             });
             o.Set("structures", Defs.All.Values.Where(d => d.IsStructure).Select(DefJson).ToList());
             o.Set("ores", "iron_ore and copper_ore near every corner (empty corners are expansion sites); crystal around the middle; uranium in small contested deposits at the centre. Mined fields slowly regrow, fastest in the middle");

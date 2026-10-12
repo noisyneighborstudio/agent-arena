@@ -2177,6 +2177,16 @@ namespace Pez.Sim
 
         /// <summary>How far from a drop-off a truck will pick a new field on its own.</summary>
         public const float LeashDist = 35f;
+        /// <summary>
+        /// What a team can do once the surface ore near its drop-offs is gone: there are only two ways on, and every
+        /// surface-ore alert says so (agents left idle trucks parked for an hour, not knowing).
+        /// </summary>
+        public static readonly string OreWaysOn =
+            "there are only two ways on. " +
+            "1) Go underground: train a geological_surveyor (factory) and 'prospect' (or 'survey' a spot) to flag deep deposits as mining_zones, then 'drill' a drill_rig onto one: a deep_mine pumps 4 ore/s with no trucks. " +
+            "2) Explore the map: ore_fields lists only fields in ground you've explored, so scout the rest (scout_buggy, recon_drone) to find more surface ore, then deploy an outpost_truck (or build a mining_refinery) beside a field you find and send trucks there with harvest x,y. " +
+            $"Trucks won't go looking on their own: they only mine within {(int)LeashDist} tiles of a drop-off";
+
         /// <summary>Within this many tiles of a drop-off counts as "home" ore.</summary>
         public const float HomeOreRadius = 20f;
 
@@ -2214,7 +2224,7 @@ namespace Pez.Sim
                 team.SurfaceWarnedAt = Time;
                 Alerts.Raise(this, team.Id, "surface_ore_exhausted", Priority.Medium, drops[0].Center, hit: false)
                       .Lost.Add($"the surface {Defs.Ores[k]} within {(int)HomeOreRadius} tiles of your drop-offs is down to {left[k]} ({100 * left[k] / was[k]}% of what was there). " +
-                                "Plan the next step now: survey for deep deposits (geological_surveyor, then drill_rig), hold a derrick, or put a refinery or outpost by a new field and guard it. When it's gone, trucks stop and wait for your call rather than driving off to far fields");
+                                "Plan the next step now: once it's gone, " + OreWaysOn);
             }
         }
 
@@ -2230,7 +2240,7 @@ namespace Pez.Sim
             team.SurfaceWarnedAt = Time;
             Alerts.Raise(this, truck.Team, "surface_ore_exhausted", Priority.Medium, tile.Center, hit: false)
                   .Lost.Add($"the ore near your bases is running out: mining truck #{truck.Id} is heading {(int)near} tiles from your nearest drop-off, to {tile.X},{tile.Y}. " +
-                            "Escort it, build a refinery or outpost by that field, or go deep: a geological_surveyor finds deposits and a drill_rig mines one with no trucks");
+                            "Escort it. Once the ore near home is gone, " + OreWaysOn);
         }
 
         /// <summary>A mining truck that can't find any surface ore means it's time to go deep.</summary>
@@ -2241,8 +2251,7 @@ namespace Pez.Sim
             team.SurfaceWarnedAt = Time;
             string what = type >= 0 ? Defs.Ores[type] : "surface ore";
             Alerts.Raise(this, truck.Team, "surface_ore_exhausted", Priority.Medium, truck.Pos, hit: false)
-                  .Lost.Add($"mining truck #{truck.Id} can't find any {what} near your drop-offs and is waiting (trucks don't drive off to far fields on their own). " +
-                            $"Your call: send it to a field you know with harvest x,y (escort it), build a refinery or outpost by a field so it's near a drop-off, or go deep: a geological_surveyor finds deposits and a drill_rig mines one with no trucks");
+                  .Lost.Add($"mining truck #{truck.Id} can't find any {what} within {(int)LeashDist} tiles of your drop-offs and is waiting. Your call: " + OreWaysOn);
         }
 
         // ------------------------------------------------------------------ fuel
