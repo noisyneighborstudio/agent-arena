@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Pezz v2 vehicle models: artillery, long_range_artillery and mining_truck (issues #3 and #4).
+"""Pezz v2 models: artillery, long_range_artillery and mining_truck (issues #3 and #4); recon_drone, transport_chopper and
+stealth_bomber (the aircraft that were placeholders or a three-slab handoff model).
 
 Writes glTF 2.0 binaries straight from numpy (no trimesh or Blender needed) into the game's model folder, plus a
 manifest (triangles, team-mask share, nodes, bounds) next to this script. Optional preview renders (a small software
 rasteriser, the game's default camera) are for iterating; the real check is the Unity build.
 
-  python3 art-src/tools/build_units_v2.py                  # write the three .glb files and units_v2.json
+  python3 art-src/tools/build_units_v2.py                  # write the .glb files and units_v2.json
   python3 art-src/tools/build_units_v2.py --preview /tmp/p  # also render stills (hero, poses, stream scale)
 
 The asset contract (docs/art/ASSETS.md):
@@ -52,6 +53,8 @@ MATS = {
     "dark": ("M_Dark", "#2A2E33", 0.0, 0.55, False),
     "bone": ("M_Bone", "#F6F2E8", 0.0, 0.3, False),
     "ore": ("M_Ore_Cinnamon", "#8A3A24", 0.0, 0.7, False),
+    "foil": ("M_Foil", "#C9A45C", 0.75, 0.3, False),
+    "cyan": ("M_E_Cyan", "#3FE6FF", 0.0, 0.3, True),   # laser and optics
 }
 
 
@@ -750,10 +753,200 @@ def mining_truck():
     return a
 
 
+# ---------------------------------------------------------------- aircraft
+def lathe(prof, seg=20, closed=False):
+    """Revolve a (radius, y) profile about Y. An open profile runs pole to pole (r = 0 at both ends); a closed one is
+    a ring (a duct). Wound outward."""
+    a = np.linspace(0, 2 * math.pi, seg, endpoint=False)
+    v, rings = [], []
+    for r, y in prof:
+        if r < 1e-9:
+            rings.append([len(v)]); v.append((0.0, y, 0.0))
+        else:
+            rings.append(list(range(len(v), len(v) + seg)))
+            v += [(r * math.cos(t), y, r * math.sin(t)) for t in a]
+    f = []
+    n = len(rings)
+    for k in range(n if closed else n - 1):
+        A, B = rings[k], rings[(k + 1) % n]
+        for i in range(seg):
+            j = (i + 1) % seg
+            if len(A) == 1:
+                f.append((A[0], B[j], B[i]))
+            elif len(B) == 1:
+                f.append((A[i], A[j], B[0]))
+            else:
+                f += [(A[i], A[j], B[j]), (A[i], B[j], B[i])]
+    m = Mesh(v, f)
+    vv = m.v[m.f]
+    if np.einsum("ij,ij->i", vv[:, 0], np.cross(vv[:, 1], vv[:, 2])).sum() < 0:
+        m.f = m.f[:, ::-1]
+    return m
+
+
+def ellipsoid(sx, sy, sz, x=0, y=0, z=0, seg=20, rings=10, top_only=False):
+    """An ellipsoid (semi-axes sx, sy, sz), or its upper half closed by a flat floor."""
+    k0 = rings // 2 if top_only else 0
+    prof = [(0.0, 0.0)] if top_only else []
+    prof += [(math.sin(math.pi * k / rings), -math.cos(math.pi * k / rings)) for k in range(k0, rings + 1)]
+    return lathe(prof, seg).xf(np.diag([sx, sy, sz]), (x, y, z))
+
+
+def rounded_ring(r0, r1, y0, y1, c, seg=24, steps=3):
+    """A duct: a ring with a rounded-rectangle section (inner radius r0, outer r1, corner radius c)."""
+    prof = []
+    for cx, cy, a0 in ((r1 - c, y0 + c, -90), (r1 - c, y1 - c, 0), (r0 + c, y1 - c, 90), (r0 + c, y0 + c, 180)):
+        for k in range(steps + 1):
+            t = math.radians(a0 + 90 * k / steps)
+            prof.append((cx + c * math.cos(t), cy + c * math.sin(t)))
+    return lathe(prof, seg, closed=True)
+
+
+def hull(points):
+    """The convex hull of a point cloud (a tapered or sloped convex part), wound outward."""
+    from scipy.spatial import ConvexHull
+    P = np.asarray(points, float)
+    h = ConvexHull(P)
+    used = np.unique(h.simplices)
+    remap = -np.ones(len(P), int); remap[used] = np.arange(len(used))
+    return orient_convex(P[used], remap[h.simplices])
+
+
+def rotor(a, node, blades, r0, r1, chord, pitch, tip=0.0, hub=0.04):
+    """Blades round a hub on a spinner node: each from r0 to r1, pitched about its own axis; cream tips trace the disc."""
+    a.add("steel", cyl(hub, 0.03, axis="y", seg=12), node)
+    a.add("dark", cyl(hub * 0.55, 0.05, axis="y", seg=10), node)
+    for k in range(blades):
+        R = ry(k * 360 / blades)
+        a.add("licorice", box(r1 - r0 - tip, 0.01, chord, R=R @ rx(pitch)).xf(None, R @ [(r0 + r1 - tip) / 2, 0, 0]), node)
+        if tip:
+            a.add("cream", box(tip, 0.011, chord, R=R @ rx(pitch)).xf(None, R @ [r1 - tip / 2, 0, 0]), node)
+
+
+# Counter-rotating spinners are authored upside down (rolled 180 deg about Z): PezMotion turns every spinner node the
+# same way about its own +Y, so a flipped one turns the other way. Their geometry is symmetric about the node's origin.
+FLIP = rz(180)
+
+
+def recon_drone():
+    """
+    Hero idea: a curious eye on four fans. Recon is all it does (sight 12, no gun), so the eye is exaggerated: a cream
+    gimbal ball under the nose with a big cyan lens, on the turret node, so the drone glances about when it idles. A
+    team shell over a smoke belly, an X of arms out to four rounded ducts, a two-blade fan in each (spinner,
+    spinner_1-3; the diagonal pairs counter-rotate), short skids for the pad. The long-range drone is this at 1.35x.
+    """
+    a = Model("recon_drone")
+    yb = 0.15
+    a.add("smoke", ellipsoid(0.13, 0.06, 0.2, 0, yb, 0))
+    a.add("team", ellipsoid(0.142, 0.08, 0.215, 0, yb + 0.005, -0.005, top_only=True))
+    a.add("steel", cyl(0.035, 0.016, 0, yb + 0.085, -0.07, axis="y", seg=14))          # the nav puck on the spine
+    a.add("steel", beam((0, yb + 0.05, -0.17), (0, yb + 0.15, -0.24), 0.012, 0.012))  # whip antenna
+    # Arms and ducts. +X is the model's left; spinner order: front left, front right, rear right, rear left.
+    for i, (sx, sz) in enumerate(((1, 1), (-1, 1), (-1, -1), (1, -1))):
+        c = np.array([sx * 0.25, yb + 0.01, sz * 0.24])
+        a.add("smoke", beam((sx * 0.07, yb, sz * 0.07), c, 0.045, 0.03))
+        a.add("smoke", rounded_ring(0.112, 0.146, -0.032, 0.032, 0.012).xf(None, c))
+        a.add("dark", cyl(0.03, 0.05, *c, axis="y", seg=12))                         # motor pod
+        sp = a.node("spinner" if i == 0 else f"spinner_{i}", None, c + [0, 0.032, 0], FLIP if i % 2 else None)
+        rotor(a, sp, 2, 0.02, 0.105, 0.034, 14, hub=0.022)
+    # The eye: a gimbal ball tucked under the nose, lens forward.
+    t = a.node("turret", None, (0, 0.09, 0.19))
+    a.add("steel", cyl(0.024, 0.07, 0, 0.065, -0.01, axis="y", seg=10), t)
+    a.add("cream", ellipsoid(0.08, 0.08, 0.08, seg=20, rings=10), t)
+    a.add("dark", cyl(0.058, 0.03, 0, 0.004, 0.068, seg=20), t)
+    a.add("cyan", cyl(0.044, 0.014, 0, 0.004, 0.085, seg=20), t)
+    # Skids.
+    for s in (-1, 1):
+        a.add("licorice", span(s * 0.085 - 0.012, s * 0.085 + 0.012, 0.0, 0.02, -0.13, 0.08))
+        for z in (-0.07, 0.03):
+            a.add("steel", beam((s * 0.085, 0.015, z), (s * 0.06, yb - 0.04, z), 0.014, 0.014))
+    return a
+
+
+def transport_chopper():
+    """
+    Hero idea: a flying bus for six. A long smoke cabin with three windows a side (one per two passengers), a team nose
+    and team rear pylon, the rear rotor raised on the pylon over the front one (spinner front, spinner_1 rear,
+    counter-rotating, cream blade tips that trace each disc), sponsons along the belly, a loading ramp under the tail.
+    """
+    a = Model("transport_chopper")
+    hw = 0.18
+    a.add("smoke", span(-hw, hw, 0.1, 0.42, -0.46, 0.42))
+    # Nose: tapering forward, the glazing on its slope.
+    a.add("team", hull([(x * hw, y, 0.4) for x in (-1, 1) for y in (0.1, 0.42)] +
+                       [(x * 0.12, y, 0.64) for x in (-1, 1) for y in (0.13, 0.27)]))
+    d = np.array([0.24, -0.15]); d /= np.linalg.norm(d); n = np.array([-d[1], d[0]])   # slope direction, normal (z, y)
+    pane = []
+    for t, w in ((0.08, 0.085), (0.19, 0.075)):   # inside the rounded rim of the slope
+        zy = np.array([0.4, 0.42]) + d * t
+        for off in (-0.004, 0.008):
+            z, y = zy + n * off
+            pane += [(-w, y, z), (w, y, z)]
+    a.add("dark", hull(pane))
+    # Tail and the raised rear pylon.
+    a.add("smoke", hull([(x * hw, y, -0.44) for x in (-1, 1) for y in (0.1, 0.42)] +
+                        [(x * 0.16, y, -0.64) for x in (-1, 1) for y in (0.28, 0.42)]))
+    a.add("team", hull([(x * 0.17, 0.4, z) for x in (-1, 1) for z in (-0.63, -0.2)] +
+                       [(x * 0.08, 0.62, z) for x in (-1, 1) for z in (-0.58, -0.36)]))
+    a.add("kraft", hull([(x * 0.14, y, z) for x in (-1, 1) for y, z in ((0.1, -0.44), (0.104, -0.46), (0.28, -0.645), (0.29, -0.64))]))  # ramp
+    # Windows, sponsons, wheels.
+    for s in (-1, 1):
+        for z in (-0.26, -0.06, 0.14):
+            a.add("dark", span(min(s * hw, s * (hw + 0.008)), max(s * hw, s * (hw + 0.008)), 0.26, 0.34, z - 0.05, z + 0.05))
+        a.add("dark", ellipsoid(0.055, 0.06, 0.3, s * 0.2, 0.15, -0.05, seg=16, rings=8))
+        for z, x in ((0.3, 0.15), (-0.32, 0.2)):
+            a.add("licorice", cyl(0.045, 0.035, s * x, 0.045, z, axis="x", seg=12))
+            a.add("steel", beam((s * x, 0.045, z), (s * (x - 0.04), 0.12, z), 0.016, 0.016))
+    # Rotor masts and rotors.
+    a.add("steel", cyl(0.035, 0.12, 0, 0.47, 0.32, axis="y", seg=12))
+    a.add("steel", cyl(0.035, 0.1, 0, 0.64, -0.47, axis="y", seg=12))
+    front = a.node("spinner", None, (0, 0.54, 0.32))
+    rear = a.node("spinner_1", None, (0, 0.7, -0.47), FLIP)
+    for sp in (front, rear):
+        rotor(a, sp, 3, 0.04, 0.52, 0.06, 8, tip=0.07, hub=0.05)
+    return a
+
+
+def stealth_bomber():
+    """
+    Hero idea: a black flying wing (the Reaper drone is this at 0.7x). A swept leading edge and a sawtooth trailing
+    edge, thickest at the centreline; a blended hump with a gold-foil windscreen, two engine humps with dark intakes and
+    steel exhaust trenches, and a team chevron along the leading edge (the edge strip that pulses while cloaked).
+    The wing is six convex panels whose tops meet flush, so it reads as one surface with panel lines.
+    """
+    a = Model("stealth_bomber")
+    span_x, nose = 0.7, 0.42
+    le = lambda x: nose - 0.52 * abs(x) / span_x                 # leading edge z at x
+    yt = lambda x: 0.175 - 0.05 * abs(x) / span_x               # top surface
+    yb = lambda x: 0.08 + 0.02 * abs(x) / span_x                 # belly
+    T, A, B, C, D = (0.7, -0.1), (0.52, -0.3), (0.34, -0.16), (0.16, -0.32), (0.0, -0.2)
+    panels = [[(0.34, le(0.34)), T, A, B], [(0.16, le(0.16)), (0.34, le(0.34)), B, C], [(0.0, nose), (0.16, le(0.16)), C, D]]
+    for s in (-1, 1):
+        for p in panels:
+            a.add("licorice", hull([(s * x, y(x), z) for x, z in p for y in (yt, yb)]))
+        # Team chevron on the leading edge, x 0.18 to 0.64.
+        pts = []
+        for x in (0.18, 0.64):
+            for dz in (0.03, 0.11):
+                for dy in (0.002, 0.012):
+                    pts.append((s * x, yt(x) + dy - 0.004, le(x) - dz))
+        a.add("team", hull(pts))
+        # Engine humps, intakes, exhaust trenches.
+        a.add("licorice", ellipsoid(0.075, 0.035, 0.2, s * 0.2, yt(0.2) - 0.005, 0.0, seg=16, rings=8))
+        a.add("dark", ellipsoid(0.055, 0.014, 0.03, s * 0.2, yt(0.2) + 0.012, 0.17, seg=12, rings=6))
+        a.add("dark", span(min(s * 0.13, s * 0.27), max(s * 0.13, s * 0.27), yt(0.2) - 0.02, yt(0.2) + 0.004, -0.25, -0.17))
+    a.add("licorice", ellipsoid(0.14, 0.07, 0.3, 0, 0.17, 0.06))
+    a.add("foil", ellipsoid(0.1, 0.028, 0.045, 0, 0.214, 0.21, seg=16, rings=8))   # wraparound visor
+    return a
+
+
 BUILDERS = {
     "artillery": lambda: artillery("artillery", L=1.1, W=0.66, barrel_len=1.36, lra=False),
     "long_range_artillery": lambda: artillery("long_range_artillery", L=1.4, W=0.7, barrel_len=1.85, lra=True),
     "mining_truck": mining_truck,
+    "recon_drone": recon_drone,
+    "transport_chopper": transport_chopper,
+    "stealth_bomber": stealth_bomber,
 }
 
 

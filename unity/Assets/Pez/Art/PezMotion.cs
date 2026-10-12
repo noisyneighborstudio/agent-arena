@@ -1,4 +1,5 @@
-// Drives the named animation nodes on a Pez model: turret, barrel, spinner, bin/bin_ore, door, lift.
+// Drives the named animation nodes on a Pez model: turret, barrel, spinner (plus spinner_1, spinner_2, ... on multi-rotor
+// aircraft), bin/bin_ore, door, lift.
 // Add to the root of an imported .glb prefab. The profile is looked up from PezMotionProfiles by asset key.
 // Gameplay code calls AimAt / ClearAim / Fire / SetWorking / SetDoorOpen / SetLiftUp / SetBinLoad / TipBin.
 using UnityEngine;
@@ -19,6 +20,9 @@ namespace Pez
         public float scanAmp = 40f;
 
         Transform turret, barrel, spinner, bin, binOre, door, lift, piston, mast, beam, oreTube;
+        /// <summary>More rotors (spinner_1, spinner_2, ...) turned with the spinner. A counter-rotating one is authored upside
+        /// down (rolled 180 deg about Z), so the same local spin turns it the other way.</summary>
+        Transform[] moreSpinners;
         Vector3 barrelRestPos;
         Quaternion turretRest, binRest;
         float yaw, targetYaw, recoilT = -1f, rpm, doorScale = 1f, doorTarget = 1f;
@@ -41,6 +45,9 @@ namespace Pez
             turret = FindDeep(transform, "turret");
             barrel = FindDeep(transform, "barrel");
             spinner = FindDeep(transform, "spinner");
+            var more = new System.Collections.Generic.List<Transform>();
+            for (Transform s; spinner && (s = FindDeep(transform, "spinner_" + (more.Count + 1))); ) more.Add(s);
+            moreSpinners = more.ToArray();
             bin = FindDeep(transform, "bin");
             binOre = FindDeep(transform, "bin_ore");
             door = FindDeep(transform, "door");
@@ -239,6 +246,7 @@ namespace Pez
                 rpm = Mathf.MoveTowards(rpm, goalRpm, rate * dt);
                 Vector3 axis = profile.spinnerAxis == 'X' ? Vector3.right : profile.spinnerAxis == 'Z' ? Vector3.forward : Vector3.up;
                 spinner.Rotate(axis, rpm * 6f * dt * machineRate, Space.Self);
+                foreach (var s in moreSpinners) s.Rotate(axis, rpm * 6f * dt * machineRate, Space.Self);
             }
 
             if (door)

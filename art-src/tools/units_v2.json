@@ -99,5 +99,98 @@
     0.727
    ]
   ]
+ },
+ {
+  "key": "recon_drone",
+  "file": "unity/Assets/Pez/Resources/PezModels/recon_drone.glb",
+  "tris": 5020,
+  "team_share_area": 0.144,
+  "team_share_visible": 0.257,
+  "material_share": {
+   "M_SmokePlastic": 0.602,
+   "M_Team": 0.144,
+   "M_Dark": 0.071,
+   "M_Licorice": 0.068,
+   "M_SpringSteel": 0.054,
+   "M_CreamPlastic": 0.051,
+   "M_E_Cyan": 0.01
+  },
+  "nodes": [
+   "spinner",
+   "spinner_1",
+   "spinner_2",
+   "spinner_3",
+   "turret"
+  ],
+  "bounds": [
+   [
+    -0.396,
+    0.0,
+    -0.386
+   ],
+   [
+    0.396,
+    0.303,
+    0.386
+   ]
+  ]
+ },
+ {
+  "key": "transport_chopper",
+  "file": "unity/Assets/Pez/Resources/PezModels/transport_chopper.glb",
+  "tris": 1248,
+  "team_share_area": 0.218,
+  "team_share_visible": 0.241,
+  "material_share": {
+   "M_SmokePlastic": 0.455,
+   "M_Team": 0.218,
+   "M_Dark": 0.128,
+   "M_Licorice": 0.109,
+   "M_Kraft": 0.04,
+   "M_SpringSteel": 0.033,
+   "M_CreamPlastic": 0.017
+  },
+  "nodes": [
+   "spinner",
+   "spinner_1"
+  ],
+  "bounds": [
+   [
+    -0.52,
+    0.0,
+    -0.936
+   ],
+   [
+    0.52,
+    0.725,
+    0.786
+   ]
+  ]
+ },
+ {
+  "key": "stealth_bomber",
+  "file": "unity/Assets/Pez/Resources/PezModels/stealth_bomber.glb",
+  "tris": 1392,
+  "team_share_area": 0.068,
+  "team_share_visible": 0.119,
+  "material_share": {
+   "M_Licorice": 0.882,
+   "M_Team": 0.068,
+   "M_Dark": 0.035,
+   "M_Foil": 0.014
+  },
+  "nodes": [],
+  "bounds": [
+   [
+    -0.7,
+    0.08,
+    -0.32
+   ],
+   [
+    0.7,
+    0.242,
+    0.42
+   ]
+  ]
  }
 ]

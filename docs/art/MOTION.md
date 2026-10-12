@@ -247,6 +247,27 @@ Units are tiles (1 tile = 1 Unity unit) and seconds. Rotation speeds are in degr
 - **Emerge:** Spawns on the airfield lift node, starting at y=−0.6 inside the pad. The lift rises to 0 over 1.2 s (ease-out). The aircraft spins up and climbs to cruise altitude (see its entry). The lift stays up until the aircraft is 1 tile away, then drops back down.
 - **Remove:** Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540°/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then sinks into the ground over 2 s.
 
+### `recon_drone`
+*Unarmed flying scout (sight 12). Hovers at 2.8. The long-range drone is the same model at 1.35x.* Built at **factory**.
+
+- **Locomotion:** rotor · max 4.5 t/s · accel 4.0 t/s² · decel 6.0 t/s² · turn 220°/s · turns in place: yes
+- **Mechanics:** Quadcopter: four ducted fans (spinner front left, spinner_1 front right, spinner_2 rear right, spinner_3 rear left); the diagonal pairs counter-rotate (spinner_1 and spinner_3 are authored upside down). Fans spin up 0→700 rpm over 0.6 s before it lifts off. It leans 6° into its velocity and banks into turns. The turret is its camera: a gimbal ball with a cyan lens, unarmed, so it only ever looks around.
+- **`spinner`:** axis=Y, idle_rpm=700, active_rpm=700, spinup_s=0.6
+- **`turret`:** yaw_speed_deg=240, yaw_limit_deg=360, idle_scan=True
+- **Idle:** Hovering: altitude bob ±0.08 on a 3.7 s sine. The camera holds forward, then glances up to ±72° and back now and then (curious).
+- **Emerge:** Spawns inside the factory, 0.6 behind its door node. The door rolls up (localScale.y 1→0.05, 0.35 s), the unit drives out along −Z at 60% speed to a point 1.5 tiles south, then takes its rally order. The door rolls down 0.5 s after the unit clears.
+- **Remove:** Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540°/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then sinks into the ground over 2 s.
+
+### `transport_chopper`
+*Tandem-rotor transport for 6 infantry. Hovers at 2.6.* Built at **airfield**.
+
+- **Locomotion:** rotor · max 3.5 t/s · accel 2.0 t/s² · decel 3.0 t/s² · turn 120°/s · turns in place: yes
+- **Mechanics:** Rotorcraft: it can strafe and turn in place. Two three-blade rotors (spinner front, spinner_1 rear on the raised pylon) counter-rotate (spinner_1 is authored upside down); cream blade tips trace each disc. Takeoff: spins up 0→260 rpm over 1.2 s, then climbs to 2.6. Loading and unloading happen landed (the rear ramp faces the squad).
+- **`spinner`:** axis=Y, idle_rpm=260, active_rpm=260, spinup_s=1.2
+- **Idle:** Hovering: altitude bob ±0.08 on a 3.7 s sine.
+- **Emerge:** Spawns on the airfield lift node, starting at y=−0.6 inside the pad. The lift rises to 0 over 1.2 s (ease-out). The aircraft spins up and climbs to cruise altitude (see its entry). The lift stays up until the aircraft is 1 tile away, then drops back down.
+- **Remove:** Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540°/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then sinks into the ground over 2 s.
+
 ### `stealth_bomber`
 *High-altitude bomber. Never stops.* Built at **airfield**.
 

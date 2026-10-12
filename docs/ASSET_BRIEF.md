@@ -88,8 +88,8 @@ You're the art director and lead asset designer for **Pezz**, a modern, high-res
 | minelayer | 0.9 | tracked vehicle with a hazard-yellow mine hopper | – |
 | mine | 0.32 wide | flat disc mine with team ring and blinking red light | – |
 | mammoth_tank | 1.5 | super-heavy twin-cannon tank with side missile pods | `turret`, `barrel` |
-| recon_drone | 0.5 | quadcopter drone with a cyan camera eye (flies 2.8 up) | – |
-| transport_chopper | 1.3 | twin-rotor transport helicopter (flies 2.6 up) | `spinner` (rotors) |
+| recon_drone | 0.8 | ducted quadcopter with an oversized cyan camera eye on a gimbal (flies 2.8 up) | `spinner`, `spinner_1`–`spinner_3` (fans), `turret` (camera) |
+| transport_chopper | 1.3 | tandem-rotor transport helicopter (flies 2.6 up) | `spinner` (front rotor), `spinner_1` (rear rotor) |
 
 ### Assets the game doesn't have yet (design these too)
 

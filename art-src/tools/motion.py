@@ -86,6 +86,18 @@ UNITS = [
    "The turret is a chin gun (±120°). Rocket pods fire as salvos of 4, alternating sides 0.1 s apart. Landing reverses this.",
    dict(spinner=dict(axis='Y', idle_rpm=600, active_rpm=600, spinup_s=1.0), **TURRET(220, 120), **BARREL(.02, .02, .06)),
    "Hovering: altitude bob ±0.05 on a 2.2 s sine and yaw drift ±3°."),
+ U('recon_drone', 'Unarmed flying scout (sight 12). Hovers at 2.8. The long-range drone is the same model at 1.35x.', 'factory', 'rotor', 4.5, 4.0, 220, True,
+   "Quadcopter: four ducted fans (spinner front left, spinner_1 front right, spinner_2 rear right, spinner_3 rear left); the diagonal pairs "
+   "counter-rotate (spinner_1 and spinner_3 are authored upside down). Fans spin up 0→700 rpm over 0.6 s before it lifts off. It leans 6° into its "
+   "velocity and banks into turns. The turret is its camera: a gimbal ball with a cyan lens, unarmed, so it only ever looks around.",
+   dict(spinner=dict(axis='Y', idle_rpm=700, active_rpm=700, spinup_s=.6), **TURRET(240)),
+   "Hovering: altitude bob ±0.08 on a 3.7 s sine. The camera holds forward, then glances up to ±72° and back now and then (curious)."),
+ U('transport_chopper', 'Tandem-rotor transport for 6 infantry. Hovers at 2.6.', 'airfield', 'rotor', 3.5, 2.0, 120, True,
+   "Rotorcraft: it can strafe and turn in place. Two three-blade rotors (spinner front, spinner_1 rear on the raised pylon) counter-rotate "
+   "(spinner_1 is authored upside down); cream blade tips trace each disc. Takeoff: spins up 0→260 rpm over 1.2 s, then climbs to 2.6. "
+   "Loading and unloading happen landed (the rear ramp faces the squad).",
+   dict(spinner=dict(axis='Y', idle_rpm=260, active_rpm=260, spinup_s=1.2)),
+   "Hovering: altitude bob ±0.08 on a 3.7 s sine."),
  U('stealth_bomber', 'High-altitude bomber. Never stops.', 'airfield', 'fixed_wing', 4.5, 1.5, 45, False,
    "Fixed wing: it must keep moving, with a minimum speed of 2.5. Its turn radius comes from the turn rate and its current speed. It banks up to 35° in turns. "
    "Takeoff: it rises on the lift, then accelerates along −Z and climbs to 3.2 over 2.5 tiles. "

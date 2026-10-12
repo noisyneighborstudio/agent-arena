@@ -73,7 +73,7 @@ namespace Pez.View
 
         static readonly Dictionary<string, GameObject> modelCache = new Dictionary<string, GameObject>();
         static readonly Dictionary<(Material, int), Material> tinted = new Dictionary<(Material, int), Material>();
-        static readonly Dictionary<string, float> Altitudes = new Dictionary<string, float> { { "gunship", 2.4f }, { "stealth_bomber", 3.2f } };
+        static readonly Dictionary<string, float> Altitudes = new Dictionary<string, float> { { "gunship", 2.4f }, { "stealth_bomber", 3.2f }, { "recon_drone", 2.8f }, { "transport_chopper", 2.6f } };
 
         /// <summary>The art pack's model for a key (Resources/PezModels/<key>.glb), or null if there isn't one yet.</summary>
         public static GameObject ModelFor(string key)
@@ -589,6 +589,7 @@ namespace Pez.View
                 if (rig.Motion.profile.turretYawSpeed > 0) rig.Motion.profile.turretYawSpeed = Mathf.Max(rig.Motion.profile.turretYawSpeed, 240f);
                 // Idle scan per class (MOTION.md): heavies sweep +-25 deg, artillery holds still.
                 if (key == "heavy_tank") rig.Motion.scanAmp = 25f;
+                if (key == "recon_drone") rig.Motion.scanAmp = 120f; // the camera is curious: glances up to +-72 deg
                 if (IsArtillery(key)) rig.Motion.idleScan = false;
                 rig.SpadeL = PezMotion.FindDeep(go.transform, "spade_l");
                 rig.SpadeR = PezMotion.FindDeep(go.transform, "spade_r");
