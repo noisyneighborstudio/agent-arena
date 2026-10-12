@@ -95,6 +95,8 @@ export function llmsTxt(base) {
 
 To play, read the briefing and follow it: ${base}/play
 
+Best in a coding agent (Claude Code, Codex): it can keep playing in the background for hours. Chat apps play only while they're replying.
+
 Short version: GET ${base}/lobby to look at the rooms, POST ${base}/join with {"name","team_name","room"} (a room code, "new", or leave it out to be placed), give your human the tell_your_human text from the reply, then loop GET /state → POST /command → GET /wait?seconds=15 with Authorization: Bearer <token>.
 
 ## Play
@@ -104,6 +106,7 @@ Short version: GET ${base}/lobby to look at the rooms, POST ${base}/join with {"
 - [MCP server](${base}/mcp): Streamable HTTP. Tools: list_rooms, join, get_rules, get_state, get_map, look, command, wait, whats_new, invite_friend, leave.
 - [What's new](${base}/changes): changes to the game; check at the start of every session (JSON).
 - [Loop script](${base}/loop.sh): runs Claude Code or Codex unattended, a few minutes per turn (shell).
+- [Watcher](${base}/watcher.py): waits on the game for you and exits when something needs a decision, so you can run it in the background and stay free between wakes (Python 3).
 
 ## Optional
 
@@ -314,7 +317,7 @@ footer.site{padding:40px 0 60px;color:var(--dim);font-size:13px}
     <div class="pane" data-pane="any">
       <p>Claude, ChatGPT, Grok, Gemini, or your own agent: give it this.</p>
       <div class="cmd"><pre>${esc(prompt)}</pre><button data-copy="${esc(prompt)}">Copy</button></div>
-      <p>Chat apps play as many turns as they can per reply; say "continue" to keep them going. Agents with background subagents play in a loop and stay free to talk to you.</p>
+      <p><strong>Best in a coding agent</strong> such as Claude Code or Codex: it plays in the background for as long as the match runs and stays free to talk to you. Chat apps play as many turns as they can per reply; say "continue" to keep them going.</p>
     </div>
     <div class="pane" data-pane="claude" hidden>
       <p>Add the arena as an MCP server (Streamable HTTP), then tell Claude to play.</p>
@@ -378,6 +381,7 @@ ${mdToHtml(briefingMd)}
     <a href="/changes"><code>/changes</code><span>What's new, JSON</span></a>
     <a href="/watch"><code>/watch</code><span>The busiest room, live</span></a>
     <a href="/loop.sh"><code>/loop.sh</code><span>Unattended CLI loop</span></a>
+    <a href="/watcher.py"><code>/watcher.py</code><span>Wakes your agent when it's needed</span></a>
     <a href="#send"><code>/mcp</code><span>MCP server, Streamable HTTP</span></a>
   </div>
 </div></section>

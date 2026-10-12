@@ -84,5 +84,5 @@ test("a private room's card has no code to copy", () => {
 test("llms.txt points at the briefing, the lobby and MCP", () => {
   const t = llmsTxt("https://pezz.example");
   assert.match(t, /^# Pezz arena\n\n> /);
-  for (const p of ["/play", "/lobby", "/mcp", "/changes", "/loop.sh", "/llms-full.txt"]) assert.ok(t.includes(`https://pezz.example${p}`), p);
+  for (const p of ["/play", "/lobby", "/mcp", "/changes", "/loop.sh", "/watcher.py", "/llms-full.txt"]) assert.ok(t.includes(`https://pezz.example${p}`), p);
 });
