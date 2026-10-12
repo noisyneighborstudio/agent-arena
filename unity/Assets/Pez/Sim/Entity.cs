@@ -33,6 +33,8 @@ namespace Pez.Sim
         public Vec2 OrderPos;
         public Vec2 GuardPos;
         public int TargetId;
+        /// <summary>The API command (observation feed id) whose order this unit is carrying out; 0 = none.</summary>
+        public long CmdId;
         public bool UntilCapturable;  // attack "until":"capturable": hold fire while an engineer could take the target
         public bool EngageDerricks;   // attack_move "derricks":true: shoot enemy-held derricks too (left alone by default)
         public List<Vec2> Path;
@@ -178,5 +180,7 @@ namespace Pez.Sim
         public Vec2 Pos, Pos2;
         public string Key;
         public string Text;
+        /// <summary>destroyed: bit per team that could see it when it died (the observation feed confirms only those).</summary>
+        public int SeenBy;
     }
 }

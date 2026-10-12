@@ -561,8 +561,10 @@ namespace Pez.Sim
         /// 33: set_retreat pulls back once per wound (a later order sticks); aircraft retreat to a pad and land.
         /// 34: a patrol whose points are all within 4 tiles holds instead; a group's slots are at least its biggest unit apart;
         ///     units stepping aside don't move others aside (no more pairs shuffling forever).
+        /// 35: the observation feed (/api/observe, Observations.cs): a team's fogged view as an event log with cursors; commands
+        ///     get ids (cmd), the units they affected, and tracked outcomes; optional command-controller leases (/api/controller).
         /// </summary>
-        public const int RulesVersion = 34;
+        public const int RulesVersion = 35;
 
         public static JObj Rules()
         {

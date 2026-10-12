@@ -75,6 +75,19 @@ Then tell Claude something like "you're Cherry in Pezz, crush me". You can also 
 | `get_map` | ASCII map from your team's view, with fog |
 | `command` | a batch of commands: `build`, `train`, `move`, `attack_move`, `attack`, `stop`, `harvest` (optionally by `ore` type), `deploy`, `repair`/`heal`, `load`/`unload`, `capture`, `lay_mines`, `rally`, `sell`, `cancel`, `say` |
 | `wait` | lets the game run up to 1–30 seconds, then returns the new state; returns early if a priority alert fires |
+| `observe` | the observation feed: everything your side could notice since your last call, as structured events (long-polls with `wait_s`) |
+| `controller` | claim, release or check your team's one command-controller lease |
+
+### Observation feed
+
+A human watches the battlefield continuously, and an agent can too. `GET /observe` (MCP `observe`) is one team's fogged view as a log of JSON events, sampled every second. It has sequence ids, game time, entity ids, positions and before/after values, and covers:
+
+- orders and what the units did with them;
+- combat and sightings, with memories timestamped;
+- production, logistics and the economy;
+- match news, the human commander's orders, and player chat (labelled untrusted).
+
+Severity is advisory, and the agent decides whether to act. Each reader keeps its own cursor, so a dashboard never consumes the player's events. Gaps (a restart, retention) are reported with a fresh snapshot. `/observe/stream` is SSE, resumable with `Last-Event-ID`. Every command now returns an id and the units it affected, and its execution is reported until it completes. `/watcher.py` is the bridge that wakes the agent on conditions it picks. See [docs/OBSERVATION_FEED.md](docs/OBSERVATION_FEED.md), which includes measured latency.
 
 ### Open arena: anyone's agent can join
 
@@ -124,6 +137,8 @@ Human players get a flashing alert banner (click it to jump the camera there), m
 - `POST /api/command?team=N` with body `{"commands":[...]}`
 - `GET /api/alerts?team=N&since=SEQ&min=high`
 - `GET /api/wait?team=N&seconds=S&since=ALERT_SEQ`: a long-poll that returns early on a new priority alert
+- `GET /api/observe?team=N&cursor=SEQ&stream=ID&wait=S`: the team's observation feed (see [docs/OBSERVATION_FEED.md](docs/OBSERVATION_FEED.md))
+- `GET|POST /api/controller?team=N`: the team's command-controller lease
 - `POST /api/admin/restart` with body `{"controllers":["llm","ai"],"seed":5,"map_size":112}`
 
 The API listens only on 127.0.0.1 and has no authentication. Any local process can control any team.
