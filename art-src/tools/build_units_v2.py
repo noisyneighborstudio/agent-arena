@@ -16,6 +16,7 @@ The asset contract (docs/art/ASSETS.md):
     the hull's rear; WorldView raises them for travel and plants them when the gun deploys).
   - Geometry nodes are <parent>__<material>. M_Team is the team mask (exported Blueberry blue), M_E_* glow.
 """
+import round_models
 import argparse
 import json
 import math
@@ -1009,7 +1010,9 @@ def main():
         manifest.append(entry)
         print(f"{k:22s} {tris:5d} tris  team {entry['team_share_area'] * 100:4.1f}% of area, {entry['team_share_visible'] * 100:4.1f}% seen  bounds {entry['bounds']}")
         if not a.no_write:
-            m.write(os.path.join(OUT, f"{k}.glb"))
+            path = os.path.join(OUT, f"{k}.glb")
+            m.write(path)
+            round_models.round_file(path, path, round_models.RADIUS, round_models.MAX_RADIUS, round_models.MIN_RADIUS) # Pez are rounded: no sharp edge ships
     if not a.no_write and not a.only:
         with open(os.path.join(HERE, "units_v2.json"), "w") as fh:
             json.dump(manifest, fh, indent=1)
