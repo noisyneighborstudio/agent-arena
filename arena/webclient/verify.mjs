@@ -101,12 +101,12 @@ if (!CMD) {
   await fetch(`${ENGINE}/api/command`, { method: "POST", headers: { authorization: `Bearer ${TOKEN.replace(/^r\d+-/, "")}` }, body: JSON.stringify([{ type: "say", text: "CI room check" }]) }).catch(() => {});
 }
 
-// ------------------------------------------------------------------ 0. the showcase page: catalog, click an exhibit, the view reloads on it
+// ------------------------------------------------------------------ 0. the showcase page: catalog, click an exhibit, the camera flies to it
 async function showcasePage() {
   const ctx = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
   const page = await ctx.newPage();
   const t = track(page);
-  const loaded = await loadView(page, t, `${PAGE}/ci-room`, "showcase page", 60000);
+  const loaded = await loadView(page, t, `${PAGE}/ci-room?camlog=1`, "showcase page", 60000);
   const items = await until(async () => { const n = await page.locator("#list .it").count(); return n >= 20 && n; }, 20000);
   const districts = await page.locator("#list .dh").count();
   ok("showcase page: the catalog lists the districts and exhibits", items && districts >= 12, `${districts} districts, ${items} exhibits`);
@@ -114,21 +114,21 @@ async function showcasePage() {
   await page.mouse.move(900, 600);
   await sleep(3000);
   await page.screenshot({ path: `${OUT}/c0-showcase.png` });
-  // Click an exhibit: the view reloads at its camera and the new load gets a snapshot.
+  // Click an exhibit: the running build flies its camera there; the view isn't reloaded.
   const target = page.locator("#list .it").nth(5);
   const name = (await target.locator("b").textContent()) ?? "";
-  const before = t.resyncs;
+  const frameUrl = () => page.frames().map((f) => f.url()).find((u) => u.includes("/watch/web")) ?? "";
+  const urlBefore = frameUrl(), resyncsBefore = t.resyncs;
+  let navigated = false;
+  page.on("framenavigated", (f) => { if (f !== page.mainFrame()) navigated = true; });
   await target.click();
-  const cam = await until(() => { const m = /cam=([-\d.]+)%2C([-\d.]+)%2C([-\d.]+)|cam=([-\d.]+),([-\d.]+),([-\d.]+)/.exec(page.frames().map((f) => f.url()).join(" ")); return m; }, 8000);
-  ok("showcase page: clicking an exhibit reloads the view at its camera", !!cam, `${name}: ${cam ? cam[0] : "no cam= in the view URL"}`);
-  let reloaded = await until(() => t.resyncs > before, 45000);
-  if (!reloaded) { // the same one-off load failure loadView retries
-    results.push({ name: "showcase page: the reloaded view loaded on the second try", pass: true, warn: true, detail: "no snapshot in 45 s" });
-    console.log("WARN  showcase page: the reloaded view got no snapshot in 45 s; clicking the exhibit again");
-    await target.click();
-    reloaded = await until(() => t.resyncs > before, 45000);
-  }
-  ok("showcase page: the reloaded view gets its first snapshot", reloaded);
+  const want = await page.evaluate(() => flat[cur]);
+  const near = () => t.cam && Math.hypot(t.cam.x - want.x, t.cam.z - want.y) < 1.5;
+  let flew = await until(async () => { await page.mouse.move(900 + Math.random(), 600); return near(); }, 8000, 300);
+  ok("showcase page: clicking an exhibit flies the camera to it", flew, `${name}: want ${want.x},${want.y}; camera ${t.cam ? `${t.cam.x},${t.cam.z} d=${t.cam.d}` : "silent"}`);
+  ok("showcase page: picking an exhibit doesn't reload the view", !navigated && frameUrl() === urlBefore, navigated ? "the frame navigated" : "");
+  const reloaded = await until(() => t.resyncs > resyncsBefore, 20000); // the same build keeps getting snapshots
+  ok("showcase page: the view keeps updating after the move", reloaded);
   await page.mouse.move(900, 600);
   await sleep(3500);
   await page.screenshot({ path: `${OUT}/c1-exhibit.png` });

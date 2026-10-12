@@ -13,7 +13,7 @@ namespace Pez.View
     /// in under the running view (GameRunner.AdoptWorld). Added by GameRunner on the web player only.
     /// Page URL query: snapshot=URL (default snapshot.json), live=SECONDS (0 = static), team=N (point of view; default
     /// -1, a spectator who sees everything), cam=x,y,zoom (opening camera), q=0..5 (quality level, default 5), fps=1 (fps label).
-    /// The page can also call SendMessage("Pez", "SetSnapshotUrl", url). The gateway pieces (meta, feed, orders, the
+    /// The page can also call SendMessage("Pez", "SetSnapshotUrl", url) and SendMessage("Pez", "LookAt", "x,y[,zoom]"). The gateway pieces (meta, feed, orders, the
     /// commander box) are in WebClientContract.cs. c=CODE on a player view turns on the commander box.
     /// </summary>
     public partial class WebClient : MonoBehaviour
@@ -85,16 +85,7 @@ namespace Pez.View
             Spectator = Team < 0;
             ContractAwake();
             showFps = Query("fps") == "1";
-            if (Query("cam") is string c)
-            {
-                var p = c.Split(',');
-                var inv = System.Globalization.CultureInfo.InvariantCulture;
-                if (p.Length >= 2 && float.TryParse(p[0], System.Globalization.NumberStyles.Float, inv, out var x) && float.TryParse(p[1], System.Globalization.NumberStyles.Float, inv, out var y))
-                {
-                    camPos = new Vector3(x, 0, y);
-                    if (p.Length >= 3 && float.TryParse(p[2], System.Globalization.NumberStyles.Float, inv, out var z)) camZoom = z;
-                }
-            }
+            if (Query("cam") is string c && ParseCam(c, out var at, out var zoom)) { camPos = at; camZoom = zoom; }
             windowStart = labelStart = Time.unscaledTime;
         }
 
@@ -294,6 +285,32 @@ namespace Pez.View
                 Runner.Hud.enabled = Runner.Input.enabled = true;
             }
             Debug.Log($"pez resync: tick={tick} bytes={p.Bytes} parse={p.ParseMs:0.#}ms restore={restoreMs:0.#}ms rebind={rebindMs:0.#}ms ({(rebound ? "rebound" : "rebuilt")}) local={local} rate={RateScale:0.00} queued={queue.Count}");
+        }
+
+        /// <summary>"x,y[,zoom]" in map tiles (zoom NaN when absent), as in the page's cam= parameter.</summary>
+        static bool ParseCam(string c, out Vector3 at, out float zoom)
+        {
+            var p = c.Split(',');
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            var num = System.Globalization.NumberStyles.Float;
+            at = default; zoom = float.NaN;
+            if (p.Length < 2 || !float.TryParse(p[0], num, inv, out var x) || !float.TryParse(p[1], num, inv, out var y)) return false;
+            at = new Vector3(x, 0, y);
+            if (p.Length >= 3 && float.TryParse(p[2], num, inv, out var z)) zoom = z;
+            return true;
+        }
+
+        /// <summary>
+        /// Page hook: SendMessage("Pez", "LookAt", "x,y[,zoom]") flies the camera there (the CI room's index uses it, so
+        /// picking an exhibit doesn't reload the build). Before the first view is built it becomes the opening camera.
+        /// </summary>
+        public void LookAt(string c)
+        {
+            if (c == null || !ParseCam(c, out var at, out var zoom)) return;
+            var cam = Runner != null && Runner.View != null ? Runner.Camera : null;
+            if (cam == null) { camPos = at; camZoom = zoom; return; }
+            Runner.View.Selected.Clear(); // a followed unit would pull the camera straight back
+            cam.FlyTo(at, float.IsNaN(zoom) ? cam.Distance : zoom);
         }
 
         /// <summary>GameRunner built the view: put the camera where the page asked, the first time only.</summary>

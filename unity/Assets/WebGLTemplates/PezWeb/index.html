@@ -61,6 +61,15 @@
       }
       const startBoot = !noGl && !(lite && classic);
 
+      // A page framing this one (the CI room's index) moves the camera without reloading the build:
+      // postMessage({pez: "look", cam: "x,y,zoom"}). Same origin only; held until the engine is up.
+      let pendingLook = null;
+      window.addEventListener("message", (e) => {
+        if (e.origin !== location.origin || e.data?.pez !== "look" || typeof e.data.cam !== "string") return;
+        if (window.unityInstance) { try { window.unityInstance.SendMessage("Pez", "LookAt", e.data.cam); } catch (err) { console.warn("pez: " + err.message); } }
+        else pendingLook = e.data.cam;
+      });
+
       // The commander box: the game places it (PezCommander.place, from the jslib) and gets text back by SendMessage.
       window.PezCommander = (() => {
         const box = document.getElementById("cmd"), text = document.getElementById("cmdText"), send = document.getElementById("cmdSend"),
@@ -125,6 +134,7 @@
       const stall = setTimeout(() => { slow.innerHTML = "Still loading… a slow connection or GPU?" + classicLink; }, 8000);
       function failed(message) {
         clearTimeout(stall);
+        window.pezFailed = true; // (a framing page reloads it rather than posting to a build that never started)
         loadText.textContent = "Pezz failed to start: " + message;
         slow.innerHTML = classic ? `<a href="${classic}">Open the classic view instead</a>` : "";
         document.getElementById("loadBtn").innerHTML = `<button onclick="location.reload()">Try again</button>`;
@@ -145,6 +155,7 @@
         devicePixelRatio: Math.min(Number(q.get("dpr")) || window.devicePixelRatio || 1, 2),
       }, (p) => { document.querySelector("#bar > div").style.width = (100 * p) + "%"; }).then((unityInstance) => {
         window.unityInstance = unityInstance;
+        if (pendingLook) unityInstance.SendMessage("Pez", "LookAt", pendingLook);
         window.pezLoadMs = Math.round(performance.now() - t0);
         console.log("pez: engine ready in " + window.pezLoadMs + " ms");
         clearTimeout(stall);

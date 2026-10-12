@@ -80,10 +80,15 @@ let cat = null, flat = [], cur = -1, tour = null;
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const slug = s => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
-// Reload the browser build on the room's spectator feed at a camera spot (the build reads cam=x,y,zoom from its URL).
+// Point the browser build at a camera spot. The first time it loads there (cam=x,y,zoom in its URL); after that the
+// camera flies over in the running build (its LookAt hook, by postMessage), with no reload.
+let framed = false;
 function look(x, y, zoom) {
-  const url = `/watch/web?cam=${x},${y},${zoom}`;
-  frame.contentWindow ? frame.contentWindow.location.replace(url) : (frame.src = url);
+  const cam = `${x},${y},${zoom}`;
+  const w = frame.contentWindow;
+  if (framed && w && !w.pezFailed) return w.postMessage({pez: 'look', cam}, location.origin);
+  framed = true;
+  frame.src = `/watch/web?cam=${cam}` + (new URLSearchParams(location.search).get('camlog') === '1' ? '&camlog=1' : ''); // (camlog: for CI's check)
 }
 
 function render() {
@@ -122,8 +127,7 @@ $('bOverview').onclick = overview;
 $('bPrev').onclick = () => { stopTour(); go(cur - 1); };
 $('bNext').onclick = () => { stopTour(); go(cur + 1); };
 function stopTour() { if (tour) { clearInterval(tour); tour = null; $('bTour').classList.remove('on'); } }
-// A reload takes a few seconds (the build loads and the first snapshot arrives), so the tour dwells longer than the old page's 9 s.
-$('bTour').onclick = () => { if (tour) return stopTour(); $('bTour').classList.add('on'); go(cur + 1); tour = setInterval(() => go(cur + 1), 14000); };
+$('bTour').onclick = () => { if (tour) return stopTour(); $('bTour').classList.add('on'); go(cur + 1); tour = setInterval(() => go(cur + 1), 9000); };
 $('bLegend').onclick = () => { $('legend').classList.toggle('open'); $('bLegend').classList.toggle('on'); };
 $('bIndex').onclick = () => $('index').classList.toggle('open');
 addEventListener('keydown', e => {

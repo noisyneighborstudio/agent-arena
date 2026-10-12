@@ -170,6 +170,9 @@ namespace Pez.View
             flyTo = to; flyT = 0f; flying = true;
         }
 
+        /// <summary>Fly to a point at a zoom (the page's LookAt hook); like `F`, it forgets the pose `M` would return to.</summary>
+        public void FlyTo(Vector3 focus, float distance) { fitActive = false; FlyTo(new Pose { Focus = focus, Distance = distance, Yaw = Yaw }); }
+
         /// <summary>`F`: your base (command center, else start position); a spectator's presses cycle through the teams' bases.</summary>
         void FlyHome()
         {
