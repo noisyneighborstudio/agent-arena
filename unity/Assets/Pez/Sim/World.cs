@@ -854,7 +854,7 @@ namespace Pez.Sim
             e.Order = o;
             e.OrderPos = pos;
             e.TargetId = target;
-            if (o != Order.Refuel) e.UntilCapturable = false; // a refuel trip picks the order back up as it was (FinishRefuel)
+            if (o != Order.Refuel) { e.UntilCapturable = false; e.EngageDerricks = false; } // a refuel trip picks the order back up as it was (FinishRefuel)
             e.Path = null;
             e.RepathTimer = 0;
             e.Dock = DockStep.None; e.DockAt = 0;
@@ -1106,6 +1106,7 @@ namespace Pez.Sim
                     if (FollowPath(e, e.OrderPos, 0.3f) && !NextWaypoint(e))
                     {
                         bool back = e.Retreating; SetOrder(e, Order.Idle, e.Pos); e.Retreating = back;
+                        DerrickHint(e);
                         // A loaded truck brought home unloads instead of sitting on its cargo (sent elsewhere, it waits there).
                         if (e.IsHarvester && e.Cargo > 0 && Entities.Any(s => !s.Dead && s.Team == e.Team && s.IsStructure && s.IsComplete && s.Def.DropOff && s.DistFrom(e.Pos) <= 12f))
                             e.Order = Order.ReturnOre;
@@ -1118,7 +1119,7 @@ namespace Pez.Sim
                         if (!e.IsArmed) { if (FollowPath(e, e.OrderPos, 0.5f) && !NextWaypoint(e)) FinishOrder(e); break; }
                         var t = AcquireTarget(e, e.Def.Sight);
                         if (t != null) { Engage(e, t); break; }
-                        if (FollowPath(e, e.OrderPos, 0.5f) && !NextWaypoint(e)) FinishOrder(e);
+                        if (FollowPath(e, e.OrderPos, 0.5f) && !NextWaypoint(e)) { FinishOrder(e); DerrickHint(e); }
                         break;
                     }
                 case Order.Attack:
@@ -1155,10 +1156,10 @@ namespace Pez.Sim
             if (e.Waypoints.Count == 0) return false;
             var next = e.Waypoints[0];
             var rest = e.Waypoints.Skip(1).ToList();
-            bool loop = e.WaypointLoop; float cap = e.SpeedCap; int group = e.Group;
+            bool loop = e.WaypointLoop, derricks = e.EngageDerricks; float cap = e.SpeedCap; int group = e.Group;
             if (loop) rest.Add(e.OrderPos);
             SetOrder(e, e.Order, next);
-            e.Waypoints.AddRange(rest); e.WaypointLoop = loop; e.SpeedCap = cap; e.Group = group;
+            e.Waypoints.AddRange(rest); e.WaypointLoop = loop; e.SpeedCap = cap; e.Group = group; e.EngageDerricks = derricks;
             return true;
         }
 
@@ -1493,7 +1494,8 @@ namespace Pez.Sim
             foreach (var o in nearTarget)
             {
                 if (o.Dead || o.Team == e.Team || o.IsCarried || o.Team < 0) continue; // neutral derricks aren't enemies
-                if (o.Def.Key == "derrick") continue; // nor are held ones a threat: worth capturing, so only shot when ordered (attack)
+                // Nor are held ones a threat: worth capturing, so only shot when ordered (attack, or attack_move with "derricks":true).
+                if (o.Def.Key == "derrick" && !(e.Order == Order.AttackMove && e.EngageDerricks)) continue;
                 if (IsProtected(o.Team) || IsProtected(e.Team)) continue; // newcomer protection: no fighting either way
                 if (e.Def.Weapon != null && !e.Def.Weapon.CanHit(o.Def)) continue;
                 float d = o.DistFrom(e.Pos);

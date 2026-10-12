@@ -133,8 +133,9 @@ namespace Pez.Sim
         public const float DerrickSteel = 1.5f;
         /// <summary>Seconds after a derrick is destroyed before a fresh neutral one rises on its site.</summary>
         public const float DerrickRespawn = 120f;
-        /// <summary>What a derrick is worth when destroyed (its salvage is a quarter of this).</summary>
-        static readonly Dictionary<string, int> DerrickValue = new Dictionary<string, int> { { "steel", 600 } };
+        /// <summary>What a derrick is worth when destroyed: its kill value (Match.HowScored says "about 600"); its salvage is a quarter of this.</summary>
+        public const int DerrickWorth = 600;
+        static readonly Dictionary<string, int> DerrickValue = new Dictionary<string, int> { { "steel", DerrickWorth } };
 
         /// <summary>Destroyed derricks waiting to come back: (site origin, game time it rises again). In order of destruction.</summary>
         public readonly List<(Int2 origin, float at)> DerrickRespawns = new List<(Int2, float)>();
@@ -219,6 +220,22 @@ namespace Pez.Sim
 
         /// <summary>Who may capture it now: anyone's engineer if it's neutral (whatever its health), else below CaptureThreshold.</summary>
         public static bool Capturable(Entity t) => t.Team < 0 || t.Hp <= t.Def.MaxHp * CaptureThreshold;
+
+        /// <summary>
+        /// Armed units stopping beside an enemy-held derrick leave it alone (AcquireTarget): say so, and how to take or
+        /// destroy it, once per derrick every 2 minutes (test players Scarlett and Clark left tanks idle by one).
+        /// </summary>
+        void DerrickHint(Entity e)
+        {
+            if (!e.IsArmed || IsProtected(e.Team)) return;
+            var d = Derricks.FirstOrDefault(x => x.Team >= 0 && x.Team != e.Team && !IsProtected(x.Team) && x.DistFrom(e.Pos) <= e.Def.Sight && e.Def.Weapon.CanHit(x.Def) && IsVisibleTo(e.Team, x));
+            if (d == null) return;
+            for (int i = Events.Count - 1; i >= 0 && (Tick - Events[i].Tick) * Dt < 120f; i--)
+                if (Events[i].Type == "derrick_skipped" && Events[i].Team == e.Team && Events[i].B == d.Id) return;
+            Emit("derrick_skipped", e.Team, e.Id, d.Id, d.Center, key: e.Def.Key,
+                 text: $"{e.Def.Key} #{e.Id} stopped by {Teams[d.Team].Name}'s derrick #{d.Id} at {(int)d.Center.X},{(int)d.Center.Y} and leaves it alone: units only shoot a held derrick when told to (it's worth capturing). " +
+                       $"To take it: attack with \"until\":\"capturable\", then capture it with an engineer. To destroy it (about {DerrickWorth} kill value, and salvage): attack it, or attack_move with \"derricks\":true");
+        }
 
         void DerrickCaptured(Entity d, int old)
         {

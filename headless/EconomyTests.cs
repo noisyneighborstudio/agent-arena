@@ -24,6 +24,7 @@ namespace Pez.Headless
             MatchClock();
             Derricks();
             AttackUntilCapturable();
+            AttackMoveDerricks();
             DefenceUpkeep();
         }
 
@@ -110,6 +111,46 @@ namespace Pez.Headless
             Run(w, 5);
             Check(Ok(rc) && d.Team == 0 && d.Hp == d.Def.MaxHp * World.CaptureThreshold && tanks.All(t => t.Order == Order.Idle && !t.UntilCapturable),
                   $"the engineer takes it at 50% and the tanks stand down ({Said(rc)})");
+        }
+
+        /// <summary>attack_move leaves held derricks alone unless told "derricks":true (never neutral ones), and says so when units stop by one.</summary>
+        static void AttackMoveDerricks()
+        {
+            var w = new World(2, 7, 96);
+            foreach (var u in w.Entities.Where(e => !e.IsStructure).ToList()) w.Remove(u);
+            var ds = w.Derricks.ToList();
+            var d = ds[0];
+            d.Team = 1;
+            var hq0 = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var tanks = Enumerable.Range(0, 2).Select(i => At(w.SpawnUnit(0, "light_tank", hq0), d.Center + new Vec2(-12, i))).ToList();
+            var ids = tanks.Select(t => t.Id).ToArray();
+            var r = Commands.Execute(w, 0, Cmd("type", "attack_move", "units", ids, "x", d.Center.X - 3, "y", d.Center.Y));
+            Run(w, 15);
+            var hints = w.Events.Where(e => e.Type == "derrick_skipped").ToList();
+            Check(Ok(r) && d.Hp == d.Def.MaxHp && tanks.All(t => t.Order == Order.Idle) && hints.Count == 1 && hints[0].B == d.Id && hints[0].Team == 0 &&
+                  StateView.EventsFor(w, 0, 0, 25).Any(l => l.Contains("\"derricks\":true")),
+                  $"by default attack_move passes a held derrick, and the units stopping by it say why, once ({hints.FirstOrDefault()?.Text})");
+            Commands.Execute(w, 0, Cmd("type", "attack_move", "units", ids, "x", d.Center.X - 3, "y", d.Center.Y + 2));
+            Run(w, 5);
+            Check(w.Events.Count(e => e.Type == "derrick_skipped") == 1 && d.Hp == d.Def.MaxHp, "and not again for the same derrick soon after");
+
+            var rm = Commands.Execute(w, 0, Cmd("type", "move", "units", ids, "x", d.Center.X - 3, "y", d.Center.Y, "derricks", true));
+            var r2 = Commands.Execute(w, 0, Cmd("type", "attack_move", "units", ids, "x", d.Center.X - 3, "y", d.Center.Y - 2, "derricks", true));
+            Run(w, 8);
+            Check(!Ok(rm) && Ok(r2) && d.Hp < d.Def.MaxHp && tanks.All(t => t.Order == Order.AttackMove && t.EngageDerricks),
+                  $"with \"derricks\":true they shoot it ({Said(r2)}; hp {d.Hp:0}/{d.Def.MaxHp}); move refuses the flag ({Said(rm)})");
+            int kv = w.Teams[0].Stats.KillValue;
+            w.Hurt(d, 1e5f, tanks[0]);
+            Check(d.Dead && w.Teams[0].Stats.KillValue - kv == World.DerrickWorth && World.HowScored.Contains($"about {World.DerrickWorth}"),
+                  $"a destroyed derrick is worth {w.Teams[0].Stats.KillValue - kv} kill value, as the points text says");
+
+            var neutral = ds[1];
+            foreach (var t in tanks) At(t, neutral.Center + new Vec2(-8, tanks.IndexOf(t)));
+            float fired = tanks.Max(t => t.LastFiredAt);
+            Commands.Execute(w, 0, Cmd("type", "attack_move", "units", ids, "x", neutral.Center.X - 3, "y", neutral.Center.Y, "derricks", true));
+            Run(w, 10);
+            Check(neutral.Team < 0 && neutral.Hp == neutral.Def.MaxHp && tanks.Max(t => t.LastFiredAt) == fired && tanks.All(t => t.Order == Order.Idle),
+                  "never a neutral derrick: it can't be hurt, so nobody shoots at it");
         }
 
         static void Derricks()

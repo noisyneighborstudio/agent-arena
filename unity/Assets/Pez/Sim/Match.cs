@@ -155,7 +155,7 @@ namespace Pez.Sim
             return scoreCache;
         }
 
-        public const string HowScored = "each team's share of what all players still in hold between them, 100 points each: territory (tiles within 6 of your finished command centers, outposts, derricks, deep mines and refineries by an ore field; 2 around any other structure), economy (ore mined all game) and kills (the ore value of everything you destroyed); the most points wins";
+        public const string HowScored = "each team's share of what all players still in hold between them, 100 points each: territory (tiles within 6 of your finished command centers, outposts, derricks, deep mines and refineries by an ore field; 2 around any other structure), economy (ore mined all game) and kills (the ore value of everything you destroyed: a derrick is about 600); the most points wins";
 
         public string ScoreLine() => string.Join(", ", Scores().Select(s => $"{s.Name} {s.Score}"));
 

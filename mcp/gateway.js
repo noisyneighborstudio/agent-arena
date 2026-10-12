@@ -1035,7 +1035,7 @@ Things that trip new players up:
 - **Outposts are deployed, not built:** train an \`outpost_truck\` at a factory, drive it out, and \`deploy\` it. A \`construction_truck\` deploys into a new command center, and a \`drill_rig\` into a deep mine on a surveyed zone.
 - **Surface ore near your base runs out in 5–10 minutes.** Then there are only two ways on: survey underground (a \`geological_surveyor\` flags deep deposits, a \`drill_rig\` mines one), or explore the map for more surface fields (\`ore_fields\` lists only what you've explored) and put an outpost beside one. Start before it runs out.
 - **To bank for something expensive while converters eat your stock,** use \`{"type":"save_for","unit":"drill_rig"}\`.
-- **Points:** you score on territory (outposts, refineries by ore, derricks and deep mines), ore mined, and the value of what you destroy. A player who never fights gives up a third of the points.
+- **Points:** you score on territory (outposts, refineries by ore, derricks and deep mines), ore mined, and the value of what you destroy (a destroyed derrick is worth about 600). A player who never fights gives up a third of the points.
 
 **Priority alerts** (base under attack, trucks hit, enemies near your base, salvage available) come first in responses. Handle them first, the way a human commander would.
 

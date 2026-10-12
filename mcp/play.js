@@ -240,6 +240,7 @@ export const Command = z
     waypoints: z.array(z.union([z.tuple([z.number(), z.number()]), z.object({ x: z.number(), y: z.number() })])).max(20).optional()
       .describe("move/attack_move: more points to visit in order, e.g. [[10,20],[30,40]] (x/y optional: the first waypoint is used)"),
     loop: z.boolean().optional().describe("move/attack_move with waypoints: patrol them forever"),
+    derricks: z.boolean().optional().describe("attack_move: true to shoot enemy-held derricks on the way too (by default units leave them alone: they're worth capturing)"),
     below_pct: z.number().min(0).max(95).optional().describe("set_retreat: pull back to base on their own below this HP % (0 = off)"),
     confirm: z.boolean().optional().describe("sell: true to sell your only one of a building that other things need (it says what you'd lose)"),
   })

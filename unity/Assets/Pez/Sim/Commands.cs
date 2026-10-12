@@ -16,7 +16,8 @@ namespace Pez.Sim
   {""type"":""train"", ""unit"":KEY, ""count"":N}            queue N units (1-10) at the barracks / war factory
       add ""structure_id"":ID to have them come out of that building (e.g. a forward barracks); otherwise your first one
   {""type"":""move"", ""units"":[IDS], ""x"":X, ""y"":Y}     move, ignoring enemies
-  {""type"":""attack_move"", ""units"":[IDS], ""x"":X, ""y"":Y}  move, engaging enemies on the way
+  {""type"":""attack_move"", ""units"":[IDS], ""x"":X, ""y"":Y}  move, engaging enemies on the way, except derricks someone holds (worth capturing: attack one to destroy it)
+      add ""derricks"":true to attack_move to shoot enemy-held derricks on the way too (never neutral ones: they can't be hurt)
       add ""together"":true to move or attack_move so the group keeps the slowest member's pace and arrives as one (leaders wait, stragglers catch up; aircraft fly their own pace)
       add ""spread"":3 (tiles between units, 1-6; true = 3) to open the formation up against splash (artillery, heavy tanks)
       add ""waypoints"":[[x,y],...] to queue more points (x/y optional: the first waypoint is used), and ""loop"":true to patrol them
@@ -203,6 +204,9 @@ namespace Pez.Sim
             foreach (var p in waypoints) if (!w.Map.InBounds((int)p.X, (int)p.Y)) return Err($"waypoint ({p.X},{p.Y}) is outside the {w.Map.W}x{w.Map.H} map");
             if ((order == Order.Move || order == Order.AttackMove) && float.IsNaN(x) && waypoints.Count > 0) { x = waypoints[0].X; y = waypoints[0].Y; waypoints.RemoveAt(0); }
             bool loop = c.TryGetValue("loop", out var lp) && lp is bool lb && lb;
+            // Held derricks are left alone unless asked for (rules 23: test players Ember and Fern wanted to capture them).
+            bool derricks = c.TryGetValue("derricks", out var dk) && dk is bool db && db;
+            if (derricks && order != Order.AttackMove) return Err("\"derricks\":true goes with attack_move (to destroy one derrick, attack it)");
             if (order != Order.Idle && (float.IsNaN(x) || float.IsNaN(y)))
             {
                 if (order != Order.Harvest) return Err("x and y are required");
@@ -265,6 +269,7 @@ namespace Pez.Sim
                 var target = n > 1 && order != Order.Idle ? dest + off : dest;
                 if (u.IsHarvester && order == Order.AttackMove) { w.SetOrder(u, Order.Move, target); continue; }
                 w.SetOrder(u, order, order == Order.Idle ? u.Pos : target);
+                u.EngageDerricks = derricks;
                 if (order == Order.Move || order == Order.AttackMove)
                 {
                     foreach (var p in waypoints) u.Waypoints.Add(n > 1 ? p + off : p);
@@ -279,7 +284,7 @@ namespace Pez.Sim
             if (together) { int group = ground.Min(u => u.Id); foreach (var u in ground) { u.SpeedCap = pace; u.Group = group; } }
             var low = units.Where(u => u.Def.UsesFuel && u.FuelFraction < 0.35f).ToList();
             var shortOfFuel = order == Order.Idle ? new List<string>() : FuelShortfalls(w, units, dest, waypoints);
-            return Ok($"{n} unit(s) {(order == Order.Idle ? "stopped" : order == Order.AttackMove ? "attack-moving" : "moving")}" +
+            return Ok($"{n} unit(s) {(order == Order.Idle ? "stopped" : order == Order.AttackMove ? "attack-moving" : "moving")}" + (derricks ? ", shooting enemy derricks too" : "") +
                       (together ? $" together at {pace:0.0} tiles/s{(ground.Count < n ? " (aircraft at their own speed)" : "")}" : "") +
                       (waypoints.Count > 0 ? $", then {waypoints.Count} more waypoint(s){(loop ? " on a loop" : "")}" : "") +
                       (shortOfFuel.Count > 0 ? $"; FUEL: {string.Join("; ", shortOfFuel.Take(4))}{(shortOfFuel.Count > 4 ? $" (+{shortOfFuel.Count - 4} more)" : "")}. " +

@@ -68,6 +68,7 @@ namespace Pez.Sim
                 if (e.OrderName != "idle") u.Set("order_x", R1(e.OrderPos.X)).Set("order_y", R1(e.OrderPos.Y));
                 if (e.DockName != null) u.Set("dock", e.DockName);
                 if (e.Order == Order.Attack && e.UntilCapturable) u.Set("until", "capturable");
+                if (e.Order == Order.AttackMove && e.EngageDerricks) u.Set("derricks", true);
                 if (e.Waypoints.Count > 0) u.Set("waypoints", e.Waypoints.Select(p => (object)Point(p)).ToList());
                 if (e.RetreatBelow > 0) u.Set("retreat_below_pct", StateView.Pct(e.RetreatBelow));
                 if (e.IsCarried) u.Set("carried_by", e.CarrierId);
