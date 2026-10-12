@@ -386,8 +386,10 @@ namespace Pez.Sim
             scoreCache = null; // on the scoreboard now, even within the second (or in a waiting room, where no time passes)
             UpdatePower();
             UpdateVisibility();
-            Emit("joined", team.Id, pos: spawn, text: $"{playerName} joined as {team.Name} at sector {StateView.Sector(spawn)}. The map is now {Map.W}x{Map.H}.");
-            Emit("chat", -1, text: $"{playerName} joined as {team.Name} at sector {StateView.Sector(spawn)}.");
+            // Everyone hears that someone joined, never where: a base's location is for scouting (the newcomer's own join
+            // reply and state say where theirs is). So the event carries no position either (it's public).
+            Emit("joined", team.Id, text: $"{playerName} joined as {team.Name}. The map is now {Map.W}x{Map.H}.");
+            Emit("chat", -1, text: $"{playerName} joined as {team.Name}.");
             return team;
         }
 

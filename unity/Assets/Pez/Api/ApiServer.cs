@@ -606,7 +606,7 @@ namespace Pez.Api
         /// The saved-game snapshot for a client that renders it itself, minus what the viewer must not read: never the API
         /// section (tokens) or anyone else's orders. A spectator (team -1) gets the whole world, so it's served delayed. A
         /// player's team gets ViewFrame's fog rules: its own team in full; rivals cut to what's public (name, seat, status,
-        /// kills); enemy units and buildings only while it sees them (buildings also once seen), with their plans cut to the
+        /// kills; not where their base is); enemy units and buildings only while it sees them (buildings also once seen), with their plans cut to the
         /// next few steps of their path; events, shots and alerts only where it can see. Nothing here starts a rival's AI or
         /// a house seat in the client's local copy: that would be a guess, corrected by the next snapshot anyway.
         /// </summary>
@@ -635,6 +635,9 @@ namespace Pez.Api
                                               "save_for", "save_for_cost", "zones", "stalled_since", "surface_warned_at", "home_ore_warned", "last_active_at", "orders_version" })
                         t.Remove(k);
                     if (t["stats"] is JObj st) t["stats"] = new JObj().Set("kills", st["kills"] ?? 0);
+                    // Where a rival's base is, is for scouting: their start goes far off the map (not 0,0, a real corner, where
+                    // the client's copy would then think a protected rival's reserved ore lay).
+                    t["start"] = SnapIO.V(new Vec2(HiddenStart, HiddenStart));
                 }
             if (world["events"] is List<object> events)
             {
@@ -686,6 +689,9 @@ namespace Pez.Api
                 map["deep"] = deep.OfType<JObj>().Where(d => t0.Surveyed.Contains((int)Num(d["id"]))).Cast<object>().ToList();
             return snap;
         }
+
+        /// <summary>A rival's base position in a player's snapshot: hidden, far off any map.</summary>
+        public const float HiddenStart = -10000f;
 
         static double Num(object o) => o is double d ? d : o is float f ? f : o is int i ? i : o is long l ? l : o is IConvertible c ? c.ToDouble(System.Globalization.CultureInfo.InvariantCulture) : 0;
 

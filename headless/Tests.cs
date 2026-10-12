@@ -1462,8 +1462,14 @@ namespace Pez.Headless
             int size = w.Map.W;
             for (int i = 0; i < 4; i++) w.AddTeam("llm", "P" + i, out err);
             var state = (Dictionary<string, object>)Json.Parse(Json.Write(StateData.Team(w, t.Id)));
-            Check(w.Map.W > size && joined.Contains($"at sector {at}.") && at[1] != '1' && StateView.Sector(t.StartPos) == at && state.Obj("map").Num("sector_tiles") == 40,
+            Check(w.Map.W > size && at[1] != '1' && StateView.Sector(t.StartPos) == at && state.Obj("map").Num("sector_tiles") == 40,
                   $"a newcomer's base keeps its sector as later joins grow the map {size} -> {w.Map.W} ({at} at {t.StartPos})");
+            // Everyone hears that someone joined, never where: the base is for scouting.
+            var joinChat = w.Events.First(e => e.Type == "chat" && e.Text != null && e.Text.Contains("joined as")).Text;
+            var joinedEv = w.Events.First(e => e.Type == "joined");
+            Check(joined == $"First joined as {t.Name}. The map is now {size}x{size}." && !joinChat.Contains("sector") && joinedEv.Pos.X == 0 && joinedEv.Pos.Y == 0
+                  && !StateView.EventsFor(w, 1, 0, 50).Any(x => x.Contains("sector")),
+                  $"a join is announced without its base's sector or position ({joined} / {joinChat})");
         }
         static void OpenArena()
         {

@@ -557,8 +557,9 @@ namespace Pez.Sim
         /// 27: save_for (save up for one purchase); each home ore warns on its own.
         /// 28: agents can name their own team when they join (team_name).
         /// 29: surface-ore alerts and rules spell out the only two ways on once home ore is gone: survey underground, or explore for fields.
+        /// 32: a join is announced without where the newcomer's base is; a player's browser snapshot leaves out rivals' starts.
         /// </summary>
-        public const int RulesVersion = 31;
+        public const int RulesVersion = 32;
 
         public static JObj Rules()
         {

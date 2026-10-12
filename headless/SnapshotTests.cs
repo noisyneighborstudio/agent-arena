@@ -257,6 +257,8 @@ namespace Pez.Headless
                   "a rival's orders, stockpile and vision aren't in the copy (the copy works out what the rival's units it has can see)");
             Check(cw.Teams[0].Amount("steel") == w.Teams[0].Amount("steel") && cw.Teams[0].Visible.SequenceEqual(w.Teams[0].Visible), "the player's own stockpile and vision are");
             Check(cw.Teams[1].Name == w.Teams[1].Name && cw.Teams[1].Stats.Kills == w.Teams[1].Stats.Kills, "rivals keep their public face: name and kills");
+            Check(cw.Teams[1].StartPos.X == ApiServer.HiddenStart && cw.Teams[1].StartPos.Y == ApiServer.HiddenStart && cw.Teams[0].StartPos.X == w.Teams[0].StartPos.X && cw.Teams[0].StartPos.Y == w.Teams[0].StartPos.Y,
+                  $"where a rival's base is stays out of the copy (it's for scouting); the player's own start is there ({cw.Teams[1].StartPos})");
             int teams = cw.Teams.Count;
             cw.Mirror = true; // as the browser runs it
             Step(copy, 20);
