@@ -12,9 +12,10 @@ namespace Pez.View
     /// in under the running view (GameRunner.AdoptWorld). Added by GameRunner on the web player only.
     /// Page URL query: snapshot=URL (default snapshot.json), live=SECONDS (0 = static), team=N (point of view; default
     /// -1, a spectator who sees everything), cam=x,y,zoom (opening camera), q=0..5 (quality level, default 5), fps=1 (fps label).
-    /// The page can also call SendMessage("Pez", "SetSnapshotUrl", url).
+    /// The page can also call SendMessage("Pez", "SetSnapshotUrl", url). The gateway pieces (meta, feed, orders, the
+    /// commander box) are in WebClientContract.cs. c=CODE on a player view turns on the commander box.
     /// </summary>
-    public class WebClient : MonoBehaviour
+    public partial class WebClient : MonoBehaviour
     {
         public GameRunner Runner;
         /// <summary>The first snapshot is in: the runner may build the view and tick.</summary>
@@ -27,6 +28,7 @@ namespace Pez.View
         float live;
         int lastTick = -1;
         bool fetching, showFps;
+        float startedAt;
         Vector3? camPos;
         float camZoom = float.NaN;
 
@@ -74,8 +76,13 @@ namespace Pez.View
         void Awake()
         {
             if (Query("snapshot") is string s && s.Length > 0) url = s;
-            live = Mathf.Max(0f, Num("live", 0f));
+            Instance = this;
+            startedAt = Time.unscaledTime;
+            // Opened without live=: a player's own view follows its game, a spectator's follows the delayed feed.
+            live = Mathf.Max(0f, Num("live", url.Contains("/view/") ? 1f : url.Contains("/watch") ? 2f : 0f));
             Team = askedTeam = (int)Num("team", -1);
+            Spectator = Team < 0;
+            ContractAwake();
             showFps = Query("fps") == "1";
             if (Query("cam") is string c)
             {
@@ -90,17 +97,33 @@ namespace Pez.View
             windowStart = labelStart = Time.unscaledTime;
         }
 
-        void Start() { StartCoroutine(Loop()); }
+        void Start() { StartCoroutine(Loop()); StartContract(); }
+
+        // Why the player snapshot isn't being polled (the seat's link 401s); meta decides what happens next.
+        bool expired;
+        float nextDelay;
+        int failures;
 
         IEnumerator Loop()
         {
             while (true)
             {
+                if (expired) { yield return WaitOrWake(10f); continue; } // meta (every 10 s, or on the wake) says when the spectator feed takes over
+                nextDelay = live > 0f ? Mathf.Max(live, Spectator ? 2f : 0f) : 2f; // (before the first one arrives, keep trying)
                 yield return Fetch();
-                if (live <= 0f && Loaded) yield break; // a static view: the one snapshot is all there is
-                yield return new WaitForSecondsRealtime(live > 0f ? live : 2f); // (before the first one arrives, keep trying)
+                if (live <= 0f && Loaded && failures == 0) yield break; // a static view: the one snapshot is all there is
+                yield return WaitOrWake(nextDelay);
             }
         }
+
+        /// <summary>Waits <paramref name="seconds"/>, or less if something asked the loops to look again now (mode change, 401).</summary>
+        IEnumerator WaitOrWake(float seconds)
+        {
+            wake = false;
+            for (float t = 0f; t < seconds && !wake; t += 0.1f) yield return new WaitForSecondsRealtime(0.1f);
+            wake = false;
+        }
+        bool wake;
 
         /// <summary>Page hook: follow a different snapshot URL (applied even if its tick is older than the last).</summary>
         public void SetSnapshotUrl(string newUrl)
@@ -110,7 +133,9 @@ namespace Pez.View
             lastTick = -1;
             StopAllCoroutines();
             fetching = false;
+            expired = false; failures = 0; seatEnded = false; Result = null;
             StartCoroutine(Loop());
+            StartContract();
         }
 
         string FetchUrl()
@@ -128,20 +153,43 @@ namespace Pez.View
             using (var req = UnityWebRequest.Get(FetchUrl()))
             {
                 yield return req.SendWebRequest();
-                if (req.result != UnityWebRequest.Result.Success)
+                long code = req.responseCode;
+                var body = req.downloadHandler != null ? req.downloadHandler.text : null;
+                if (req.result == UnityWebRequest.Result.Success)
                 {
-                    error = $"Couldn't fetch the game ({req.error})";
-                    Debug.LogWarning($"pez snapshot: {error} from {url}");
-                }
-                else
-                {
-                    var text = req.downloadHandler.text;
-                    try { Apply(text); error = null; }
+                    NoteHeaders(req);
+                    try
+                    {
+                        Apply(body); error = null; failures = 0;
+                        fetchedAt = Time.unscaledTime;
+                        Status = null; // reconnected, or the waiting/expired line is out of date
+                    }
                     catch (System.Exception ex)
                     {
                         error = "Couldn't read the game: " + ex.Message;
                         Debug.LogError($"pez snapshot: {ex.GetType().Name}: {ex.Message}");
                     }
+                }
+                else if (code == 503) // nothing to show yet: the spectator feed hasn't started (or has nothing)
+                {
+                    Status = WaitingText(body) ?? "Waiting for the game…";
+                    nextDelay = 2f;
+                    failures = 0;
+                }
+                else if (code == 401) // the seat's link is dead: stop asking for the player's snapshot until meta says what's next
+                {
+                    Status = ExpiredStatus;
+                    expired = true;
+                    metaNow = true; wake = true;
+                    Debug.LogWarning($"pez snapshot: 401 from {url}: {ErrorOf(body) ?? "link expired"}");
+                }
+                else
+                {
+                    failures++;
+                    nextDelay = Mathf.Min(8f, Mathf.Pow(2f, failures - 1)); // 1, 2, 4, 8 s
+                    error = $"Couldn't fetch the game ({req.error})";
+                    if (Loaded) Status = Reconnecting;
+                    if (failures <= 1) Debug.LogWarning($"pez snapshot: {error} from {url}");
                 }
             }
             fetching = false;
@@ -165,9 +213,11 @@ namespace Pez.View
             if (local > tick && local - tick <= 40) game.CatchUp(local, alpha); // time never runs backwards on screen (events up to here already played)
             double restoreMs = sw.Elapsed.TotalMilliseconds;
             // The page's team may not be in this game (a seat from an earlier match, or not taken yet): watch everything until it is.
-            int team = askedTeam < game.World.Teams.Count ? askedTeam : -1;
-            if (team != Team) Debug.Log($"pez team: showing {(team < 0 ? "everything" : "team " + team)} (asked for {askedTeam}, the game has {game.World.Teams.Count})");
+            int team = !seatEnded && askedTeam < game.World.Teams.Count ? askedTeam : -1;
+            if (team != Team && !seatEnded) Debug.Log($"pez team: showing {(team < 0 ? "everything" : "team " + team)} (asked for {askedTeam}, the game has {game.World.Teams.Count})");
             Team = team;
+            Spectator = seatEnded || team < 0;
+            ShowStandingOrders(game.World);
             sw.Restart();
             // The same game: the view moves over to the new world. A different one, the first, or a new point of view: Update rebuilds the view.
             bool rebound = sameGame && Team == Runner.HumanTeam && Runner.AdoptWorld(game.World);
@@ -192,6 +242,7 @@ namespace Pez.View
         void Update()
         {
             float now = Time.unscaledTime, dt = Time.unscaledDeltaTime;
+            UpdateContract();
             if (dt <= 0f) return;
             frames.Add(dt);
             labelFrames++;
@@ -209,7 +260,7 @@ namespace Pez.View
         void OnGUI()
         {
             if (style == null) style = new GUIStyle(GUI.skin.label) { fontSize = 22, alignment = TextAnchor.MiddleCenter, normal = { textColor = Color.white } };
-            if (!Loaded) GUI.Label(new Rect(0, 0, Screen.width, Screen.height), error ?? "Loading game…", style);
+            if (!Loaded) GUI.Label(new Rect(0, 0, Screen.width, Screen.height), error ?? Status ?? (Time.unscaledTime - startedAt > 8f ? "Still loading the game…" : "Loading game…"), style);
             if (showFps)
             {
                 style.fontSize = 14; style.alignment = TextAnchor.MiddleRight;

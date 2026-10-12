@@ -4,22 +4,110 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, user-scalable=no">
     <title>Pezz</title>
+    <link rel="icon" href="data:,">
     <style>
       html, body { margin: 0; height: 100%; background: #14110d; overflow: hidden; }
       #unity-canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; outline: none; }
       #load { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 320px; font: 13px system-ui, sans-serif; color: #d8c9b0; text-align: center; }
       #bar { height: 4px; margin-top: 10px; background: #2b241b; } #bar > div { height: 100%; width: 0; background: #f5a623; }
+      #load a, #classic { color: #e8a33d; }
+      #slow { margin-top: 12px; min-height: 16px; color: #e8a33d; font-size: 12px; }
+      #load button { margin-top: 12px; background: #2a262b; color: #ece4d2; border: 1px solid #3a343b; border-radius: 8px; padding: 6px 12px; font: inherit; cursor: pointer; }
+      #classic { position: fixed; right: 8px; bottom: 6px; z-index: 5; font: 11px system-ui, sans-serif; opacity: .45; text-decoration: none; display: none; }
+      #classic:hover { opacity: 1; text-decoration: underline; }
+      #notice { position: fixed; inset: 0; z-index: 20; display: none; align-items: center; justify-content: center; background: #14110d; color: #d8c9b0; font: 14px system-ui, sans-serif; text-align: center; padding: 24px; }
+      /* The commander's standing-orders box: placed over the canvas where the HUD asks (PezCommander.place). */
+      #cmd { position: fixed; display: none; z-index: 10; box-sizing: border-box; flex-direction: column; gap: 4px; padding: 6px; font: 12px system-ui, sans-serif; color: #ece4d2; }
+      #cmd textarea { flex: 1 1 auto; min-height: 0; width: 100%; box-sizing: border-box; resize: none; padding: 6px 8px; border: 1px solid #4a4238; border-radius: 6px; background: #101317; color: #ece4d2; font: 14px system-ui, sans-serif; }
+      #cmd textarea:focus { outline: none; border-color: #e8a33d; }
+      #cmd .row { display: flex; gap: 6px; flex: none; }
+      #cmd button { flex: 1; height: 26px; border: 0; border-radius: 6px; background: #ece4d2; color: #101317; font: 600 12px system-ui, sans-serif; cursor: pointer; }
+      #cmd button#cmdClear { background: #2a262b; color: #ece4d2; border: 1px solid #3a343b; }
+      #cmd button:disabled { opacity: .4; cursor: default; }
+      #cmdNote { flex: none; min-height: 14px; color: #9a9184; font-size: 11px; line-height: 14px; overflow: hidden; }
     </style>
   </head>
   <body>
     <canvas id="unity-canvas" tabindex="-1"></canvas>
-    <div id="load">Loading Pezz…<div id="bar"><div></div></div></div>
+    <div id="load"><span id="loadText">Loading Pezz…</span><div id="bar"><div></div></div><div id="slow"></div><div id="loadBtn"></div></div>
+    <a id="classic" title="The simple 2D page">Classic view</a>
+    <div id="notice"></div>
+    <div id="cmd"><textarea id="cmdText" maxlength="600" placeholder="New orders for your agent (they interrupt whatever it's waiting on)" aria-label="New orders for your agent"></textarea><div class="row"><button id="cmdSend" disabled>Send</button><button id="cmdClear">Clear</button></div><div id="cmdNote"></div></div>
+    <script>
+      // The old viewer (mcp/viewer.html) is the fallback, at <base>/classic: /view/<v>/web -> /view/<v>/classic, /watch[/n]/web -> /watch[/n]/classic.
+      const q = new URLSearchParams(location.search);
+      function classicUrl() {
+        const c = q.get("c");
+        let m = location.pathname.match(/^(\/view\/[^\/]+)\/web\/?$/);
+        if (m) return m[1] + "/classic" + (c ? "?c=" + encodeURIComponent(c) : "");
+        m = location.pathname.match(/^(\/watch(?:\/\d{1,3})?)\/web\/?$/);
+        return m ? m[1] + "/classic" : null;
+      }
+      const classic = classicUrl();
+      if (classic) { const a = document.getElementById("classic"); a.href = classic; a.style.display = "block"; }
+      // No WebGL2 (or ?lite=1): the 3D build can't run, so go to the old page with a one-line notice.
+      let noGl = false;
+      try { noGl = !document.createElement("canvas").getContext("webgl2"); } catch (e) { noGl = true; }
+      const lite = q.get("lite") === "1";
+      if ((noGl || lite) && classic) {
+        const n = document.getElementById("notice");
+        n.textContent = noGl ? "This browser can't run the 3D view: opening the classic view…" : "Opening the classic view…";
+        n.style.display = "flex";
+        setTimeout(() => location.replace(classic), 900);
+      } else if (noGl) {
+        document.getElementById("loadText").textContent = "This browser can't run the 3D view (it needs WebGL2).";
+      }
+      const startBoot = !noGl && !(lite && classic);
+
+      // The commander box: the game places it (PezCommander.place, from the jslib) and gets text back by SendMessage.
+      window.PezCommander = (() => {
+        const box = document.getElementById("cmd"), text = document.getElementById("cmdText"), send = document.getElementById("cmdSend"),
+          clear = document.getElementById("cmdClear"), note = document.getElementById("cmdNote");
+        let dirty = false;
+        const unity = (fn, arg) => { try { window.unityInstance?.SendMessage("Pez", fn, arg); } catch (e) { console.warn("pez: " + e.message); } };
+        const refresh = () => { send.disabled = !text.value.trim(); };
+        text.addEventListener("input", () => { dirty = true; refresh(); });
+        // Keys typed into the box are text, never shortcuts: Unity doesn't get them (and doesn't preventDefault them) meanwhile.
+        for (const ev of ["keydown", "keyup", "keypress"]) text.addEventListener(ev, (e) => {
+          e.stopPropagation();
+          if (ev === "keydown" && e.key === "Escape") text.blur();
+          if (ev === "keydown" && e.key === "Enter" && (e.metaKey || e.ctrlKey) && !send.disabled) send.click();
+        });
+        text.addEventListener("focus", () => unity("OnCommanderFocus", "1"));
+        text.addEventListener("blur", () => unity("OnCommanderFocus", "0"));
+        send.addEventListener("click", () => { const t = text.value.trim(); if (t) unity("OnCommanderSend", t); });
+        clear.addEventListener("click", () => { text.value = ""; dirty = false; refresh(); unity("OnCommanderSend", ""); });
+        return {
+          // x,y,w,h in Unity screen pixels (top left origin); the canvas may be shown at another CSS size than it renders at.
+          place(x, y, w, h, visible, sw, sh) {
+            if (!visible) { if (box.style.display !== "none") { box.style.display = "none"; if (document.activeElement === text) text.blur(); } return; }
+            const r = document.getElementById("unity-canvas").getBoundingClientRect(), kx = r.width / (sw || r.width), ky = r.height / (sh || r.height);
+            box.style.left = (r.left + x * kx) + "px"; box.style.top = (r.top + y * ky) + "px";
+            box.style.width = (w * kx) + "px"; box.style.height = (h * ky) + "px";
+            box.style.display = "flex";
+          },
+          status(t) { note.textContent = t || ""; note.title = t || ""; },
+          setText(t, force) { if (force || !dirty) { text.value = t; dirty = false; refresh(); } },
+        };
+      })();
+    </script>
     <script src="Build/{{{ LOADER_FILENAME }}}"></script>
     <script>
       // ?dpr=<n> overrides the render scale (default: the screen's, capped at 2) so a slow GPU can trade sharpness for frames.
-      const q = new URLSearchParams(location.search);
       const t0 = performance.now();
-      createUnityInstance(document.querySelector("#unity-canvas"), {
+      const loadText = document.getElementById("loadText"), slow = document.getElementById("slow");
+      const classicLink = classic ? ` <a href="${classic}">Try the classic view</a>` : "";
+      // Nothing yet after 8 s: say so, so a slow link or GPU is told apart from a broken page.
+      const stall = setTimeout(() => { slow.innerHTML = "Still loading… a slow connection or GPU?" + classicLink; }, 8000);
+      function failed(message) {
+        clearTimeout(stall);
+        loadText.textContent = "Pezz failed to start: " + message;
+        slow.innerHTML = classic ? `<a href="${classic}">Open the classic view instead</a>` : "";
+        document.getElementById("loadBtn").innerHTML = `<button onclick="location.reload()">Try again</button>`;
+        document.getElementById("bar").style.display = "none";
+      }
+      if (startBoot && typeof createUnityInstance !== "function") failed("the game engine didn't download");
+      else if (startBoot) createUnityInstance(document.querySelector("#unity-canvas"), {
         arguments: [],
         dataUrl: "Build/{{{ DATA_FILENAME }}}",
         frameworkUrl: "Build/{{{ FRAMEWORK_FILENAME }}}",
@@ -35,8 +123,9 @@
         window.unityInstance = unityInstance;
         window.pezLoadMs = Math.round(performance.now() - t0);
         console.log("pez: engine ready in " + window.pezLoadMs + " ms");
+        clearTimeout(stall);
         document.getElementById("load").remove();
-      }).catch((message) => { document.getElementById("load").textContent = "Pezz failed to start: " + message; });
+      }).catch((message) => failed(message));
     </script>
   </body>
 </html>

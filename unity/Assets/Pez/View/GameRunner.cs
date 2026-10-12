@@ -423,7 +423,7 @@ namespace Pez.View
             if (Game.World != viewWorld) RebuildView();
             if (!InMenu)
             {
-                if (UnityEngine.Input.GetKeyDown(KeyCode.Pause) || (UnityEngine.Input.GetKeyDown(KeyCode.P) && HumanTeam < 0 && !Hud.Typing)) Game.Paused = !Game.Paused;
+                if (!IsWeb && (UnityEngine.Input.GetKeyDown(KeyCode.Pause) || (UnityEngine.Input.GetKeyDown(KeyCode.P) && HumanTeam < 0 && !Hud.Typing))) Game.Paused = !Game.Paused;
                 Game.Advance(Time.deltaTime);
                 saver?.Tick(Game, Api);
             }
