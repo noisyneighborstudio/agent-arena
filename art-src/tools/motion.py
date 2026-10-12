@@ -88,8 +88,10 @@ UNITS = [
    "Hovering: altitude bob ±0.05 on a 2.2 s sine and yaw drift ±3°."),
  U('recon_drone', 'Unarmed flying scout (sight 12). Hovers at 2.8. The long-range drone is the same model at 1.35x.', 'factory', 'rotor', 4.5, 4.0, 220, True,
    "Quadcopter: four ducted fans (spinner front left, spinner_1 front right, spinner_2 rear right, spinner_3 rear left); the diagonal pairs "
-   "counter-rotate (spinner_1 and spinner_3 are authored upside down). Fans spin up 0→700 rpm over 0.6 s before it lifts off. It leans 6° into its "
-   "velocity and banks into turns. The turret is its camera: a gimbal ball with a cyan lens, unarmed, so it only ever looks around.",
+   "counter-rotate (spinner_1 and spinner_3 are authored upside down). Fans spin up 0→700 rpm over 0.6 s before it lifts off. "
+   "It flies like a quadcopter, with no wings to bank with: the whole body tips toward its acceleration (nose down to set off, a roll toward "
+   "the new heading when it changes direction, a rear-back to stop that ends in a small rock back to level, up to 30°), holding about 10° of "
+   "forward lean at cruise. Hovering, it makes tiny ±1.5° corrections. The turret is its camera: a gimbal ball with a cyan lens, unarmed, so it only ever looks around.",
    dict(spinner=dict(axis='Y', idle_rpm=700, active_rpm=700, spinup_s=.6), **TURRET(240)),
    "Hovering: altitude bob ±0.08 on a 3.7 s sine. The camera holds forward, then glances up to ±72° and back now and then (curious)."),
  U('transport_chopper', 'Tandem-rotor transport for 6 infantry. Hovers at 2.6.', 'airfield', 'rotor', 3.5, 2.0, 120, True,

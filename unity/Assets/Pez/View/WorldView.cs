@@ -24,6 +24,8 @@ namespace Pez.View
             public float LandK;          // aircraft: 0 flying, 1 parked on its pad (eases between)
             // Hull feel (MOTION.md): nose-up under acceleration, dip when braking, kick back on firing.
             public float HullSpeed, HullPitch, HullPitchVel;
+            // Drones tilt like quadcopters: the smoothed velocity, and the tilt (a world-space lean vector) on a spring.
+            public Vector3 DroneVel, DroneTilt, DroneTiltVel;
             public Vector3? EaseFrom; public Vector3 EaseOff; // a resync moved the entity: where it was drawn, and the offset from where it now is (bleeds off)
             // Mass in motion: the heavy's start squat, artillery deployed (0..1) and whether it has rammed this cycle.
             public float StartSquat, Deploy;
@@ -774,8 +776,9 @@ namespace Pez.View
                         if (e.CargoType >= 0) rig.Bin.GetComponent<Renderer>().sharedMaterial = Mats.Glow(OreColors[e.CargoType], 0.8f);
                     }
                 }
-                // Aircraft bank into turns.
-                if (e.IsAir) rig.Body.localRotation = Quaternion.Euler(e.Moving ? 6f : 0, 0, Mathf.Clamp(Mathf.DeltaAngle(rig.Root.eulerAngles.y, Yaw(e.Facing)) * 0.6f, -25f, 25f));
+                // Aircraft bank into turns; drones tilt toward where they're accelerating, as quadcopters do.
+                if (e.Def.ModelKey == "recon_drone") DroneTilt(v);
+                else if (e.IsAir) rig.Body.localRotation = Quaternion.Euler(e.Moving ? 6f : 0, 0, Mathf.Clamp(Mathf.DeltaAngle(rig.Root.eulerAngles.y, Yaw(e.Facing)) * 0.6f, -25f, 25f));
                 // Infantry walk: the stride follows the ground actually covered this frame, and they settle when they stop.
                 if (rig.Gait != null) rig.Gait.Tick(rig.Root, Time.deltaTime);
             }
@@ -970,6 +973,40 @@ namespace Pez.View
             {
                 var bp = v.Rig.Body.localPosition; bp.y = -0.015f * v.StartSquat - 0.04f * v.Deploy; v.Rig.Body.localPosition = bp;
             }
+        }
+
+        /// <summary>
+        /// A quadcopter has no wings to bank with: it tips its whole body so the fans push toward where it wants to go. The
+        /// lean follows the acceleration (it noses down to set off, rolls toward the new heading when it changes direction,
+        /// rears back to stop) plus a little forward lean held at cruise against the air. The lean rides an underdamped
+        /// spring, so a stop ends in a small rock back to level; hovering it keeps making tiny corrections. It levels out
+        /// as it settles onto a pad.
+        /// </summary>
+        void DroneTilt(EV v)
+        {
+            float dt = Mathf.Min(Time.deltaTime, 0.03f); // explicit spring: keep the step small (see HullFeel)
+            if (dt <= 0) return;
+            var e = v.E;
+            var d = e.Pos - e.PrevPos;
+            var vel = new Vector3(d.X, 0, d.Y) / World.Dt;
+            if (vel.magnitude > e.Def.Speed * 3f) vel = Vector3.zero; // a teleport (spawned, unloaded), not flight
+            var smoothed = Vector3.Lerp(v.DroneVel, vel, 1f - Mathf.Exp(-dt * 4f)); // the sim's speed changes are instant: spread each over ~0.5 s
+            var accel = (smoothed - v.DroneVel) / dt;
+            v.DroneVel = smoothed;
+            // tan(lean): about 10 deg at the recon drone's cruise, 20-30 deg setting off and turning (exaggerated to read at
+            // 30 px), less stopping (the cruise lean takes some of the flare back).
+            var target = smoothed * 0.04f + accel * 0.03f;
+            float t = Time.time * 0.6f + e.Id * 7.3f; // hover: small corrections, about +-1.5 deg
+            target += new Vector3(Mathf.PerlinNoise(t, 0.5f) - 0.5f, 0, Mathf.PerlinNoise(0.5f, t) - 0.5f) * 0.05f;
+            target = Vector3.ClampMagnitude(target, 0.58f) * (1f - v.LandK);
+            const float w = 9f, damping = 0.5f;
+            v.DroneTiltVel += (w * w * (target - v.DroneTilt) - 2f * damping * w * v.DroneTiltVel) * dt;
+            v.DroneTilt += v.DroneTiltVel * dt;
+            if (!(v.DroneTilt.sqrMagnitude < 1f)) v.DroneTilt = v.DroneTiltVel = Vector3.zero; // NaN / runaway: start over
+            // Tip the body's up toward the lean (in world space), then express it under the root, which yaws to its heading.
+            var lean = Quaternion.FromToRotation(Vector3.up, (Vector3.up + v.DroneTilt).normalized);
+            var root = v.Rig.Root.rotation;
+            v.Rig.Body.localRotation = Quaternion.Inverse(root) * lean * root;
         }
 
         /// <summary>Will the sim stop this vehicle within about 0.3 s? (It stops dead at Range x 0.95 from an attack target,
