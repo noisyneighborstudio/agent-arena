@@ -39,6 +39,8 @@ namespace Pez.View
             public Bars Bars;            // world-space health and fuel bars (seen by every camera)
             public bool MainShow = true; // the local view's visibility and fade scale, restored after a stream render
             public float MainScale = 1f;
+            public bool Popping;         // going poof as it slips out of the local view's sight (PopOut)
+            public Vector3 PopCenter;    // the model's middle from its root, at full scale
             // Power state on structures: emissive renderers, the smoothed glow and what was last applied, steam.
             public Renderer[] Glows;
             public float GlowK = -1f, GlowShown = -1f, RateShown = 1f;
@@ -124,16 +126,40 @@ namespace Pez.View
         /// <summary>The fire light map covers the whole map, with a margin.</summary>
         void FireArea() => FireSim.SetMapArea(new Vector2(-8f, -8f), new Vector2(World.Map.W + 16f, World.Map.H + 16f), TerrainView.MainFogLayer);
 
-        // When a unit drops out of a team's sight it shrinks away over half a second instead of blinking off.
-        const float FogFade = 0.5f;
+        // When a unit drops out of a team's sight it goes poof (like anything leaving the map: PezEmerge.Poof) instead of
+        // blinking off or shrinking into the ground: a cloud bursts out of it while it swells 8% and pops to nothing.
+        const float FogFade = 0.2f;
         readonly Dictionary<(int team, int id), float> lastSeen = new Dictionary<(int, int), float>();
 
-        /// <summary>How much of `e` team `team` sees: 1 in sight, 1 to 0 over FogFade after it slips into the fog.</summary>
+        /// <summary>The scale `e` shows at for team `team`: 1 in sight; after it slips into the fog, the poof's swell and
+        /// pop over FogFade (up to 1.08, then down to 0).</summary>
         float Visibility(Entity e, int team)
         {
             if (ShownFor(e, team)) { if (team >= 0) lastSeen[(team, e.Id)] = Time.time; return 1f; }
             if (team < 0 || e.IsCarried || e.Dead || e.IsStructure || !lastSeen.TryGetValue((team, e.Id), out var t)) return 0f;
-            return Mathf.Clamp01(1f - (Time.time - t) / FogFade);
+            float k = (Time.time - t) / FogFade;
+            return k >= 1f ? 0f : k < 0.3f ? 1f + 0.08f * (k / 0.3f) : 1.08f * (1f - Mathf.Pow((k - 0.3f) / 0.7f, 2f));
+        }
+
+        /// <summary>A unit popping out of sight (vis is Visibility's scale, already on its root): the cloud on the first
+        /// frame, and the scale held about the model's middle, not its feet, so it pops in place rather than sinking.</summary>
+        void PopOut(EV v, float vis)
+        {
+            var root = v.Rig.Root;
+            if (!v.Popping)
+            {
+                Bounds b = default; bool any = false;
+                foreach (var r in root.GetComponentsInChildren<Renderer>())
+                {
+                    if (!r.enabled || r is ParticleSystemRenderer) continue;
+                    if (any) b.Encapsulate(r.bounds); else { b = r.bounds; any = true; }
+                }
+                if (!any) b = new Bounds(root.position + Vector3.up * .3f, Vector3.one * .6f);
+                v.Popping = true;
+                v.PopCenter = (b.center - root.position) / Mathf.Max(0.01f, vis);
+                Fx.Poof(b.center, Mathf.Max(b.size.x, b.size.z));
+            }
+            root.position += v.PopCenter * (1f - vis);
         }
 
         readonly List<int> audience = new List<int>();
@@ -290,6 +316,7 @@ namespace Pez.View
                 if (!show) continue;
                 v.Rig.Root.localScale = Vector3.one * vis;
                 UpdateView(v, alpha);
+                if (vis != 1f) PopOut(v, vis); else v.Popping = false;
                 if (v.Bars != null) { v.Bars.Update(e); v.Bars.ForView(e, PovTeam); }
             }
             PlayEvents();
@@ -455,7 +482,7 @@ namespace Pez.View
                 into.Rig.Emerge.SetBuildProgress(0f);
                 rig.Emerge.StartCoroutine(rig.Emerge.PlayDeployInto(into.Rig.Emerge));
             }
-            else if (rig.HasModel && rig.Root.gameObject.activeInHierarchy && !LeftSight(v))
+            else if (rig.HasModel && rig.Root.gameObject.activeInHierarchy && !(LeftSight(v) && v.Popping))
             {
                 rig.Model.transform.SetParent(transform, true);
                 // Vehicles leave a wreck for a while; everything else goes poof (PezEmerge.PlayRemove).
@@ -467,9 +494,8 @@ namespace Pez.View
         }
 
         /// <summary>
-        /// A player's own view copy (fogged) drops an enemy once it's out of sight: that's not a removal, so it just goes,
-        /// with no poof (a poof would read as a kill, and say something the player can't know). Spectators and the host see
-        /// everything, so anything gone from their world really left.
+        /// A player's own view copy (fogged) drops an enemy once it's out of sight. One already going poof as it slipped
+        /// out of sight (PopOut) just finishes; one still on screen goes poof here, like anything else leaving the view.
         /// </summary>
         bool LeftSight(EV v) => World.Mirror && PovTeam >= 0 && v.E.Team != PovTeam && !v.Destroyed && !v.Sold;
 
