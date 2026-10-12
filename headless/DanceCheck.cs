@@ -33,6 +33,14 @@ namespace Pez.Headless
             int overlaps = 0; var us = w.Owned(0).Where(e => !e.IsStructure).ToList();
             for (int i = 0; i < us.Count; i++) for (int j = i + 1; j < us.Count; j++) if (Vec2.Dist(us[i].Pos, us[j].Pos) < (us[i].Def.Radius + us[j].Def.Radius) * 0.7f) overlaps++;
             Console.WriteLine($"after 30s: {us.Count(e => e.Order == Order.Idle)} of {us.Count} idle, {overlaps} pairs overlapping by over 30%");
+            if (Environment.GetEnvironmentVariable("PEZ_CROWDDBG") != null)
+            {
+                foreach (var u in us.Where(e => e.Def.Armor == Armor.Vehicle && Vec2.Dist(e.Pos, new Vec2(26.6f, 9.7f)) < 3f)) Console.WriteLine($"  near vehicle #{u.Id} {u.Def.Key} {u.OrderName} at {u.Pos} to {u.OrderPos} moving {u.Moving} facing {u.Facing:0.00} givingway {u.GivingWay}");
+                foreach (var u in us.Where(e => e.Order != Order.Idle)) Console.WriteLine($"  busy #{u.Id} {u.Def.Key} {u.OrderName} at {u.Pos} to {u.OrderPos} moving {u.Moving} ghost {w.Time < u.GhostUntil}");
+                for (int i = 0; i < us.Count; i++) for (int j = i + 1; j < us.Count; j++) if (Vec2.Dist(us[i].Pos, us[j].Pos) < (us[i].Def.Radius + us[j].Def.Radius) * 0.7f)
+                    Console.WriteLine($"  overlap #{us[i].Id} {us[i].Def.Key} {us[i].OrderName} / #{us[j].Id} {us[j].Def.Key} {us[j].OrderName} {Vec2.Dist(us[i].Pos, us[j].Pos):0.00}");
+            }
+            foreach (var ev in w.Events.Where(ev => ev.Type == "crushed")) Console.WriteLine($"  [{ev.Tick * World.Dt:0.0}s] {ev.Text}");
             return game;
         }
 
@@ -40,6 +48,16 @@ namespace Pez.Headless
         {
             Game game;
             if (file == "crowd") game = Crowd();
+            else if (file.StartsWith("ai"))
+            {
+                // "ai" or "aiMINUTES": two scripted AIs play that long first (default 20 minutes).
+                game = new Game(new GameConfig { Seed = 5, MapSize = 96, Controllers = new[] { "ai", "ai" } });
+                float min = file.Length > 2 ? float.Parse(file.Substring(2)) : 20f;
+                for (int i = 0; i < min * 60 * World.TickRate && !game.World.GameOver; i++) game.Advance(World.Dt);
+                var ev = game.World.Events.Where(x => x.Type == "crushed").ToList();
+                Console.WriteLine($"after {min:0} min of AI vs AI: {ev.Count / 1} crushed events, kills {string.Join("/", game.World.Teams.Select(t => t.Stats.Kills))}, game over {game.World.GameOver} at {game.World.Time / 60:0.0} min; units now: {string.Join(", ", game.World.Entities.Where(x => !x.Dead && !x.IsStructure).GroupBy(x => x.Def.Key).Select(g => $"{g.Key}x{g.Count()}"))}");
+                foreach (var x in ev.Take(12)) Console.WriteLine($"  [{x.Tick * World.Dt / 60:0.0}m] {x.Text}");
+            }
             else
             {
                 game = new Game(new GameConfig { Seed = 1, MapSize = 48, Controllers = new[] { "llm" } });
@@ -76,6 +94,8 @@ namespace Pez.Headless
                 top = string.Join(",", orders[e.Id].OrderByDescending(kv => kv.Value).Take(3).Select(kv => $"{kv.Key}:{kv.Value * 100 / ticks}%")),
             }).ToList();
             var dancers = rows.Where(r => r.path > 4f && r.net < r.path * 0.25f).OrderByDescending(r => r.path - r.net).ToList();
+            var crushed = w.Events.Where(ev => ev.Type == "crushed").GroupBy(ev => ev.A).Select(g => g.First()).ToList();
+            Console.WriteLine($"run over: {crushed.Count} ({crushed.Count(ev => ev.Text.Contains("your own"))} by their own side)");
             Console.WriteLine($"{rows.Count} units over {seconds:0}s; {dancers.Count} dance (travel > 4 tiles, net < 25% of it); total wasted travel {dancers.Sum(r => r.path - r.net):0} tiles");
             foreach (var g in dancers.GroupBy(r => r.top.Split(':')[0]).OrderByDescending(g => g.Count()))
                 Console.WriteLine($"  {g.Count(),3} mostly {g.Key}: {string.Join(" ", g.GroupBy(r => r.e.Def.Key).Select(k => $"{k.Key}x{k.Count()}"))}");

@@ -53,7 +53,7 @@ namespace Pez.Headless
         static readonly Dictionary<Type, string> SavedFields = new Dictionary<Type, string>
         {
             [typeof(Entity)] = "Id Team Def Pos PrevPos Facing TurretFacing Hp Dead Origin BuildProgress Rally Order OrderPos GuardPos TargetId UntilCapturable EngageDerricks Path PathIdx Cooldown " +
-                "SpeedCap Group ProgressPos ProgressAt GhostUntil ProgressDist Waypoints WaypointLoop RetreatBelow Retreating RetreatSpent GivingWay RepathTimer Moving LastAttackerId LastHitTime " +
+                "SpeedCap Group ProgressPos ProgressAt GhostUntil ProgressDist Waypoints WaypointLoop RetreatBelow Retreating RetreatSpent GivingWay OwnBlockedSince RepathTimer Moving LastAttackerId LastHitTime " +
                 "LastCallForHelp LastAttackerTeam Responding HomePos Cargo CargoType HarvestType HarvestTile WorkTimer Burning Dock DockAt DepositId Working Offline CarrierId Passengers Fuel Landed Stranded " +
                 "FuelCap AtDepot FuelWarned NoAutoRefuelUntil ResumeOrder ResumePos ResumeGuard ResumeTarget ResumeWaypoints ResumeSpeedCap MineQueue LastFiredAt " +
                 "Prospecting ProspectCenter ProspectRadius SkipSites SurveyFailure SurveyFailedAt ZoneId",
@@ -62,7 +62,7 @@ namespace Pez.Headless
                 "SurfaceWarnedAt HomeOreWarned LastActiveAt Reserve SaveFor SaveForCost Stats",
             [typeof(World)] = "Map Paths MapVersion Open MaxPlayers MaxMapSize GrowStep SafeJoinDistance ProtectionSeconds Teams ById Entities Projectiles Events " +
                 "EventCounts Alerts Tick GameOver Winner Errors LastError nextId nextSeq seatCounter rng rateSnapshot airWarned StallGrace ArenaChampion contested Inventions GameId Regrown SuddenDeathAt DerrickRespawns " +
-                "| ErrorLog loggedErrors cells cellsW cellsH nearTarget nearHelp nearMine nearSep nearSpot nearVis Showcase OreVersion oreDirty beingMined regrowNow scoreCache scoreCacheTick NextMatchIn derricksChecked groupSpan Mirror MirrorScores", // Showcase: the kitchen sink room is never saved (rebuilt from code); Mirror: set by the browser client on its copy
+                "| ErrorLog loggedErrors cells cellsW cellsH nearTarget nearHelp nearMine nearSep nearSpot nearCrush nearVis Showcase OreVersion oreDirty beingMined regrowNow scoreCache scoreCacheTick NextMatchIn derricksChecked groupSpan Mirror MirrorScores", // Showcase: the kitchen sink room is never saved (rebuilt from code); Mirror: set by the browser client on its copy
             [typeof(Invention)] = "Key Name Chassis WeaponFrom Summary Team Def ResearchCost ResearchTime Progress Novelty PriceFactor ProposedAt ResearchedAt Built Lost Kills",
             [typeof(Map)] = "W H Tiles Ore OreType Occupant Spawns Deep OreScale nextDepositId OreBase OreBaseType | writable fieldsChanged fieldTiles fieldRoots BaseMissing",
             [typeof(SimpleAI)] = "team Passive nextThink waveSize outpostTargets nextProspect prospectRadius knownSurface",
@@ -285,6 +285,12 @@ namespace Pez.Headless
             Step(game, 60); Step(back, 60);
             var ja = SnapForCompare(game); var jb = SnapForCompare(back);
             Check(ja == jb, $"and the resumed copy plays on identically: {FirstDiff(ja, jb)}");
+            if (ja != jb && Environment.GetEnvironmentVariable("PEZ_ALERTDBG") != null)
+            {
+                var la = ja.Substring(ja.IndexOf("\"alerts\":{")).Split("{\"seq\"").ToList(); var lb = jb.Substring(jb.IndexOf("\"alerts\":{")).Split("{\"seq\"").ToList();
+                foreach (var x in lb.Except(la)) Console.WriteLine("  only resumed: " + x.Substring(0, Math.Min(300, x.Length)));
+                foreach (var x in la.Except(lb)) Console.WriteLine("  only original: " + x.Substring(0, Math.Min(300, x.Length)));
+            }
         }
 
         /// <summary>A newer build loads an older snapshot: fields it doesn't find get defaults, unknown ones are ignored.</summary>
