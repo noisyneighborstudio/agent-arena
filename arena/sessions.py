@@ -422,7 +422,7 @@ class Handler(BaseHTTPRequestHandler):
         if rest == "":
             # The gateway's own viewer page, pointed at us. No ?c= (commander) ever reaches it: no orders box.
             try:
-                html = urllib.request.urlopen(f"http://127.0.0.1:{gw}/view/{tok}", timeout=5).read().decode()
+                html = urllib.request.urlopen(f"http://127.0.0.1:{gw}/view/{tok}/classic", timeout=5).read().decode()  # the original page: /view/<v> itself now opens the browser build
             except Exception as e:
                 return self.send(502, f"gateway not answering: {e}", "text/plain")
             html = html.replace(f'const BASE = "/view/{tok}"', f'const BASE = "{base}"')
