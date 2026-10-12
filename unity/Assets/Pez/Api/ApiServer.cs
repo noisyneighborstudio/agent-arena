@@ -32,6 +32,8 @@ namespace Pez.Api
             public int Team;
             public long AlertSince, EventSince;
             public int OrdersSince = -1;
+            /// <summary>In a waiting room: the players seated when the wait began (another joining, or the match starting, ends it). -1 otherwise.</summary>
+            public int Seated = -1;
             public Priority Min;
             public bool Interruptible, Json;
             public DateTime Started, Deadline;
@@ -131,19 +133,33 @@ namespace Pez.Api
                 bool news = fresh.Any(a => !w.Alerts.IsContinuation(w, a, wt.AlertSince));
                 // New commander's orders also end the wait: the model should read them right away.
                 bool newOrders = !restarted && wt.OrdersSince >= 0 && w.Teams[wt.Team].OrdersVersion > wt.OrdersSince;
-                bool interrupt = wt.Interruptible && (news || newOrders) && (now - wt.Started).TotalSeconds >= 1.0;
+                // A waiting room has no ticks: a join or the start is the news (time-outs above are on the real clock).
+                bool seating = wt.Seated >= 0 && (!game.Waiting || game.OutsidePlayers != wt.Seated);
+                bool interrupt = wt.Interruptible && (news || newOrders || seating) && (now - wt.Started).TotalSeconds >= 1.0;
                 if (!interrupt && !restarted && now < wt.Deadline && !w.GameOver) continue;
                 waiters.RemoveAt(i);
-                Respond(wt.Ctx, 200, Json.Write(WaitResult(w, wt, interrupt, fresh, now)), "application/json");
+                Respond(wt.Ctx, 200, Json.Write(WaitResult(game, wt, interrupt, fresh, now)), "application/json");
             }
         }
 
-        static JObj WaitResult(World w, Waiter wt, bool interrupted, List<Alert> fresh, DateTime now) => new JObj()
-            .Set("interrupted", interrupted)
-            .Set("waited_s", (float)Math.Round((now - wt.Started).TotalSeconds, 1))
-            .Set("new_alerts", wt.Json ? fresh.OrderByDescending(a => a.Priority).Select(a => (object)StateData.Alert(w, a)).ToList() : StateView.AlertsJson(w, fresh.OrderByDescending(a => a.Priority)))
-            .Set("orders_changed", wt.OrdersSince >= 0 && w.Teams.Count > wt.Team && w.Teams[wt.Team].OrdersVersion > wt.OrdersSince)
-            .Set("state", wt.Json ? StateData.Team(w, Math.Min(wt.Team, w.Teams.Count - 1), wt.EventSince) : StateView.TeamState(w, Math.Min(wt.Team, w.Teams.Count - 1), wt.EventSince));
+        /// <summary>A state with the waiting room's news first (what it's waiting for, and the lone player's choice), if it's waiting.</summary>
+        static JObj WithWaiting(Game game, JObj state, bool json)
+        {
+            if (game.Waiting) state.Insert(0, "waiting", json ? (object)game.WaitingJson() : game.WaitingText());
+            return state;
+        }
+
+        static JObj WaitResult(Game game, Waiter wt, bool interrupted, List<Alert> fresh, DateTime now)
+        {
+            var w = game.World;
+            return new JObj()
+                .Set("interrupted", interrupted)
+                .Set("waited_s", (float)Math.Round((now - wt.Started).TotalSeconds, 1))
+                .Set("new_alerts", wt.Json ? fresh.OrderByDescending(a => a.Priority).Select(a => (object)StateData.Alert(w, a)).ToList() : StateView.AlertsJson(w, fresh.OrderByDescending(a => a.Priority)))
+                .Set("orders_changed", wt.OrdersSince >= 0 && w.Teams.Count > wt.Team && w.Teams[wt.Team].OrdersVersion > wt.OrdersSince)
+                .Set("state", w.Teams.Count == 0 ? null // a new match that waits for players starts with no seats
+                    : WithWaiting(game, wt.Json ? StateData.Team(w, Math.Min(wt.Team, w.Teams.Count - 1), wt.EventSince) : StateView.TeamState(w, Math.Min(wt.Team, w.Teams.Count - 1), wt.EventSince), wt.Json));
+        }
 
         // ---- Player tokens (open arena). Control tokens act for one team; view tokens only read its fogged view.
         readonly Dictionary<string, (World world, int team, int seat)> controlTokens = new Dictionary<string, (World, int, int)>();
@@ -242,7 +258,8 @@ namespace Pez.Api
                         int team = TeamParam(req, w);
                         w.Teams[team].LastActiveAt = w.Time; // command, state and wait keep a seat (World.CheckIdle)
                         long since = long.TryParse(req.QueryString["since"], out var s) ? s : 0;
-                        return Json.Write(req.QueryString["format"] == "json" ? StateData.Team(w, team, since) : StateView.TeamState(w, team, since));
+                        bool json = req.QueryString["format"] == "json";
+                        return Json.Write(WithWaiting(game, json ? StateData.Team(w, team, since) : StateView.TeamState(w, team, since), json));
                     }
                 case "/api/alerts":
                     {
@@ -271,6 +288,7 @@ namespace Pez.Api
                             Interruptible = req.QueryString["min"] != "none",
                             Json = req.QueryString["format"] == "json",
                             Started = DateTime.UtcNow,
+                            Seated = game.Waiting ? game.OutsidePlayers : -1,
                         };
                         wt.Deadline = wt.Started.AddSeconds(secs);
                         waiters.Add(wt);
@@ -286,21 +304,32 @@ namespace Pez.Api
                         // Open arena: a new outside player joins. Returns a control token (keep it secret) and a
                         // read-only view token for their personal web view.
                         if (method != "POST") { status = 405; return "{\"ok\":false,\"error\":\"POST required\"}"; }
+                        var closed = game.ClosedToJoins();
+                        if (closed != null)
+                        {
+                            status = 409;
+                            var next = game.NextMatchInS;
+                            return Json.Write(new JObj().Set("ok", false).Set("error", "room_closed_to_joins: " + closed).Set("code", "room_closed_to_joins")
+                                .Set("next_match_in_s", next.HasValue ? (object)StateView.Secs(next.Value) : null));
+                        }
                         var d = Json.Parse(p.Body ?? "{}") as Dictionary<string, object>;
                         var name = Text.Name(d?.Str("name"));
-                        var team = w.AddTeam("llm", name, d?.Str("team_name"), out var err, out var nameProblem);
+                        var team = game.Join("llm", name, d?.Str("team_name"), out var err, out var nameProblem);
                         if (team == null) { status = 409; return Json.Write(new JObj().Set("ok", false).Set("error", err)); }
                         var token = NewToken(); var view = NewToken();
                         controlTokens[token] = (w, team.Id, team.Seat);
                         viewTokens[view] = (w, team.Id, team.Seat);
                         TokensVersion++;
                         Log($"Player joined: {name} as {team.Name} (team {team.Id}); map now {w.Map.W}x{w.Map.H}");
-                        return Json.Write(new JObj().Set("ok", true).Set("token", token).Set("view_token", view)
+                        var reply = new JObj().Set("ok", true).Set("token", token).Set("view_token", view)
                             .Set("team", team.Id).Set("flavor", team.Name).Set("team_name", team.Name).Put("team_name_rejected", nameProblem).Set("name", name)
                             .Set("base", $"{(int)team.StartPos.X},{(int)team.StartPos.Y} sector {StateView.Sector(team.StartPos)}")
                             .Set("map", $"{w.Map.W}x{w.Map.H}")
                             // Late joiners: how long this match has left, and what comes next.
-                            .Set("match", StateView.MatchJson(w)).Set("match_summary", StateView.MatchText(w)));
+                            .Set("match", StateView.MatchJson(w)).Set("match_summary", StateView.MatchText(w))
+                            .Set("room_status", game.RoomStatus);
+                        if (game.Waiting) reply.Set("waiting", game.WaitingJson());
+                        return Json.Write(reply);
                     }
                 case "/api/leave":
                     {
@@ -311,18 +340,34 @@ namespace Pez.Api
                         return Json.Write(new JObj().Set("ok", true).Set("result", msg));
                     }
                 case "/api/lobby":
-                    return Json.Write(new JObj()
-                        .Set("open", w.Open).Set("rules_version", StateView.RulesVersion).Set("map", $"{w.Map.W}x{w.Map.H}").Set("max_map", w.MaxMapSize).Set("sector_tiles", StateView.SectorTiles)
-                        .Set("players", w.ActivePlayers).Set("max_players", w.MaxPlayers).Set("time_s", (float)Math.Round(w.Time, 1))
-                        .Set("champion", w.ArenaChampion) // set while one team has cleared the arena (null otherwise)
-                        .Set("match", StateView.MatchJson(w))
-                        .Set("teams", w.Teams.Select(t => new JObj().Set("flavor", t.Name).Set("player", t.PlayerName ?? t.Controller)
-                            .Set("status", t.Resigned ? "resigned" : t.Left ? "left" : t.Defeated ? "eliminated" : "playing").Set("house", t.House)
-                            .Set("structures", w.Owned(t.Id).Count(e => e.IsStructure)).Set("kills", t.Stats.Kills)
-                            // Game seconds since this seat's player last called command, state or wait (null for house AI, which has no
-                            // player); active: still playing and heard from within World.ActiveWithin. CI and the gateway's reaper skip idle seats.
-                            .Set("idle_s", t.House ? null : (object)(int)(w.Time - t.LastActiveAt))
-                            .Set("active", !t.Left && !t.Defeated && (t.House || w.Time - t.LastActiveAt < World.ActiveWithin))).ToList()));
+                    {
+                        // What an agent needs to pick a room: its status, whether it can join and why not, a verdict on how far the
+                        // match has gone (Game.Verdict), the clock (null while waiting: no match yet), seats, and who's really playing.
+                        bool waiting = game.Waiting, clock = !waiting && w.SuddenDeathAt > 0;
+                        var why = game.WhyNotJoinable();
+                        var scores = w.Scores().ToDictionary(s => s.Team, s => s.Score);
+                        var lobby = new JObj()
+                            .Set("open", w.Open).Set("rules_version", StateView.RulesVersion).Set("map", $"{w.Map.W}x{w.Map.H}").Set("max_map", w.MaxMapSize).Set("sector_tiles", StateView.SectorTiles)
+                            .Set("players", w.ActivePlayers).Set("max_players", w.MaxPlayers).Set("time_s", (float)Math.Round(w.Time, 1))
+                            .Set("champion", w.ArenaChampion) // set while one team has cleared the arena (null otherwise)
+                            .Set("match", StateView.MatchJson(w))
+                            .Set("status", game.RoomStatus).Set("joinable", why == null).Set("why", why)
+                            .Set("verdict", game.Verdict()).Set("verdict_text", game.VerdictText())
+                            .Set("age_s", waiting ? null : (object)(int)w.Time).Set("match_hours", game.Config.MatchHours)
+                            .Set("sudden_death_in_s", clock ? (object)StateView.Secs(w.SuddenDeathAt - w.Time) : null)
+                            .Set("ends_in_s", clock ? (object)StateView.Secs(w.MatchEndsAt - w.Time) : null)
+                            .Set("seats_free", w.SeatsFree);
+                        if (waiting) lobby.Set("min_players", game.Config.MinPlayers).Set("waiting_s", StateView.Secs(game.WaitedSeconds));
+                        return Json.Write(lobby
+                            .Set("teams", w.Teams.Select(t => new JObj().Set("flavor", t.Name).Set("team_name", t.Name).Set("player", t.PlayerName ?? t.Controller)
+                                .Set("status", t.Resigned ? "resigned" : t.Left ? "left" : t.Defeated ? "eliminated" : "playing").Set("house", t.House)
+                                .Set("score", scores.TryGetValue(t.Id, out var sc) ? (object)sc : null) // null: not on the scoreboard (left or out)
+                                .Set("structures", w.Owned(t.Id).Count(e => e.IsStructure)).Set("kills", t.Stats.Kills)
+                                // Game seconds since this seat's player last called command, state or wait (null for house AI, which has no
+                                // player); active: still playing and heard from within World.ActiveWithin. CI and the gateway's reaper skip idle seats.
+                                .Set("idle_s", t.House ? null : (object)(int)(w.Time - t.LastActiveAt))
+                                .Set("active", w.IsActive(t))).ToList()));
+                    }
                 case "/api/whoami":
                     {
                         int team = TeamParam(req, w);
@@ -389,7 +434,7 @@ namespace Pez.Api
                         var results = new List<object>();
                         foreach (var cmd in cmds)
                         {
-                            var r = cmd is Dictionary<string, object> cd ? Commands.Execute(w, team, cd) : new JObj().Set("ok", false).Set("error", "each command must be an object");
+                            var r = cmd is Dictionary<string, object> cd ? game.Execute(team, cd) : new JObj().Set("ok", false).Set("error", "each command must be an object");
                             results.Add(r);
                             OnCommand?.Invoke(team, Json.Write(cmd), Json.Write(r));
                         }
@@ -409,6 +454,7 @@ namespace Pez.Api
                             HouseAIs = game.Config.HouseAIs, HouseResignAbove = game.Config.HouseResignAbove,
                             KitchenSink = game.Config.KitchenSink, // the showcase room restarts as the showcase
                             MatchHours = d?.Num("match_hours", game.Config.MatchHours) ?? game.Config.MatchHours,
+                            MinPlayers = (int)(d?.Num("min_players", game.Config.MinPlayers) ?? game.Config.MinPlayers),
                         };
                         if (d != null && d.TryGetValue("controllers", out var cs) && cs is List<object> cl2) cfg.Controllers = cl2.Select(x => x.ToString()).ToArray();
                         else cfg.Controllers = game.Config.Controllers;

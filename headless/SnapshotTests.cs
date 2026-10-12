@@ -66,7 +66,7 @@ namespace Pez.Headless
             [typeof(Invention)] = "Key Name Chassis WeaponFrom Summary Team Def ResearchCost ResearchTime Progress Novelty PriceFactor ProposedAt ResearchedAt Built Lost Kills",
             [typeof(Map)] = "W H Tiles Ore OreType Occupant Spawns Deep OreScale nextDepositId OreBase OreBaseType | writable fieldsChanged fieldTiles fieldRoots BaseMissing",
             [typeof(SimpleAI)] = "team Passive nextThink waveSize outpostTargets nextProspect prospectRadius knownSurface",
-            [typeof(Game)] = "World Config Speed Paused ais accumulator nextHouseCheck ResumedFrom LastSaved restartIn | RenderFps Restarted",
+            [typeof(Game)] = "World Config Speed Paused ais accumulator nextHouseCheck ResumedFrom LastSaved restartIn Waiting waitedBefore waitedSeen waitingSince | RenderFps Restarted Now",
             [typeof(AlertLog)] = "All open nextSeq",
             [typeof(Alert)] = "Seq Team Kind Priority Pos StartTick LastTick Count Victims Attackers Lost Amount",
             [typeof(GameEvent)] = "Seq Tick Type Team A B Pos Pos2 Key Text",
@@ -75,7 +75,7 @@ namespace Pez.Headless
             [typeof(ProdItem)] = "Key Progress StructureId",
             [typeof(ZoneFlag)] = "ZoneId FlaggedBy FlaggedAt",
             [typeof(TeamStats)] = "UnitsBuilt StructuresBuilt UnitsLost StructuresLost Kills OreMined Built KillValue KillsValued SalvageLeft DeepMined DerricksCaptured DerrickSteel SalvageMined UpkeepPaid",
-            [typeof(GameConfig)] = "Seed MapSize Speed Controllers Orders Open MaxPlayers MaxMapSize OreScale HouseAIs HouseResignAbove MatchHours | KitchenSink",
+            [typeof(GameConfig)] = "Seed MapSize Speed Controllers Orders Open MaxPlayers MaxMapSize OreScale HouseAIs HouseResignAbove MatchHours MinPlayers | KitchenSink",
         };
 
         static void SnapshotCoversEveryField()

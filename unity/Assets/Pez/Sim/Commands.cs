@@ -44,6 +44,7 @@ namespace Pez.Sim
   {""type"":""save_for"", ""unit"":""drill_rig""}           save up for one unit or structure: converters leave its cost alone until you train/build it (no unit: cancel)
   {""type"":""cancel"", ""unit"":KEY}                       cancel the last queued unit of that type (full refund)
   {""type"":""say"", ""text"":""...""}                      broadcast a chat message (shown on screen)
+  {""type"":""start_match"", ""opponent"":""scripted""}     in a room waiting for players, after 5 minutes alone: start now against the scripted AI (it attacks)
   {""type"":""propose_tech"", ""name"":""Lancer"", ""base"":""light_tank"", ""weapon_from"":""rocket_soldier"", ""hp"":360, ""damage"":70, ""dry_run"":true}
       design your own unit from one you can build (see inventions in the rules); dry_run quotes it, without dry_run it's researched, then train its key
 'units' may also be the string ""all"" (all your combat units) or ""idle"" (idle combat units).";

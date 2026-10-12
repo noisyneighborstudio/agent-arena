@@ -163,7 +163,7 @@ namespace Pez.Sim
 
         bool Crossed(float at) => at > 0 && (Tick - 1) * Dt < at && Time >= at;
 
-        void Announce(string text)
+        internal void Announce(string text)
         {
             Emit("chat", -1, text: text);
             Emit("match", -1, text: text);
@@ -246,11 +246,168 @@ namespace Pez.Sim
             {
                 Seed = unchecked(c.Seed * 31 + 17), MapSize = c.MapSize, Speed = c.Speed, Controllers = Enumerable.Repeat("ai", c.HouseAIs).ToArray(),
                 Orders = null, Open = c.Open, MaxPlayers = c.MaxPlayers, MaxMapSize = c.MaxMapSize, OreScale = c.OreScale,
-                HouseAIs = c.HouseAIs, HouseResignAbove = c.HouseResignAbove, MatchHours = c.MatchHours,
+                HouseAIs = c.HouseAIs, HouseResignAbove = c.HouseResignAbove, MatchHours = c.MatchHours, MinPlayers = c.MinPlayers,
             };
             Restart(cfg);
-            World.Emit("chat", -1, text: $"A new match has begun ({(cfg.MatchHours > 0 ? $"{cfg.MatchHours:0.#} h until sudden death" : "no time limit")}). Join again for a seat.");
+            World.Emit("chat", -1, text: Waiting ? $"The next match is open: it starts when {cfg.MinPlayers} players are seated. Join again for a seat."
+                                                 : $"A new match has begun ({(cfg.MatchHours > 0 ? $"{cfg.MatchHours:0.#} h until sudden death" : "no time limit")}). Join again for a seat.");
             Restarted?.Invoke();
+        }
+
+        // ------------------------------------------------------------------ waiting rooms
+
+        /// <summary>
+        /// A room that waits for players (GameConfig.MinPlayers): frozen (no ticks, no game time) until that many outside
+        /// agents are seated, so everyone starts together at t=0 and no match ages with one agent sitting alone. Separate
+        /// from the operator's Paused. Commands other than say and start_match are refused (Execute).
+        /// </summary>
+        public bool Waiting;
+        /// <summary>Real seconds a lone agent waits before it may start against the scripted AI instead (start_match).</summary>
+        public const float ChoiceAfter = 300f;
+        /// <summary>The wall clock for the real time waited (tests set their own).</summary>
+        public Func<DateTime> Now = () => DateTime.UtcNow;
+        /// <summary>Real seconds waited before waitingSince (a resumed room keeps how long it's waited); waitedSeen: as of the last frame.</summary>
+        float waitedBefore, waitedSeen;
+        DateTime waitingSince;
+
+        public float WaitedSeconds => Waiting ? waitedBefore + (float)(Now() - waitingSince).TotalSeconds : waitedBefore;
+        /// <summary>Outside agents seated (not house AI, not gone): what MinPlayers counts.</summary>
+        public int OutsidePlayers => World.Teams.Count(t => t.Controller == "llm" && !t.Left);
+
+        /// <summary>Every frame while waiting: once a lone agent has waited ChoiceAfter, an alert says what it can do.</summary>
+        void WaitingClock()
+        {
+            float waited = WaitedSeconds;
+            if (waitedSeen < ChoiceAfter && waited >= ChoiceAfter && OutsidePlayers == 1)
+                foreach (var t in World.Teams.Where(t => t.Controller == "llm" && !t.Left))
+                    World.Alerts.Raise(World, t.Id, "waiting_choice", Priority.High, t.StartPos, hit: false).Lost.Add(WaitingText());
+            waitedSeen = waited;
+        }
+
+        /// <summary>A player takes a seat (ApiServer's register). In a waiting room it's a founder, and enough of them start the match.</summary>
+        public Team Join(string controller, string playerName, string teamName, out string error, out string nameProblem)
+        {
+            var t = World.AddTeam(controller, playerName, teamName, out error, out nameProblem);
+            if (t == null || !Waiting) return t;
+            t.ProtectedUntil = 0; // founders start together: no newcomer protection (and at game time 0, no catch-up kit)
+            if (OutsidePlayers >= Config.MinPlayers) BeginMatch($"{OutsidePlayers} players are seated");
+            return t;
+        }
+
+        void BeginMatch(string how)
+        {
+            waitedBefore = WaitedSeconds;
+            Waiting = false;
+            World.Announce($"The match has started: {how}. The clock runs from now ({(Config.MatchHours > 0 ? $"{Config.MatchHours:0.#} h until sudden death" : "no time limit")}). Everyone starts together, with no newcomer protection.");
+        }
+
+        /// <summary>One command from a player over the API: start_match and the waiting room's refusals, then Commands.Execute.</summary>
+        public JObj Execute(int team, Dictionary<string, object> c)
+        {
+            var type = c.Str("type", "").ToLowerInvariant();
+            if (type == "start_match") return StartMatch(team, c.Str("opponent"));
+            if (Waiting && type != "say") return Fail($"waiting_for_players: {WaitingText()} Until then only say and start_match work.");
+            return Commands.Execute(World, team, c);
+        }
+
+        static JObj Fail(string error) => new JObj().Set("ok", false).Set("error", error);
+
+        /// <summary>A lone agent who has waited ChoiceAfter starts now against the scripted AI: the aggressive one (attack waves), seated as house.</summary>
+        JObj StartMatch(int team, string opponent)
+        {
+            if (!Waiting) return Fail("start_match: the match is already running");
+            if (opponent != "scripted") return Fail("start_match needs \"opponent\":\"scripted\" (the scripted AI is the only sparring partner)");
+            int seated = OutsidePlayers;
+            if (seated != 1) return Fail($"start_match is for a player waiting alone; {seated} players are seated, and the match starts by itself when {Config.MinPlayers} are");
+            float left = ChoiceAfter - WaitedSeconds;
+            if (left > 0) return Fail($"start_match opens after {ChoiceAfter / 60:0} minutes of waiting: {StateView.Secs(left)}s to go. Until then the room waits for players");
+            var ai = World.AddTeam("ai", "Scripted AI", out var err);
+            if (ai == null) return Fail("start_match: " + err);
+            ai.House = true; // not an outside player: it doesn't count toward min_players, or keep the room open
+            ai.ProtectedUntil = 0;
+            ais.RemoveAll(a => a.Team == ai.Id); // a recycled seat may still have the old occupant's AI
+            ais.Add(new SimpleAI(ai.Id, passive: false));
+            BeginMatch($"{World.Teams[team].Name} against the scripted AI ({ai.Name})");
+            return new JObj().Set("ok", true).Set("result", $"the match has started against the scripted AI ({ai.Name}: it attacks, in waves of 6 to 10)");
+        }
+
+        /// <summary>What a waiting room is waiting for, in a sentence, with the lone agent's choice once it's open.</summary>
+        public string WaitingText()
+        {
+            int seated = OutsidePlayers, min = Config.MinPlayers;
+            float waited = WaitedSeconds;
+            var s = $"waiting for players: {seated} of {min} seated, {StateView.Hms(waited)} waited. The match starts by itself when {min} are seated; no game time passes until then.";
+            if (seated != 1) return s;
+            return waited < ChoiceAfter ? s + $" If you're still alone in {StateView.Hms(ChoiceAfter - waited)}, you can start against the scripted AI instead."
+                : s + " You've waited 5 minutes alone, so choose: keep waiting (do nothing); leave, then join a running room by its code (the lobby lists them); " +
+                      "or start now against the scripted AI: {\"type\":\"start_match\",\"opponent\":\"scripted\"}.";
+        }
+
+        public JObj WaitingJson() => new JObj().Set("players", OutsidePlayers).Set("min_players", Config.MinPlayers)
+            .Set("waited_s", StateView.Secs(WaitedSeconds)).Set("choose_after_s", StateView.Secs(ChoiceAfter - WaitedSeconds)).Set("text", WaitingText());
+
+        // ------------------------------------------------------------------ the lobby
+
+        /// <summary>waiting (gathering players, frozen), playing, closing (sudden death or later: no joins) or results (the match is over).</summary>
+        public string RoomStatus => Waiting ? "waiting" : World.GameOver ? "results" : World.Phase >= MatchPhase.SuddenDeath ? "closing" : "playing";
+
+        /// <summary>Game seconds until the next match starts (the results countdown, or the clock plus ResultsSeconds); null if none is coming.</summary>
+        public float? NextMatchInS =>
+            !Config.Open || Config.KitchenSink || World.SuddenDeathAt <= 0 || (World.GameOver && !World.MatchOver) ? (float?)null
+            : World.GameOver ? (restartIn >= 0 ? restartIn : ResultsSeconds)
+            : World.MatchEndsAt - World.Time + ResultsSeconds;
+
+        /// <summary>Why the room takes no new players now (null: it does): sudden death or later is closed to every join, even by code, as a newcomer can't catch up.</summary>
+        public string ClosedToJoins()
+        {
+            var next = NextMatchInS;
+            string when = next.HasValue ? $"; its next match starts in {StateView.Hms(next.Value)}" : "";
+            if (World.GameOver) return $"this match is over and its results are showing{when}. Join a room that's playing or waiting (the lobby lists them)";
+            if (World.Phase >= MatchPhase.SuddenDeath) return $"this match is in sudden death and closed to new players, who couldn't catch up{when}. Join a room that's playing or waiting (the lobby lists them)";
+            return null;
+        }
+
+        /// <summary>The lobby's why for a room that can't be joined; null when it can.</summary>
+        public string WhyNotJoinable()
+        {
+            var w = World; var next = NextMatchInS;
+            if (!w.Open) return "not open for joining";
+            if (w.GameOver) return "match over: results showing" + (next.HasValue ? $"; next match in {StateView.Secs(next.Value)}s" : "");
+            if (w.Phase >= MatchPhase.SuddenDeath) return "sudden death: closed to new players";
+            if (w.SeatsFree == 0) return $"all {Math.Min(w.MaxPlayers, World.Flavors.Length)} seats taken";
+            return null;
+        }
+
+        public const float FreshFor = 15 * 60f, LateWithin = 30 * 60f;
+
+        /// <summary>
+        /// The lobby's read on a room: fresh (waiting, or the first FreshFor of game time), early (before a third of the time to
+        /// sudden death), midgame, then late (less than LateWithin to sudden death, closing or results; late wins over fresh in
+        /// a short match). A room with no clock is fresh, then midgame.
+        /// </summary>
+        public string Verdict()
+        {
+            var w = World;
+            if (Waiting) return "fresh";
+            if (RoomStatus != "playing" || (w.SuddenDeathAt > 0 && w.SuddenDeathAt - w.Time < LateWithin)) return "late";
+            if (w.Time < FreshFor) return "fresh";
+            return w.SuddenDeathAt > 0 && w.Time < w.SuddenDeathAt / 3 ? "early" : "midgame";
+        }
+
+        /// <summary>The verdict in one plain line: time to sudden death, who's active, the leader's share of the points.</summary>
+        public string VerdictText()
+        {
+            var w = World;
+            if (Waiting) return WaitingText();
+            if (w.GameOver) return $"match over: {(w.Winner >= 0 ? $"{w.Teams[w.Winner].Name} won" : "no winner")}; " + (NextMatchInS is float n ? $"next match in {StateView.Hms(n)}." : "no next match.");
+            var scores = w.Scores();
+            int total = scores.Sum(s => s.Score);
+            string clock = w.SuddenDeathAt <= 0 ? "no time limit"
+                : w.Phase >= MatchPhase.SuddenDeath ? $"sudden death: the match ends on points in {StateView.Hms(w.MatchEndsAt - w.Time)}"
+                : $"{StateView.Hms(w.SuddenDeathAt - w.Time)} to sudden death";
+            int active = w.Teams.Count(t => !t.House && w.IsActive(t));
+            return $"{clock}; {active} active player{(active == 1 ? "" : "s")}; " +
+                   (total > 0 ? $"the leader ({scores[0].Name}) has {100 * scores[0].Score / total}% of the points." : "no points scored yet.");
         }
     }
 }

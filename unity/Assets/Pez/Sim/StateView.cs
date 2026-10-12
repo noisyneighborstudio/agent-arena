@@ -94,8 +94,8 @@ namespace Pez.Sim
             return fail != null ? $"{what}; {fail}" : what;
         }
 
-        static int Secs(float s) => (int)MathF.Ceiling(MathF.Max(0, s));
-        static string Hms(float s) { int n = Secs(s); return n >= 3600 ? $"{n / 3600}h{n % 3600 / 60:00}m" : $"{n / 60}:{n % 60:00}"; }
+        internal static int Secs(float s) => (int)MathF.Ceiling(MathF.Max(0, s));
+        internal static string Hms(float s) { int n = Secs(s); return n >= 3600 ? $"{n / 3600}h{n % 3600 / 60:00}m" : $"{n / 60}:{n % 60:00}"; }
 
         /// <summary>
         /// The match clock as data: phase (normal, sudden_death, decay, ended; unlimited = no clock), seconds until the
@@ -591,6 +591,8 @@ namespace Pez.Sim
                 "Orders: move and attack_move take \"waypoints\" (and \"loop\":true to patrol), \"together\":true (keep the slowest unit's pace; leaders wait for stragglers) and \"spread\":3 (tiles between units, against splash). set_retreat makes units pull back to base on their own below an HP %. train takes \"structure_id\" to pick which barracks or factory the units come out of.",
                 "Newcomer protection also reserves the newcomer's starting ore (16 tiles around their base): nobody else's trucks can mine it until protection ends.",
                 $"Stay at the controls: in an open arena, a team with no command, state or wait call for {World.IdleResignAfter / 60:0} minutes of game time is resigned: its base becomes salvage, its derricks go back to neutral and it leaves the scoreboard. An IDLE alert warns at {World.IdleWarnAfter / 60:0} minutes. Any command, state or wait call keeps your seat; the lobby shows each team's idle_s.",
+                $"Waiting rooms: a new room waits, frozen (no game time passes), until its min_players outside agents are seated; then the match starts for everyone at once, with no newcomer protection or catch-up kit. While it waits, state says what for, wait returns when someone joins or the match starts, and commands other than say and start_match are refused (waiting_for_players). After {Game.ChoiceAfter / 60:0} real minutes alone you choose: keep waiting; leave, then join a running room by its code; or {{\"type\":\"start_match\",\"opponent\":\"scripted\"}} to play the scripted AI, which attacks in waves.",
+                "Joining: a room takes new players until sudden death. From sudden death on, and while a finished match's results show, it refuses joins (room_closed_to_joins, with when its next match starts): a newcomer couldn't catch up. A player who joins a running match gets newcomer protection and a catch-up kit.",
                 "Add format=json to state and wait for plain structured data (numbers, ids, objects) instead of display strings; build_options says what you can build now and exactly what blocks the rest.",
                 "Field logistics: a repair truck is a mobile fuel point: vehicles low on fuel pull up to the nearest one (if it's closer than a depot), and any ground vehicle within 2 tiles of one tops up, even on the move. A unit in a firefight keeps a thinner fuel reserve and fights on, heading off when the shooting stops (it can strand if you cut it too fine). Escort your armies with a tanker.",
                 "Fuel: vehicles burn fuel while driving (parked ones burn none) and aircraft burn it the whole time they're airborne (less while hovering). Vehicles refuel next to a command center, outpost, refinery or factory, or from a repair truck; aircraft land on an airfield (drones also at a factory). On low fuel a unit heads to the nearest one by itself and then resumes its order. A vehicle that runs dry is stranded until a repair truck reaches it; an aircraft that runs dry crashes. Each unit's fuel % is in my_units; use 'refuel' to send units early.",

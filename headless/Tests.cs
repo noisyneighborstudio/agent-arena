@@ -55,6 +55,7 @@ namespace Pez.Headless
             GroupMove();
             ResignWhenStalled();
             IdleSeatsResign();
+            JoinFlow();
             WaitPacing();
             DeepMining();
             Prospecting();

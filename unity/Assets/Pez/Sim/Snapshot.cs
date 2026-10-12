@@ -62,7 +62,7 @@ namespace Pez.Sim
             .Set("controllers", (c.Controllers ?? new string[0]).Cast<object>().ToList())
             .Set("orders", (c.Orders ?? new string[0]).Select(o => (object)(o ?? "")).ToList())
             .Set("open", c.Open).Set("max_players", c.MaxPlayers).Set("max_map_size", c.MaxMapSize)
-            .Set("ore_scale", SnapIO.X(c.OreScale)).Set("house_ais", c.HouseAIs).Set("house_resign_above", c.HouseResignAbove).Set("match_hours", SnapIO.X(c.MatchHours));
+            .Set("ore_scale", SnapIO.X(c.OreScale)).Set("house_ais", c.HouseAIs).Set("house_resign_above", c.HouseResignAbove).Set("match_hours", SnapIO.X(c.MatchHours)).Put("min_players", c.MinPlayers);
 
         internal static GameConfig ReadConfig(D d)
         {
@@ -72,7 +72,7 @@ namespace Pez.Sim
             if (d.Has("controllers", out _)) c.Controllers = d.Arr("controllers").Select(x => x?.ToString() ?? "llm").ToArray();
             if (d.Has("orders", out _)) c.Orders = d.Arr("orders").Select(x => x?.ToString() ?? "").ToArray();
             d.Load("open", ref c.Open); d.Load("max_players", ref c.MaxPlayers); d.Load("max_map_size", ref c.MaxMapSize);
-            d.Load("ore_scale", ref c.OreScale); d.Load("house_ais", ref c.HouseAIs); d.Load("house_resign_above", ref c.HouseResignAbove); d.Load("match_hours", ref c.MatchHours);
+            d.Load("ore_scale", ref c.OreScale); d.Load("house_ais", ref c.HouseAIs); d.Load("house_resign_above", ref c.HouseResignAbove); d.Load("match_hours", ref c.MatchHours); d.Load("min_players", ref c.MinPlayers);
             return c;
         }
 
@@ -348,6 +348,7 @@ namespace Pez.Sim
 
         internal JObj SaveState() => new JObj()
             .Set("speed", SnapIO.X(Speed)).Put("paused", Paused).Set("accumulator", SnapIO.X(accumulator)).Set("next_house_check", SnapIO.X(nextHouseCheck)).Put("restart_in", restartIn, -1f)
+            .Put("waiting", Waiting).Put("waited_s", WaitedSeconds) // real seconds, so a resumed waiting room keeps how long it's waited
             .Set("ais", ais.Select(a => (object)a.SaveState()).ToList());
 
         /// <summary>Replaces the running game with a snapshot (from Snapshot.Parse). Like Restart, views notice the new World.</summary>
@@ -363,6 +364,9 @@ namespace Pez.Sim
             nextHouseCheck = 0; g.Load("next_house_check", ref nextHouseCheck);
             restartIn = -1; g.Load("restart_in", ref restartIn);
             world.NextMatchIn = restartIn;
+            Waiting = false; g.Load("waiting", ref Waiting);
+            waitedBefore = 0; g.Load("waited_s", ref waitedBefore);
+            waitedSeen = waitedBefore; waitingSince = Now();
             ais.Clear();
             if (g.Has("ais", out _))
                 foreach (var a in g.Objs("ais")) { var ai = SimpleAI.LoadState(a); if (ai != null && ai.Team < world.Teams.Count) ais.Add(ai); }

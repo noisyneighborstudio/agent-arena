@@ -26,6 +26,8 @@ namespace Pez.Sim
         public bool KitchenSink;
         /// <summary>Game hours until sudden death (the match clock, Match.cs); the match ends on points an hour after. 0 = no clock.</summary>
         public float MatchHours = 4f;
+        /// <summary>Open arena: each match waits, frozen, until this many outside agents are seated (Game.Waiting). 0 = it starts at once.</summary>
+        public int MinPlayers;
     }
 
     /// <summary>Owns a World plus who controls each team, and advances it in real time.</summary>
@@ -46,8 +48,12 @@ namespace Pez.Sim
         {
             Config = cfg;
             Speed = cfg.Speed;
+            // A waiting room starts empty: no house AI, only the agents who join (and, if they choose, a sparring AI).
+            Waiting = cfg.MinPlayers > 0;
+            waitedBefore = waitedSeen = 0;
+            waitingSince = Now();
             World = cfg.KitchenSink ? Sim.KitchenSink.Build()
-                  : new World(cfg.Controllers.Length, cfg.Seed, cfg.MapSize, cfg.OreScale) { Open = cfg.Open, MaxPlayers = cfg.MaxPlayers, MaxMapSize = cfg.MaxMapSize };
+                  : new World(Waiting ? 0 : cfg.Controllers.Length, cfg.Seed, cfg.MapSize, cfg.OreScale) { Open = cfg.Open, MaxPlayers = cfg.MaxPlayers, MaxMapSize = cfg.MaxMapSize };
             ais.Clear();
             for (int i = 0; i < cfg.Controllers.Length && i < World.Teams.Count; i++)
             {
@@ -102,6 +108,7 @@ namespace Pez.Sim
         public int Advance(float realDt)
         {
             if (Paused) return 0;
+            if (Waiting) { WaitingClock(); return 0; }
             if (World.GameOver) { ResultsCountdown(realDt); return 0; }
             accumulator += realDt * Speed;
             int steps = 0;

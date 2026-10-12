@@ -324,6 +324,8 @@ namespace Pez.Sim
         // ------------------------------------------------------------------ open arena: join and leave
 
         public int ActivePlayers => Teams.Count(t => !t.Left && !t.Defeated);
+        /// <summary>Seats a join could take now: MaxPlayers, and at most one per team colour (AddTeam recycles departed players' seats).</summary>
+        public int SeatsFree => Math.Max(0, Math.Min(MaxPlayers, Flavors.Length) - ActivePlayers);
 
         /// <summary>
         /// A new player joins mid-game. The map grows (east and north, existing coordinates unchanged) to make
@@ -381,6 +383,7 @@ namespace Pez.Sim
             if (teamName != null) nameProblem = NameTeam(team, teamName);
             GiveCatchUp(team);
             team.ProtectedUntil = Time + ProtectionSeconds;
+            scoreCache = null; // on the scoreboard now, even within the second (or in a waiting room, where no time passes)
             UpdatePower();
             UpdateVisibility();
             Emit("joined", team.Id, pos: spawn, text: $"{playerName} joined as {team.Name} at sector {StateView.Sector(spawn)}. The map is now {Map.W}x{Map.H}.");
@@ -559,6 +562,7 @@ namespace Pez.Sim
             t.Left = true;
             t.Defeated = true;
             t.Stock.Clear();
+            scoreCache = null;
             ForgetTeam(teamId);
             MapVersion++;
             var where = StateView.Sector(t.StartPos);
@@ -2855,6 +2859,8 @@ namespace Pez.Sim
         /// The lobby counts a seat as active if it's been heard from within ActiveWithin.
         /// </summary>
         public const float IdleWarnAfter = 15 * 60f, IdleResignAfter = 20 * 60f, ActiveWithin = 5 * 60f;
+        /// <summary>Still playing, and heard from within ActiveWithin (house AI always is): the lobby's active.</summary>
+        public bool IsActive(Team t) => !t.Left && !t.Defeated && (t.House || Time - t.LastActiveAt < ActiveWithin);
 
         /// <summary>
         /// Open arena: a seat nobody plays doesn't keep its place and score (Blueberry came second after 40 minutes with no

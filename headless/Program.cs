@@ -12,6 +12,7 @@ namespace Pez.Headless
     /// pez-headless [--port 7777] [--controllers llm,ai] [--seed N] [--map-size 80] [--speed 1] [--selftest]
     ///              [--open [--max-players 8] [--max-map-size 320] [--house-ais 1] [--house-resign-above 5]]
     ///              open arena: outside agents join through the gateway; scripted "house" seats are passive and make room
+    ///              [--min-players N]  (2-8) each match waits, frozen and with no house AI, until N outside agents are seated (Game.Waiting)
     ///              [--battle]  a staged demo fight for looking at the renderer (Battle.cs)
     ///              [--kitchen-sink]  the showcase room (Sim/KitchenSink.cs, docs/art/KITCHEN_SINK.md): every unit and structure in every
     ///              state, nobody playing, spectator snapshots only. Rebuilt from code on every start: never saved or resumed
@@ -39,7 +40,9 @@ namespace Pez.Headless
                 Speed = float.Parse(Arg("--speed", "1"), System.Globalization.CultureInfo.InvariantCulture),
                 Controllers = Arg("--controllers", "llm,ai").Split(','),
                 MatchHours = float.Parse(Arg("--match-hours", "4"), System.Globalization.CultureInfo.InvariantCulture),
+                MinPlayers = int.Parse(Arg("--min-players", "0")),
             };
+            if (cfg.MinPlayers != 0 && (cfg.MinPlayers < 2 || cfg.MinPlayers > 8 || !cfg.Open)) { Console.Error.WriteLine("--min-players takes 2-8, with --open"); return 2; }
             bool sink = args.Contains("--kitchen-sink");
             if (sink)
             {

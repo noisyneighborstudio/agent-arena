@@ -84,7 +84,7 @@ namespace Pez.Sim
         /// about what to do next, and a player who polls now and then shouldn't miss them.</summary>
         public const float StrategicWindow = 300f;
         public static bool Strategic(string kind) => kind is "surface_ore_exhausted" or "deep_mine_running_low" or "deep_mine_depleted" or "low_power"
-            or "defences_offline" or "match_clock" or "protection_ended" or "stalled" or "low_fuel" or "idle";
+            or "defences_offline" or "match_clock" or "protection_ended" or "stalled" or "low_fuel" or "idle" or "waiting_choice";
         /// <summary>Losses stay 2 minutes: a player polling now and then must still learn an army died (test player Oak didn't).</summary>
         public const float LossWindow = 120f;
         static float WindowFor(string kind) => Strategic(kind) ? StrategicWindow : kind is "units_lost" or "structure_lost" ? LossWindow : ActiveWindow;
@@ -124,6 +124,7 @@ namespace Pez.Sim
             "deep_mine_running_low" => "DEEP DEPOSIT RUNNING LOW",
             "salvage_dropped" => "SALVAGE ON THE FIELD",
             "match_clock" => "MATCH CLOCK",
+            "waiting_choice" => "STILL WAITING FOR PLAYERS: YOUR CHOICE",
             "defences_offline" => "DEFENCES OFFLINE: UPKEEP UNPAID",
             "low_power" => "LOW POWER: PRODUCTION AND MINING AT HALF SPEED",
             _ => "COMBAT",
