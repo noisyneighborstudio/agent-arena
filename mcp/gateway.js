@@ -121,7 +121,7 @@ function saveSeen() {
 }
 async function rulesOf(room) {
   if (room.rulesAt && Date.now() - room.rulesAt < 30000) return room.rulesVersion;
-  try { const l = await gameAt(room, "/api/lobby"); room.rulesVersion = l.rules_version; room.mapSize = l.map; } catch {}
+  try { const l = await gameAt(room, "/api/lobby"); room.rulesVersion = l.rules_version; room.sectorTiles = l.sector_tiles; } catch {}
   room.rulesAt = Date.now();
   return room.rulesVersion;
 }
@@ -743,11 +743,12 @@ async function seatOf(token) {
   }
   return c;
 }
+// The engine's sectors (StateView.Sector): fixed squares of its sector_tiles from the south-west corner, 8 at the south edge.
 function sectorOf(room, x, y) {
-  const [w, h] = String(room.mapSize ?? "80x80").split("x").map(Number);
-  if (!Number.isFinite(x) || !Number.isFinite(y) || !w) return null;
-  const col = Math.max(0, Math.min(7, Math.floor(x / (w / 8)))), row = Math.max(0, Math.min(7, Math.floor((h - 1 - y) / (h / 8))));
-  return "ABCDEFGH"[col] + (row + 1);
+  const t = room.sectorTiles;
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !t) return null;
+  const col = Math.max(0, Math.min(7, Math.floor(x / t))), row = Math.max(0, Math.min(7, Math.floor(y / t)));
+  return "ABCDEFGH"[col] + (8 - row);
 }
 function describeCommand(room, c) {
   const n = Array.isArray(c.units) ? `${c.units.length} unit${c.units.length === 1 ? "" : "s"}` : c.units ? `${c.units} units` : "";
@@ -766,7 +767,7 @@ async function recordCommands(token, commands, result) {
   try {
     const { room } = parseToken(token);
     const { seat, team } = await seatOf(token);
-    await rulesOf(room); // refreshes the room's map size, for sector names
+    await rulesOf(room); // fetches the room's sector size, for sector names
     let results = [];
     try { results = JSON.parse(result).results ?? []; } catch {}
     const key = `${room.id}:${seat}`;

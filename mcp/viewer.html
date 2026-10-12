@@ -660,9 +660,11 @@ function drawMini() {
   }
   mctx.strokeStyle = "#3A4047"; mctx.lineWidth = 2; mctx.strokeRect(ox, oy, map.w * k, map.h * k);
   mctx.fillStyle = "#9BA5AE"; mctx.font = "20px 'IBM Plex Mono', monospace"; mctx.textAlign = "center";
+  // The engine's fixed sectors (map.sector_tiles from the south-west corner), each labelled mid-way along the part on the map.
+  const st = map.sector_tiles, mid = (i, n) => (i * st + Math.min((i + 1) * st, n)) / 2;
   for (let i = 0; i < 8; i++) {
-    mctx.fillText("ABCDEFGH"[i], ox + (i + 0.5) * map.w * k / 8, 26);
-    mctx.fillText(String(i + 1), 18, oy + (i + 0.5) * map.h * k / 8 + 7);
+    if (i * st < map.w) mctx.fillText("ABCDEFGH"[i], ox + mid(i, map.w) * k, 26);
+    if (i * st < map.h) mctx.fillText(String(8 - i), 18, oy + (map.h - mid(i, map.h)) * k + 7);
   }
   if (!liveMode) {
     // The map view's visible area.
@@ -783,12 +785,13 @@ function draw() {
   ctx.drawImage(terrainCanvas, sx(0), sy(map.h), map.w * s, map.h * s);
   ctx.strokeStyle = "rgba(236,228,210,.06)"; ctx.lineWidth = 1;
   ctx.fillStyle = "rgba(236,228,210,.45)"; ctx.font = `${Math.max(10, s * 1.2)}px "IBM Plex Mono", monospace`;
-  for (let i = 0; i <= 8; i++) {
-    const gx = sx(i * map.w / 8), gy = sy(i * map.h / 8);
-    ctx.beginPath(); ctx.moveTo(gx, sy(0)); ctx.lineTo(gx, sy(map.h)); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(sx(0), gy); ctx.lineTo(sx(map.w), gy); ctx.stroke();
-    if (i < 8) { ctx.fillText("ABCDEFGH"[i], gx + 4, sy(map.h) + 14); ctx.fillText(String(8 - i), sx(0) + 4, gy - 4); }
+  // Sector lines every map.sector_tiles from the south-west corner (the engine's StateView.Sector), then the map's edge.
+  for (let i = 0, st = map.sector_tiles; i < 8; i++) {
+    const gx = sx(i * st), gy = sy(i * st);
+    if (i * st < map.w) { ctx.beginPath(); ctx.moveTo(gx, sy(0)); ctx.lineTo(gx, sy(map.h)); ctx.stroke(); ctx.fillText("ABCDEFGH"[i], gx + 4, sy(map.h) + 14); }
+    if (i * st < map.h) { ctx.beginPath(); ctx.moveTo(sx(0), gy); ctx.lineTo(sx(map.w), gy); ctx.stroke(); ctx.fillText(String(8 - i), sx(0) + 4, gy - 4); }
   }
+  ctx.strokeRect(sx(0), sy(map.h), map.w * s, map.h * s);
   // Surveyed deep deposits: a tinted ring with what's left.
   for (const [x, y, type, pct] of frame.deposits ?? []) {
     ctx.strokeStyle = DEEP[type] ?? "#ECE4D2"; ctx.globalAlpha = pct > 0 ? 0.9 : 0.35; ctx.lineWidth = Math.max(1.5, s * 0.12);

@@ -25,7 +25,7 @@ The look comes from the v0.2 art handoff, "The Dispenser War". The handoff is in
 - **Terrain:** biscuit ground with a faint tile grid, kept within the handoff's 8% "quiet ground" rule. Cola lakes have a shore band and glints, and cotton-candy trees line the edges.
 - **Rocks (handoff v0.3):** tiered licorice massifs with faceted boulders, built from the pathing grid by the pack's `PezCliffBuilder`. The dark rim is exactly where movement is blocked.
 - **Brown patches (open decision 4):** they were cosmetic dirt tiles with no gameplay meaning, so they're now subtle ground variation. The other brown areas are the cola lakes, which are impassable.
-- **HUD:** the sidebar uses the pack's icons, and the minimap shows sectors A–H (west to east) by 1–8 (north to south). Alerts and the LLM order feed include the sector.
+- **HUD:** the sidebar uses the pack's icons, and the minimap shows sectors A–H (west to east) by 1–8 (north to south): fixed 40-tile squares counted from the south-west corner, so a full 320-tile map has all 64 and a place keeps its sector as joins grow the map. Alerts and the LLM order feed include the sector.
 - **Regenerating the blockouts:** the pack's generators are in `art-src/`.
 
 ## Layout

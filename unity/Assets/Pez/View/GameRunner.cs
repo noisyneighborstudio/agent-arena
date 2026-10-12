@@ -155,7 +155,7 @@ namespace Pez.View
                     if (type == "say") return; // already shown as chat
                     var what = c.Str("structure") ?? c.Str("unit") ?? (c.ContainsKey("target") ? $"#{c.Num("target")}" : null);
                     what = what?.Replace('_', ' ');
-                    var where = !float.IsNaN(c.Num("x")) ? $" at {StateView.Sector(Game.World.Map, new Vec2(c.Num("x"), c.Num("y")))}" : "";
+                    var where = !float.IsNaN(c.Num("x")) ? $" at {StateView.Sector(new Vec2(c.Num("x"), c.Num("y")))}" : "";
                     var units = c.TryGetValue("units", out var u) ? (u is List<object> l ? $" {l.Count} unit{(l.Count == 1 ? "" : "s")}" : $" {u}") : "";
                     ok = r != null && r.TryGetValue("ok", out var o) && o is bool b && b;
                     if (!ok) error = r?.Str("error");

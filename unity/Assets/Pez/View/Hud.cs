@@ -527,7 +527,7 @@ namespace Pez.View
             if (recent.Count == 0) return;
             var top = recent[0];
             string level = top.Priority == Priority.Critical ? "CRITICAL" : top.Priority == Priority.High ? "HIGH" : "INFO";
-            string sector = StateView.Sector(W.Map, top.Pos);
+            string sector = StateView.Sector(top.Pos);
             string msg = (Team < 0 ? $"{Flavor(top.Team)} {AlertLog.Label(top.Kind).ToLowerInvariant()}" : Sentence(AlertLog.Label(top.Kind))) + " at ";
             string more = recent.Count > 1 ? $"+{recent.Count - 1} more" : null;
             float lw = Spaced(0, 0, 0, level, fHeadBold, 14, Ink, 0.12f, false);
@@ -673,11 +673,13 @@ namespace Pez.View
             if (ok) for (int i = 0; i < 4; i++) Segment(corners[i], corners[(i + 1) % 4], map, 1.5f, Cream);
 
             Round(map, 4, new Color(0, 0, 0, 0), Line, 1f);
-            // Sector labels: A-H west to east, 1-8 north to south (the frame LLM orders and alerts use).
+            // Sector labels: A-H west to east, 1-8 north to south (the frame LLM orders and alerts use), each in the middle of
+            // the part of its fixed square that's on the map (StateView.Sector: they count from the south-west corner).
+            const float st = StateView.SectorTiles;
             for (int i = 0; i < 8; i++)
             {
-                Text(new Rect(map.x + (i + 0.5f) * map.width / 8 - 10, area.y + 2, 20, 14), ((char)('A' + i)).ToString(), fMono, 10, Muted, TextAnchor.MiddleCenter);
-                Text(new Rect(area.x, map.y + (i + 0.5f) * map.height / 8 - 7, 18, 14), (i + 1).ToString(), fMono, 10, Muted, TextAnchor.MiddleCenter);
+                if (i * st < m.W) Text(new Rect(map.x + (i * st + Mathf.Min((i + 1) * st, m.W)) / 2 * scale - 10, area.y + 2, 20, 14), ((char)('A' + i)).ToString(), fMono, 10, Muted, TextAnchor.MiddleCenter);
+                if (i * st < m.H) Text(new Rect(area.x, map.y + (m.H - (i * st + Mathf.Min((i + 1) * st, m.H)) / 2) * scale - 7, 18, 14), (8 - i).ToString(), fMono, 10, Muted, TextAnchor.MiddleCenter);
             }
 
             var ev = Event.current;
@@ -1264,10 +1266,7 @@ namespace Pez.View
             }
             foreach (var (hr, sector) in sectorHits)
                 if (Click(hr))
-                {
-                    var m = W.Map;
-                    Runner.Camera.LookAt(new Vector3((sector[0] - 'A' + 0.5f) * m.W / 8f, 0, m.H - (sector[1] - '1' + 0.5f) * m.H / 8f));
-                }
+                    Runner.Camera.LookAt(new Vector3((sector[0] - 'A' + 0.5f) * StateView.SectorTiles, 0, ('8' - sector[1] + 0.5f) * StateView.SectorTiles));
         }
 
         // ------------------------------------------------------------------ selection card (bottom-centre)
@@ -1333,7 +1332,7 @@ namespace Pez.View
             else
             {
                 doing = $"Order: {Sentence(e.OrderName)}";
-                if (e.Order != Order.Idle && (e.OrderPos.X != 0 || e.OrderPos.Y != 0)) doing += $" at {StateView.Sector(W.Map, e.OrderPos)}";
+                if (e.Order != Order.Idle && (e.OrderPos.X != 0 || e.OrderPos.Y != 0)) doing += $" at {StateView.Sector(e.OrderPos)}";
                 if (e.IsHarvester) doing += $" · cargo {e.Cargo}/{e.Def.HarvestCapacity}";
                 if (e.Stranded) doing += " · OUT OF FUEL";
             }
@@ -1390,7 +1389,7 @@ namespace Pez.View
                 if (e.IsCarried) parts.Add($"inside #{e.CarrierId}");
                 if (!GameRunner.IsWeb && Runner.Camera != null && Runner.Camera.Following) parts.Add("camera following (Esc to stop)");
             }
-            else if (e.Rally.HasValue) parts.Add($"rally {StateView.Sector(W.Map, e.Rally.Value)}");
+            else if (e.Rally.HasValue) parts.Add($"rally {StateView.Sector(e.Rally.Value)}");
             return string.Join(" · ", parts);
         }
 

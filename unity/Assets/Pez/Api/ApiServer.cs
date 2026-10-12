@@ -296,7 +296,7 @@ namespace Pez.Api
                         Log($"Player joined: {name} as {team.Name} (team {team.Id}); map now {w.Map.W}x{w.Map.H}");
                         return Json.Write(new JObj().Set("ok", true).Set("token", token).Set("view_token", view)
                             .Set("team", team.Id).Set("flavor", team.Name).Set("team_name", team.Name).Put("team_name_rejected", nameProblem).Set("name", name)
-                            .Set("base", $"{(int)team.StartPos.X},{(int)team.StartPos.Y} sector {StateView.Sector(w.Map, team.StartPos)}")
+                            .Set("base", $"{(int)team.StartPos.X},{(int)team.StartPos.Y} sector {StateView.Sector(team.StartPos)}")
                             .Set("map", $"{w.Map.W}x{w.Map.H}")
                             // Late joiners: how long this match has left, and what comes next.
                             .Set("match", StateView.MatchJson(w)).Set("match_summary", StateView.MatchText(w)));
@@ -311,7 +311,7 @@ namespace Pez.Api
                     }
                 case "/api/lobby":
                     return Json.Write(new JObj()
-                        .Set("open", w.Open).Set("rules_version", StateView.RulesVersion).Set("map", $"{w.Map.W}x{w.Map.H}").Set("max_map", w.MaxMapSize)
+                        .Set("open", w.Open).Set("rules_version", StateView.RulesVersion).Set("map", $"{w.Map.W}x{w.Map.H}").Set("max_map", w.MaxMapSize).Set("sector_tiles", StateView.SectorTiles)
                         .Set("players", w.ActivePlayers).Set("max_players", w.MaxPlayers).Set("time_s", (float)Math.Round(w.Time, 1))
                         .Set("champion", w.ArenaChampion) // set while one team has cleared the arena (null otherwise)
                         .Set("match", StateView.MatchJson(w))
@@ -514,7 +514,7 @@ namespace Pez.Api
                 ore.Append(m.Ore[i] <= 0 ? '.' : "icxu"[m.OreType[i]]);
             }
             return new JObj().Set("w", m.W).Set("h", m.H).Set("version", w.MapVersion).Set("ore_version", w.OreVersion).Set("tiles", tiles.ToString()).Set("ore", ore.ToString())
-                .Set("team", team).Set("flavor", team >= 0 ? w.Teams[team].Name : "Spectator");
+                .Set("sector_tiles", StateView.SectorTiles).Set("team", team).Set("flavor", team >= 0 ? w.Teams[team].Name : "Spectator");
         }
 
         static JObj UnitDetails(World w, Entity e, bool full)
@@ -534,11 +534,11 @@ namespace Pez.Api
                 o.Set("complete", e.IsComplete).Set("progress_pct", StateView.Pct(e.BuildProgress));
                 if (d.Recipes.Length > 0) o.Set("working", e.Working);
                 if (d.Key == "deep_mine") { var dep = w.Map.DepositById(e.DepositId); if (dep != null) o.Set("deposit", $"{Defs.Ores[dep.Type]}: {(int)dep.Amount}/{(int)dep.Initial} left"); }
-                if (e.Rally.HasValue) o.Set("rally", StateView.Sector(w.Map, e.Rally.Value));
+                if (e.Rally.HasValue) o.Set("rally", StateView.Sector(e.Rally.Value));
                 return o;
             }
-            o.Set("order", e.OrderName).Set("x", Math.Round(e.Pos.X, 1)).Set("y", Math.Round(e.Pos.Y, 1)).Set("sector", StateView.Sector(w.Map, e.Pos));
-            if (e.Order != Order.Idle) o.Set("order_sector", StateView.Sector(w.Map, e.OrderPos));
+            o.Set("order", e.OrderName).Set("x", Math.Round(e.Pos.X, 1)).Set("y", Math.Round(e.Pos.Y, 1)).Set("sector", StateView.Sector(e.Pos));
+            if (e.Order != Order.Idle) o.Set("order_sector", StateView.Sector(e.OrderPos));
             var target = e.TargetId != 0 ? w.Get(e.TargetId) : null;
             if (target != null && e.Order != Order.Idle) o.Set("target", $"{target.Def.Name} #{target.Id}");
             if (d.UsesFuel) o.Set("fuel_pct", StateView.Pct(e.FuelFraction)).Set("landed", e.Landed).Set("stranded", e.Stranded);
@@ -722,7 +722,7 @@ namespace Pez.Api
                             .Set("count", q.Count(x => x.Key == q[0].Key)).Set("pct", (int)(q[0].Progress / Defs.Get(q[0].Key).BuildTime * 100)))).ToList()));
                 o.Set("alerts", w.Alerts.Active(w, team).Take(4).Select(a => AlertLog.Describe(w, a)).ToList());
                 o.Set("alert_items", w.Alerts.Active(w, team).Take(4).Select(a => (object)new JObj().Set("priority", a.Priority.ToString().ToLowerInvariant())
-                    .Set("label", AlertLog.Label(a.Kind)).Set("sector", StateView.Sector(w.Map, a.Pos)).Set("x", (int)a.Pos.X).Set("y", (int)a.Pos.Y)).ToList());
+                    .Set("label", AlertLog.Label(a.Kind)).Set("sector", StateView.Sector(a.Pos)).Set("x", (int)a.Pos.X).Set("y", (int)a.Pos.Y)).ToList());
                 o.Set("standing_orders", t.StandingOrders);
             }
             return o;

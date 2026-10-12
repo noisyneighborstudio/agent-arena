@@ -45,6 +45,7 @@ namespace Pez.Headless
             DefendersRespond();
             UnarmedAttackMove();
             MapSizes();
+            FixedSectors();
             OpenArena();
             HousePolicy();
             TeamNames();
@@ -1363,6 +1364,22 @@ namespace Pez.Headless
                 Check(w.Map.W == size && connected, $"{size}x{size} map generates with both bases connected ({rock} rock tiles)");
             }
             Check(new World(2, 7, 9999).Map.W == Map.MaxSize && new World(2, 7, 1).Map.W == Map.MinSize, "map size is clamped to 48-160");
+        }
+        static void FixedSectors()
+        {
+            // Fixed 40-tile squares from the south-west corner: a full 320 map is A-H (west to east) by 1-8 (north to south).
+            Check(StateView.Sector(new Vec2(0, 0)) == "A8" && StateView.Sector(new Vec2(39.9f, 40)) == "A7" &&StateView.Sector(new Vec2(40, 39.9f)) == "B8" &&
+                  StateView.Sector(new Vec2(160, 200)) == "E3" && StateView.Sector(new Vec2(319.9f, 319.9f)) == "H1", "sectors are 40-tile squares, A8 in the south-west and H1 in the north-east at full size");
+
+            // A base keeps its sector as later joins grow the map (the join line used to say H1 or A1, then drift).
+            var w = new World(1, 7, 80) { Open = true, MaxPlayers = 8, MaxMapSize = 320 };
+            var t = w.AddTeam("llm", "First", out var err);
+            string joined = w.Events.Last(e => e.Type == "joined").Text, at = StateView.Sector(t.StartPos);
+            int size = w.Map.W;
+            for (int i = 0; i < 4; i++) w.AddTeam("llm", "P" + i, out err);
+            var state = (Dictionary<string, object>)Json.Parse(Json.Write(StateData.Team(w, t.Id)));
+            Check(w.Map.W > size && joined.Contains($"at sector {at}.") && at[1] != '1' && StateView.Sector(t.StartPos) == at && state.Obj("map").Num("sector_tiles") == 40,
+                  $"a newcomer's base keeps its sector as later joins grow the map {size} -> {w.Map.W} ({at} at {t.StartPos})");
         }
         static void OpenArena()
         {

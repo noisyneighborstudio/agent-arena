@@ -383,8 +383,8 @@ namespace Pez.Sim
             team.ProtectedUntil = Time + ProtectionSeconds;
             UpdatePower();
             UpdateVisibility();
-            Emit("joined", team.Id, pos: spawn, text: $"{playerName} joined as {team.Name} at sector {StateView.Sector(Map, spawn)}. The map is now {Map.W}x{Map.H}.");
-            Emit("chat", -1, text: $"{playerName} joined as {team.Name} at sector {StateView.Sector(Map, spawn)}.");
+            Emit("joined", team.Id, pos: spawn, text: $"{playerName} joined as {team.Name} at sector {StateView.Sector(spawn)}. The map is now {Map.W}x{Map.H}.");
+            Emit("chat", -1, text: $"{playerName} joined as {team.Name} at sector {StateView.Sector(spawn)}.");
             return team;
         }
 
@@ -524,7 +524,7 @@ namespace Pez.Sim
             float total = SpillSalvage(value, tiles);
             t.Stock.Clear();
             if (total <= 0) return;
-            var where = StateView.Sector(Map, cc.Center);
+            var where = StateView.Sector(cc.Center);
             string msg = $"{t.Name}'s last command center fell at sector {where}: its stockpile spilled out as about {(int)total} units of salvage ore. First come, first served.";
             Emit("chat", -1, text: msg);
             var truck = Entities.FirstOrDefault(e => !e.Dead && e.Team == t.Id && e.Def.DeploysInto == "command_center");
@@ -561,7 +561,7 @@ namespace Pez.Sim
             t.Stock.Clear();
             ForgetTeam(teamId);
             MapVersion++;
-            var where = StateView.Sector(Map, t.StartPos);
+            var where = StateView.Sector(t.StartPos);
             string msg = $"{t.PlayerName ?? t.Name} ({t.Name}) {reason ?? "left the arena"}. Their base at sector {where} is now about {(int)total} units of salvage ore. First come, first served.";
             Emit("left", teamId, pos: t.StartPos, text: msg);
             Emit("chat", -1, text: msg);

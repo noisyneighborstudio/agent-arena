@@ -32,7 +32,7 @@ namespace Pez.Sim
                     .Set("reserves", t.Reserve.Aggregate(new JObj(), (j, kv) => j.Set(kv.Key, kv.Value)))
                     .Set("saving_for", t.SaveFor == null ? null : new JObj().Set("key", t.SaveFor).Set("holding", t.SaveForCost.Aggregate(new JObj(), (j, kv) => j.Set(kv.Key, kv.Value))))
                     .Set("power", new JObj().Set("produced", t.PowerProduced).Set("used", t.PowerUsed).Set("low", t.LowPower)))
-                .Set("map", new JObj().Set("w", w.Map.W).Set("h", w.Map.H).Set("sector_tiles", w.Map.W / 8))
+                .Set("map", new JObj().Set("w", w.Map.W).Set("h", w.Map.H).Set("sector_tiles", StateView.SectorTiles))
                 .Set("upkeep", StateView.UpkeepJson(w, team)).Set("bottleneck", StateView.Bottleneck(w, team))
                 .Set("match", StateView.MatchJson(w));
 
@@ -156,7 +156,7 @@ namespace Pez.Sim
 
         public static JObj Alert(World w, Alert a) => new JObj()
             .Set("seq", a.Seq).Set("priority", a.Priority.ToString().ToLowerInvariant()).Set("kind", a.Kind).Set("label", AlertLog.Label(a.Kind))
-            .Set("x", (int)a.Pos.X).Set("y", (int)a.Pos.Y).Set("sector", StateView.Sector(w.Map, a.Pos))
+            .Set("x", (int)a.Pos.X).Set("y", (int)a.Pos.Y).Set("sector", StateView.Sector(a.Pos))
             .Set("age_s", R1((w.Tick - a.LastTick) * World.Dt)).Set("hits", a.Count)
             .Set("victims", a.Victims.Where(id => w.Get(id) != null).Cast<object>().ToList())
             .Set("attackers", a.Attackers.Where(id => w.Get(id) != null).Cast<object>().ToList())
