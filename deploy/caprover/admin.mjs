@@ -6,7 +6,7 @@
 //   node deploy/caprover/admin.mjs room <n> status                a room's engine status
 //   node deploy/caprover/admin.mjs room <n> <admin cmd> ['<json>']  POST /api/admin/<cmd> on room n (save, kick, announce,
 //                                                                 speed, restart, orders, ...); GET when there's no JSON
-// Options: --app pezz-staging, --domain pezz-staging.sethwebster.com
+// Options: --app pezz-staging, --domain pezz.sethwebster.com
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -14,7 +14,7 @@ import path from "node:path";
 const argv = process.argv.slice(2);
 const opt = (n, d) => { const i = argv.indexOf("--" + n); if (i < 0) return d; const v = argv[i + 1]; argv.splice(i, 2); return v; };
 const APP = opt("app", "pezz-staging");
-const DOMAIN = opt("domain", "pezz-staging.sethwebster.com");
+const DOMAIN = opt("domain", "pezz.sethwebster.com");
 const secret = fs.readFileSync(path.join(os.homedir(), ".config", "pezz", `${APP}-admin-secret`), "utf8").trim();
 const [what, n, cmd, json] = argv;
 let p, body;

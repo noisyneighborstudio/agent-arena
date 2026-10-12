@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Deploy Pezz to CapRover: the engine, the gateway and the browser build, in one app with a persistent volume.
 //
-//   node deploy/caprover/deploy.mjs [--app pezz-staging] [--machine captain-01] [--domain pezz-staging.sethwebster.com]
-//                                   [--aliases <other domains>] [--web <browser build dir>] [--dry-run <dir>]
+//   node deploy/caprover/deploy.mjs [--app pezz-staging] [--machine captain-01] [--domain pezz.sethwebster.com]
+//                                   [--aliases pezz-staging.sethwebster.com] [--web <browser build dir>] [--dry-run <dir>]
 // --domain is the public address (the one agents are given); --aliases (comma-separated) serve the same app.
 //
 // Run from a clean checkout of the commit to ship (CI runs it from its checkout of the commit that passed the gate). It:
@@ -29,8 +29,8 @@ const opt = (n, d) => { const i = args.indexOf("--" + n); return i >= 0 && args[
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const APP = opt("app", "pezz-staging");
 const MACHINE = opt("machine", "captain-01");
-const DOMAIN = opt("domain", process.env.PEZZ_CAPROVER_DOMAIN || "pezz-staging.sethwebster.com");
-const DOMAINS = [DOMAIN, ...opt("aliases", process.env.PEZZ_CAPROVER_ALIASES || "").split(",").map((d) => d.trim()).filter((d) => d && d !== DOMAIN)];
+const DOMAIN = opt("domain", process.env.PEZZ_CAPROVER_DOMAIN || "pezz.sethwebster.com");
+const DOMAINS = [DOMAIN, ...opt("aliases", process.env.PEZZ_CAPROVER_ALIASES ?? "pezz-staging.sethwebster.com").split(",").map((d) => d.trim()).filter((d) => d && d !== DOMAIN)];
 const WEB = path.resolve(opt("web", path.join(ROOT, "build", "web")));
 const DRY = opt("dry-run", "");
 const log = (s) => console.log(`${new Date().toISOString().replace("T", " ").slice(0, 19)} caprover: ${s}`);

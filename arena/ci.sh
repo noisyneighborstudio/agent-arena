@@ -1,7 +1,7 @@
 #!/bin/zsh
 # Continuous integration for the live arena. Whenever origin/main moves: test it, build it (engine and browser player), check
-# it in the CI room's browser UI check, deploy it into room 1 on this Mac WITHOUT ending anyone's game (arena/deploy.sh
-# pauses with a notice, saves, swaps, resumes, verifies, rolls back), then ship it to the CapRover app (deploy/caprover).
+# it in the CI room's browser UI check, then ship it to the CapRover app that serves pezz.sethwebster.com (deploy/caprover;
+# its rooms save and resume across the swap, so nobody's game ends).
 #
 #   arena/ci.sh once     one pass: deploy origin/main if it isn't live yet
 #   PEZZ_CI_FORCE_FRESH=1 arena/ci.sh once   the owner's call: when the running build can't resume, restart room 1 fresh
@@ -22,9 +22,9 @@ UNITY=/Applications/Unity/Hub/Editor/6000.3.25f1/Unity.app/Contents/MacOS/Unity
 # Playwright for the CI room's UI check (arena/webclient/verify.mjs): a stable install outside any checkout.
 export PEZZ_PLAYWRIGHT=${PEZZ_PLAYWRIGHT:-$HOME/.local/share/pezz/playwright}
 FRESH_JSON=${PEZZ_FRESH_JSON:-'{"ore_scale":0.3,"open":true}'}
-# Room 1 and its gateway on this Mac (arena/deploy.sh, the gateway LaunchAgent, the room 1 watchdog): pezz.sethwebster.com
-# until it moves to the CapRover app (docs/CAPROVER.md). PEZZ_CI_ROOM1=0 stops deploying them here.
-ROOM1=${PEZZ_CI_ROOM1:-1}
+# The public arena (pezz.sethwebster.com) is the CapRover app since 2026-10-12 (docs/CAPROVER.md). PEZZ_CI_ROOM1=1 brings
+# back deploying room 1 and its gateway on this Mac (arena/deploy.sh, the gateway LaunchAgent, the room 1 watchdog).
+ROOM1=${PEZZ_CI_ROOM1:-0}
 mkdir -p "$CI"
 log() { echo "$(date '+%F %T') $*"; }
 status() { printf '{"at":"%s","state":"%s","commit":"%s","detail":"%s"}\n' "$(date '+%FT%T%z')" "$1" "${2:-}" "${3:-}" > "$CI/status.json"; }

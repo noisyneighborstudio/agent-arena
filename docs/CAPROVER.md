@@ -1,6 +1,6 @@
 # Pezz on CapRover
 
-The whole game server runs as one CapRover app, `pezz-staging` on captain-01, at https://pezz-staging.sethwebster.com:
+The public arena, https://pezz.sethwebster.com (also https://pezz-staging.sethwebster.com), is one CapRover app, `pezz-staging` on captain-01. It replaced room 1 on the Mac on 2026-10-12: the game, its seats and its links moved across. The app holds:
 - **Room 1:** the headless engine.
 - **The gateway** in front of it: `/join`, `/mcp`, `/view`, `/watch`, `/play`, `/admin`.
 - **Extra rooms:** the gateway opens them in the same container when room 1 is full.
@@ -16,10 +16,11 @@ CI deploys it. After a commit passes its tests, the browser build and the CI roo
 - A commit that changes nothing the server runs is only recorded.
 - A failed deploy is retried after 30 minutes. The old container keeps serving meanwhile.
 
-By hand, from a clean checkout of the commit to ship, with a browser build for it:
+By hand, from a clean checkout of the commit to ship, with a browser build for it. Take CI's lock first, so the two never deploy at once:
 
 ```bash
-node deploy/caprover/deploy.mjs --web ci-work/live/build/web     # --app pezz-staging --domain pezz-staging.sethwebster.com
+mkdir ci-work/caprover.lock && node deploy/caprover/deploy.mjs --web ci-work/live/build/web; rmdir ci-work/caprover.lock
+# options: --app pezz-staging --domain pezz.sethwebster.com --aliases pezz-staging.sethwebster.com
 ```
 
 What it does:
@@ -30,7 +31,15 @@ What it does:
    - the app's deploy token;
    - the env vars: `PEZZ_PUBLIC_URL`, the operator secret, `PEZZ_ADMIN_REMOTE=1`, `PEZZ_CLIENT_IP_HEADER=x-real-ip`, and the Claude token.
 3. **Upload.** It uploads the bundle and CapRover builds `deploy/caprover/Dockerfile`. The old container gets SIGTERM, and every engine in it saves its game. The new container resumes them all: same seats, tokens and commander links.
-4. **Domain and check.** It adds the domain with HTTPS once, then waits for `/healthz` to report the new build with room 1 up.
+4. **Domains and check.** It adds each domain with HTTPS once, then waits for `/healthz` to report the new build with room 1 up.
+
+**DNS:** both names are DNS-only CNAMEs to `pezz-staging.projects.sethwebster.com`, in Cloudflare. The `pezz` Cloudflare tunnel on the Mac now carries only pezz-ops.sethwebster.com.
+
+**Moving a game between servers** (as done for the cutover):
+1. Post a notice (`maintenance on 60 ... --preserved`) and stop the old server; the engine saves on SIGTERM.
+2. Scale the app to 0 instances.
+3. Copy these into `/data/.config/pezz` on the volume, owned by uid 10001: `rooms/game-7777.json`, `rooms.json` (the room code), `gateway-sessions.json`, `commanders.json`, `seen-changes.json`, `replays/` and `inventions/`.
+4. Scale back to 1. Seats, tokens, links and MCP sessions all carry over.
 
 ## Logins and secrets
 
@@ -60,7 +69,7 @@ Everything lives on this Mac, owner-only, and is never printed:
   ```
 
   Any `/api/admin/<cmd>` of a room's engine works the same way: `kick`, `speed`, `restart`, `orders`, `viewlink`, and so on.
-- **Health:** `https://pezz-staging.sethwebster.com/healthz` returns the build, whether room 1 answers, and the address the rate limits see for you.
+- **Health:** `https://pezz.sethwebster.com/healthz` returns the build, whether room 1 answers, and the address the rate limits see for you.
 
 ## Performance
 

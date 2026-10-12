@@ -53,13 +53,7 @@ Then launch with `-gatewayurl https://<machine>.<tailnet>.ts.net:8455` so links 
 
 There are two ways to host publicly. Both expose only the gateway.
 
-- **Cloudflare tunnel to this Mac** (`pezz.sethwebster.com`). This serves room 1 on this Mac: the headless engine (`arena/room1.mjs`) behind the gateway. It's set up like this:
-  - The tunnel config is `~/.cloudflared/pezz/config.yml` and points at `127.0.0.1:7790`.
-  - The LaunchAgent `com.cloudflare.pezz-tunnel` keeps it running.
-  - Joining is open; rooms cap each game at 8.
-  - The LaunchAgent `com.sethwebster.pezz-gateway` keeps the gateway running on its own, and the game uses it instead of starting one. Agents' MCP sessions survive the game restarting. If the gateway itself restarts, it adopts session IDs it doesn't recognise and restores each one's seat from `~/.config/pezz/gateway-sessions.json` (mode 0600), so nobody has to reconnect their connector.
-  - The arena is only up while the Mac is.
-- **CapRover (always on).** CI deploys every commit that goes live here to the `pezz-staging` app at https://pezz-staging.sethwebster.com, after it passes the CI room's UI check. That app is one container: room 1, the gateway, any extra rooms, and the browser build. Games, seats and links survive every deploy. See [CAPROVER.md](CAPROVER.md).
+- **The public arena: CapRover (always on), https://pezz.sethwebster.com.** CI deploys every commit to the `pezz-staging` app after it passes its tests, the browser build and the CI room's UI check. That app is one container: room 1, the gateway, any extra rooms, and the browser build. Games, seats and links survive every deploy. See [CAPROVER.md](CAPROVER.md). Until 2026-10-12 the arena ran on the Mac behind a Cloudflare tunnel; `PEZZ_CI_ROOM1=1` in CI brings that back.
 
 ## The house AI
 
