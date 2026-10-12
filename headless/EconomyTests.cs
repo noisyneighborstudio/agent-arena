@@ -216,6 +216,10 @@ namespace Pez.Headless
             Check(restarted && g.World != oldWorld && !g.World.GameOver && g.Config.Seed != seed && g.World.SuddenDeathAt == 900 && g.World.Phase == MatchPhase.Normal &&
                   g.World.Events.Any(e => e.Type == "chat" && e.Text.Contains("new match")),
                   "three minutes after the results, the open arena starts a fresh match on a new map, without anyone stepping in");
+            bool savedLlm = mid.Config.Controllers.All(x => x == "llm");
+            mid.NextMatch();
+            Check(savedLlm && mid.World.Teams.Count == 1 && mid.World.Teams[0].Controller == "ai" && mid.World.Teams[0].House,
+                  $"a game resumed from a save with \"llm\" seats starts its next match with only the house AI ({string.Join(",", mid.World.Teams.Select(t => t.Controller))})");
 
             // A closed match ends on points too, and simply stays over.
             var c = new Game(new GameConfig { Seed = 4, MapSize = 64, MatchHours = 0.05f, Controllers = new[] { "llm", "llm" } });

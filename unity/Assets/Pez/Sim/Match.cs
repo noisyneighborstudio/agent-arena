@@ -235,14 +235,17 @@ namespace Pez.Sim
             NextMatch();
         }
 
-        /// <summary>Start the next match: same room settings, a new map (the seed moves on).</summary>
+        /// <summary>
+        /// Start the next match: same room settings, a new map (the seed moves on). Only the house AIs get seats: outside
+        /// players join again, and a seat saved for one ("llm") would sit idle and keep scoring.
+        /// </summary>
         public void NextMatch()
         {
             var c = Config;
             var cfg = new GameConfig
             {
-                Seed = unchecked(c.Seed * 31 + 17), MapSize = c.MapSize, Speed = c.Speed, Controllers = (string[])c.Controllers.Clone(),
-                Orders = (string[])c.Orders?.Clone(), Open = c.Open, MaxPlayers = c.MaxPlayers, MaxMapSize = c.MaxMapSize, OreScale = c.OreScale,
+                Seed = unchecked(c.Seed * 31 + 17), MapSize = c.MapSize, Speed = c.Speed, Controllers = Enumerable.Repeat("ai", c.HouseAIs).ToArray(),
+                Orders = null, Open = c.Open, MaxPlayers = c.MaxPlayers, MaxMapSize = c.MaxMapSize, OreScale = c.OreScale,
                 HouseAIs = c.HouseAIs, HouseResignAbove = c.HouseResignAbove, MatchHours = c.MatchHours,
             };
             Restart(cfg);
