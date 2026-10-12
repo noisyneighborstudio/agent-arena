@@ -76,7 +76,7 @@ async function api(p, body, { raw = false, appToken = null } = {}) {
   if (body instanceof FormData) init.body = body;
   else if (body !== undefined) { init.body = JSON.stringify(body); headers["content-type"] = "application/json"; }
   const j = await (await fetch(`${BASE}/api/v2${p}`, init)).json();
-  if (!raw && j.status !== 100) throw new Error(`${p}: ${j.status} ${j.description}`);
+  if (!raw && j.status !== 100 && j.status !== 101) throw new Error(`${p}: ${j.status} ${j.description}`); // 101: a detached deploy started
   return j;
 }
 const loggedIn = M ? (await api("/user/apps/appDefinitions", undefined, { raw: true })).status === 100 : false;
