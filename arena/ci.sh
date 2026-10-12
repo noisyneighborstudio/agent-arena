@@ -18,6 +18,8 @@ CI="$REPO/ci-work"; WT="$CI/worktree"; LIVE="$CI/live"  # build-and-test checkou
 WEB="$CI/web"  # the browser build's checkout: its own Unity import cache on the WebGL target, so neither build switches platforms
 UNITY=/Applications/Unity/Hub/Editor/6000.3.25f1/Unity.app/Contents/MacOS/Unity
 # A fresh room 1's settings (POST /api/admin/restart): ore_scale, open, map_size, match_hours (the match clock; default 4).
+# Playwright for the CI room's UI check (arena/webclient/verify.mjs): a stable install outside any checkout.
+export PEZZ_PLAYWRIGHT=${PEZZ_PLAYWRIGHT:-$HOME/.local/share/pezz/playwright}
 FRESH_JSON=${PEZZ_FRESH_JSON:-'{"ore_scale":0.3,"open":true}'}
 mkdir -p "$CI"
 log() { echo "$(date '+%F %T') $*"; }
@@ -54,6 +56,27 @@ try: t=json.load(sys.stdin)["teams"]
 except Exception: print(-1); sys.exit()
 idle=float(os.environ["IDLE"])
 print(sum(1 for i,x in enumerate(t) if i>=2 and x["status"]=="playing" and not x.get("house") and x.get("idle_s", 0) < idle))'
+}
+
+# The CI room (arena/ci-room.sh, docs/CI_ROOM.md): the candidate checkout's engine and gateway with the candidate's browser
+# build, then an in-browser UI check. Its state is under ci-work/ci-room. `ensure` afterwards gives the owner's room back (on
+# the deployed build if they have it open, else it frees the ports).
+ci_room() { PEZZ_CIROOM_STATE="$CI/ci-room" "$WT/arena/ci-room.sh" "$@"; }
+ci_room_gate() {  # <candidate web build>; 0 passed (or no gate in this commit), 1 failed, 2 couldn't run
+  [ -x "$WT/arena/ci-room.sh" ] || return 0   # a candidate older than the CI room has no gate
+  # Playwright for verify.mjs: `npm install` once in $REPO/arena/webclient (or keep /tmp/pezweb/pw); the checkout shares it like mcp/node_modules.
+  [ -d "$REPO/arena/webclient/node_modules" ] && [ ! -e "$WT/arena/webclient/node_modules" ] && ln -s "$REPO/arena/webclient/node_modules" "$WT/arena/webclient/node_modules"
+  ci_room gate --checkout "$WT" --build "$1" > "$CI/ci-room.log" 2>&1; local rc=$?
+  ci_room ensure --checkout "$LIVE" --build "$LIVE/build/web" >> "$CI/ci-room.log" 2>&1
+  return $rc
+}
+
+# After every pass the owner's room follows the deployed build (a no-op if it isn't open or is already on it). Detached and
+# niced: it can't block, slow or fail a deploy. Replaces kitchen_sink() once the owner has moved to the CI room.
+ci_room_follow() {
+  [ -x "$LIVE/arena/ci-room.sh" ] || return 0
+  (nice -n 10 env PEZZ_CIROOM_STATE="$CI/ci-room" "$LIVE/arena/ci-room.sh" ensure --checkout "$LIVE" --build "$LIVE/build/web" >> "$REPO/arena/logs/ci-room.log" 2>&1 &)
+  return 0
 }
 
 pass() {
@@ -111,6 +134,21 @@ pass() {
       log "browser build failed at ${target[1,7]} (see .ci/web-build.log)"; echo "$target" > "$CI/failed"; status failed "$target" "browser build"; return 1
     fi
     echo "$target" > "$CI/web-built"
+  fi
+  # 2c. The CI room: the candidate's engine, gateway and browser build in a private room, and an in-browser UI check. A red
+  #     check blocks the deploy like a failed test; one that can't run blocks it too, without marking the commit, and retries.
+  #     It runs when there is a new browser build, or the gateway changed (then on the deployed build), once per commit.
+  local gate_web="$web_next"; [ -f "$gate_web/index.html" ] || gate_web="$LIVE/build/web"
+  if [ -f "$gate_web/index.html" ] && { [ -f "$web_next/index.html" ] || [ $changed_mcp = 1 ]; } && [ "$(cat "$CI/ci-room-passed" 2>/dev/null)" != "$target" ]; then
+    log "UI check in the CI room"
+    status testing "$target" "UI check"
+    ci_room_gate "$gate_web"; local gate=$?
+    if [ $gate = 0 ]; then echo "$target" > "$CI/ci-room-passed"
+    elif [ $gate = 1 ]; then
+      log "UI check failed at ${target[1,7]} (see ci-work/ci-room/last/verify.log and the screenshots next to it)"; echo "$target" > "$CI/failed"; status failed "$target" "UI check"; return 1
+    else
+      log "the CI room couldn't run its check (exit $gate; see .ci/ci-room.log): not deploying, will retry"; status error "$target" "CI room check couldn't run"; return 2
+    fi
   fi
   if [ $changed_unity = 1 ]; then
 
@@ -184,7 +222,7 @@ room1_watchdog() {
 }
 
 case "${1:-once}" in
-  once) pass; rc=$?; room1_watchdog; kitchen_sink; exit $rc ;;
-  loop) while true; do pass; room1_watchdog; kitchen_sink; sleep "${PEZZ_CI_EVERY:-180}"; done ;;
+  once) pass; rc=$?; room1_watchdog; kitchen_sink; ci_room_follow; exit $rc ;;
+  loop) while true; do pass; room1_watchdog; kitchen_sink; ci_room_follow; sleep "${PEZZ_CI_EVERY:-180}"; done ;;
   *) echo "usage: $0 once|loop"; exit 2 ;;
 esac
