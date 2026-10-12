@@ -20,7 +20,8 @@
 //      PEZZ_MAX_ROOMS (default 6), PEZZ_ROOM_IDLE_MIN (close a room nobody plays after this many minutes, default 10),
 //      PEZZ_ENGINE (the headless engine dll rooms run), PEZZ_ROOM_BASE_PORT (local rooms' first port, default 7801),
 //      PEZZ_WATCH_DELAY (seconds the public /watch spectator view lags the game, default 45), PEZZ_GAME (only for a
-//      gateway in front of one game it doesn't run, the CI room or a test room: that game is room 1, always)
+//      gateway in front of one game it doesn't run, the Unity app's open arena, the CI room or a test room: that game
+//      is room 1, always)
 import http from "node:http";
 import { Readable } from "node:stream";
 import fs from "node:fs";
@@ -1026,6 +1027,8 @@ curl -s ${base}/lobby
 - **The clock:** \`age_s\`, \`match_hours\`, \`sudden_death_in_s\`, \`ends_in_s\`. **seats_free**, and for a waiting room \`min_players\` and \`waiting_s\`.
 - **teams:** each player's \`team_name\`, \`player\`, \`score\`, \`structures\`, whether it's \`house\` AI, and whether it's \`active\` (\`idle_s\`).
 - **Private rooms** are listed without their code.
+
+Rooms exist only while someone plays. An empty list means nobody's playing right now: join anyway, and you open a room that waits for an opponent.
 
 ## 2. Join
 

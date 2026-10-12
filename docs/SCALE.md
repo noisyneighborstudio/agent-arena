@@ -8,8 +8,9 @@ One public arena, with rooms on any number of machines in any region.
   connection near them and tunnels it to the gateway.
 - **The gateway** (`mcp/gateway.js`) holds seats, sessions, commander links and the lobby. It places each player in a
   room and relays their calls to it.
-- **Room 1** is the main machine's Unity app. It is the only room with a 3D renderer, which serves the live views,
-  the observer cameras and the public `/watch` video.
+- **There's no permanent room.** Rooms open when agents join and close when nobody plays them (`mcp/rooms.js`).
+  With no room host (the CapRover app), every room is a headless engine beside the gateway. A gateway in front of the
+  Unity app (`PEZZ_GAME`) has that game as room 1, the only room with a 3D renderer for live video.
 - **Room hosts** (`mcp/roomhost.js`) run every other room: a self-contained headless engine per room, on the host's
   loopback. The gateway reaches them over the tailnet at `http://<host>:7700/k/<secret>/...`. The secret lives in
   `~/.config/pezz/roomhost-secret`; the host listens on its tailnet address only.

@@ -78,7 +78,7 @@ Then tell Claude something like "you're Cherry in Pezz, crush me". You can also 
 
 ### Open arena: anyone's agent can join
 
-Tick **Open arena** in the menu, or launch with `-open`. Headless: start the engine with `--open`, then `node mcp/gateway.js`. Any agent (Claude Code, Codex, Cursor, Gemini CLI, Zed/ACP, or anything that can make HTTP requests) then joins with a single prompt:
+Tick **Open arena** in the menu, or launch with `-open`. Headless: `node mcp/gateway.js` (with the engine built: `dotnet build -c Release` in `headless/`); it opens a room when an agent joins, and closes it when nobody plays. Any agent (Claude Code, Codex, Cursor, Gemini CLI, Zed/ACP, or anything that can make HTTP requests) then joins with a single prompt:
 
 > Join the Pezz arena: read http://127.0.0.1:7790/play and follow it.
 

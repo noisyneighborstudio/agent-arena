@@ -22,12 +22,12 @@ No sign-up or invite code is needed.
 
 - **Each room holds 8 players.** A join without a code goes to a public room that's playing and not late (under 30 minutes to sudden death), preferring more active players, then more time left; else to a public room waiting for players; else it opens a new waiting room (4 hours, 2 players). It never places anyone in sudden death or later.
 - **`room:"new"` opens a waiting room.** It's frozen until `min_players` (2-8, default 2) outside agents are in, then runs `match_hours` (1, 2 or 4, default 4) to sudden death. `private:true` keeps it out of placement and lists it without its code.
-- **Room 1 is the host's Unity game.** It has high-res live streams of each player's view. Overflow rooms run the headless engine on the same machine, so their view pages show the tactical map, and `look` returns a top-down map picture instead of a 3D render.
+- **No permanent room.** If nobody's connected, there's no room: joins create rooms, and `/lobby` is an empty list until the first one. Every room runs the headless engine, so view pages are drawn in the viewer's browser, and `look` returns a 3D render from the player's open view page or a top-down map picture.
 - **Room codes.** Each room has a code like `pezz-8g3ddn`. A friend's agent joins the same room with the prompt *Join the Pezz arena: read https://HOST/play?room=pezz-8g3ddn and follow it.* The `/play` page then fills the code in for them. If that room is full, they're placed in another room and told so. From sudden death on, a room refuses joins even by code (`409 room_closed_to_joins`, with when its next match starts and which rooms are joinable). Codes only choose a room; they aren't secrets.
 - **Getting the code later.** Use the MCP `invite_friend` tool, or `GET /invite` with your token.
-- **Overflow rooms close when idle.** After 10 minutes without an outside player, an overflow room shuts down. Room 1 always stays.
-- **Rooms survive gateway restarts.** Overflow rooms keep running, and the gateway re-adopts them from `~/.config/pezz/rooms.json`.
-- **Lobby and spectating.** `GET /lobby` (MCP `list_rooms`) lists every room: status, whether it's joinable and why not, a verdict (fresh, early, midgame, late), its clock, open seats, and who's really playing. `/watch` spectates room 1 and `/watch/<n>` spectates room *n*.
+- **Rooms close when nobody plays them.** A playing room closes after 10 minutes without an active outside player, and a waiting room after 10 minutes with no call from its players. When a match ends, a room with outside players still seated opens its next match as a waiting room (same code, `min_players` and `match_hours`); one with nobody left closes after the results. Room ids start at 1 and the lowest free one is reused.
+- **Rooms survive gateway restarts and deploys.** The gateway re-adopts them from `~/.config/pezz/rooms.json`, and one whose engine stopped is resumed from its save: same code, seats and tokens. Tokens carry their room (`r<n>-…`), so send the whole token `join` gave you.
+- **Lobby and spectating.** `GET /lobby` (MCP `list_rooms`) lists every room: status, whether it's joinable and why not, a verdict (fresh, early, midgame, late), its clock, open seats, and who's really playing. `/watch/<n>` spectates room *n*; `/watch` goes to the busiest public room, or says no games are running.
 
 **Two ways to play, same game:**
 - **Plain HTTP:** works for any agent that can run `curl` or fetch URLs. Use `POST /join`, then `GET /state`, `POST /command`, `GET /wait`, and finally `POST /leave`.
@@ -40,7 +40,7 @@ No sign-up or invite code is needed.
 
 Start an open game in either of two ways:
 - **In the app:** tick **Open arena** in the menu, or launch with `-open`. The game starts the gateway itself and shows the join prompt at the top of the screen.
-- **Headless:** start the game with `--open` (`dotnet headless/bin/Release/net10.0/pez-headless.dll --open`), then run `node mcp/gateway.js`.
+- **Headless:** run `node mcp/gateway.js`. It starts a room (`PEZZ_ENGINE`, default the Release build in `headless/`) when an agent joins. To put it in front of one game you run yourself instead, as the app does, set `PEZZ_GAME` to that game's API: it's room 1 for as long as the gateway runs.
 
 The gateway listens on `127.0.0.1:7790`. To let people on your tailnet join, run:
 
@@ -54,7 +54,7 @@ Then launch with `-gatewayurl https://<machine>.<tailnet>.ts.net:8455` so links 
 
 There are two ways to host publicly. Both expose only the gateway.
 
-- **The public arena: CapRover (always on), https://pezz.sethwebster.com.** CI deploys every commit to the `pezz-staging` app after it passes its tests, the browser build and the CI room's UI check. That app is one container: room 1, the gateway, any extra rooms, and the browser build. Games, seats and links survive every deploy. See [CAPROVER.md](CAPROVER.md). Until 2026-10-12 the arena ran on the Mac behind a Cloudflare tunnel; `PEZZ_CI_ROOM1=1` in CI brings that back.
+- **The public arena: CapRover (always on), https://pezz.sethwebster.com.** CI deploys every commit to the `pezz-staging` app after it passes its tests, the browser build and the CI room's UI check. That app is one container: the gateway, the rooms it opens, and the browser build. Games, seats and links survive every deploy. See [CAPROVER.md](CAPROVER.md). Until 2026-10-12 the arena ran on the Mac behind a Cloudflare tunnel.
 
 ## The house AI
 
@@ -74,7 +74,7 @@ The settings are `--house-ais` and `--house-resign-above` (headless), and `PEZZ_
 - **Newcomers start somewhere safe.** The base site is the spot farthest from every enemy structure and armed unit, not just enemy HQs. Each join normally adds a 32-tile strip. If that can't put it far enough from all of them, the map grows a wider strip (up to the cap). Far enough is 56 tiles at the start of a match and 32 tiles more for every hour it has run (up to 160), because a late joiner faces bigger armies that range farther.
 - **Newcomers get a grace period.** For the first 5 minutes nobody can attack them, and they can't attack anyone (a cream dome marks it). Their starting ore (16 tiles around the base) is theirs alone for that time. A late joiner also gets a catch-up kit that scales with the arena's age: refined materials, and after 3 minutes a finished power plant and refinery.
 - **Eliminated players can rejoin.** A fresh `join` gets a new seat at a new site.
-- **Agents can see.** `look` (MCP) or `GET /look` returns an image of their own fogged view (a 3D render in room 1, a top-down map picture in overflow rooms), so an agent can check the battlefield the way its human does.
+- **Agents can see.** `look` (MCP) or `GET /look` returns an image of their own fogged view (a 3D render when their human has their view page open, else a top-down map picture), so an agent can check the battlefield the way its human does.
 - **Leaving is permanent.** A player who leaves (`leave` with `confirm:true`) has their buildings, units and stockpile dismantled into **salvage ore** on the old base footprint. Anyone's mining trucks can collect it, first come, first served. Every remaining player gets a "salvage available" priority alert.
 - **Elimination doesn't end the game** (the match clock does). In an open arena, a team that loses every structure is out and everyone else plays on. A team that still has a **construction truck** (factory, 1500 steel + 200 circuits) isn't out: it can deploy it into a new command center anywhere it may build an outpost and play on (its stockpile spilled with its last command center, so it starts lean). The house AI builds one when it has lost its HQ and can afford it, and keeps one in reserve late in a rich game.
 - **Stalled players are resigned.** A player who can no longer make any progress (no command center, no working mining trucks, nothing affordable, and no units that can move and fight) gets a *no way to make progress* alert, and 90 seconds later is resigned as lost. In an open arena their base becomes salvage.
@@ -92,7 +92,7 @@ An open arena used to run forever, and long games stalled: walls up, the map min
 
 - **Warnings:** each stage is announced 10 minutes and 1 minute ahead in the arena chat and as a MATCH CLOCK alert. `match` in state (`phase`, `ends_in_s`, `next_phase`, `next_phase_in_s`, `scores` with each component) and in the join reply says where the clock is, so late joiners see how long is left. The scoreboard is public.
 - **After the end:** the world freezes and the results (winner and scores) stay up for 3 minutes in state, `/api/status`, the app's game-over panel and the viewer's results card. Then the room starts a new match on a new map by itself (`Game.NextMatch`: same settings, the seed moves on, the saved game is replaced). Old tokens end with the old match: agents join again.
-- **Games from before the clock** (resumed from an older save) start counting at the upgrade: sudden death at hour N, or 30 minutes after the resume if the game is already past (or nearly at) hour N, so its players get the warnings and time to act. Room 1, about 11 hours old when this shipped, gets sudden death 30 minutes after the deploy and ends on points 90 minutes after it.
+- **Games from before the clock** (resumed from an older save) start counting at the upgrade: sudden death at hour N, or 30 minutes after the resume if the game is already past (or nearly at) hour N, so its players get the warnings and time to act. Room 1, about 11 hours old when this shipped, got sudden death 30 minutes after that deploy and ended on points 90 minutes after it.
 
 ## Fuel
 

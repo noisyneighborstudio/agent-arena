@@ -112,7 +112,7 @@ case "${1:-status}" in
     curl -s -m 600 -X POST "$url/roll"; echo ;;
   roll-all)
     # Every host installed with this script (it has an ssh target): update it and roll its rooms. CI runs this after
-    # each live deploy, so room hosts run the same engine as room 1.
+    # each live deploy, so room hosts run the same engine as the arena.
     for h in $(python3 -c "import json; print(' '.join(h['ssh'] for h in json.load(open('$HOSTS')) if h.get('ssh')))" 2>/dev/null); do
       echo "== $h"; "$0" update "$h" || echo "update of $h FAILED"
     done ;;

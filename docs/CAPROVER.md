@@ -1,9 +1,8 @@
 # Pezz on CapRover
 
-The public arena, https://pezz.sethwebster.com (also https://pezz-staging.sethwebster.com), is one CapRover app, `pezz-staging` on captain-01. It replaced room 1 on the Mac on 2026-10-12: the game, its seats and its links moved across. The app holds:
-- **Room 1:** the headless engine.
-- **The gateway** in front of it: `/join`, `/mcp`, `/view`, `/watch`, `/play`, `/admin`.
-- **Extra rooms:** the gateway opens them in the same container when room 1 is full.
+The public arena, https://pezz.sethwebster.com (also https://pezz-staging.sethwebster.com), is one CapRover app, `pezz-staging` on captain-01. It replaced the Mac on 2026-10-12: the game, its seats and its links moved across. The app holds:
+- **The gateway:** `/join`, `/mcp`, `/view`, `/watch`, `/play`, `/lobby`, `/admin`.
+- **Rooms:** headless engines the gateway opens in the same container when agents join, and closes when nobody plays them. There's no permanent room: with nobody connected, no engine runs.
 - **The browser build:** Unity Web, the default viewer.
 - **The ops dashboard,** https://pezz-ops.sethwebster.com: every room, its match and every seat, with links to the spectator view and each player's own view. Look only. The gateway serves it on that hostname only (`mcp/ops.js`); without its cookie every page there is a bare 404. Open `https://pezz-ops.sethwebster.com/k/<key>` once per browser, with the key from `~/.config/pezz/ops-key`.
 
@@ -32,14 +31,21 @@ What it does:
    - the app's deploy token;
    - the env vars: `PEZZ_PUBLIC_URL`, the operator secret, `PEZZ_ADMIN_REMOTE=1`, `PEZZ_CLIENT_IP_HEADER=x-real-ip`, the Claude token, and the ops dashboard's hostname and key (`PEZZ_OPS_HOST`, `PEZZ_OPS_KEY`).
 3. **Upload.** It uploads the bundle and CapRover builds `deploy/caprover/Dockerfile`. The old container gets SIGTERM, and every engine in it saves its game. The new container resumes them all: same seats, tokens and commander links.
-4. **Domains and check.** It adds each domain (the arena, its alias, pezz-ops) with HTTPS once, then waits for `/healthz` to report the new build with room 1 up.
+4. **Domains and check.** It adds each domain (the arena, its alias, pezz-ops) with HTTPS once, then waits for `/healthz` to report the new build.
+
+**The one-time move-over from room 1** (the first deploy without a permanent room, #38/#39):
+1. The old container gets SIGTERM, and room 1's engine saves to `rooms/game-7777.json` as usual.
+2. The new container starts only the gateway. It finds the old format in `rooms.json` (`hostCode`) and room 1's save, and resumes room 1 as an ordinary room: id 1, the same code, seats and `r1-` tokens. It rewrites `rooms.json` without `hostCode`.
+3. Room 1's current match plays on. Its next match waits for 2 players, or the room closes when nobody plays it, like any other.
+
+The block that does this (marked in `mcp/rooms.js`) can go once the app has started on it once.
 
 **DNS:** all three names are DNS-only CNAMEs to `pezz-staging.projects.sethwebster.com`, in Cloudflare. Nothing public runs on the Mac any more.
 
 **Moving a game between servers** (as done for the cutover):
 1. Post a notice (`maintenance on 60 ... --preserved`) and stop the old server; the engine saves on SIGTERM.
 2. Scale the app to 0 instances.
-3. Copy these into `/data/.config/pezz` on the volume, owned by uid 10001: `rooms/game-7777.json`, `rooms.json` (the room code), `gateway-sessions.json`, `commanders.json`, `seen-changes.json`, `replays/` and `inventions/`.
+3. Copy these into `/data/.config/pezz` on the volume, owned by uid 10001: `rooms/` (each room's `game-<port>.json`), `rooms.json` (each room's code and port), `gateway-sessions.json`, `commanders.json`, `seen-changes.json`, `replays/` and `inventions/`.
 4. Scale back to 1. Seats, tokens, links and MCP sessions all carry over.
 
 ## Logins and secrets
@@ -59,19 +65,19 @@ Everything lives on this Mac, owner-only, and is never printed:
 - **State:** `/data` on the `pezz-staging-data` volume holds:
   - every room's save (`.config/pezz/rooms/game-<port>.json`);
   - the gateway's rooms, seats, MCP sessions, commander links and replays;
-  - all logs (`/data/logs`: `room1.log`, `gateway.log`, `room-<n>.log`).
-- **Supervisor:** `deploy/caprover/serve.mjs`. If room 1 or the gateway dies on its own, it saves the other rooms and exits, and CapRover starts a new container that resumes them.
+  - all logs (`/data/logs`: `gateway.log`, `room-<n>.log`).
+- **Supervisor:** `deploy/caprover/serve.mjs` runs only the gateway. The engines are the gateway's children: one that exits is resumed from its save by the gateway within a minute. If the gateway dies on its own, `serve.mjs` saves every room and exits, and CapRover starts a new container that resumes them.
 - **Operator commands:** over HTTPS, with the secret:
 
   ```bash
   node deploy/caprover/admin.mjs fleet                          # rooms
-  node deploy/caprover/admin.mjs room 1 status
-  node deploy/caprover/admin.mjs room 1 announce '{"text":"Server restarts in 5 minutes"}'
-  node deploy/caprover/admin.mjs room 2 save '{}'
+  node deploy/caprover/admin.mjs room <n> status
+  node deploy/caprover/admin.mjs room <n> announce '{"text":"Server restarts in 5 minutes"}'
+  node deploy/caprover/admin.mjs room <n> save '{}'
   ```
 
   Any `/api/admin/<cmd>` of a room's engine works the same way: `kick`, `speed`, `restart`, `orders`, `viewlink`, and so on.
-- **Health:** `https://pezz.sethwebster.com/healthz` returns the build, whether room 1 answers, and the address the rate limits see for you.
+- **Health:** `https://pezz.sethwebster.com/healthz` answers `ok` whenever the gateway is up, with the build, the number of rooms (information only: rooms come and go with players), and the address the rate limits see for you.
 
 ## Performance
 
