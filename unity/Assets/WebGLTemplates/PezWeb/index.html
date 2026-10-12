@@ -21,6 +21,7 @@
       #cmd { position: fixed; display: none; z-index: 10; box-sizing: border-box; flex-direction: column; gap: 4px; padding: 6px; font: 12px system-ui, sans-serif; color: #ece4d2; }
       #cmd textarea { flex: 1 1 auto; min-height: 0; width: 100%; box-sizing: border-box; resize: none; padding: 6px 8px; border: 1px solid #4a4238; border-radius: 6px; background: #101317; color: #ece4d2; font: 14px system-ui, sans-serif; }
       #cmd textarea:focus { outline: none; border-color: #e8a33d; }
+      #cmd.editing { background: rgba(16,19,23,.96); border: 1px solid #2a3138; border-radius: 10px; box-shadow: 0 6px 24px rgba(0,0,0,.5); z-index: 20; }
       #cmd .row { display: flex; gap: 6px; flex: none; }
       #cmd button { flex: 1; height: 26px; border: 0; border-radius: 6px; background: #ece4d2; color: #101317; font: 600 12px system-ui, sans-serif; cursor: pointer; }
       #cmd button#cmdClear { background: #2a262b; color: #ece4d2; border: 1px solid #3a343b; }
@@ -74,13 +75,33 @@
           if (ev === "keydown" && e.key === "Escape") text.blur();
           if (ev === "keydown" && e.key === "Enter" && (e.metaKey || e.ctrlKey) && !send.disabled) send.click();
         });
-        text.addEventListener("focus", () => unity("OnCommanderFocus", "1"));
-        text.addEventListener("blur", () => unity("OnCommanderFocus", "0"));
+        // On a phone the keyboard shrinks the visible page and the HUD relays itself out: the box's slot in the side panel
+        // ends up clipped or behind the keyboard. While typing there, the box docks just above the keyboard instead
+        // (following the visual viewport), and goes back to its slot when the keyboard goes away.
+        let editing = false, placed = null;
+        const small = () => matchMedia("(max-width: 820px), (pointer: coarse)").matches;
+        const dock = () => {
+          if (!editing) return;
+          const vv = window.visualViewport, vw = vv ? vv.width : innerWidth, vh = vv ? vv.height : innerHeight;
+          const h = Math.min(180, Math.max(120, vh * 0.45));
+          Object.assign(box.style, { left: ((vv ? vv.offsetLeft : 0) + 8) + "px", top: ((vv ? vv.offsetTop : 0) + vh - h - 8) + "px", width: (vw - 16) + "px", height: h + "px", display: "flex" });
+        };
+        window.visualViewport?.addEventListener("resize", dock);
+        window.visualViewport?.addEventListener("scroll", dock);
+        text.addEventListener("focus", () => { unity("OnCommanderFocus", "1"); if (small()) { editing = true; box.classList.add("editing"); dock(); } });
+        text.addEventListener("blur", () => {
+          unity("OnCommanderFocus", "0");
+          if (!editing) return;
+          // A tap on Send or Clear blurs the text first: let that click land before the box moves back.
+          setTimeout(() => { if (document.activeElement === text) return; editing = false; box.classList.remove("editing"); if (placed) api.place(...placed); }, 250);
+        });
         send.addEventListener("click", () => { const t = text.value.trim(); if (t) unity("OnCommanderSend", t); });
         clear.addEventListener("click", () => { text.value = ""; dirty = false; refresh(); unity("OnCommanderSend", ""); });
-        return {
+        const api = {
           // x,y,w,h in Unity screen pixels (top left origin); the canvas may be shown at another CSS size than it renders at.
           place(x, y, w, h, visible, sw, sh) {
+            placed = [x, y, w, h, visible, sw, sh];
+            if (editing) return; // docked over the keyboard until the typing is done
             if (!visible) { if (box.style.display !== "none") { box.style.display = "none"; if (document.activeElement === text) text.blur(); } return; }
             const r = document.getElementById("unity-canvas").getBoundingClientRect(), kx = r.width / (sw || r.width), ky = r.height / (sh || r.height);
             box.style.left = (r.left + x * kx) + "px"; box.style.top = (r.top + y * ky) + "px";
@@ -90,6 +111,7 @@
           status(t) { note.textContent = t || ""; note.title = t || ""; },
           setText(t, force) { if (force || !dirty) { text.value = t; dirty = false; refresh(); } },
         };
+        return api;
       })();
     </script>
     <script src="Build/{{{ LOADER_FILENAME }}}"></script>
