@@ -117,7 +117,7 @@ async function showcasePage() {
   // Click an exhibit: the running build flies its camera there; the view isn't reloaded.
   const target = page.locator("#list .it").nth(5);
   const name = (await target.locator("b").textContent()) ?? "";
-  const frameUrl = () => page.frames().map((f) => f.url()).find((u) => u.includes("/watch/web")) ?? "";
+  const frameUrl = () => page.frames().map((f) => f.url()).find((u) => /\/watch\/\d+\/web/.test(u)) ?? ""; // /watch/web goes on to its room's
   const urlBefore = frameUrl(), resyncsBefore = t.resyncs;
   let navigated = false;
   page.on("framenavigated", (f) => { if (f !== page.mainFrame()) navigated = true; });
@@ -240,7 +240,7 @@ async function spectator() {
   const t = track(page);
   const loaded = await loadView(page, t, `${GW}/watch`, "/watch", 60000);
   await page.mouse.move(800, 500);
-  ok("/watch opens the browser build", /\/watch\/web\?/.test(page.url()));
+  ok("/watch opens the browser build", /\/watch\/\d+\/web\?/.test(page.url()));
   ok("spectator feed loads", loaded);
   await sleep(3000);
   await page.screenshot({ path: `${OUT}/s1-watch.png` });

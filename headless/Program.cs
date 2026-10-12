@@ -72,6 +72,7 @@ namespace Pez.Headless
                 IntervalSeconds = float.Parse(Arg("--save-interval", "30"), System.Globalization.CultureInfo.InvariantCulture),
             };
             bool resumed = saver != null && saver.TryResume(game, api, args.Contains("--resume"), cfg.Open, args.Contains("--fresh"));
+            if (resumed) OperatorFlagsWin(game, cfg, args);
             if (saver != null)
             {
                 api.OnRestart = () => saver.Forget(game);
@@ -127,6 +128,16 @@ namespace Pez.Headless
         /// Deploy rehearsal: load a saved game (a copy; the file is only read), run it on for a while with no server, and
         /// report what the new rules make of it. Never binds a port.
         /// </summary>
+        /// <summary>
+        /// A resumed game takes its config from its save, except what the operator gives on the command line: --min-players
+        /// applies from the next match on (the match being resumed plays on as it was). The gateway relaunches a room saved
+        /// before waiting rooms (min_players 0) with --min-players 2, so its next match waits for players like any other.
+        /// </summary>
+        internal static void OperatorFlagsWin(Game game, GameConfig cfg, string[] args)
+        {
+            if (args.Contains("--min-players")) game.Config.MinPlayers = cfg.MinPlayers;
+        }
+
         static int ResumeCheck(string file, float seconds)
         {
             var game = new Game(new GameConfig { Seed = 1, MapSize = 48, Controllers = new[] { "llm" } });

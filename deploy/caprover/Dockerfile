@@ -1,5 +1,5 @@
-# The Pezz server on CapRover: the headless engine (room 1 and any extra rooms), the gateway, and the browser build, in one
-# container. deploy/caprover/deploy.sh assembles the upload: the engine is published on the Mac (a framework-dependent
+# The Pezz server on CapRover: the gateway, the headless engine its rooms run, and the browser build, in one
+# container. deploy/caprover/deploy.mjs assembles the upload: the engine is published on the Mac (a framework-dependent
 # .dll runs on any OS with the .NET runtime) and the browser build comes from Unity there, so the server only installs the
 # gateway's packages and the Claude CLI (for the team-name check). Only the gateway (8080) is exposed; the engines' APIs
 # stay inside the container. Everything that must survive a deploy lives under /data (the app's persistent volume).

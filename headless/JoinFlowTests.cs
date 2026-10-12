@@ -15,6 +15,7 @@ namespace Pez.Headless
         {
             Console.WriteLine("\n-- join flow");
             WaitingRoom();
+            ResumedRoomWaits();
             Sparring();
             LobbyAndCutoff();
         }
@@ -71,6 +72,25 @@ namespace Pez.Headless
             game.NextMatch();
             Check(game.Waiting && game.World.Teams.Count == 0 && game.Config.MinPlayers == 2 && game.Config.MatchHours == 4, "the next match opens waiting too, with the same min_players and match length");
             Check(w.Errors == 0 && game.World.Errors == 0, $"no sim errors ({w.LastError})");
+        }
+
+        /// <summary>A room saved before waiting rooms (min_players 0) that the gateway relaunches with --min-players 2: its match plays on, the next one waits.</summary>
+        static void ResumedRoomWaits()
+        {
+            var old = new Game(new GameConfig { Seed = 9, MapSize = 64, Open = true, Controllers = new[] { "ai" }, HouseAIs = 1 });
+            old.Join("llm", "Ada", null, out _, out _);
+            Step(old, 10);
+            var json = Snap(old);
+            var back = Resume(json);
+            Program.OperatorFlagsWin(back, new GameConfig { MinPlayers = 2 }, new[] { "--open", "--resume", "--min-players", "2" });
+            Check(!back.Waiting && back.RoomStatus == "playing" && back.World.Time >= 9 && back.Config.MinPlayers == 2,
+                  "relaunched with --min-players, a resumed room's match plays on, with min_players 2 in its config");
+            back.NextMatch();
+            Check(back.Waiting && back.World.Teams.Count == 0 && back.Config.MinPlayers == 2, "and its next match opens waiting for 2 players");
+            var plain = Resume(json);
+            Program.OperatorFlagsWin(plain, new GameConfig(), new[] { "--open", "--resume" });
+            plain.NextMatch();
+            Check(!plain.Waiting && plain.Config.MinPlayers == 0, "without the flag the save's config stands: the next match starts at once");
         }
 
         static void Sparring()

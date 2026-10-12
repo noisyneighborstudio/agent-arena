@@ -1,10 +1,11 @@
-// Gateway tests for the browser build's routes: meta, snapshot headers, /web redirects, /play caching, the seat-ended
-// degrade, and the per-address caps. Starts a throwaway headless engine and a throwaway gateway (temp HOME, so nothing
-// under ~/.config/pezz is touched) as child processes, and stops exactly those two at the end.
+// Gateway tests for the browser build's routes: meta, snapshot headers, /web redirects, /watch with no room, /play caching,
+// the seat-ended degrade, and the per-address caps. Starts a throwaway gateway the way CapRover runs it (temp HOME, so
+// nothing under ~/.config/pezz is touched; no PEZZ_GAME, so no room until a join opens one, on the real headless engine),
+// and stops exactly it and the room it opened at the end.
 //
 //   node --test mcp/web.test.js
 //
-// Env: PEZZ_TEST_PORT (engine; the gateway takes the next port, default 7940), PEZZ_TEST_DIR (default /tmp/parity-gw-test).
+// Env: PEZZ_TEST_PORT (the gateway; its room takes the port 2 above, default 7940), PEZZ_TEST_DIR (default /tmp/parity-gw-test).
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -15,8 +16,8 @@ import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..");
-const ENGINE_PORT = Number(process.env.PEZZ_TEST_PORT || 7940);
-const GW_PORT = ENGINE_PORT + 1;
+const GW_PORT = Number(process.env.PEZZ_TEST_PORT || 7940);
+const ENGINE_PORT = GW_PORT + 2; // the first room the gateway opens (PEZZ_ROOM_BASE_PORT)
 const DIR = process.env.PEZZ_TEST_DIR || "/tmp/parity-gw-test";
 const DELAY = 3;
 const children = [];
@@ -60,25 +61,60 @@ before(async () => {
   fs.writeFileSync(path.join(web, "Build", "game.data.br"), "not really brotli");
   fs.writeFileSync(path.join(web, "Build", "game.loader.js"), "// loader");
 
-  start("dotnet", [path.join(ROOT, "headless/bin/Release/net10.0/pez-headless.dll"), "--port", String(ENGINE_PORT), "--open", "--fresh", "--snapshot", path.join(DIR, "game.json")],
-    { ...process.env, HOME: path.join(DIR, "home") }, "engine.log");
-  await until("the engine", async () => (await call("/api/status", { port: ENGINE_PORT })).status === 200);
   start(process.execPath, [path.join(HERE, "gateway.js")], {
-    PATH: process.env.PATH, HOME: path.join(DIR, "home"), PEZZ_GAME: `http://127.0.0.1:${ENGINE_PORT}`, PEZZ_FRAMES: "http://127.0.0.1:1", PEZZ_GATEWAY_PORT: String(GW_PORT),
-    PEZZ_WEB_DIR: web, PEZZ_MAX_ROOMS: "1", PEZZ_WATCH_DELAY: String(DELAY),
+    PATH: process.env.PATH, HOME: path.join(DIR, "home"), PEZZ_FRAMES: "none", PEZZ_GATEWAY_PORT: String(GW_PORT), PEZZ_ROOM_BASE_PORT: String(ENGINE_PORT),
+    PEZZ_ENGINE: path.join(ROOT, "headless/bin/Release/net10.0/pez-headless.dll"), PEZZ_WEB_DIR: web, PEZZ_MAX_ROOMS: "1", PEZZ_WATCH_DELAY: String(DELAY),
   }, "gateway.log");
   await until("the gateway", async () => (await call("/lobby")).status === 200);
 });
 
 after(async () => {
+  // The room's engine is the gateway's detached child: stop it by the pid the gateway saved.
+  let pids = [];
+  try { pids = JSON.parse(fs.readFileSync(path.join(DIR, "home", ".config", "pezz", "rooms.json"), "utf8")).rooms.map((r) => r.pid).filter(Boolean); } catch {}
+  for (const pid of pids) { try { process.kill(pid, "SIGTERM"); } catch {} }
   for (const c of children) { try { c.kill("SIGTERM"); } catch {} }
   await sleep(500);
   for (const c of children) { if (c.exitCode === null) { try { c.kill("SIGKILL"); } catch {} } }
 });
 
-test("spectator meta: waiting at first, then ready; room 1 is warm without anyone asking", async () => {
-  // Straight after start the ring has nothing old enough: meta and the 503 both say when it starts.
-  const w = (await call("/watch/meta")).json();
+test("no game running: /watch is a plain page saying so, its feeds 404, and /changes lists everything", async () => {
+  const w = await call("/watch");
+  assert.equal(w.status, 200);
+  assert.match(w.text, /No games right now/);
+  assert.match((await call("/watch/web")).text, /No games right now/);
+  assert.equal((await call("/watch/meta")).status, 404);
+  assert.equal((await call("/watch/snapshot")).status, 404);
+  const c = (await call("/changes")).json();
+  assert.equal(c.room, null);
+  assert.equal(c.changes.at(-1).id, 1, "the whole list, newest first");
+  assert.equal((await call("/rules")).status, 503);
+});
+
+test("the first join opens room 1, waiting for players", async () => {
+  const j = (await call("/join", { method: "POST", body: { name: "WebTest" } })).json();
+  assert.equal(j.ok, true, JSON.stringify(j));
+  assert.equal(j.room, 1);
+  assert.equal(j.room_status, "waiting");
+  assert.ok(j.tell_your_human.includes(j.commander_url), "one link: the commander view (the browser build by default)");
+  assert.match(j.token, /^r1-[a-f0-9]{48}$/);
+  const [viewUrl, commander] = j.commander_url.split("?c=");
+  seat = { view: new URL(viewUrl).pathname, commander, team: undefined, flavor: j.flavor, token: j.token };
+  // A bare token (no room in it) is refused, and says what to send instead.
+  const bare = await call("/state", { headers: { authorization: `Bearer ${j.token.slice(3)}` } });
+  assert.equal(bare.status, 401);
+  assert.match(bare.json().error, /no room in it: send the whole token/);
+  assert.equal((await call("/state", { headers: { authorization: `Bearer ${j.token}` } })).status, 200);
+});
+
+test("spectator meta: waiting at first, then ready; bare /watch goes to the busiest room", async () => {
+  for (const [from, to] of [["/watch", "/watch/1"], ["/watch/web?cam=2", "/watch/1/web?cam=2"], ["/watch/meta", "/watch/1/meta"], ["/watch/classic", "/watch/1/classic"]]) {
+    const r = await call(from);
+    assert.equal(r.status, 302, from);
+    assert.equal(r.headers.location, to);
+  }
+  // Nobody has watched yet, so the ring has nothing old enough: meta and the 503 both say when it starts.
+  const w = (await call("/watch/1/meta")).json();
   assert.equal(w.ok, true);
   assert.equal(w.mode, "spectator");
   assert.equal(w.delay_s, DELAY);
@@ -86,18 +122,18 @@ test("spectator meta: waiting at first, then ready; room 1 is warm without anyon
   assert.equal(w.room, 1);
   assert.match(w.waiting, /^Spectator feed starts in \d+s \(it runs \d+s behind the game\)\.$/);
   assert.ok(w.starts_in_s >= 1 && w.starts_in_s <= DELAY);
-  const early = await call("/watch/snapshot");
+  const early = await call("/watch/1/snapshot");
   assert.equal(early.status, 503);
   assert.equal(early.headers["x-pezz-mode"], "spectator");
   assert.match(early.json().waiting, /^Snapshot feed starts in \d+s/);
   assert.ok(early.json().starts_in_s >= 1);
-  // Ready after the delay, with the request above the only thing that ever asked (room 1 samples on its own).
-  const m = await until("meta ready", async () => { const x = (await call("/watch/meta")).json(); return x.waiting === null ? x : null; }, (DELAY + 10) * 1000);
+  // Ready after the delay: asking started the ring.
+  const m = await until("meta ready", async () => { const x = (await call("/watch/1/meta")).json(); return x.waiting === null ? x : null; }, (DELAY + 10) * 1000);
   assert.equal(m.starts_in_s, null);
   assert.equal(m.results, null);
   assert.equal(m.rejoin, null);
   assert.ok("map_name" in m && "flavor" in m);
-  const r = await call("/watch/snapshot");
+  const r = await call("/watch/1/snapshot");
   assert.equal(r.status, 200);
   assert.equal(r.headers["x-pezz-mode"], "spectator");
   assert.equal(r.headers["x-pezz-delay-s"], String(DELAY));
@@ -106,17 +142,13 @@ test("spectator meta: waiting at first, then ready; room 1 is warm without anyon
 });
 
 test("a player's meta, snapshot headers and /web redirect", async () => {
-  const j = (await call("/join", { method: "POST", body: { name: "WebTest" } })).json();
-  assert.equal(j.ok, true, JSON.stringify(j));
-  assert.ok(j.tell_your_human.includes(j.commander_url), "one link: the commander view (the browser build by default)");
-  const [viewUrl, commander] = j.commander_url.split("?c=");
-  seat = { view: new URL(viewUrl).pathname, commander, team: undefined, flavor: j.flavor, token: j.token };
-
+  assert.ok(seat, "the join test ran first");
+  const { commander } = seat;
   const m = (await call(`${seat.view}/meta`)).json();
   assert.equal(m.ok, true);
   assert.equal(m.mode, "player");
   assert.equal(m.delay_s, 0);
-  assert.equal(m.flavor, j.flavor);
+  assert.equal(m.flavor, seat.flavor);
   assert.equal(m.room, 1);
   assert.equal(m.results, null);
   assert.equal(m.rejoin, null);
@@ -143,9 +175,9 @@ test("a player's meta, snapshot headers and /web redirect", async () => {
   assert.match(page.text, /<base href="\/play\/">/);
   assert.match(page.text, /window\.PEZ_QUERY=/);
 
-  const w = await call("/watch/web");
+  const w = await call("/watch/1/web");
   assert.equal(w.status, 302);
-  assert.match(w.headers.location, /snapshot=%2Fwatch%2Fsnapshot/);
+  assert.match(w.headers.location, /^\/watch\/1\/web\?.*snapshot=%2Fwatch%2F1%2Fsnapshot/);
 
   // The plain links open the browser build; the original page stays at /classic (and ?classic=1).
   const d = await call(`${seat.view}?c=${commander}`);
@@ -153,10 +185,10 @@ test("a player's meta, snapshot headers and /web redirect", async () => {
   assert.equal(d.headers.location, `${seat.view}/web?c=${commander}`);
   assert.match((await call(`${seat.view}/classic?c=${commander}`)).text, /Pezz: your view/);
   assert.match((await call(`${seat.view}?classic=1`)).text, /Pezz: your view/);
-  const dw = await call("/watch");
+  const dw = await call("/watch/1");
   assert.equal(dw.status, 302);
-  assert.equal(dw.headers.location, "/watch/web");
-  assert.match((await call("/watch/classic")).text, /Pezz: your view/);
+  assert.equal(dw.headers.location, "/watch/1/web");
+  assert.match((await call("/watch/1/classic")).text, /Pezz: your view/);
 });
 
 test("/play: strong ETag, 304 on revalidation, 406 when br is not accepted", async () => {
@@ -206,7 +238,7 @@ test("seat ended: meta turns spectator with results, and the snapshot is the del
 
 test("a view link that 401s at the game degrades too, and a bad room is a clean error", async () => {
   // A syntactically valid link the game has never heard of: its seat is not a seat, so there is nothing live to serve.
-  const bogus = `/view/${"ab".repeat(24)}`;
+  const bogus = `/view/r1-${"ab".repeat(24)}`;
   const m = await call(`${bogus}/meta`);
   assert.equal(m.json().mode, "spectator");
   assert.equal(m.json().results.outcome, "ended");
@@ -214,11 +246,12 @@ test("a view link that 401s at the game degrades too, and a bad room is a clean 
   assert.equal(s.status, 200);
   assert.equal(s.headers["x-pezz-mode"], "spectator");
   assert.equal((await call(`/view/r7-${"ab".repeat(24)}/meta`)).status, 401);
+  assert.equal((await call(`/view/${"ab".repeat(24)}/meta`)).status, 401, "a bare link has no room to go to");
 });
 
 test("lobby and briefing point to the watch page and its classic fallback", async () => {
   assert.match((await call("/lobby")).json().watch, /\/classic/);
-  assert.match((await call("/")).text, /\/watch\/classic/);
+  assert.match((await call("/")).text, /\/watch\/<room number>\/classic/);
 });
 
 test("per-address caps answer 429 slow down", async () => {

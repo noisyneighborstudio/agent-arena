@@ -5,8 +5,8 @@
 //   node mcp/gateway.js            # then expose it, e.g.: tailscale serve --bg --https=8455 http://127.0.0.1:7790
 //
 // Joining is a single prompt to an agent:  "Join the Pezz arena: read <gateway>/play and follow it."
-// Rooms hold 8 players each. Room 1 is the host's game. Agents look at /lobby first; a join with no room code goes to a
-// public match that isn't late, else a room waiting for players, else opens a new waiting room.
+// Rooms hold 8 players each, and exist only while someone plays (mcp/rooms.js). Agents look at /lobby first; a join with
+// no room code goes to a public match that isn't late, else a room waiting for players, else opens a new waiting room.
 // A player can hand their human a room code (/play?room=<code>) so a friend's agent joins the same game.
 //
 // Safety:
@@ -16,10 +16,11 @@
 //  - Request bodies are capped, and joins, calls and new rooms are rate-limited and capped.
 //  - Binds to 127.0.0.1 by default; put it on your tailnet with tailscale serve rather than the open internet.
 //
-// Env: PEZZ_GAME (game API, default http://127.0.0.1:7777), PEZZ_GATEWAY_PORT (7790), PEZZ_GATEWAY_HOST (127.0.0.1),
-//      PEZZ_PUBLIC_URL (override the URL shown to agents), PEZZ_MAX_ROOMS (default 6), PEZZ_ROOM_IDLE_MIN (close an
-//      empty overflow room after this many minutes, default 10), PEZZ_ENGINE (headless engine dll for overflow rooms),
-//      PEZZ_WATCH_DELAY (seconds the public /watch spectator view lags the game, default 45)
+// Env: PEZZ_GATEWAY_PORT (7790), PEZZ_GATEWAY_HOST (127.0.0.1), PEZZ_PUBLIC_URL (override the URL shown to agents),
+//      PEZZ_MAX_ROOMS (default 6), PEZZ_ROOM_IDLE_MIN (close a room nobody plays after this many minutes, default 10),
+//      PEZZ_ENGINE (the headless engine dll rooms run), PEZZ_ROOM_BASE_PORT (local rooms' first port, default 7801),
+//      PEZZ_WATCH_DELAY (seconds the public /watch spectator view lags the game, default 45), PEZZ_GAME (only for a
+//      gateway in front of one game it doesn't run, the CI room or a test room: that game is room 1, always)
 import http from "node:http";
 import { Readable } from "node:stream";
 import fs from "node:fs";
@@ -33,7 +34,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { Player, registerPlayTools } from "./play.js";
-import { Rooms, regionOf, placementOrder } from "./rooms.js";
+import { Rooms, regionOf, placementOrder, busiest } from "./rooms.js";
 import { CHANGES, LATEST, changesFor } from "./changes.js";
 import * as inventions from "./inventions.js";
 import { chooseTeamName } from "./names.js";
@@ -41,7 +42,7 @@ import { LookBroker, LOOK_MAX_BYTES } from "./browserlook.js";
 import { opsSite } from "./ops.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const GAME = (process.env.PEZZ_GAME || "http://127.0.0.1:7777").replace(/\/$/, "");
+const GAME = process.env.PEZZ_GAME?.replace(/\/$/, "") || null;
 const PORT = Number(process.env.PEZZ_GATEWAY_PORT || 7790);
 const HOST = process.env.PEZZ_GATEWAY_HOST || "127.0.0.1";
 const ICONS = path.resolve(HERE, "../unity/Assets/Pez/Resources/PezIcons");
@@ -51,13 +52,16 @@ const VIEWER = fs.readFileSync(path.join(HERE, "viewer.html"), "utf8");
 const WEB3D = path.resolve(HERE, "../arena/web3d");
 const MODELS = path.resolve(HERE, "../unity/Assets/Pez/Resources/PezModels");
 const VIEW3D = fs.readFileSync(path.join(WEB3D, "view.html"), "utf8");
+const NO_GAMES = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Pezz: no games right now</title></head>
+<body style="font:16px system-ui;background:#111;color:#ddd;text-align:center;padding:4em 1em"><h1>No games right now</h1>
+<p>A room opens when an agent joins (<a style="color:#8cf" href="/play">/play</a>). Try again in a while, or see <a style="color:#8cf" href="/lobby">/lobby</a>.</p></body></html>`;
 const MAX_BODY = 64 * 1024;
 const WATCH_DELAY_S = Number(process.env.PEZZ_WATCH_DELAY || 45);
-// The Unity host's frame server: renders each player's own high-res live stream (absent on headless servers).
-// Room 1's renderer (frames, live video, `look` pictures): the Unity app beside the game, if there is one. PEZZ_FRAMES=none:
-// room 1 runs the headless engine (browsers draw the game; `look` uses a player's browser or the map picture).
-const FRAMES = process.env.PEZZ_FRAMES === "none" ? null
-  : (process.env.PEZZ_FRAMES || GAME.replace(/:(\d+)$/, (m, p) => `:${Number(p) + 1}`)).replace(/\/$/, ""); // public spectator view lags so players can't use it to see through fog
+// A PEZZ_GAME room's renderer (frames, live video, `look` pictures): the Unity app's frame server beside the game (its
+// port + 1), if there is one. Every other room, and PEZZ_FRAMES=none, has none: browsers draw the game, and `look` uses
+// a player's browser or the map picture.
+const FRAMES = !GAME || process.env.PEZZ_FRAMES === "none" ? null
+  : (process.env.PEZZ_FRAMES || GAME.replace(/:(\d+)$/, (m, p) => `:${Number(p) + 1}`)).replace(/\/$/, "");
 const CONFIG_DIR = path.join(os.homedir(), ".config", "pezz");
 // Operator secret for /admin (arena/rooms.sh reads the same file). Made on first start, unless PEZZ_ADMIN_SECRET gives it.
 // /admin answers only on this machine, unless PEZZ_ADMIN_REMOTE=1 (a server with no shell for the operator: CapRover).
@@ -68,8 +72,9 @@ const ADMIN_SECRET = process.env.PEZZ_ADMIN_SECRET?.trim() || (() => {
   try { fs.mkdirSync(path.dirname(f), { recursive: true, mode: 0o700 }); const s = randomBytes(24).toString("hex"); fs.writeFileSync(f, s, { mode: 0o600 }); return s; } catch { return null; }
 })();
 const rooms = new Rooms({
-  hostGame: GAME, hostFrames: FRAMES,
+  fixed: GAME ? { game: GAME, frames: FRAMES } : null,
   engine: process.env.PEZZ_ENGINE || path.resolve(HERE, "../headless/bin/Release/net10.0/pez-headless.dll"),
+  basePort: Number(process.env.PEZZ_ROOM_BASE_PORT || 7801),
   stateFile: process.env.PEZZ_ROOMS_FILE || path.join(CONFIG_DIR, "rooms.json"),
   // Room hosts on other machines (arena/roomhost.sh): new rooms go there, nearest region first.
   hostsFile: process.env.PEZZ_ROOMHOSTS_FILE || path.join(CONFIG_DIR, "roomhosts.json"),
@@ -167,48 +172,47 @@ async function markAllSeen(token) {
 }
 
 // Public spectator frames are buffered and served WATCH_DELAY_S late (whole map, no fog). Each room's buffer fills
-// only while someone has watched it recently (room 1 always, so its feed is ready).
-const watch = new Map(); // room id -> { frames: [], wantedAt }
+// only while someone has watched it recently. Buffers here and below belong to a room, not its number: a closed
+// room's id is reused by the next room opened, which must never show the old game.
+const watch = new Map(); // room id -> { room, frames: [], wantedAt }
+const watchOf = (room) => { let w = watch.get(room.id); if (w?.room !== room) watch.set(room.id, (w = { room, frames: [], wantedAt: 0 })); return w; };
 setInterval(async () => {
   for (const room of rooms.all()) {
-    const w = watch.get(room.id) ?? { frames: [], wantedAt: 0 };
-    watch.set(room.id, w);
-    if (room.id !== 1 && Date.now() - w.wantedAt > 120000) { w.frames.length = 0; continue; }
+    const w = watchOf(room);
+    if (Date.now() - w.wantedAt > 120000) { w.frames.length = 0; continue; }
     try {
       w.frames.push({ at: Date.now(), frame: await gameAt(room, "/api/view/frame") });
       while (w.frames.length && Date.now() - w.frames[0].at > (WATCH_DELAY_S + 10) * 1000) w.frames.shift();
     } catch {}
   }
-  for (const id of watch.keys()) if (!rooms.get(id)) watch.delete(id);
+  for (const [id, w] of watch) if (rooms.get(id) !== w.room) watch.delete(id);
 }, 500);
 function delayedFrame(room) {
-  const w = watch.get(room.id) ?? { frames: [] };
-  w.wantedAt = Date.now(); watch.set(room.id, w);
+  const w = watchOf(room);
+  w.wantedAt = Date.now();
   const cutoff = Date.now() - WATCH_DELAY_S * 1000;
   let best = null;
   for (const f of w.frames) if (f.at <= cutoff) best = f;
   return best ? { ...best.frame, delay_s: WATCH_DELAY_S } : { waiting: `Spectator feed starts in ${Math.ceil((w.frames.length ? w.frames[0].at - cutoff : WATCH_DELAY_S * 1000) / 1000)}s (it runs ${WATCH_DELAY_S}s behind the game).` };
 }
 
-// The browser client's feed: the room's whole-world snapshot (GET /watch[/n]/snapshot), buffered and served
+// The browser client's feed: the room's whole-world snapshot (GET /watch/<n>/snapshot), buffered and served
 // WATCH_DELAY_S late like the frames above so it can't be used to see through fog. Sampled every ~2 s, only while
 // someone has polled in the last minute, kept gzipped (the game builds the JSON; builds without the endpoint 4xx and are skipped).
 const SNAP_EVERY_MS = 2000, SNAP_WANTED_MS = 60000;
-const snaps = new Map(); // room id -> { items: [{ at, gz }], wantedAt, busy }
-/** A room's snapshot ring (made on first use). `want` marks someone as watching, which starts the sampling. */
-function snapRing(room, want = true) {
+const snaps = new Map(); // room id -> { room, items: [{ at, gz }], wantedAt, busy }
+/** A room's snapshot ring (made on first use). Asking marks someone as watching, which starts the sampling. */
+function snapRing(room) {
   let w = snaps.get(room.id);
-  if (!w) { w = { items: [], wantedAt: 0, busy: false }; snaps.set(room.id, w); }
-  if (want) w.wantedAt = Date.now();
+  if (w?.room !== room) snaps.set(room.id, (w = { room, items: [], wantedAt: 0, busy: false }));
+  w.wantedAt = Date.now();
   return w;
 }
 setInterval(async () => {
-  const r1 = rooms.get(1);
-  if (r1) snapRing(r1, false); // room 1's ring always runs (like its frames above), so the first /watch/web viewer doesn't wait out the delay
   for (const [id, w] of snaps) {
-    const room = rooms.get(id);
-    if (!room) { snaps.delete(id); continue; }
-    if (id !== 1 && Date.now() - w.wantedAt > SNAP_WANTED_MS) { w.items.length = 0; continue; }
+    const room = w.room;
+    if (rooms.get(id) !== room) { snaps.delete(id); continue; }
+    if (Date.now() - w.wantedAt > SNAP_WANTED_MS) { w.items.length = 0; continue; }
     if (w.busy) continue;
     w.busy = true;
     try {
@@ -278,7 +282,7 @@ async function sendOwnSnapshot(req, res, view) {
 }
 
 // The browser build (Unity Web): /play/... serves its files (precompressed .br with the real file's type), and
-// /view/<v>/web or /watch[/<n>]/web opens it on the right feed. PEZZ_WEB_DIR is the build (PezSetup.BuildWeb's output).
+// /view/<v>/web or /watch/<n>/web opens it on the right feed. PEZZ_WEB_DIR is the build (PezSetup.BuildWeb's output).
 const WEB_DIR = process.env.PEZZ_WEB_DIR || path.join(HERE, "..", "build", "web");
 const WEB_TYPES = { ".html": "text/html; charset=utf-8", ".js": "application/javascript", ".wasm": "application/wasm", ".data": "application/octet-stream",
   ".json": "application/json", ".png": "image/png", ".ico": "image/x-icon", ".css": "text/css" };
@@ -326,7 +330,7 @@ function sendWebPage(res, query) {
 // ------------------------------------------------------------------ the public spectator's live video, delayed
 // Rooms with a renderer (the Unity host) have a spectator camera: the whole map, no fog, with its own director. The
 // gateway holds one upstream connection to it per room, keeps about WATCH_FPS frames a second in a ring a little
-// longer than the delay, and serves /watch[/n]/live.mjpg from that ring at now - WATCH_DELAY_S, so the video and the
+// longer than the delay, and serves /watch/<n>/live.mjpg from that ring at now - WATCH_DELAY_S, so the video and the
 // delayed HUD data agree. The feed starts when a spectator first asks (page polls count) and stops, with its ring
 // freed, WATCH_IDLE_MS after the last one leaves.
 const WATCH_FPS = 12;
@@ -524,11 +528,13 @@ async function gameAt(room, pathname, { method = "GET", body, token, timeout } =
   return json;
 }
 
-// Tokens and view links carry their room: r<room>-<48 hex>. A bare 48-hex token is room 1 (from before rooms).
+// Tokens and view links carry their room: r<room>-<48 hex>. A bare 48-hex one (from before rooms, when it meant the
+// permanent room 1) has no room to go to: the agent is told to send the whole token.
 function parseToken(t) {
   const m = /^(?:r(\d{1,3})-)?([a-f0-9]{48})$/.exec(String(t ?? ""));
   if (!m) return null;
-  const room = rooms.get(m[1] ?? 1);
+  if (!m[1]) { const e = new Error("that token has no room in it: send the whole token join gave you (r<room>-<48 hex>), or join again"); e.status = 401; throw e; }
+  const room = rooms.get(m[1]);
   if (!room) { const e = new Error("that room has closed; join again for a new seat"); e.status = 401; throw e; }
   return { room, raw: m[2] };
 }
@@ -606,7 +612,8 @@ async function placeAndRegister(name, code, newRoom, base, region = null, ip = n
   const notes = [];
   let room = null, r = null;
   const regBody = { name: String(name ?? "").slice(0, 64), ...(screened.name ? { team_name: screened.name } : {}) };
-  const register = async (candidate) => { r = await gameAt(candidate, "/api/register", { method: "POST", body: regBody }); room = candidate; };
+  // A seat taken counts as a call from its player (seatClient), so the reaper can't close a waiting room under a newcomer.
+  const register = async (candidate) => { r = await gameAt(candidate, "/api/register", { method: "POST", body: regBody }); room = candidate; room.calledAt = Date.now(); };
   // Refusals that send a player on to another room; anything else (a bad name, say) is theirs to see.
   const passOn = (e) => e.body?.code === "room_closed_to_joins" || /full|taken|fetch failed|ECONNREFUSED|not open/i.test(e.message);
   if (wanted) {
@@ -789,7 +796,7 @@ async function sendOrders(view, code, text) {
 // ------------------------------------------------------------------ command feed
 // What each player's agent ordered, for their own view page (the HUD's command feed). Keyed by room and seat, so a
 // recycled seat starts a fresh feed.
-const feeds = new Map(); // "room:seat" -> [{ at, time_s, text, ok }]
+const feeds = new Map(); // "room code:seat" -> [{ at, time_s, text, ok }]
 const seatCache = new Map(); // control token -> { seat, team, at }
 async function seatOf(token) {
   let c = seatCache.get(token);
@@ -828,7 +835,7 @@ async function recordCommands(token, commands, result) {
     await rulesOf(room); // fetches the room's sector size, for sector names
     let results = [];
     try { results = JSON.parse(result).results ?? []; } catch {}
-    const key = `${room.id}:${seat}`;
+    const key = `${room.code}:${seat}`; // the code, not the id: a reused id must start a fresh feed
     const list = feeds.get(key) ?? [];
     commands.forEach((c, i) => {
       if (c?.type === "propose_tech")
@@ -1046,7 +1053,7 @@ You get back:
 - **token:** your secret key. It controls only your team. Don't share it.
 - **team_name:** the name your team ended up with: the one you asked for, or a fruit (Blueberry, Cherry, Lime, Lemon, Grape, Blackberry, Spearmint or Plum) if you gave none or it was refused. (\`flavor\` is the same value, kept for older clients.) **team_name_rejected** says why, when a name you asked for wasn't used.
 - **base:** where your base is.
-- **commander_url:** your human's private live view of the battlefield from your side (a high-res stream of your own gameplay in room 1, a tactical map in every room), with the Standing orders box. Give it to your human, and only to them.
+- **commander_url:** your human's private live view of the battlefield from your side, drawn in their browser, with the Standing orders box. Give it to your human, and only to them.
 - **room, room_code, friend_prompt:** which room you're in, and how a friend joins it.
 - **room_status:** \`playing\` or \`waiting\` (then \`waiting\` and a \`note\` explain the wait). In a running match, **verdict_text** restates what you walked into, and **match_summary** how long is left.
 
@@ -1121,7 +1128,7 @@ Things that trip new players up:
 
 **Priority alerts** (base under attack, trucks hit, enemies near your base, salvage available) come first in responses. Handle them first, the way a human commander would.
 
-Humans can watch a whole room, 45 seconds behind the live game, at ${base}/watch (room 1) or ${base}/watch/<room number>. (The original 2D page is at /watch/classic.)
+Humans can watch a whole room, 45 seconds behind the live game, at ${base}/watch/<room number>, or ${base}/watch for the busiest room. (The original 2D page is at /watch/<room number>/classic.)
 
 ## Rules of conduct
 
@@ -1161,7 +1168,7 @@ async function lobby() {
   const m = maintenance();
   return { ...(m ? { maintenance: maintenanceNotice(m) } : {}), rooms: await Promise.all(rooms.all().map(roomEntry)),
     watch: "Anyone can watch a room, 45 seconds behind: /watch/<room> (or /watch/<room>/classic for the original 2D page).",
-    join: "POST /join (or the MCP join tool) with \"room\":\"<code>\" to join a room you picked here (a late one too, until sudden death), \"room\":\"new\" to open your own (match_hours 1, 2 or 4; min_players 2-8; private), or no room to be placed in a public one worth joining" };
+    join: "POST /join (or the MCP join tool) with \"room\":\"<code>\" to join a room you picked here (a late one too, until sudden death), \"room\":\"new\" to open your own (match_hours 1, 2 or 4; min_players 2-8; private), or no room to be placed in a public one worth joining (with none open, that opens a room waiting for players)" };
 }
 
 function mcpServerFor(seat, baseUrl) {
@@ -1232,8 +1239,8 @@ function mcpServerFor(seat, baseUrl) {
     server.registerTool(tool, { description }, async () => ({ content: [{ type: "text", text: JSON.stringify(await lobby(), null, 1) }] }));
   server.registerTool("whats_new", { description: "New capabilities and rule changes in Pezz (newest first). Check at the start of every session and whenever a 🆕 notice appears; re-read get_rules if they matter to you." },
     async () => {
-      const room = seat.token ? parseToken(seat.token).room : rooms.get(1);
-      const list = (await changesForRoom(room)).slice().reverse();
+      // Seated: what your room's build has. Not yet: everything.
+      const list = (seat.token ? await changesForRoom(parseToken(seat.token).room) : CHANGES).slice().reverse();
       if (seat.token) await markAllSeen(seat.token);
       return { content: [{ type: "text", text: list.map((c) => `${c.date} #${c.id} ${c.title}: ${c.text}`).join("\n\n") }] };
     });
@@ -1310,16 +1317,16 @@ setInterval(() => inventions.collect(rooms.all(), (room) => gameAt(room, "/api/a
 // ~/.config/pezz/replays/room-<n>-<start>/. A viewer can replay the game so far, but never anything newer than the
 // public /watch delay, so a replay shows nobody anything /watch doesn't already.
 const REPLAY_DIR = process.env.PEZZ_REPLAY_DIR || path.join(CONFIG_DIR, "replays");
-const recording = new Map(); // room id -> { dir, lastTick, mapVersion }
+const recording = new Map(); // room id -> { room, dir, lastTick, mapVersion }
 async function recordRooms() {
   for (const room of rooms.all()) {
     let f;
     try { f = await gameAt(room, "/api/view/frame"); } catch { continue; }
     let r = recording.get(room.id);
-    if (!r || f.tick < r.lastTick) { // a new game in this room: new recording
+    if (r?.room !== room || f.tick < r.lastTick) { // a new room, or a new game in this one: new recording
       const dir = path.join(REPLAY_DIR, `room-${room.id}-${new Date().toISOString().replace(/[:.]/g, "-")}`);
       try { fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); } catch { continue; }
-      r = { dir, lastTick: 0, mapVersion: -1 };
+      r = { room, dir, lastTick: 0, mapVersion: -1 };
       recording.set(room.id, r);
     }
     r.lastTick = f.tick;
@@ -1349,7 +1356,7 @@ setInterval(() => {
 /** The current game's replay for a room, up to the public delay. */
 async function replayFrames(room) {
   const r = recording.get(room.id);
-  if (!r) return { frames: [], note: "no recording yet" };
+  if (r?.room !== room) return { frames: [], note: "no recording yet" };
   let lines = [];
   try { lines = fs.readFileSync(path.join(r.dir, "frames.jsonl"), "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)); } catch {}
   const now = lines.length ? lines[lines.length - 1].t : 0;
@@ -1357,6 +1364,7 @@ async function replayFrames(room) {
 }
 function replayMap(room, version) {
   const r = recording.get(room.id);
+  if (r?.room !== room) return null;
   try { return JSON.parse(fs.readFileSync(path.join(r.dir, `map-${Number(version)}.json`), "utf8")); } catch { return null; }
 }
 
@@ -1436,19 +1444,18 @@ const server = http.createServer(async (req, res) => {
       return send(res, 404, { ok: false, error: "not found" });
     }
     if (p === "/" || p === "/play") return send(res, 200, briefing(base, url.searchParams.get("room")), "text/markdown");
-    if (p === "/healthz") { // for deploys: which build is serving, and does room 1 answer
-      const game = await fetch(GAME + "/api/status", { signal: AbortSignal.timeout(3000) }).then((r) => r.ok).catch(() => false);
-      return send(res, game ? 200 : 503, { ok: game, build: process.env.PEZZ_BUILD || null, room1: game, you: ip }); // you: the address rate limits see
-    }
+    // For deploys: the gateway answers, and on which build. Rooms come and go with players, so their count is only information.
+    if (p === "/healthz") return send(res, 200, { ok: true, build: process.env.PEZZ_BUILD || null, rooms: rooms.all().length, you: ip }); // you: the address rate limits see
     if (p === "/lobby") return send(res, 200, await lobby());
     if (p === "/loop.sh") return send(res, 200, loopScript(base), "text/x-shellscript");
     if (p === "/changes") {
       const auth0 = req.headers.authorization, tok = auth0?.startsWith("Bearer ") ? auth0.slice(7).trim() : null;
-      let room = rooms.get(1); try { if (tok) room = parseToken(tok).room; } catch {}
+      // With a token: what that room's build has. Without (or a token whose room is gone): the whole list.
+      let room = null; try { if (tok) room = parseToken(tok)?.room ?? null; } catch {}
       const since = Number(url.searchParams.get("since") || 0);
-      const list = (await changesForRoom(room)).filter((c) => c.id > since).slice().reverse();
-      if (tok) { try { await markAllSeen(tok); } catch {} }
-      return send(res, 200, { latest: LATEST, room: room.id, changes: list, keep_up: "Check this at the start of each session; ?since=<id> lists only newer entries." });
+      const list = (room ? await changesForRoom(room) : CHANGES).filter((c) => c.id > since).slice().reverse();
+      if (room) await markAllSeen(tok).catch(() => {});
+      return send(res, 200, { latest: LATEST, room: room?.id ?? null, changes: list, keep_up: "Check this at the start of each session; ?since=<id> lists only newer entries." });
     }
     if (p === "/join" && req.method === "POST") {
       if (!allow(`join:${ip}`, 5 / 600, 5)) return send(res, 429, { ok: false, error: "too many joins from your address; try again later" });
@@ -1495,11 +1502,20 @@ const server = http.createServer(async (req, res) => {
       try { return send(res, 200, await gameAt(room, `/api/view/unit?view=${raw}&id=${um[2]}`)); }
       catch (e) { return send(res, e.status === 404 ? 404 : 400, { ok: false, error: e.message }); }
     }
-    // Replays: /view/<v>/replay and /view/<v>/replay/map/<version>; /watch[/<n>]/replay likewise.
+    // /watch with no room number: the busiest public room (most active outside players, then players), at its own
+    // address, so the page and its feeds stay on that room. With no game running, a plain page says so.
+    const bare = p.match(/^\/watch(\/(?:web|3d|classic|map|frame|meta|snapshot|live\.mjpg|live\.jpg|replay(?:\/map\/\d+)?))?$/);
+    if (bare) {
+      await rooms.ready;
+      const top = busiest(await Promise.all(rooms.all().map(roomEntry)));
+      if (top) { res.writeHead(302, { location: `/watch/${top.room}${bare[1] ?? ""}${url.search}`, "cache-control": "no-store" }); return res.end(); }
+      return /^(\/(web|3d|classic))?$/.test(bare[1] ?? "") ? send(res, 200, NO_GAMES, "text/html") : send(res, 404, { ok: false, error: "no games right now (see /lobby)" });
+    }
+    // Replays: /view/<v>/replay and /view/<v>/replay/map/<version>; /watch/<n>/replay likewise.
     const rv = p.match(new RegExp(`^/view/${V}/replay(?:/map/(\\d+))?$`)) ;
-    const rw = p.match(/^\/watch(?:\/(\d{1,3}))?\/replay(?:\/map\/(\d+))?$/);
+    const rw = p.match(/^\/watch\/(\d{1,3})\/replay(?:\/map\/(\d+))?$/);
     if (rv || rw) {
-      const room = rv ? parseToken(rv[1]).room : rooms.get(rw[1] ?? 1);
+      const room = rv ? parseToken(rv[1]).room : rooms.get(rw[1]);
       if (!room) return send(res, 404, { ok: false, error: "no such room" });
       const ver = rv ? rv[2] : rw[2];
       if (ver != null) { const m = replayMap(room, ver); return m ? send(res, 200, m) : send(res, 404, { ok: false, error: "no such map" }); }
@@ -1509,7 +1525,7 @@ const server = http.createServer(async (req, res) => {
     if (fm) {
       const { room, raw } = parseToken(fm[1]);
       let seat = null; try { seat = (await gameAt(room, `/api/view/whoami?view=${raw}`)).seat; } catch {}
-      return send(res, 200, { items: seat == null ? [] : (feeds.get(`${room.id}:${seat}`) ?? []).slice(-12) });
+      return send(res, 200, { items: seat == null ? [] : (feeds.get(`${room.code}:${seat}`) ?? []).slice(-12) });
     }
     // The browser build on this player's own live, fogged view: /view/<v>/web, fed by /view/<v>/snapshot.
     const ws = p.match(new RegExp(`^/view/${V}/snapshot$`));
@@ -1541,54 +1557,54 @@ const server = http.createServer(async (req, res) => {
       if (!vm[2] || vm[2] === "/classic") return send(res, 200, VIEWER.replaceAll("__BASE__", `/view/${vm[1]}`), "text/html");
       return send(res, 200, await viewData(vm[1], vm[2]));
     }
-    // Public spectator view: a whole room, delayed. /watch is room 1; /watch/<n> is room n.
-    // Its live video (rooms with a renderer): /watch[/<n>]/live.mjpg, or one still at a time from live.jpg.
-    const lw = p.match(/^\/watch(?:\/(\d{1,3}))?\/live\.(mjpg|jpg)$/);
+    // Public spectator view: a whole room, delayed: /watch/<n> (bare /watch picks one, above).
+    // Its live video (rooms with a renderer): /watch/<n>/live.mjpg, or one still at a time from live.jpg.
+    const lw = p.match(/^\/watch\/(\d{1,3})\/live\.(mjpg|jpg)$/);
     if (lw) {
-      const room = rooms.get(lw[1] ?? 1);
+      const room = rooms.get(lw[1]);
       if (!room) return send(res, 404, { ok: false, error: "no such room (see /lobby)" });
       return lw[2] === "mjpg" ? watchStream(res, room, ip) : watchStill(res, room);
     }
-    // The spectator view in 3D: /watch[/<n>]/3d (the whole room, delayed like /watch).
-    const w3 = p.match(/^\/watch(?:\/(\d{1,3}))?\/3d$/);
+    // The spectator view in 3D: /watch/<n>/3d (the whole room, delayed like /watch).
+    const w3 = p.match(/^\/watch\/(\d{1,3})\/3d$/);
     if (w3) {
-      const room = rooms.get(w3[1] ?? 1);
+      const room = rooms.get(w3[1]);
       if (!room) return send(res, 404, { ok: false, error: "no such room (see /lobby)" });
-      return send3d(res, w3[1] ? `/watch/${room.id}` : "/watch", `spectator · room ${room.id}`);
+      return send3d(res, `/watch/${room.id}`, `spectator · room ${room.id}`);
     }
-    // The browser build, spectating: /watch[/<n>]/web on /watch[/<n>]/snapshot (the whole room, delayed like /watch).
-    const ww = p.match(/^\/watch(?:\/(\d{1,3}))?\/web$/);
+    // The browser build, spectating: /watch/<n>/web on /watch/<n>/snapshot (the whole room, delayed like /watch).
+    const ww = p.match(/^\/watch\/(\d{1,3})\/web$/);
     if (ww) {
-      const room = rooms.get(ww[1] ?? 1);
+      const room = rooms.get(ww[1]);
       if (!room) return send(res, 404, { ok: false, error: "no such room (see /lobby)" });
       snapRing(room); // opening the page starts the ring before the first snapshot poll
       if (!url.searchParams.has("snapshot")) {
         const q = new URLSearchParams(url.searchParams);
-        q.set("snapshot", `${ww[1] ? `/watch/${room.id}` : "/watch"}/snapshot`); q.set("live", q.get("live") ?? "2");
-        res.writeHead(302, { location: `${ww[1] ? `/watch/${room.id}` : "/watch"}/web?${q}`, "cache-control": "no-store" }); return res.end();
+        q.set("snapshot", `/watch/${room.id}/snapshot`); q.set("live", q.get("live") ?? "2");
+        res.writeHead(302, { location: `/watch/${room.id}/web?${q}`, "cache-control": "no-store" }); return res.end();
       }
       return sendWebPage(res, Object.fromEntries(url.searchParams));
     }
     const wf = p.match(/^\/play\/([A-Za-z0-9_.\/-]+)$/);
     if (wf && !wf[1].includes("..")) return webLimited(res, ip, "files") || sendWebFile(req, res, wf[1]);
-    // The browser client's snapshot feed: /watch[/<n>]/snapshot, delayed like /watch.
-    const sn = p.match(/^\/watch(?:\/(\d{1,3}))?\/snapshot$/);
+    // The browser client's snapshot feed: /watch/<n>/snapshot, delayed like /watch.
+    const sn = p.match(/^\/watch\/(\d{1,3})\/snapshot$/);
     if (sn) {
-      const room = rooms.get(sn[1] ?? 1);
+      const room = rooms.get(sn[1]);
       if (!room) return send(res, 404, { ok: false, error: "no such room (see /lobby)" });
       return webLimited(res, ip, "snap") || sendSnapshot(req, res, room);
     }
-    const wmm = p.match(/^\/watch(?:\/(\d{1,3}))?\/meta$/);
+    const wmm = p.match(/^\/watch\/(\d{1,3})\/meta$/);
     if (wmm) {
-      const room = rooms.get(wmm[1] ?? 1);
+      const room = rooms.get(wmm[1]);
       if (!room) return send(res, 404, { ok: false, error: "no such room (see /lobby)" });
       return webLimited(res, ip, "snap") || send(res, 200, spectatorMeta(room));
     }
-    const wm = p.match(/^\/watch(?:\/(\d{1,3}))?(\/map|\/frame|\/classic)?$/);
+    const wm = p.match(/^\/watch\/(\d{1,3})(\/map|\/frame|\/classic)?$/);
     if (wm) {
-      const room = rooms.get(wm[1] ?? 1);
+      const room = rooms.get(wm[1]);
       if (!room) return send(res, 404, { ok: false, error: "no such room (see /lobby)" });
-      const wbase = wm[1] ? `/watch/${room.id}` : "/watch";
+      const wbase = `/watch/${room.id}`;
       if (!wm[2] && webInstalled() && !url.searchParams.has("classic"))
         { res.writeHead(302, { location: `${wbase}/web${url.search}`, "cache-control": "no-store" }); return res.end(); }
       if (!wm[2] || wm[2] === "/classic") return send(res, 200, VIEWER.replaceAll("__BASE__", wbase), "text/html");
@@ -1603,14 +1619,14 @@ const server = http.createServer(async (req, res) => {
       return pipeFile(f, res);
     }
 
-    // The rules are public reading (the /play briefing links them): without a token, serve room 1's, or the first
-    // running room's while room 1 is down (a stopped room 1 mustn't stop newcomers reading how to play).
+    // The rules are public reading (the /play briefing links them): without a token, the first running room's. They come
+    // from a game, so with no room running there are none to read until a join opens one.
     if (p === "/rules" && !req.headers.authorization) {
       let last = null;
       for (const room of rooms.all()) {
         try { return send(res, 200, await gameAt(room, "/api/rules")); } catch (e) { last = e; }
       }
-      return send(res, 502, { ok: false, error: "rules unavailable: " + (last?.message ?? "no rooms") });
+      return send(res, 503, { ok: false, error: last ? `rules unavailable: ${last.message}` : "no game is running right now, and the rules come from one: join (POST /join opens a room), then GET /rules with your token" });
     }
 
     // Everything below acts for a player: token required.
@@ -1659,4 +1675,4 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, HOST, () => console.log(`Pezz arena gateway on http://${HOST}:${PORT}  (room 1: ${GAME}; open joining, 8 per room, up to ${rooms.maxRooms} rooms)`));
+server.listen(PORT, HOST, () => console.log(`Pezz arena gateway on http://${HOST}:${PORT}  (${GAME ? `room 1: ${GAME}; ` : ""}open joining, 8 per room, up to ${rooms.maxRooms} rooms)`));

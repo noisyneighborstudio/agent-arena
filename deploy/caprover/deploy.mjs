@@ -14,7 +14,8 @@
 //      so every room saves, the operator secret for /admin), changing only those settings: anything set in CapRover's
 //      dashboard stays;
 //   3. uploads the bundle; CapRover builds deploy/caprover/Dockerfile and swaps containers (the old one saves on SIGTERM);
-//   4. waits until https://<domain>/healthz reports this build with room 1 answering. Exit 0 live, 1 failed.
+//   4. waits until https://<domain>/healthz reports this build (the gateway is up; rooms come and go with players). Exit 0
+//      live, 1 failed.
 // Login: the CapRover CLI's (`caprover login -n <machine>`, kept in ~/.config/configstore/caprover.json). Once it has
 // deployed, the app's deploy token (~/.config/pezz/<app>-deploy-token) keeps CI's deploys going after the login expires.
 // The team-name check's Claude token: ~/.config/pezz/<app>-claude-token (from `claude setup-token`, chmod 600) becomes the
@@ -185,4 +186,4 @@ for (const end = Date.now() + (loggedIn ? 5 : 25) * 60000; Date.now() < end;) {
   } catch {}
   await new Promise((r) => setTimeout(r, 5000));
 }
-die(`https://${DOMAIN}/healthz never reported ${build} with room 1 up`);
+die(`https://${DOMAIN}/healthz never reported ${build}`);

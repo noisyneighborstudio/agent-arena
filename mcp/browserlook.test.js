@@ -1,6 +1,6 @@
 // Browser look: the broker (queue, delivery, upload validation, timeout fallback, cooling off, first answer wins), the
 // Player's use of it, and the gateway's routes with a mocked page. Starts a throwaway headless engine and gateway (temp
-// HOME; room 1 without a renderer, as a headless room 1 will be) and stops exactly those two at the end.
+// HOME; the engine is the gateway's PEZZ_GAME room, as in the CI room, with no renderer) and stops exactly those two at the end.
 //
 //   node --test mcp/browserlook.test.js
 //

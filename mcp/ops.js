@@ -31,9 +31,9 @@ export function opsSite({ host, key, rooms, gameAt, publicUrl }) {
     }
     return { id: room.id, title: title(room), code: room.code, time_s: st.time_s, speed: st.speed, paused: st.paused, map: st.map_size,
       errors: st.sim_errors, game_over: st.game_over, phase: st.match?.phase, ends_in_s: st.match?.ends_in_s, seats,
-      viewers: [["spectator /watch", `${publicUrl}/watch${room.id === 1 ? "" : `/${room.id}`}`], ...(room.id === 1 ? [["site", `${publicUrl}/`]] : [])] };
+      viewers: [["spectator /watch", `${publicUrl}/watch/${room.id}`]] };
   }
-  const title = (room) => room.id === 1 ? "Room 1 · live arena" : `Room ${room.id} · ${room.code ?? ""}${room.kind === "remote" ? ` · on ${room.host}` : ""}`;
+  const title = (room) => `Room ${room.id} · ${room.code ?? ""}${room.kind === "remote" ? ` · on ${room.host}` : ""}`;
 
   return async function handle(req, res, url) {
     if (String(req.headers.host || "").toLowerCase().replace(/:\d+$/, "") !== host) return false;
