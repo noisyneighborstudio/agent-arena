@@ -120,7 +120,9 @@ async function viaApi(name, { apiKey, model, fetchImpl, timeoutMs }) {
 /** Run one CLI invocation (no shell, the prompt on stdin, killed after timeoutMs); resolves with its stdout. */
 function runCli(bin, name, { spawnImpl, timeoutMs, env }) {
   return new Promise((resolve, reject) => {
-    const args = ["-p", "--model", "sonnet", "--tools", "", "--no-session-persistence", "--disable-slash-commands", "--setting-sources", "", "--system-prompt", SYSTEM];
+    // User settings only: a Claude profile can keep its login there (no settings at all reads as "not logged in"); the
+    // empty working directory below keeps project settings and CLAUDE.md out.
+    const args = ["-p", "--model", "sonnet", "--tools", "", "--no-session-persistence", "--disable-slash-commands", "--setting-sources", "user", "--system-prompt", SYSTEM];
     // An empty directory, so no project CLAUDE.md or settings leak into the check.
     const child = spawnImpl(bin, args, { cwd: os.tmpdir(), env, stdio: ["pipe", "pipe", "pipe"] });
     let out = "", done = false;
