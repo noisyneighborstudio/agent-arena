@@ -869,6 +869,7 @@ namespace Pez.Sim
             e.SpeedCap = 0; e.Group = 0;
             e.Waypoints.Clear(); e.WaypointLoop = false;
             e.Retreating = false;
+            e.GivingWay = false;
             if (o == Order.Harvest && e.IsHarvester)
             {
                 var t = Int2.Of(pos);
@@ -1160,6 +1161,8 @@ namespace Pez.Sim
         bool NextWaypoint(Entity e)
         {
             if (e.Waypoints.Count == 0) return false;
+            // A patrol on the spot (orders from before the move command refused them) settles where it is.
+            if (e.WaypointLoop && TightLoop(e.OrderPos, e.Waypoints)) { e.Waypoints.Clear(); e.WaypointLoop = false; return false; }
             var next = e.Waypoints[0];
             var rest = e.Waypoints.Skip(1).ToList();
             bool loop = e.WaypointLoop, derricks = e.EngageDerricks; float cap = e.SpeedCap; int group = e.Group;
@@ -1168,6 +1171,11 @@ namespace Pez.Sim
             e.Waypoints.AddRange(rest); e.WaypointLoop = loop; e.SpeedCap = cap; e.Group = group; e.EngageDerricks = derricks;
             return true;
         }
+
+        /// <summary>A patrol whose points all lie within this many tiles of each other is pacing on the spot, not patrolling.</summary>
+        public const float MinPatrolSpan = 4f;
+        public static bool TightLoop(Vec2 at, List<Vec2> waypoints) =>
+            waypoints.All(p => Vec2.Dist(p, at) < MinPatrolSpan && waypoints.All(q => Vec2.Dist(p, q) < MinPatrolSpan));
 
         /// <summary>How far apart (in tiles of route left) a group moving together lets its members get.</summary>
         public const float GroupSlack = 3f;
@@ -2609,10 +2617,11 @@ namespace Pez.Sim
             e.ProgressPos = e.Pos; e.ProgressDist = d; e.ProgressAt = Time;
         }
 
-        /// <summary>An idle unit in a moving friendly's way steps aside (and makes that spot its new post).</summary>
+        /// <summary>An idle unit in a moving friendly's way steps aside to a clear spot (and makes that spot its new post).
+        /// A unit that's stepping aside itself doesn't move anyone else on: two of them would take turns forever.</summary>
         void GiveWay(Entity idle, Entity mover)
         {
-            if (idle.Order != Order.Idle || idle.Moving || idle.Team != mover.Team || Time < idle.GhostUntil - 2.5f) return;
+            if (idle.Order != Order.Idle || idle.Moving || idle.Team != mover.Team || Time < idle.GhostUntil - 2.5f || mover.GivingWay) return;
             var dir = mover.Path != null && mover.PathIdx < mover.Path.Count ? mover.Path[mover.PathIdx] - mover.Pos : idle.Pos - mover.Pos;
             if (dir.LengthSq < 1e-4f) dir = new Vec2(1, 0);
             var side = new Vec2(-dir.Y, dir.X).Normalized * (((idle.Id & 1) == 0) ? 1.6f : -1.6f);
@@ -2620,13 +2629,24 @@ namespace Pez.Sim
             {
                 var spot = idle.Pos + s;
                 var t = Int2.Of(spot);
-                if (!Map.Passable(t.X, t.Y)) continue;
+                if (!Map.Passable(t.X, t.Y) || Crowded(idle, spot)) continue;
                 SetOrder(idle, Order.Move, spot);
+                idle.GivingWay = true;
                 idle.GuardPos = spot;
                 idle.GhostUntil = Time + 0.5f; // marks that it just gave way (no ping-pong)
                 return;
             }
         }
+
+        /// <summary>Whether another ground unit already stands where e would stand at p.</summary>
+        bool Crowded(Entity e, Vec2 p)
+        {
+            Near(p, 1.5f, nearSpot);
+            foreach (var o in nearSpot)
+                if (o != e && !o.IsStructure && !o.IsAir && !o.IsCarried && !o.IsMine && Vec2.Dist(o.Pos, p) < (o.Def.Radius + e.Def.Radius) * 0.9f) return true;
+            return false;
+        }
+        readonly List<Entity> nearSpot = new List<Entity>();
 
         void Separate()
         {

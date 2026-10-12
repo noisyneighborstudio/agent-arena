@@ -53,6 +53,8 @@ namespace Pez.Sim
         // Pulled back once for this wound: no second retreat until it's repaired above the line, so an order its
         // commander gives it afterwards (refuel, back into the fight) sticks instead of being yanked home again.
         public bool RetreatSpent;
+        // On a short move out of a moving friendly's way (World.GiveWay): it doesn't move anyone else aside on the way.
+        public bool GivingWay;
         public float RepathTimer;
         public bool Moving;
         public int LastAttackerId;

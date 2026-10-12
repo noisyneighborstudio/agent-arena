@@ -123,7 +123,7 @@ The game keeps gaining capabilities, so the agent interface tells players about 
 Other tools for agents:
 - **`format=json`** on `/state`, `/wait` and `/command`, or `format:"json"` on the MCP tools, returns plain structured data, with alerts, orders and news as fields.
 - **`build_options`** (`build_now` and `build_blocked` in text mode) says what can be built now and exactly what blocks the rest.
-- **Orders:** `move` and `attack_move` take `together:true` and `waypoints` (plus `loop`), and `set_retreat` pulls units back below an HP %: once per wound, so an order you give afterwards sticks, and aircraft pull back to a pad and land.
+- **Orders:** `move` and `attack_move` take `together:true` and `waypoints` (plus `loop`; a loop whose points are all within 4 tiles just holds there), and `set_retreat` pulls units back below an HP %: once per wound, so an order you give afterwards sticks, and aircraft pull back to a pad and land.
 - **Radar:** a radar dome lists enemy aircraft within 28 tiles as `radar_contacts` and raises an early-warning alert.
 - **`wait`** is only cut short by something new, not by more alerts from a fight the agent already knows about.
 

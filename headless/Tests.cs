@@ -53,6 +53,7 @@ namespace Pez.Headless
             SafeSpawn();
             Fuel();
             RetreatOncePerWound();
+            NoDancing();
             GroupMove();
             ResignWhenStalled();
             IdleSeatsResign();
@@ -188,6 +189,56 @@ namespace Pez.Headless
             tank.Hp = tank.Def.MaxHp * 0.3f; Run(w, 1);
             Check(tank.Retreating, "repaired and hurt again, it pulls back again");
             Check(w.Errors == 0, $"no sim errors ({w.LastError})");
+        }
+
+        static void NoDancing()
+        {
+            // Two heavy tanks landing on one spot used to take turns giving way to each other forever (each step aside
+            // was a move that bumped the other one aside): a live game had a pair doing it for an hour.
+            var w = new World(2, 7, 80);
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var spot = hq.Center + new Vec2(14, 4);
+            var a = At(w.SpawnUnit(0, "heavy_tank", hq), spot);
+            var b = At(w.SpawnUnit(0, "heavy_tank", hq), spot + new Vec2(-4, 0));
+            w.SetOrder(b, Order.Move, spot + new Vec2(0.4f, 0.3f));
+            Run(w, 6);
+            float travel = 0; var pa = a.Pos; var pb = b.Pos;
+            for (int i = 0; i < 20 * World.TickRate; i++) { w.Step(); travel += Vec2.Dist(a.Pos, pa) + Vec2.Dist(b.Pos, pb); pa = a.Pos; pb = b.Pos; }
+            Check(a.Order == Order.Idle && b.Order == Order.Idle && !a.Moving && !b.Moving && travel < 1f && Vec2.Dist(a.Pos, b.Pos) >= (a.Def.Radius + b.Def.Radius) * 0.9f,
+                  $"two heavy tanks sent to one spot settle side by side ({travel:0.0} tiles moved in 20s once there, {Vec2.Dist(a.Pos, b.Pos):0.00} apart, orders {a.OrderName}/{b.OrderName})");
+
+            // A "patrol" between two points a tile apart is pacing on the spot: the units hold there instead, and are told so.
+            var drone = At(w.SpawnUnit(0, "recon_drone", hq), hq.Center + new Vec2(20, 10));
+            var rs = At(w.SpawnUnit(0, "rocket_soldier", hq), hq.Center + new Vec2(10, 10));
+            var r = Commands.Execute(w, 0, Cmd("type", "move", "units", new[] { drone.Id, rs.Id }, "x", hq.Center.X + 14, "y", hq.Center.Y + 12, "waypoints", new List<object> { new List<object> { (double)(hq.Center.X + 15), (double)(hq.Center.Y + 13) } }, "loop", true));
+            Check(Ok(r) && r["result"].ToString().Contains("no patrol") && !drone.WaypointLoop && !rs.WaypointLoop, $"a patrol a tile across is refused as pacing: {r["result"] ?? r["error"]}");
+            Run(w, 15);
+            Check(drone.Order == Order.Idle && rs.Order == Order.Idle, $"and they hold there (orders {drone.OrderName}/{rs.OrderName})");
+            // One already pacing (ordered before this rule) settles at its next turn.
+            var old = At(w.SpawnUnit(0, "light_tank", hq), hq.Center + new Vec2(8, 10));
+            w.SetOrder(old, Order.Move, old.Pos + new Vec2(1, 1));
+            old.Waypoints.Add(old.Pos); old.WaypointLoop = true;
+            Run(w, 6);
+            Check(old.Order == Order.Idle && !old.WaypointLoop, $"a pacing patrol from an older order settles (order {old.OrderName})");
+            // A real patrol still runs.
+            var guard = At(w.SpawnUnit(0, "light_tank", hq), hq.Center + new Vec2(8, 14));
+            r = Commands.Execute(w, 0, Cmd("type", "move", "units", new[] { guard.Id }, "x", guard.Pos.X + 8, "y", guard.Pos.Y, "waypoints", new List<object> { new List<object> { (double)guard.Pos.X, (double)guard.Pos.Y } }, "loop", true));
+            Check(Ok(r) && guard.WaypointLoop && !r["result"].ToString().Contains("no patrol"), $"an 8-tile patrol is still a patrol: {r["result"]}");
+
+            // A mixed army sent to one spot in one order settles: nobody still shoving after half a minute.
+            var w2 = new World(2, 7, 80);
+            var hq2 = w2.Owned(0).First(e => e.Def.Key == "command_center");
+            string[] mix = { "mammoth_tank", "heavy_tank", "heavy_tank", "artillery", "light_tank", "rifleman", "rocket_soldier", "rifleman" };
+            var army = new List<Entity>();
+            for (int i = 0; i < 40; i++) army.Add(At(w2.SpawnUnit(0, mix[i % mix.Length], hq2), hq2.Center + new Vec2(4 + (i % 8) * 1.6f, -6 + (i / 8) * 1.6f)));
+            Commands.Execute(w2, 0, Cmd("type", "move", "units", army.Select(u => u.Id).ToArray(), "x", hq2.Center.X + 22, "y", hq2.Center.Y));
+            Run(w2, 30);
+            var before = army.ToDictionary(u => u.Id, u => u.Pos);
+            Run(w2, 20);
+            float moved = army.Sum(u => Vec2.Dist(before[u.Id], u.Pos));
+            int idle = army.Count(u => u.Order == Order.Idle && !u.Moving);
+            Check(idle >= army.Count - 1 && moved < 4f, $"40 mixed units sent to one spot settle ({idle} idle, {moved:0.0} tiles of shuffling in the next 20s)");
+            Check(w.Errors == 0 && w2.Errors == 0, $"no sim errors ({w.LastError ?? w2.LastError})");
         }
 
         static void GroupMove()

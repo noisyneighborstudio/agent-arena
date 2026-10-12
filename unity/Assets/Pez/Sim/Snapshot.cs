@@ -185,7 +185,7 @@ namespace Pez.Sim
             o.Put("cooldown", e.Cooldown).Put("speed_cap", e.SpeedCap).Put("group", e.Group, 0)
              .PutV("progress_pos", e.ProgressPos).Put("progress_at", e.ProgressAt).Put("ghost_until", e.GhostUntil).Put("progress_dist", e.ProgressDist);
             if (e.Waypoints.Count > 0) o.Set("waypoints", SnapIO.Vs(e.Waypoints));
-            o.Put("waypoint_loop", e.WaypointLoop).Put("retreat_below", e.RetreatBelow).Put("retreating", e.Retreating).Put("retreat_spent", e.RetreatSpent)
+            o.Put("waypoint_loop", e.WaypointLoop).Put("retreat_below", e.RetreatBelow).Put("retreating", e.Retreating).Put("retreat_spent", e.RetreatSpent).Put("giving_way", e.GivingWay)
              .Put("repath_timer", e.RepathTimer).Put("moving", e.Moving).Put("last_attacker", e.LastAttackerId).Put("last_attacker_team", e.LastAttackerTeam, -1)
              .Put("last_hit_time", e.LastHitTime, -999f).Put("last_call_for_help", e.LastCallForHelp, -999f)
              .Put("responding", e.Responding).PutV("home_pos", e.HomePos)
@@ -225,7 +225,7 @@ namespace Pez.Sim
             d.Load("cooldown", ref e.Cooldown); d.Load("speed_cap", ref e.SpeedCap); d.Load("group", ref e.Group);
             d.Load("progress_pos", ref e.ProgressPos); d.Load("progress_at", ref e.ProgressAt); d.Load("ghost_until", ref e.GhostUntil); d.Load("progress_dist", ref e.ProgressDist);
             e.Waypoints.AddRange(SnapIO.ToVecs(d.Arr("waypoints")));
-            d.Load("waypoint_loop", ref e.WaypointLoop); d.Load("retreat_below", ref e.RetreatBelow); d.Load("retreating", ref e.Retreating); d.Load("retreat_spent", ref e.RetreatSpent);
+            d.Load("waypoint_loop", ref e.WaypointLoop); d.Load("retreat_below", ref e.RetreatBelow); d.Load("retreating", ref e.Retreating); d.Load("retreat_spent", ref e.RetreatSpent); d.Load("giving_way", ref e.GivingWay);
             d.Load("repath_timer", ref e.RepathTimer); d.Load("moving", ref e.Moving); d.Load("last_attacker", ref e.LastAttackerId); d.Load("last_attacker_team", ref e.LastAttackerTeam);
             d.Load("last_hit_time", ref e.LastHitTime); d.Load("last_call_for_help", ref e.LastCallForHelp);
             d.Load("responding", ref e.Responding); d.Load("home_pos", ref e.HomePos);

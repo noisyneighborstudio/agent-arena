@@ -20,7 +20,7 @@ namespace Pez.Sim
       add ""derricks"":true to attack_move to shoot enemy-held derricks on the way too (never neutral ones: they can't be hurt)
       add ""together"":true to move or attack_move so the group keeps the slowest member's pace and arrives as one (leaders wait, stragglers catch up; aircraft fly their own pace)
       add ""spread"":3 (tiles between units, 1-6; true = 3) to open the formation up against splash (artillery, heavy tanks)
-      add ""waypoints"":[[x,y],...] to queue more points (x/y optional: the first waypoint is used), and ""loop"":true to patrol them
+      add ""waypoints"":[[x,y],...] to queue more points (x/y optional: the first waypoint is used), and ""loop"":true to patrol them (a loop within 4 tiles holds there instead)
   {""type"":""set_retreat"", ""units"":[IDS], ""below_pct"":30}  units pull back to base on their own below that HP %, once per wound, so your next order sticks (aircraft land on a pad; 0 = off)
   {""type"":""attack"", ""units"":[IDS], ""target"":ID}     focus fire on a visible enemy
       add ""until"":""capturable"" (structures only) to hold fire once it's at 50% health or less, so an engineer can capture it; they open up again if it's repaired
@@ -213,6 +213,9 @@ namespace Pez.Sim
                 if (order != Order.Harvest) return Err("x and y are required");
             }
             var dest = new Vec2(float.IsNaN(x) ? 0 : x, float.IsNaN(y) ? 0 : y);
+            // A patrol a few tiles across is just pacing on the spot (and infantry on the move don't shoot): hold there instead.
+            bool tight = loop && waypoints.Count > 0 && (order == Order.Move || order == Order.AttackMove) && World.TightLoop(dest, waypoints);
+            if (tight) { loop = false; waypoints.Clear(); }
             if (order != Order.Idle && !float.IsNaN(x) && !w.Map.InBounds((int)x, (int)y)) return Err($"({x},{y}) is outside the {w.Map.W}x{w.Map.H} map");
 
             if (order == Order.Harvest)
@@ -261,6 +264,9 @@ namespace Pez.Sim
                 else if (sp is double sd && sd >= 1 && sd <= 6) gap = (float)sd;
                 else return Err("spread must be true or the tiles between units, 1-6");
             }
+            // Never closer than the biggest member is wide: 0.9-tile slots under mammoth tanks overlap, so they arrive on
+            // top of each other and shove each other about.
+            gap = MathF.Max(gap, units.Where(u => !u.IsAir).Select(u => u.Def.Radius * 2f + 0.1f).DefaultIfEmpty(0f).Max());
             int n = units.Count, i = 0;
             int cols = (int)MathF.Ceiling(MathF.Sqrt(n));
             foreach (var u in units)
@@ -288,6 +294,7 @@ namespace Pez.Sim
             return Ok($"{n} unit(s) {(order == Order.Idle ? "stopped" : order == Order.AttackMove ? "attack-moving" : "moving")}" + (derricks ? ", shooting enemy derricks too" : "") +
                       (together ? $" together at {pace:0.0} tiles/s{(ground.Count < n ? " (aircraft at their own speed)" : "")}" : "") +
                       (waypoints.Count > 0 ? $", then {waypoints.Count} more waypoint(s){(loop ? " on a loop" : "")}" : "") +
+                      (tight ? $"; no patrol: its points are all within {World.MinPatrolSpan:0} tiles of each other, so they'd only pace back and forth. They hold at {(int)dest.X},{(int)dest.Y} instead: idle units already shoot anything in range and chase what they see, then return to their spot" : "") +
                       (shortOfFuel.Count > 0 ? $"; FUEL: {string.Join("; ", shortOfFuel.Take(4))}{(shortOfFuel.Count > 4 ? $" (+{shortOfFuel.Count - 4} more)" : "")}. " +
                                                "Units turn back to refuel when what's left only just gets them to a refuel point: deploy an outpost along the way, or send a repair truck with them"
                        : low.Count > 0 ? $"; low fuel: {string.Join(", ", low.Select(u => $"#{u.Id} {StateView.Pct(u.FuelFraction)}%"))} (they'll turn back to refuel when they must)" : ""));
