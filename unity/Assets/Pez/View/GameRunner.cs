@@ -9,7 +9,7 @@ namespace Pez.View
     /// <summary>
     /// Owns the Game, the HTTP API and the view. Created automatically at startup (see Bootstrap),
     /// so the project needs no authored scene content.
-    /// Command line: -team0 human|ai|claude|codex|llm -team1 ... -model0 sonnet -effort0 medium -orders0 "text" -seed N -mapsize 80 -open -port 7777 -speed 1 -autostart
+    /// Command line: -team0 human|ai|llm -team1 ... -orders0 "text" -seed N -mapsize 80 -open -port 7777 -speed 1 -autostart
     ///               -matchhours 4 (game hours until sudden death; the match ends on points an hour later; 0 = no clock)
     ///               -resume (resume the saved game; an -open arena does by default) -fresh (discard it) -snapshot path
     ///               -kitchensink (the showcase room: every asset in every state, docs/art/KITCHEN_SINK.md; never saved)
@@ -31,7 +31,7 @@ namespace Pez.View
         /// <summary>Commands agents sent over the API, for the HUD's command feed: plain text, sectors as bare "E5".</summary>
         public readonly List<(float time, int team, string text, bool ok, string error)> CommandFeed = new List<(float, int, string, bool, string)>();
         public string AgentStatus;
-        System.Diagnostics.Process agentProc, gatewayProc;
+        System.Diagnostics.Process gatewayProc;
         /// <summary>URL outside agents use to join (the local gateway; expose it with tailscale serve).</summary>
         public string GatewayUrl;
         public int GatewayPort = 7790;
@@ -103,7 +103,7 @@ namespace Pez.View
                 Seed = int.Parse(Arg("-seed", Random.Range(1, 99999).ToString())),
                 MapSize = int.Parse(Arg("-mapsize", "80")),
                 Speed = float.Parse(Arg("-speed", "1"), System.Globalization.CultureInfo.InvariantCulture),
-                Controllers = new[] { Arg("-team0", "human"), Arg("-team1", "ai") },
+                Controllers = new[] { SimController(Arg("-team0", "human")), SimController(Arg("-team1", "ai")) },
                 Orders = new[] { Arg("-orders0", ""), Arg("-orders1", "") },
                 Open = args.Contains("-open"),
                 MatchHours = float.Parse(Arg("-matchhours", "4"), System.Globalization.CultureInfo.InvariantCulture),
@@ -222,22 +222,20 @@ namespace Pez.View
             }
         }
 
-        static readonly string[] AgentClis = { "claude", "codex", "grok", "gemini" };
-
         public void StartGame(GameConfig cfg)
         {
-            StopAgents();
             saver?.Forget(Game); // a new game replaces the saved one
             startingFromMenu = true;
-            // The sim only knows "llm"; which CLI plays is the launcher's business.
-            var simControllers = cfg.Controllers.Select(c => AgentClis.Contains(c) ? "llm" : c).ToArray();
+            var simControllers = cfg.Controllers.Select(SimController).ToArray();
             Game.Restart(new GameConfig { Seed = cfg.Seed, Speed = cfg.Speed, MapSize = cfg.MapSize, Controllers = simControllers, Orders = (string[])cfg.Orders?.Clone(), Open = cfg.Open, KitchenSink = cfg.KitchenSink, MatchHours = cfg.MatchHours });
             InMenu = false;
-            if (cfg.Controllers.Any(c => AgentClis.Contains(c))) LaunchAgents(cfg.Controllers);
             if (cfg.Open) LaunchGateway(); else StopGateway();
         }
 
-        /// <summary>Repo root (for arena/battle.mjs): -repo arg, else derived from the app or editor location.</summary>
+        /// <summary>The app no longer launches agent CLIs itself: an old -team0 claude (codex, ...) is an External team, for any MCP client.</summary>
+        static string SimController(string c) => c is "claude" or "codex" or "grok" or "gemini" ? "llm" : c;
+
+        /// <summary>Repo root (for the arena gateway, mcp/gateway.js): -repo arg, else derived from the app or editor location.</summary>
         static string RepoRoot()
         {
             var args = GameRunner.Args;
@@ -246,37 +244,9 @@ namespace Pez.View
             foreach (var up in new[] { "../../../..", "../.." }) // Build/Pezz.app/Contents, or unity/Assets
             {
                 var root = System.IO.Path.GetFullPath(System.IO.Path.Combine(Application.dataPath, up));
-                if (System.IO.File.Exists(System.IO.Path.Combine(root, "arena", "battle.mjs"))) return root;
+                if (System.IO.File.Exists(System.IO.Path.Combine(root, "mcp", "gateway.js"))) return root;
             }
             return null;
-        }
-
-        void LaunchAgents(string[] controllers)
-        {
-            var root = RepoRoot();
-            if (root == null) { AgentStatus = "Can't find arena/battle.mjs; launch with -repo /path/to/pez"; Debug.LogError(AgentStatus); return; }
-            var players = string.Join(" ", controllers.Select(c => c == "llm" ? "external" : c));
-            // Per-team model/effort (-model0 sonnet -effort0 medium) map to the arena's per-player flags.
-            var args = GameRunner.Args;
-            string Arg(string name) { int i = System.Array.IndexOf(args, name); return i >= 0 && i + 1 < args.Length ? args[i + 1] : null; }
-            var extra = "";
-            for (int t = 0; t < controllers.Length; t++)
-            {
-                if (!AgentClis.Contains(controllers[t])) continue;
-                if (Arg($"-model{t}") is string m) extra += $" --model-{controllers[t]} {m}";
-                if (Arg($"-effort{t}") is string ef) extra += $" --effort-{controllers[t]} {ef}";
-            }
-            var log = System.IO.Path.Combine(root, "arena", "logs", "unity-agents.log");
-            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(log));
-            // A login+interactive shell picks up the user's PATH (node, claude, codex) even when launched from Finder.
-            var cmd = $"cd '{root}' && exec node arena/battle.mjs {players}{extra} --attach --no-restart --url http://127.0.0.1:{Port} --minutes 120 > '{log}' 2>&1";
-            try
-            {
-                agentProc = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("/bin/zsh", $"-lic \"{cmd}\"") { UseShellExecute = false, CreateNoWindow = true });
-                AgentStatus = $"Agents launched ({players}); log: arena/logs/unity-agents.log";
-                Debug.Log(AgentStatus);
-            }
-            catch (System.Exception ex) { AgentStatus = "Agent launch failed: " + ex.Message; Debug.LogError(AgentStatus); }
         }
 
         /// <summary>Start the arena gateway (mcp/gateway.js) so outside agents can join this game.</summary>
@@ -341,19 +311,6 @@ namespace Pez.View
             GatewayUrl = null;
         }
 
-        void StopAgents()
-        {
-            if (agentProc == null) return;
-            try
-            {
-                // SIGTERM (not Kill/SIGKILL) so battle.mjs can shut down the CLIs it spawned.
-                if (!agentProc.HasExited) System.Diagnostics.Process.Start("/bin/kill", $"-TERM {agentProc.Id}")?.WaitForExit(2000);
-            }
-            catch { }
-            agentProc = null;
-            AgentStatus = null;
-        }
-
         void RebuildView()
         {
             Game.World.ErrorLog = msg => Debug.LogError("Sim error (game continues): " + msg);
@@ -405,14 +362,13 @@ namespace Pez.View
         void Start()
         {
             if (resumed) ResumeSession();
-            else if (!InMenu) StartGame(MenuConfig); // -autostart, including launching any agent CLIs
+            else if (!InMenu) StartGame(MenuConfig); // -autostart
         }
 
-        /// <summary>The saved game is already loaded: bring back the in-app agents and the gateway around it.</summary>
+        /// <summary>The saved game is already loaded: bring back the gateway around it.</summary>
         void ResumeSession()
         {
             startingFromMenu = true;
-            if (MenuConfig.Controllers.Any(c => AgentClis.Contains(c))) LaunchAgents(MenuConfig.Controllers);
             if (Game.Config.Open) LaunchGateway();
         }
 
@@ -431,11 +387,11 @@ namespace Pez.View
             View.Sync(Game.Alpha);
         }
 
-        void OnDestroy() { StopAgents(); StopGateway(); Api?.Stop(); }
+        void OnDestroy() { StopGateway(); Api?.Stop(); }
         void OnApplicationQuit()
         {
             if (!InMenu) saver?.Save(Game, Api, "quit");
-            StopAgents(); StopGateway(); Api?.Stop();
+            StopGateway(); Api?.Stop();
         }
     }
 

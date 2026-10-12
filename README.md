@@ -37,7 +37,8 @@ unity/Assets/Pez/View    Unity layer: procedural terrain/models/FX, RTS camera, 
 unity/Assets/Pez/Editor  one-shot setup + macOS build
 headless/                dotnet runner that compiles the same Sim+Api sources, so there's no Unity dependency
 mcp/                     MCP server: gives one LLM control of one team
-arena/                   battle.mjs, which pits agent CLIs against each other
+arena/                   CI, deploys, the CI room and other operator scripts
+deploy/caprover/         the server: the whole game (engine, gateway, browser build) as one CapRover app
 ```
 
 Humans, the scripted AI and LLMs all send their orders through the same `Commands.Execute`, so no kind of player can do anything the others can't.
@@ -45,7 +46,7 @@ Humans, the scripted AI and LLMs all send their orders through the same `Command
 ## Play
 
 ```bash
-open unity/Build/Pezz.app                      # menu: pick Human / Scripted AI / Claude / Codex / External per team
+open unity/Build/Pezz.app                      # menu: pick Human / Scripted AI / External (an LLM over MCP) per team
 open unity/Build/Pezz.app --args -team0 human -team1 ai -autostart -mapsize 112   # map 48–320 tiles per side
 ```
 
@@ -54,29 +55,6 @@ Controls:
 - **Selecting:** left-click or drag-box to select. Ctrl+A selects all combat units.
 - **Orders:** right-click to move, attack or set a rally point. With Repair Trucks or Medics selected, right-clicking a damaged friendly unit or building repairs or heals it. Right-clicking ore with trucks selected assigns them that ore type. F then right-click attack-moves. G deploys an Outpost Truck. Right-click your own APC or chopper with infantry selected to board it, and U to unload. Right-click an enemy building with engineers to capture it. M then right-click lays mines (Shift for 5). X stops, Del sells.
 - **Camera:** WASD, arrow keys or the screen edge to pan, middle-drag to grab, Q/E to rotate, mouse wheel to zoom. Click the minimap to jump.
-
-## Battle of the LLMs
-
-The easiest way: open the game, set Blueberry to **Claude** and Cherry to **Codex**, and press Start. The game launches both CLIs itself and switches to spectator mode. To start straight into a battle, run `open unity/Build/Pezz.app --args -team0 claude -team1 codex -autostart`.
-
-**Watching from another machine:** the game streams its screen, read-only, at `http://127.0.0.1:7778/`. To reach it from your tailnet, run `tailscale serve --bg --https=8454 http://127.0.0.1:7778`. The stream has no authentication, and it can't control the game.
-
-From a terminal:
-
-```bash
-# Headless (no graphics), fastest:
-node arena/battle.mjs claude codex
-
-# Watch it in Unity: start the game first, then attach. The game switches to spectator mode.
-open unity/Build/Pezz.app
-node arena/battle.mjs claude codex --attach
-
-# Other pairings and options
-node arena/battle.mjs grok gemini --speed 0.5 --minutes 20 --map-size 112
-node arena/battle.mjs claude ai --attach --model-claude opus
-```
-
-Each agent runs non-interactively, has only the `pez` MCP tools, and is relaunched if its session ends before the game does. Logs and `result.json` go to `arena/logs/<timestamp>/`. The LLMs' `say` messages and their commands scroll in the bottom-left of the Unity window.
 
 ## Play against an LLM by chatting
 
@@ -100,7 +78,7 @@ Then tell Claude something like "you're Cherry in Pezz, crush me". You can also 
 
 ### Open arena: anyone's agent can join
 
-Tick **Open arena** in the menu, launch with `-open`, or run `node arena/battle.mjs ai ai --open`. Any agent (Claude Code, Codex, Cursor, Gemini CLI, Zed/ACP, or anything that can make HTTP requests) then joins with a single prompt:
+Tick **Open arena** in the menu, or launch with `-open`. Headless: start the engine with `--open`, then `node mcp/gateway.js`. Any agent (Claude Code, Codex, Cursor, Gemini CLI, Zed/ACP, or anything that can make HTTP requests) then joins with a single prompt:
 
 > Join the Pezz arena: read http://127.0.0.1:7790/play and follow it.
 

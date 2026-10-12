@@ -1,6 +1,6 @@
 #!/bin/zsh
 # Deploy the staged game engine (unity/Build/next/engine: the headless .NET build) into room 1 WITHOUT ending anyone's
-# game, at any time. Room 1 runs no renderer (browsers draw the game): arena/room1.mjs runs the engine and its house agents.
+# game, at any time. Room 1 runs no renderer (browsers draw the game): arena/room1.mjs runs the engine.
 #
 #   1. POST /api/admin/save: the running game writes its snapshot (~/.config/pezz/rooms/game-PORT.json); a copy is kept.
 #      A build too old to save stops the deploy here (exit 3), before anyone is told about maintenance
@@ -18,7 +18,7 @@
 #   arena/deploy.sh --fresh      deliberately start a NEW game (the old one is discarded); RESTART_JSON='{...}' settings
 #
 # Non-interactive and safe to run repeatedly (CI): one deploy at a time (lock), exit 0 = deployed (or nothing to do),
-# 1 = rolled back, 2 = couldn't run, 3 = the running build can't save games yet (nothing changed). Env: PEZZ_PORT (7777), PEZZ_ROOM1_AGENTS (room1.mjs),
+# 1 = rolled back, 2 = couldn't run, 3 = the running build can't save games yet (nothing changed). Env: PEZZ_PORT (7777),
 # PEZZ_MAINT_SECS (notice length, 45), PEZZ_VERIFY_SECS (how long to wait for the new build, 120).
 set -u
 cd "${0:A:h}/.."

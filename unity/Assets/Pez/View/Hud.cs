@@ -1474,8 +1474,8 @@ namespace Pez.View
 
         // ------------------------------------------------------------------ main menu
 
-        static readonly string[] ControllerOptions = { "human", "ai", "claude", "codex", "llm" };
-        static readonly string[] ControllerLabels = { "Human", "Scripted AI", "Claude", "Codex", "External" };
+        static readonly string[] ControllerOptions = { "human", "ai", "llm" };
+        static readonly string[] ControllerLabels = { "Human", "Scripted AI", "External" };
 
         void Menu()
         {
@@ -1498,8 +1498,7 @@ namespace Pez.View
             {
                 Round(new Rect(x, y + 13, 10, 10), 3, Mats.Team(t));
                 Text(new Rect(x + 18, y, 110, 36), Mats.TeamNames[t], fSansBold, 15, Ink);
-                // The browser can't launch the Claude / Codex CLIs, so it offers only the seats that need no process.
-                var shown = Enumerable.Range(0, ControllerOptions.Length).Where(o => !GameRunner.IsWeb || (ControllerOptions[o] != "claude" && ControllerOptions[o] != "codex")).ToList();
+                var shown = Enumerable.Range(0, ControllerOptions.Length).ToList();
                 float sx = x + 130, segW = (inner - 130 - (shown.Count - 1) * 6) / shown.Count;
                 for (int n = 0; n < shown.Count; n++)
                 {
@@ -1547,7 +1546,7 @@ namespace Pez.View
 
             if (!GameRunner.IsWeb) Text(new Rect(x, y, inner, 20), $"LLM control API: http://127.0.0.1:{Runner.Port}/" + (Runner.ApiError != null ? $"  ({Runner.ApiError})" : ""), fMono, 13, Runner.ApiError != null ? Amber : Muted);
             y += 40;
-            if (!GameRunner.IsWeb) Text(new Rect(x, y - 14, inner, 72), "<b>Claude</b> / <b>Codex</b>: the game launches that CLI and hands it the team over MCP (arena/battle.mjs).\n<b>External</b>: leave the team for any MCP client you connect yourself (mcp/server.js, PEZ_TEAM=n).", fSans, 13, Muted, TextAnchor.UpperLeft, true);
+            if (!GameRunner.IsWeb) Text(new Rect(x, y - 14, inner, 72), "<b>External</b>: leave the team for an LLM: any MCP client you connect yourself (mcp/server.js, PEZ_TEAM=n).\nWith Open arena on, anyone's agent can join through the gateway.", fSans, 13, Muted, TextAnchor.UpperLeft, true);
             y += 58;
             if (Runner.AgentStatus != null) Text(new Rect(x, y - 4, inner, 20), Runner.AgentStatus, fSans, 13, Amber);
             y += 18 + 8;
