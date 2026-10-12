@@ -44,6 +44,7 @@ namespace Pez.View
             public float GlowK = -1f, GlowShown = -1f, RateShown = 1f;
             public float[] SteamNext;    // per tower: when it next puffs (each tower on its own irregular rhythm)
             public bool GlowHidden;
+            public Sheen Sheen;          // newcomer protection: the sheen over its parts (null when its team isn't protected)
             public Renderer[] Halos;     // power plant: the light rising out of its open stacks      // the neutral "last seen" glow is applied (a stream render of fogged enemy state)
             // Damage state on finished buildings: smoke and fire intensity (eased), emitters, and the roof they rise from.
             public float SmokeK, FireK;
@@ -174,6 +175,11 @@ namespace Pez.View
                 if (v.Ring.gameObject.activeSelf != ring) v.Ring.gameObject.SetActive(ring);
                 v.Bars?.ForView(v.E, team); // a player's stream shows only their own units' fuel
                 // A remembered enemy building under fog shows no live power state: neutral glow in that render.
+                if (show && v.Sheen != null) // protection is live state too: not on a remembered building under fog
+                {
+                    bool see = SeesState(v.E, team);
+                    foreach (var (src, copy) in v.Sheen.Parts) if (src != null && copy != null) copy.enabled = see && src.enabled;
+                }
                 if (show && v.Glows != null && v.GlowShown >= 0f)
                 {
                     bool hide = !SeesState(v.E, team);
@@ -287,6 +293,7 @@ namespace Pez.View
             foreach (var kv in Views) if (!seen.Contains(kv.Key)) gone.Add(kv.Key);
             foreach (var id in gone)
             {
+                Views[id].Sheen?.Clear(); Views[id].Sheen = null; // a wreck wears no protection
                 Retire(Views[id]); Views.Remove(id); Selected.Remove(id); Plinths.Unregister(id);
                 for (int t = 0; t < 8; t++) lastSeen.Remove((t, id));
             }
@@ -294,58 +301,123 @@ namespace Pez.View
             Deposits.Sync(PovTeam);
             SyncProjectiles(alpha);
             if (Time.time >= nextFog) { nextFog = Time.time + 0.2f; Terrain.UpdateFog(w, PovTeam); }
-            SyncShields();
+            SyncSheen();
         }
-
-        readonly Dictionary<int, Transform> shields = new Dictionary<int, Transform>();
 
         /// <summary>
-        /// A translucent, gently pulsing dome over each base under newcomer protection: your own, and others' only where your
-        /// team can see the base (never through fog), and none for a team that's out. Kept across snapshots (a new copy of the
-        /// world moves them; it doesn't redraw them), so they never blink.
+        /// Newcomer protection: every unit and building of a protected team wears a pulsing cream sheen (Pez/Sheen) for as
+        /// long as protection lasts. It breathes on a 1.6 s sine (15–100%), quickens over the last 15 s, and fades out when protection
+        /// ends. Drawn as a copy of each opaque part under that part, so it follows the model everywhere (motion, boarding, the
+        /// per-team hides of a stream render) and never shows through fog. Status, so cream for every team. The kitchen sink
+        /// protects everyone forever, so it's off there.
         /// </summary>
-        void SyncShields()
+        public class Sheen
         {
-            foreach (var t in World.Teams)
-            {
-                bool on = World.IsProtected(t.Id) && !t.Left && !t.Defeated && World.Showcase == null && SeesBase(t); // the kitchen sink protects everyone: no domes there
-                shields.TryGetValue(t.Id, out var dome);
-                if (!on) { if (dome != null) { Destroy(dome.gameObject); shields.Remove(t.Id); } continue; }
-                if (dome == null)
-                {
-                    // Protection is a status, and status never uses team hues: a faint cream dome for every team.
-                    var c = Mats.Cream; c.a = 0.07f;
-                    dome = Models.Part(transform, PrimitiveType.Sphere, W(t.StartPos), new Vector3(13f, 7f, 13f), Mats.Unlit(c, true));
-                    dome.GetComponent<Renderer>().shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-                    shields[t.Id] = dome;
-                }
-                dome.localPosition = W(t.StartPos);
-                float k = 1f + Mathf.Sin(Time.time * 1.5f + t.Id) * 0.02f;
-                dome.localScale = new Vector3(13f, 7f, 13f) * k;
-            }
-            if (shields.Count > 0)
-            {
-                staleShields.Clear();
-                foreach (var id in shields.Keys) if (id >= World.Teams.Count) staleShields.Add(id); // a new game with fewer seats
-                foreach (var id in staleShields) { Destroy(shields[id].gameObject); shields.Remove(id); }
-            }
-        }
-        readonly List<int> staleShields = new List<int>();
+            public readonly List<(Renderer src, MeshRenderer copy)> Parts = new List<(Renderer, MeshRenderer)>();
+            public int Team, Sources;
+            public float NextScan;
+            public bool Shown = true;
 
-        /// <summary>Does this view's team see that base right now (its centre or any side of the dome)? Spectators see every base.</summary>
-        bool SeesBase(Team t)
-        {
-            if (PovTeam < 0 || t.Id == PovTeam || PovTeam >= World.Teams.Count) return true;
-            var vis = World.Teams[PovTeam].Visible;
-            if (vis == null) return false;
-            foreach (var (dx, dy) in ShieldProbes)
-            {
-                int x = (int)(t.StartPos.X + dx), y = (int)(t.StartPos.Y + dy);
-                if (World.Map.InBounds(x, y) && World.Map.Idx(x, y) < vis.Length && vis[World.Map.Idx(x, y)]) return true;
-            }
-            return false;
+            public void Clear() { foreach (var (_, c) in Parts) if (c != null) Object.Destroy(c.gameObject); Parts.Clear(); }
         }
-        static readonly (float, float)[] ShieldProbes = { (0, 0), (5, 0), (-5, 0), (0, 5), (0, -5) };
+
+        const string SheenName = "pez-sheen";
+        static Shader sheenShader;
+        // Per team: its material (the strength is per team), the breath's phase and the fade (0 off .. 1 on).
+        readonly Dictionary<int, (Material mat, float phase, float fade)> sheenTeams = new Dictionary<int, (Material, float, float)>();
+        readonly List<int> sheenDone = new List<int>();
+        static readonly List<MeshFilter> sheenScan = new List<MeshFilter>();
+
+        void SyncSheen()
+        {
+            float dt = Mathf.Min(Time.deltaTime, 0.1f);
+            for (int id = 0; id < World.Teams.Count; id++)
+            {
+                var t = World.Teams[id];
+                bool on = World.IsProtected(id) && !t.Left && !t.Defeated && World.Showcase == null;
+                sheenTeams.TryGetValue(id, out var st);
+                if (!on && st.mat == null) continue;
+                if (st.mat == null)
+                {
+                    sheenShader ??= Resources.Load<Shader>("PezShaders/PezSheen") ?? Shader.Find("Pez/Sheen");
+                    if (sheenShader == null) continue;
+                    st.mat = new Material(sheenShader) { name = $"sheen team {id}" };
+                    Debug.Log($"pez sheen: team {id} protected for {t.ProtectedUntil - World.Time:0}s");
+                    st.mat.SetColor("_Color", Mats.Cream);
+                }
+                float left = on ? t.ProtectedUntil - World.Time : 0f;
+                st.fade = Mathf.MoveTowards(st.fade, on ? 1f : 0f, dt / (on ? 0.5f : 0.8f));
+                st.phase += dt * Mathf.PI * 2f / (left > 0f && left < 15f ? 0.6f : 1.6f); // quicker as it runs out
+                float breath = 0.15f + 0.85f * (0.5f + 0.5f * Mathf.Sin(st.phase));
+                st.mat.SetFloat("_Strength", breath * st.fade);
+                sheenTeams[id] = st;
+            }
+
+            foreach (var v in Views.Values)
+            {
+                var e = v.E;
+                bool want = !e.Dead && !e.IsCarried && sheenTeams.TryGetValue(e.Team, out var st) && st.mat != null && st.fade > 0f;
+                if (!want || (v.Sheen != null && v.Sheen.Team != e.Team)) { if (v.Sheen != null) { v.Sheen.Clear(); v.Sheen = null; } if (!want) continue; }
+                if (!v.Rig.Root.gameObject.activeSelf) continue;
+                var sh = v.Sheen ??= new Sheen { Team = e.Team };
+                if (Time.time >= sh.NextScan) { sh.NextScan = Time.time + 1.5f; ScanSheen(v, sheenTeams[e.Team].mat); }
+                // A remembered building under fog shows no live state: no sheen.
+                bool show = SeesState(e, PovTeam);
+                for (int i = sh.Parts.Count - 1; i >= 0; i--)
+                {
+                    var (src, copy) = sh.Parts[i];
+                    if (src == null || copy == null) { if (copy != null) Destroy(copy.gameObject); sh.Parts.RemoveAt(i); continue; }
+                    bool en = show && src.enabled;
+                    if (copy.enabled != en) copy.enabled = en;
+                }
+                sh.Shown = show;
+            }
+
+            // Protection over and faded out: drop the team's material.
+            sheenDone.Clear();
+            foreach (var kv in sheenTeams) if (kv.Value.fade <= 0f && !(kv.Key < World.Teams.Count && World.IsProtected(kv.Key))) sheenDone.Add(kv.Key);
+            foreach (var id in sheenDone) { Destroy(sheenTeams[id].mat); sheenTeams.Remove(id); Debug.Log($"pez sheen: team {id} off"); }
+        }
+
+        /// <summary>(Re)builds the sheen over an entity's opaque parts when its parts change (a model built in stages, a capture).</summary>
+        void ScanSheen(EV v, Material mat)
+        {
+            var sh = v.Sheen;
+            sheenScan.Clear();
+            v.Rig.Root.GetComponentsInChildren(true, sheenScan);
+            int sources = 0;
+            foreach (var mf in sheenScan) if (SheenSource(mf, out _)) sources++;
+            if (sources == sh.Sources && sh.Parts.Count == sources && sh.Parts.TrueForAll(p => p.copy != null && p.copy.sharedMaterial == mat)) return;
+            sh.Clear();
+            sh.Sources = sources;
+            foreach (var mf in sheenScan)
+            {
+                if (!SheenSource(mf, out var r)) continue;
+                var go = new GameObject(SheenName) { layer = mf.gameObject.layer };
+                go.transform.SetParent(mf.transform, false);
+                go.AddComponent<MeshFilter>().sharedMesh = mf.sharedMesh;
+                var copy = go.AddComponent<MeshRenderer>();
+                var mats = new Material[Mathf.Max(1, mf.sharedMesh.subMeshCount)];
+                for (int i = 0; i < mats.Length; i++) mats[i] = mat;
+                copy.sharedMaterials = mats;
+                copy.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                copy.receiveShadows = false;
+                copy.lightProbeUsage = UnityEngine.Rendering.LightProbeUsage.Off;
+                copy.reflectionProbeUsage = UnityEngine.Rendering.ReflectionProbeUsage.Off;
+                copy.allowOcclusionWhenDynamic = false;
+                sh.Parts.Add((r, copy));
+            }
+        }
+
+        /// <summary>A part that gets a sheen: a mesh drawn opaque (not a glow, halo, bar or ring, and not a sheen itself).</summary>
+        static bool SheenSource(MeshFilter mf, out Renderer r)
+        {
+            r = null;
+            if (mf.sharedMesh == null || mf.gameObject.name == SheenName) return false;
+            r = mf.GetComponent<MeshRenderer>();
+            var m = r != null ? r.sharedMaterial : null;
+            return m != null && m.renderQueue < 2500;
+        }
 
         /// <summary>Nothing pops off the map: art-pack models sink or collapse (wrecks linger) before they're destroyed.</summary>
         void Board(EV v)

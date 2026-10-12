@@ -138,8 +138,8 @@ namespace Pez.Sim
             map.Spawns.Add(new Vec2(size / 2f, size / 2f));
             k.Lay();
             w.Showcase = k;
-            // Everyone is protected for good: nothing picks fights or takes damage, mines stay quiet. (Protection's dome
-            // is drawn at a team's start position, which for these teams is off the map.)
+            // Everyone is protected for good: nothing picks fights or takes damage, mines stay quiet. (The view doesn't
+            // draw protection's sheen in this room: everything would wear it.)
             foreach (var t in w.Teams) t.ProtectedUntil = float.MaxValue;
             k.Stock();
             w.RefreshPower();

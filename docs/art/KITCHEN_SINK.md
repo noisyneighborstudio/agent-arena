@@ -77,7 +77,7 @@ Teams: Blueberry and Cherry everywhere they can sit side by side, Lime for the l
 Nothing here is staged in the view; it's the real sim, held in place:
 
 - **Every team is protected** (`ProtectedUntil` forever), so nothing picks a fight or takes damage and mines never go off.
-  The protection dome isn't drawn in this room. Shooters have explicit attack orders on their targets, and the defence
+  The protection sheen isn't drawn in this room. Shooters have explicit attack orders on their targets, and the defence
   structures are fired each tick by the hold, so the range fires forever without anyone getting hurt.
 - **`KitchenSink.Hold()` runs after every tick** (the last line of `World.Step`, only when `World.Showcase` is set; real games
   never build a showcase, so their sim is unchanged). It keeps stockpiles full, puts pinned exhibits back on their spot and
