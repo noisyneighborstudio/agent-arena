@@ -162,8 +162,24 @@ namespace Pez.View
         ///   tangent = a unit tangent in the face plane (w = 1), the frame those normals are expressed in.
         /// The bevel width scales with the part (connected piece) it's on: 3% of its size, 0.012 to 0.05 units.
         /// </summary>
-        static (Vector4[] dist, Vector4[] bev01, Vector4[] bev2, Vector4[] tan) BevelData(Vector3[] v, List<int[]> subs)
+        static (Vector4[] dist, Vector4[] bev01, Vector4[] bev2, Vector4[] tan) BevelData(Vector3[] v, List<int[]> subs, bool authored = false)
         {
+            // A mesh with its own normals (the rounded art pack: art-src/tools/round_models.py) says which edges are smooth by
+            // sharing their vertices: a fillet's facets share them and must shade as one curve, with no chamfer line on each
+            // step. Only edges it splits are creases.
+            var sharedSrc = new HashSet<long>();
+            if (authored)
+            {
+                var seen = new HashSet<long>();
+                foreach (var st in subs)
+                    for (int i = 0; i + 2 < st.Length; i += 3)
+                        for (int c = 0; c < 3; c++)
+                        {
+                            int a = st[i + c], b = st[i + (c + 1) % 3];
+                            long sk = a < b ? ((long)a << 32) | (uint)b : ((long)b << 32) | (uint)a;
+                            if (!seen.Add(sk)) sharedSrc.Add(sk);
+                        }
+            }
             // Weld by position (the source may split vertices by material or UV), then index edges.
             var ids = new Dictionary<Vector3Int, int>();
             int Id(Vector3 p) { var k = new Vector3Int(Mathf.RoundToInt(p.x * 2000f), Mathf.RoundToInt(p.y * 2000f), Mathf.RoundToInt(p.z * 2000f)); if (!ids.TryGetValue(k, out int i)) ids[k] = i = ids.Count; return i; }
@@ -216,6 +232,8 @@ namespace Pez.View
                     float len = (eb - ea).magnitude;
                     h[c] = len > 1e-6f ? area2 / len : 0f;
                     var l = edges[Key(pid[ia], pid[ib])];
+                    int sa = tris[ia], sb = tris[ib];
+                    bool welded = authored && sharedSrc.Contains(sa < sb ? ((long)sa << 32) | (uint)sb : ((long)sb << 32) | (uint)sa);
                     Vector3 bevel = Vector3.zero;
                     bool crease = false;
                     if (l.Count == 1)
@@ -228,7 +246,7 @@ namespace Pez.View
                     foreach (int other in l)
                     {
                         int ot = other / 3;
-                        if (ot == t) continue;
+                        if (ot == t || welded) continue; // the mesh welds this edge: one smooth surface, no crease
                         var n2 = normals[ot];
                         if (Vector3.Dot(n, n2) > SoftEdgeCos) continue; // a soft edge (a curved surface's facets): no crease
                         // Convex when the neighbour's far corner lies behind this face.
@@ -283,14 +301,24 @@ namespace Pez.View
             if (verts.Count > 65000) m.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
             m.SetVertices(verts);
             // Unwelded vertex i is source corner i (submeshes in order): the bevel data lines up one to one.
-            var (dist, bev01, bev2, tan) = BevelData(v, srcSubs);
+            // The art's own normals when it has them (rounded parts: exact fillet normals); otherwise smoothed by angle.
+            var sn = src.normals;
+            bool authored = sn.Length == v.Length;
+            var (dist, bev01, bev2, tan) = BevelData(v, srcSubs, authored);
             m.SetUVs(3, dist); m.SetUVs(4, bev01); m.SetUVs(5, bev2);
             m.SetTangents(tan);
             if (hasUv) m.SetUVs(0, uvs);
             if (hasCol) m.SetColors(cols);
             m.subMeshCount = subs.Count;
             for (int s = 0; s < subs.Count; s++) m.SetTriangles(subs[s], s);
-            m.SetNormals(SmoothByAngle(v, srcSubs));
+            if (authored)
+            {
+                var flatN = new Vector3[verts.Count];
+                int o = 0;
+                foreach (var st in srcSubs) foreach (int i in st) flatN[o++] = sn[i];
+                m.SetNormals(flatN);
+            }
+            else m.SetNormals(SmoothByAngle(v, srcSubs));
             m.RecalculateBounds();
             return m;
         }
