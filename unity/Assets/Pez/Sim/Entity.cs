@@ -50,6 +50,9 @@ namespace Pez.Sim
         // Pull back to base on its own when HP drops below this fraction (0 = never). Stays set until changed.
         public float RetreatBelow;
         public bool Retreating;
+        // Pulled back once for this wound: no second retreat until it's repaired above the line, so an order its
+        // commander gives it afterwards (refuel, back into the fight) sticks instead of being yanked home again.
+        public bool RetreatSpent;
         public float RepathTimer;
         public bool Moving;
         public int LastAttackerId;

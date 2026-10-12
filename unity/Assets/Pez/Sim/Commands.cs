@@ -21,7 +21,7 @@ namespace Pez.Sim
       add ""together"":true to move or attack_move so the group keeps the slowest member's pace and arrives as one (leaders wait, stragglers catch up; aircraft fly their own pace)
       add ""spread"":3 (tiles between units, 1-6; true = 3) to open the formation up against splash (artillery, heavy tanks)
       add ""waypoints"":[[x,y],...] to queue more points (x/y optional: the first waypoint is used), and ""loop"":true to patrol them
-  {""type"":""set_retreat"", ""units"":[IDS], ""below_pct"":30}  units pull back to base on their own below that HP % (0 = off)
+  {""type"":""set_retreat"", ""units"":[IDS], ""below_pct"":30}  units pull back to base on their own below that HP %, once per wound, so your next order sticks (aircraft land on a pad; 0 = off)
   {""type"":""attack"", ""units"":[IDS], ""target"":ID}     focus fire on a visible enemy
       add ""until"":""capturable"" (structures only) to hold fire once it's at 50% health or less, so an engineer can capture it; they open up again if it's repaired
   {""type"":""stop"", ""units"":[IDS]}
@@ -681,7 +681,7 @@ namespace Pez.Sim
             if (units.Count == 0) return Err("no valid units of yours given");
             float pct = c.Num("below_pct");
             if (float.IsNaN(pct) || pct < 0 || pct > 95) return Err("below_pct must be 0-95 (0 turns it off)");
-            foreach (var u in units) { u.RetreatBelow = pct / 100f; if (pct == 0) u.Retreating = false; }
+            foreach (var u in units) { u.RetreatBelow = pct / 100f; u.RetreatSpent = false; if (pct == 0) u.Retreating = false; }
             return Ok(pct == 0 ? $"{units.Count} unit(s) will fight to the end" : $"{units.Count} unit(s) will pull back to base on their own below {pct:0}% HP");
         }
 

@@ -1207,24 +1207,37 @@ namespace Pez.Sim
             }
         }
 
-        /// <summary>Units told to pull back below an HP threshold head for the nearest base building on their own.</summary>
+        /// <summary>Units told to pull back below an HP threshold head for the nearest base building on their own, once per
+        /// wound: repaired back above the line, they'll do it again. Aircraft pull back to a pad and land (a base that
+        /// can't refuel them is just somewhere to hover until the tank runs dry).</summary>
         void CheckRetreat(Entity e)
         {
-            if (e.RetreatBelow <= 0 || e.Retreating || e.Hp >= e.Def.MaxHp * e.RetreatBelow || (Tick + e.Id) % 5 != 0) return;
+            if (e.RetreatBelow <= 0) return;
+            if (e.Hp >= e.Def.MaxHp * e.RetreatBelow) { e.RetreatSpent = false; return; }
+            if (e.RetreatSpent || e.Retreating || (Tick + e.Id) % 5 != 0) return;
             Entity home = null; float bd = float.MaxValue;
-            foreach (var s in Owned(e.Team))
-            {
-                if (!s.IsStructure || !s.IsComplete) continue;
-                // Pull back to a real base (production, drop-off or depot), not a lone turret, derrick or deep mine out in the field.
-                bool baseLike = s.Def.FuelDepot || s.Def.DropOff || s.Def.Produces != Producer.None;
-                float d = Vec2.DistSq(s.Center, e.Pos) * (baseLike ? 1f : 9f);
-                if (d < bd) { bd = d; home = s; }
-            }
+            if (e.IsAir) home = NearestFuelPoint(e);
+            if (home == null)
+                foreach (var s in Owned(e.Team))
+                {
+                    if (!s.IsStructure || !s.IsComplete) continue;
+                    // Pull back to a real base (production, drop-off or depot), not a lone turret, derrick or deep mine out in the field.
+                    bool baseLike = s.Def.FuelDepot || s.Def.DropOff || s.Def.Produces != Producer.None;
+                    float d = Vec2.DistSq(s.Center, e.Pos) * (baseLike ? 1f : 9f);
+                    if (d < bd) { bd = d; home = s; }
+                }
+            e.RetreatSpent = true;
             if (home == null || home.DistFrom(e.Pos) < 4f) return;
-            SetOrder(e, Order.Move, e.IsAir ? home.Center : DockPoint(home));
+            if (e.IsAir && IsFuelPoint(e, home))
+            {
+                BeginRefuel(e, home);
+                e.ResumeOrder = Order.Idle; // and stays parked on the pad
+            }
+            else SetOrder(e, Order.Move, e.IsAir ? home.Center : DockPoint(home));
             e.Retreating = true;
             Emit("retreating", e.Team, e.Id, home.Id, e.Pos, key: e.Def.Key,
-                 text: $"{e.Def.Key} #{e.Id} fell below {StateView.Pct(e.RetreatBelow)}% HP ({(int)e.Hp}/{e.Def.MaxHp}) and is pulling back to {home.Def.Key} #{home.Id}");
+                 text: $"{e.Def.Key} #{e.Id} fell below {StateView.Pct(e.RetreatBelow)}% HP ({(int)e.Hp}/{e.Def.MaxHp}) and is pulling back to {home.Def.Key} #{home.Id}" +
+                       (e.IsAir && IsFuelPoint(e, home) ? " to land" : "") + ". It won't pull back again until it's repaired above that, so an order you give it now sticks.");
         }
 
         void IdleCombat(Entity e)

@@ -52,6 +52,7 @@ namespace Pez.Headless
             NewcomerProtection();
             SafeSpawn();
             Fuel();
+            RetreatOncePerWound();
             GroupMove();
             ResignWhenStalled();
             IdleSeatsResign();
@@ -150,6 +151,43 @@ namespace Pez.Headless
             var st = Json.Write(StateView.TeamState(w2, 0));
             Check(st.Contains("fuel ") && st.Contains("%"), "units show their fuel in the state");
             Check(w.Errors == 0 && w2.Errors == 0, $"no sim errors ({w.LastError ?? w2.LastError})");
+        }
+
+        static void RetreatOncePerWound()
+        {
+            // A hurt bomber with an outpost nearer than its airfield: it used to pull back to the outpost (no pad: it
+            // hovers there burning fuel), turn for the airfield on bingo, get yanked back to the outpost by the retreat,
+            // and flip between the two until it crashed. Now an aircraft pulls back to a pad and lands.
+            var w = new World(2, 7, 80);
+            var airfield = w.SpawnStructure(0, "airfield", w.FindPlacement(0, "airfield").Value, 1f);
+            var outpost = w.SpawnStructure(0, "outpost", new Int2(60, 58), 1f);
+            var bomber = At(w.SpawnUnit(0, "stealth_bomber", airfield), new Vec2(66, 62));
+            bomber.Fuel = 40;
+            Commands.Execute(w, 0, Cmd("type", "set_retreat", "units", new[] { bomber.Id }, "below_pct", 30));
+            w.SetOrder(bomber, Order.Move, new Vec2(70, 70));
+            bomber.Hp = bomber.Def.MaxHp * 0.2f;
+            Run(w, 60);
+            int retreats = w.Events.Count(e => e.Type == "retreating" && e.A == bomber.Id);
+            Check(!bomber.Dead && bomber.Landed && airfield.DistFrom(bomber.Pos) < 2f && retreats == 1,
+                  $"a hurt bomber pulls back to its airfield once and lands (dead {bomber.Dead}, landed {bomber.Landed}, {retreats} retreats, order {bomber.OrderName})");
+
+            // A tank that has pulled back once takes its commander's next order, though it's still hurt.
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var tank = At(w.SpawnUnit(0, "light_tank", hq), hq.Center + new Vec2(14, 0));
+            Commands.Execute(w, 0, Cmd("type", "set_retreat", "units", new[] { tank.Id }, "below_pct", 50));
+            tank.Hp = tank.Def.MaxHp * 0.3f;
+            Run(w, 1);
+            Check(tank.Retreating && tank.Order == Order.Move, $"a hurt tank pulls back (order {tank.OrderName})");
+            var dest = hq.Center + new Vec2(20, 6);
+            Commands.Execute(w, 0, Cmd("type", "move", "units", new[] { tank.Id }, "x", dest.X, "y", dest.Y));
+            Run(w, 3);
+            Check(tank.Order == Order.Move && Vec2.Dist(tank.OrderPos, dest) < 1.5f && !tank.Retreating,
+                  $"ordered back out, it goes where it's told instead of pulling back again (order {tank.OrderName} to {tank.OrderPos})");
+            // Repaired above the line, it'll pull back again next time.
+            tank.Hp = tank.Def.MaxHp; Run(w, 0.5f);
+            tank.Hp = tank.Def.MaxHp * 0.3f; Run(w, 1);
+            Check(tank.Retreating, "repaired and hurt again, it pulls back again");
+            Check(w.Errors == 0, $"no sim errors ({w.LastError})");
         }
 
         static void GroupMove()

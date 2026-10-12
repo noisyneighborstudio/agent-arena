@@ -53,7 +53,7 @@ namespace Pez.Headless
         static readonly Dictionary<Type, string> SavedFields = new Dictionary<Type, string>
         {
             [typeof(Entity)] = "Id Team Def Pos PrevPos Facing TurretFacing Hp Dead Origin BuildProgress Rally Order OrderPos GuardPos TargetId UntilCapturable EngageDerricks Path PathIdx Cooldown " +
-                "SpeedCap Group ProgressPos ProgressAt GhostUntil ProgressDist Waypoints WaypointLoop RetreatBelow Retreating RepathTimer Moving LastAttackerId LastHitTime " +
+                "SpeedCap Group ProgressPos ProgressAt GhostUntil ProgressDist Waypoints WaypointLoop RetreatBelow Retreating RetreatSpent RepathTimer Moving LastAttackerId LastHitTime " +
                 "LastCallForHelp LastAttackerTeam Responding HomePos Cargo CargoType HarvestType HarvestTile WorkTimer Burning Dock DockAt DepositId Working Offline CarrierId Passengers Fuel Landed Stranded " +
                 "FuelCap AtDepot FuelWarned NoAutoRefuelUntil ResumeOrder ResumePos ResumeGuard ResumeTarget ResumeWaypoints ResumeSpeedCap MineQueue LastFiredAt " +
                 "Prospecting ProspectCenter ProspectRadius SkipSites SurveyFailure SurveyFailedAt ZoneId",
