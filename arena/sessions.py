@@ -46,10 +46,21 @@ def read(path):
         return ""
 
 
+def listening(port):
+    """Is anything accepting connections on 127.0.0.1:port (a renderer's frame server)?"""
+    import socket
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.3):
+            return True
+    except OSError:
+        return False
+
+
 def known(ts):
     """The fixed sessions: (id, title, game API port, frames port, gateway base or None, room id, extra links, camera ok)."""
     s = [
-        ("room1", "Room 1 · live arena", 7777, 7778, PUBLIC, 1, [("site", PUBLIC + "/")], False),  # gateway 7790
+        # Room 1 is the headless engine (browsers draw it): no frames unless a renderer is running beside it again.
+        ("room1", "Room 1 · live arena", 7777, 7778 if listening(7778) else None, PUBLIC, 1, [("site", PUBLIC + "/"), ("3D view", PUBLIC + "/watch")], False),  # gateway 7790
         ("test", "Test room", 7927, 7928, f"https://{ts}:8457", 1, [], True),
         ("sink", "Kitchen sink (asset library)", 7947, 7948, None, 0, [("asset library page", f"https://{ts}:8456/")], True),
         ("preview", "Preview copy", 7957, 7958, None, 0, [], True),

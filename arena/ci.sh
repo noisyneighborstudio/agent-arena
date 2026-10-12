@@ -79,23 +79,23 @@ pass() {
   # 2. Unity: build only when the game changed.
   local changed_unity=1 changed_mcp=1
   if [ -n "$deployed" ]; then
-    git -C "$REPO" diff --quiet "$deployed" "$target" -- unity/ && changed_unity=0
+    git -C "$REPO" diff --quiet "$deployed" "$target" -- unity/ headless/ && changed_unity=0
     git -C "$REPO" diff --quiet "$deployed" "$target" -- mcp/ && changed_mcp=0
   fi
-  if [ $changed_unity = 1 ] && [ "$(cat "$CI/staged" 2>/dev/null)" = "$target" ] && [ -d "$REPO/unity/Build/next/Pezz.app" ]; then
+  [ -d "$REPO/unity/Build/engine" ] || changed_unity=1 # room 1 still on the Unity app: this deploy moves it onto the engine
+  if [ $changed_unity = 1 ] && [ "$(cat "$CI/staged" 2>/dev/null)" = "$target" ] && [ -d "$REPO/unity/Build/next/engine" ]; then
     log "already built and staged; deploying"
   elif [ $changed_unity = 1 ]; then
-    log "building the game"
-    status building "$target"
-    rm -rf "$REPO/unity/Build/tmpci"
-    "$UNITY" -batchmode -projectPath "$WT/unity" -executeMethod Pez.EditorTools.PezSetup.Build \
-      -pezOut "$REPO/unity/Build/tmpci/Pezz.app" -logFile "$CI/unity-build.log" -quit
-    if ! grep -q "Pez build: Succeeded" "$CI/unity-build.log"; then
-      log "Unity build failed at ${target[1,7]} (see .ci/unity-build.log)"; echo "$target" > "$CI/failed"; status failed "$target" "unity build"; return 1
+    # Room 1 is the headless engine (no renderer: browsers draw the game). The tests above just built it from this
+    # commit; stage a copy for deploy.sh.
+    log "staging the game engine"
+    status building "$target" "engine"
+    local built="$WT/headless/bin/Release/net10.0"
+    if [ ! -f "$built/pez-headless.dll" ]; then
+      log "no engine build at ${target[1,7]}"; echo "$target" > "$CI/failed"; status failed "$target" "engine build"; return 1
     fi
-    mkdir -p "$REPO/unity/Build/next"; rm -rf "$REPO/unity/Build/next/Pezz.app"
-    mv "$REPO/unity/Build/tmpci/Pezz.app" "$REPO/unity/Build/next/Pezz.app" && rm -rf "$REPO/unity/Build/tmpci"
-    echo "$target" > "$CI/staged"
+    mkdir -p "$REPO/unity/Build/next"; rm -rf "$REPO/unity/Build/next/engine"
+    cp -R "$built" "$REPO/unity/Build/next/engine" && echo "$target" > "$CI/staged"
   fi
   # 2b. The browser build (what /view and /watch serve): built whenever the game changed, or if the live one is missing.
   #     Installed with the gateway in step 4, so the pages and the data they read move together.

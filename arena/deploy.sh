@@ -1,13 +1,14 @@
 #!/bin/zsh
-# Deploy the staged Unity build (unity/Build/next/Pezz.app) into room 1 WITHOUT ending anyone's game, at any time:
+# Deploy the staged game engine (unity/Build/next/engine: the headless .NET build) into room 1 WITHOUT ending anyone's
+# game, at any time. Room 1 runs no renderer (browsers draw the game): arena/room1.mjs runs the engine and its house agents.
 #
 #   1. POST /api/admin/save: the running game writes its snapshot (~/.config/pezz/rooms/game-PORT.json); a copy is kept.
 #      A build too old to save stops the deploy here (exit 3), before anyone is told about maintenance
 #   2. maintenance notice on (--preserved: agents are told to wait, their game and tokens are kept), only once the
 #      deploy is certain to go ahead
-#   3. stop the running app by pid ("quit app" can be ignored), escalating to SIGKILL
-#   4. swap the staged build in (the old one becomes unity/Build/prev)
-#   5. launch the new build with -resume
+#   3. stop room 1 (its supervisor, then whatever still holds the port: the engine, or the Unity app it replaced), escalating to SIGKILL
+#   4. swap the staged engine in (the old one becomes unity/Build/prev/engine)
+#   5. launch arena/room1.mjs on the new engine with --resume
 #   6. verify: /api/status shows resumed_from, the tick carries on from the snapshot's (not 0), and the same seats exist
 #   7. if that fails: put the previous build back, restore the snapshot copy, relaunch it with -resume, exit 1
 #   8. maintenance off (the gateway's what's-new broadcast then announces anything new)
@@ -17,22 +18,21 @@
 #   arena/deploy.sh --fresh      deliberately start a NEW game (the old one is discarded); RESTART_JSON='{...}' settings
 #
 # Non-interactive and safe to run repeatedly (CI): one deploy at a time (lock), exit 0 = deployed (or nothing to do),
-# 1 = rolled back, 2 = couldn't run, 3 = the running build can't save games yet (nothing changed). Env: PEZZ_PORT (7777), PEZZ_LAUNCH_ARGS (the app's game arguments),
+# 1 = rolled back, 2 = couldn't run, 3 = the running build can't save games yet (nothing changed). Env: PEZZ_PORT (7777), PEZZ_ROOM1_AGENTS (room1.mjs),
 # PEZZ_MAINT_SECS (notice length, 45), PEZZ_VERIFY_SECS (how long to wait for the new build, 120).
 set -u
 cd "${0:A:h}/.."
 ROOT=$PWD
 PORT=${PEZZ_PORT:-7777}
 GAME=http://127.0.0.1:$PORT
-APP=unity/Build/Pezz.app
-NEXT=unity/Build/next/Pezz.app
+APP=unity/Build/engine
+NEXT=unity/Build/next/engine
 PREV=unity/Build/prev
-BIN="Build/Pezz.app/Contents/MacOS/Pezz"
+PIDF=unity/Build/room1.pid  # the supervisor (arena/room1.mjs); unity/Build is shared by every checkout
 SNAP="$HOME/.config/pezz/rooms/game-$PORT.json"
 KEEP="$SNAP.predeploy"
 MAINT_SECS=${PEZZ_MAINT_SECS:-45}
 VERIFY_SECS=${PEZZ_VERIFY_SECS:-120}
-LAUNCH_ARGS=${PEZZ_LAUNCH_ARGS:-"-team0 claude -model0 sonnet -effort0 medium -team1 codex -model1 gpt-5.6-luna -effort1 medium -open -gatewayurl https://pezz.sethwebster.com -autostart"}
 MODE=deploy
 case "${1:-}" in --restart) MODE=restart;; --fresh) MODE=fresh;; "") ;; *) echo "usage: $0 [--restart|--fresh]"; exit 2;; esac
 
@@ -49,21 +49,27 @@ if [ "$MODE" = deploy ] && [ ! -d "$NEXT" ]; then log "nothing staged at $NEXT";
 [ -d "$APP" ] || [ -d "$NEXT" ] || { log "no build at $APP"; exit 2; }
 
 json() { python3 -c "import sys,json; d=json.load(sys.stdin); print($1)" 2>/dev/null; }
-app_pids() { pgrep -f "$BIN" ; }
+sup_pid() { local p=$(cat "$PIDF" 2>/dev/null); [ -n "$p" ] && kill -0 "$p" 2>/dev/null && echo "$p"; }
+# Only what this room's pid file names and whatever holds this room's port (the engine, or the Unity app room 1 used to be),
+# never a process found by name: another copy of the game (a test, the kitchen sink) can look the same.
+app_pids() { { sup_pid; lsof -tiTCP:$PORT -sTCP:LISTEN 2>/dev/null; } | sort -u ; }
 
 stop_app() {
   local pids; pids=$(app_pids)
   [ -z "$pids" ] && return 0
   log "stopping the game (pid $(echo $pids | tr '\n' ' '))"
-  kill $=pids 2>/dev/null
-  for i in {1..20}; do app_pids >/dev/null || return 0; sleep 1; done
-  log "still running after 20s; SIGKILL"
-  pkill -9 -f "$BIN"; sleep 1
+  # The supervisor first: it stops the agents and lets the engine save on its way out.
+  local sp=$(sup_pid); [ -n "$sp" ] && kill "$sp" 2>/dev/null
+  for i in {1..25}; do [ -z "$(lsof -tiTCP:$PORT -sTCP:LISTEN 2>/dev/null)" ] && [ -z "$(sup_pid)" ] && break; sleep 1; [ $i = 3 ] && kill $=pids 2>/dev/null; done
+  pids=$(app_pids); [ -z "$pids" ] && { rm -f "$PIDF"; return 0; }
+  log "still running after 25s; SIGKILL"
+  kill -9 $=pids 2>/dev/null; sleep 1; rm -f "$PIDF"
 }
 
 launch() {  # $1: -resume | -fresh
-  log "launching $APP $1"
-  open -n -a "$ROOT/$APP" --args ${=LAUNCH_ARGS} $1
+  log "launching room 1 on $APP ($1)"
+  nohup node arena/room1.mjs --engine "$ROOT/$APP" --port $PORT ${1/-/--} >> "$ROOT/arena/logs/room1.log" 2>&1 &
+  echo $! > "$PIDF"; disown
 }
 
 # Waits for the relaunched game and checks it resumed: prints nothing and returns 0 if good, else the reason.
@@ -143,8 +149,8 @@ fi
 # ---- 7. roll back
 log "FAILED: $why"
 stop_app
-if $SWAPPED && [ -d "$PREV/Pezz.app" ]; then
-  rm -rf unity/Build/failed; mkdir -p unity/Build/failed; mv "$APP" unity/Build/failed/ ; mv "$PREV/Pezz.app" "$APP"
+if $SWAPPED && [ -d "$PREV/engine" ]; then
+  rm -rf unity/Build/failed; mkdir -p unity/Build/failed; mv "$APP" unity/Build/failed/ ; mv "$PREV/engine" "$APP"
   log "rolled back to the previous build (the failed one is in unity/Build/failed)"
 fi
 if [ -f "$KEEP" ]; then cp -p "$KEEP" "$SNAP"; chmod 600 "$SNAP"; fi

@@ -51,7 +51,10 @@ const VIEW3D = fs.readFileSync(path.join(WEB3D, "view.html"), "utf8");
 const MAX_BODY = 64 * 1024;
 const WATCH_DELAY_S = Number(process.env.PEZZ_WATCH_DELAY || 45);
 // The Unity host's frame server: renders each player's own high-res live stream (absent on headless servers).
-const FRAMES = (process.env.PEZZ_FRAMES || GAME.replace(/:(\d+)$/, (m, p) => `:${Number(p) + 1}`)).replace(/\/$/, ""); // public spectator view lags so players can't use it to see through fog
+// Room 1's renderer (frames, live video, `look` pictures): the Unity app beside the game, if there is one. PEZZ_FRAMES=none:
+// room 1 runs the headless engine (browsers draw the game; `look` uses a player's browser or the map picture).
+const FRAMES = process.env.PEZZ_FRAMES === "none" ? null
+  : (process.env.PEZZ_FRAMES || GAME.replace(/:(\d+)$/, (m, p) => `:${Number(p) + 1}`)).replace(/\/$/, ""); // public spectator view lags so players can't use it to see through fog
 const CONFIG_DIR = path.join(os.homedir(), ".config", "pezz");
 // Operator secret for /admin (arena/rooms.sh reads the same file). Made on first start.
 const ADMIN_SECRET = (() => {
