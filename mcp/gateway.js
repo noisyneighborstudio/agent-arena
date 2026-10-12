@@ -180,11 +180,20 @@ function delayedFrame(room) {
 // someone has polled in the last minute, kept gzipped (the game builds the JSON; builds without the endpoint 4xx and are skipped).
 const SNAP_EVERY_MS = 2000, SNAP_WANTED_MS = 60000;
 const snaps = new Map(); // room id -> { items: [{ at, gz }], wantedAt, busy }
+/** A room's snapshot ring (made on first use). `want` marks someone as watching, which starts the sampling. */
+function snapRing(room, want = true) {
+  let w = snaps.get(room.id);
+  if (!w) { w = { items: [], wantedAt: 0, busy: false }; snaps.set(room.id, w); }
+  if (want) w.wantedAt = Date.now();
+  return w;
+}
 setInterval(async () => {
+  const r1 = rooms.get(1);
+  if (r1) snapRing(r1, false); // room 1's ring always runs (like its frames above), so the first /watch/web viewer doesn't wait out the delay
   for (const [id, w] of snaps) {
     const room = rooms.get(id);
     if (!room) { snaps.delete(id); continue; }
-    if (Date.now() - w.wantedAt > SNAP_WANTED_MS) { w.items.length = 0; continue; }
+    if (id !== 1 && Date.now() - w.wantedAt > SNAP_WANTED_MS) { w.items.length = 0; continue; }
     if (w.busy) continue;
     w.busy = true;
     try {
@@ -198,30 +207,34 @@ setInterval(async () => {
   }
 }, SNAP_EVERY_MS).unref();
 function delayedSnapshot(room) {
-  let w = snaps.get(room.id);
-  if (!w) { w = { items: [], wantedAt: 0, busy: false }; snaps.set(room.id, w); }
-  w.wantedAt = Date.now();
+  const w = snapRing(room);
   const cutoff = Date.now() - WATCH_DELAY_S * 1000;
   let best = null;
   for (const f of w.items) if (f.at <= cutoff) best = f;
-  return { best, wait: Math.ceil((w.items.length ? w.items[0].at - cutoff : WATCH_DELAY_S * 1000) / 1000) };
+  return { best, wait: Math.max(1, Math.ceil((w.items.length ? w.items[0].at - cutoff : WATCH_DELAY_S * 1000) / 1000)) };
 }
+/** Headers every snapshot answer carries: how far behind it is, how old, and whether it is a player's own view or the spectator's. */
+const snapHeaders = (delay, ageMs, mode) => ({ "x-pezz-delay-s": String(delay), "x-pezz-snapshot-age-s": String(Math.round(ageMs / 1000)), "x-pezz-mode": mode });
 function sendSnapshot(req, res, room) {
   const { best, wait } = delayedSnapshot(room);
-  if (!best) { res.setHeader("retry-after", "3"); return send(res, 503, { ok: false, waiting: `Snapshot feed starts in ${Math.max(wait, 1)}s (it runs ${WATCH_DELAY_S}s behind the game).` }); }
+  if (!best) { res.setHeader("retry-after", "3"); res.setHeader("x-pezz-mode", "spectator"); res.setHeader("x-pezz-delay-s", String(WATCH_DELAY_S)); return send(res, 503, { ok: false, waiting: `Snapshot feed starts in ${wait}s (it runs ${WATCH_DELAY_S}s behind the game).`, starts_in_s: wait }); }
   const gz = /\bgzip\b/.test(req.headers["accept-encoding"] ?? "");
   const body = gz ? best.gz : zlib.gunzipSync(best.gz);
   res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", vary: "accept-encoding", "x-content-type-options": "nosniff",
-    "x-pezz-delay-s": String(WATCH_DELAY_S), "x-pezz-snapshot-age-s": String(Math.round((Date.now() - best.at) / 1000)), ...(gz ? { "content-encoding": "gzip" } : {}), "content-length": body.length });
+    ...snapHeaders(WATCH_DELAY_S, Date.now() - best.at, "spectator"), ...(gz ? { "content-encoding": "gzip" } : {}), "content-length": body.length });
   res.end(body);
 }
 
 // A player's own snapshot (GET /view/<v>/snapshot): their team's fogged copy (the game filters it), live, for the
-// browser build. One fetch per link every SNAP_OWN_MS at most, shared by every tab on that link.
+// browser build. One fetch per link every SNAP_OWN_MS at most, shared by every tab on that link. Once the seat has
+// ended (eliminated, resigned, left, or its link 401s) it serves the room's delayed spectator snapshot instead: a dead
+// seat's link must never be a way to the fogless live world.
 const SNAP_OWN_MS = 800;
 const ownSnaps = new Map(); // view token -> { at, gz, pending }
 async function sendOwnSnapshot(req, res, view) {
   const { room, raw } = parseToken(view);
+  if ((await seatState(view)).how) return sendSnapshot(req, res, room);
+  snapRing(room); // the seat may end any moment: have the spectator ring warm for it
   let c = ownSnaps.get(view);
   if (!c || Date.now() - c.at > SNAP_OWN_MS) {
     if (!c?.pending) {
@@ -235,13 +248,17 @@ async function sendOwnSnapshot(req, res, view) {
       ownSnaps.set(view, c);
       pending.then((v) => ownSnaps.set(view, v), () => ownSnaps.delete(view));
     }
-    try { c = await c.pending; } catch (e) { return send(res, e.status ?? 502, { ok: false, error: e.message }); }
+    try { c = await c.pending; }
+    catch (e) {
+      if (e.status === 401) { seatStates.set(view, { at: Date.now(), how: "ended", team: -1 }); return sendSnapshot(req, res, room); }
+      return send(res, e.status ?? 502, { ok: false, error: e.message });
+    }
   }
   if (ownSnaps.size > 2000) for (const [k, v] of ownSnaps) if (Date.now() - v.at > 60000) ownSnaps.delete(k);
   const gz = /\bgzip\b/.test(req.headers["accept-encoding"] ?? "");
   const body = gz ? c.gz : zlib.gunzipSync(c.gz);
   res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", vary: "accept-encoding", "x-content-type-options": "nosniff",
-    ...(gz ? { "content-encoding": "gzip" } : {}), "content-length": body.length });
+    ...snapHeaders(0, Date.now() - c.at, "player"), ...(gz ? { "content-encoding": "gzip" } : {}), "content-length": body.length });
   res.end(body);
 }
 
@@ -252,16 +269,30 @@ const WEB_TYPES = { ".html": "text/html; charset=utf-8", ".js": "application/jav
   ".json": "application/json", ".png": "image/png", ".ico": "image/x-icon", ".css": "text/css" };
 function sendWebFile(req, res, rel) {
   const file = path.resolve(WEB_DIR, rel);
-  if (!file.startsWith(path.resolve(WEB_DIR) + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile())
-    return send(res, 404, { ok: false, error: "not found" });
+  let st;
+  try { st = fs.statSync(file); } catch { return send(res, 404, { ok: false, error: "not found" }); }
+  if (!file.startsWith(path.resolve(WEB_DIR) + path.sep) || !st.isFile()) return send(res, 404, { ok: false, error: "not found" });
   const enc = file.endsWith(".br") ? "br" : file.endsWith(".gz") ? "gzip" : null;
   const base = enc ? file.slice(0, -3) : file;
-  const head = { "content-type": WEB_TYPES[path.extname(base)] || "application/octet-stream", "content-length": fs.statSync(file).size, "x-content-type-options": "nosniff",
-    // Unity revalidates its cached data itself; the files keep their names between builds, so no long max-age yet.
-    "cache-control": "no-cache" };
+  // Unity can't read a precompressed file the browser didn't decode (no decompressionFallback): say so rather than hand it bytes it can't use.
+  if (enc && !new RegExp(`\\b${enc}\\b`).test(req.headers["accept-encoding"] ?? ""))
+    return send(res, 406, { ok: false, error: `this build is served ${enc}-compressed and your browser didn't say it accepts ${enc} (Accept-Encoding); use a current browser, and check that no proxy strips Accept-Encoding` });
+  // Unity's file names are stable per build, not hashed, so no long max-age: a strong ETag (size + mtime) lets the browser and Cloudflare revalidate for a 304.
+  const etag = `"${st.size.toString(16)}-${Math.floor(st.mtimeMs).toString(16)}"`;
+  const head = { "content-type": WEB_TYPES[path.extname(base)] || "application/octet-stream", "x-content-type-options": "nosniff", "cache-control": "no-cache", etag, vary: "accept-encoding" };
   if (enc) head["content-encoding"] = enc;
-  res.writeHead(200, head);
+  const inm = String(req.headers["if-none-match"] ?? "");
+  if (inm && (inm.trim() === "*" || inm.split(",").some((t) => t.trim().replace(/^W\//, "") === etag))) { res.writeHead(304, head); return res.end(); }
+  res.writeHead(200, { ...head, "content-length": st.size });
   fs.createReadStream(file).pipe(res);
+}
+/** Per-address caps for the browser build's own traffic (files and snapshot polls), on top of the gateway-wide one. */
+function webLimited(res, ip, kind) {
+  const [perSecond, burst] = kind === "files" ? [20, 80] : [10, 40]; // a cold load is ~6 files; a tab polls about once a second
+  if (allow(`${kind}:${ip}`, perSecond, burst)) return false;
+  res.setHeader("retry-after", "2");
+  send(res, 429, { ok: false, error: "slow down" });
+  return true;
 }
 function sendWebPage(res, query) {
   const file = path.join(WEB_DIR, "index.html");
@@ -518,7 +549,8 @@ async function placeAndRegister(name, code, base, region = null, ip = null) {
   const view_url = `${base}/view/${roomToken(room, r.view_token)}`;
   const token = roomToken(room, r.token);
   await markAllSeen(token); // they get the current list right here
-  const commander_url = `${view_url}?c=${newCommander(token)}`;
+  const commander = newCommander(token);
+  const commander_url = `${view_url}?c=${commander}`;
   const recent = (await changesForRoom(room)).slice(-5).reverse();
   const share = shareFor(room, base);
   return {
@@ -534,11 +566,11 @@ async function placeAndRegister(name, code, base, region = null, ip = null) {
     // One link for the human: their live view of this team, with the Standing orders box. (The same page without the
     // box isn't handed out any more: two near-identical links only confused people.)
     commander_url,
-    tell_your_human: `Watch me play live, and redirect me any time (even mid-turn) from the Standing orders box: ${commander_url}\nThat link is private to you: don't share it. To bring a friend into this same game, send them this prompt for their agent: "${share.friend_prompt}"`,
+    tell_your_human: `Watch me play live, and redirect me any time (even mid-turn) from the Standing orders box: ${commander_url}\nThat link is private to you: don't share it. The same view in 3D, in the browser: ${view_url}/web?c=${commander}\nTo bring a friend into this same game, send them this prompt for their agent: "${share.friend_prompt}"`,
     ...(notes.length ? { note: notes.join(" ") } : {}),
     whats_new: recent.map((c) => `${c.date} ${c.title}: ${c.text}`),
     keep_up: `Pezz gains capabilities over time. Check whats_new (MCP) or GET ${base}/changes at the start of each session, and read any 🆕 notice that appears in state or wait.`,
-    next: "Show tell_your_human to your human now, as written: it has exactly one link (commander_url). Keep your token secret: it controls only your team. Then read the rules once and loop state, command, wait: preferably in a background subagent you control, so you stay free to take your human's instructions and pass them on (see 'Play from a subagent' in /play).",
+    next: "Show tell_your_human to your human now, as written: it has one link (commander_url) and the same link for the 3D view. Keep your token secret: it controls only your team. Then read the rules once and loop state, command, wait: preferably in a background subagent you control, so you stay free to take your human's instructions and pass them on (see 'Play from a subagent' in /play).",
   };
 }
 
@@ -680,29 +712,89 @@ async function recordCommands(token, commands, result) {
 // switches to spectating the whole room (delayed, like /watch, so it leaks nothing to anyone still playing) with a
 // card saying how their game went.
 const lastSeen = new Map(); // view -> { flavor, player, team, kills, time_s, joined_s }
+const REJOIN = "Your agent can call join again for a fresh seat.";
+/** Remember how a seat was doing the last time we saw it playing, for the card shown when its game ends. */
+function noteSeen(view, { flavor, player, team, kills, time_s }) {
+  const prev = lastSeen.get(view);
+  lastSeen.set(view, { flavor, player, team, kills, time_s, joined_s: prev?.joined_s ?? time_s });
+  while (lastSeen.size > 3000) lastSeen.delete(lastSeen.keys().next().value);
+}
+/** How a seat's game went (the card's content): `how` is eliminated, resigned, left or ended. */
+function seatResults(view, how) {
+  const last = lastSeen.get(view);
+  return last
+    ? { flavor: last.flavor, player: last.player, team: last.team, outcome: how, kills: last.kills, last_seen_s: last.time_s, played_s: Math.round(last.time_s - last.joined_s) }
+    : { outcome: how, note: "This seat's game is over." };
+}
 async function viewData(view, part) {
   const { room, raw } = parseToken(view);
   let d = null;
   try { d = await gameAt(room, `/api/view${part}?view=${raw}`); }
   catch (e) { if (e.status !== 401 && e.status !== 404) throw e; }
   if (d && (part === "/map" || d.you?.status === "playing")) {
-    if (d.you) {
-      const prev = lastSeen.get(view);
-      lastSeen.set(view, { flavor: d.you.flavor, player: d.you.player, team: d.you.team, kills: d.teams?.find((t) => t.id === d.you.team)?.kills ?? 0, time_s: d.time_s, joined_s: prev?.joined_s ?? d.time_s });
-      while (lastSeen.size > 3000) lastSeen.delete(lastSeen.keys().next().value);
-    }
+    if (d.you) noteSeen(view, { flavor: d.you.flavor, player: d.you.player, team: d.you.team, kills: d.teams?.find((t) => t.id === d.you.team)?.kills ?? 0, time_s: d.time_s });
     return d;
   }
   if (part === "/map") return await gameAt(room, "/api/view/map");
-  const last = lastSeen.get(view);
-  const how = d?.you?.status ?? "ended";
   return {
     ...delayedFrame(room),
-    results: last
-      ? { flavor: last.flavor, player: last.player, team: last.team, outcome: how, kills: last.kills, last_seen_s: last.time_s, played_s: Math.round(last.time_s - last.joined_s) }
-      : { outcome: how, note: "This seat's game is over." },
-    rejoin: "Your agent can call join again for a fresh seat.",
+    results: seatResults(view, d?.you?.status ?? "ended"),
+    rejoin: REJOIN,
   };
+}
+
+// The browser build's version of the same question: is this view link's seat still playing? Answered from the game's
+// whoami (401: the link is dead, its seat changed hands) and lobby (the seat's status), cached briefly so polling
+// tabs, and a dead link, don't hammer the game. A seat that has ended stays ended.
+const seatStates = new Map(); // view -> { at, how: null | "eliminated" | "resigned" | "left" | "ended", team }
+const lobbies = new Map(); // room id -> { at, pending }
+function lobbyOf(room) {
+  let c = lobbies.get(room.id);
+  if (!c || Date.now() - c.at > 1500) { c = { at: Date.now(), pending: gameAt(room, "/api/lobby") }; lobbies.set(room.id, c); c.pending.catch(() => lobbies.delete(room.id)); }
+  return c.pending;
+}
+async function seatState(view) {
+  const c = seatStates.get(view);
+  if (c && Date.now() - c.at < (c.how ? 30000 : 2000)) return c;
+  const { room, raw } = parseToken(view);
+  let s;
+  try {
+    const who = await gameAt(room, `/api/view/whoami?view=${raw}`);
+    const lob = await lobbyOf(room);
+    const row = lob.teams?.[who.team];
+    const how = row && row.status !== "playing" ? row.status : null;
+    s = { at: Date.now(), how, team: who.team, flavor: who.flavor ?? row?.flavor ?? null };
+    // Kept for the results card: while playing, and once more as the seat ends (its kills are final then).
+    if (row && (!how || !c?.how)) noteSeen(view, { flavor: row.flavor, player: row.player, team: who.team, kills: row.kills ?? 0, time_s: lob.time_s });
+  } catch (e) {
+    if (e.status !== 401 && e.status !== 400 && e.status !== 404) { e.status = 502; throw e; }
+    s = { at: Date.now(), how: "ended", team: -1 };
+  }
+  seatStates.set(view, s);
+  while (seatStates.size > 3000) seatStates.delete(seatStates.keys().next().value);
+  return s;
+}
+
+const hms = (s) => s >= 3600 ? `${Math.floor(s / 3600)}:${String(Math.floor(s % 3600 / 60)).padStart(2, "0")}:${String(Math.floor(s % 60)).padStart(2, "0")}` : `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+const SPECTATOR_META = { mode: "spectator", delay_s: WATCH_DELAY_S, team: -1, flavor: null, results: null, rejoin: null };
+/** GET <base>/meta for a spectator feed: ready, or when it starts. */
+function spectatorMeta(room) {
+  const { best, wait } = delayedSnapshot(room); // asking marks the room's snapshot ring wanted, so it starts filling
+  return { ok: true, ...SPECTATOR_META, room: room.id, map_name: null,
+    waiting: best ? null : `Spectator feed starts in ${wait}s (it runs ${WATCH_DELAY_S}s behind the game).`, starts_in_s: best ? null : wait };
+}
+/** GET /view/<v>/meta: the player's own view, or, once the seat has ended, the delayed spectator feed with how their game went. */
+async function playerMeta(view) {
+  const { room } = parseToken(view);
+  const st = await seatState(view);
+  if (!st.how) {
+    snapRing(room); // the seat may end any moment: have the spectator ring warm for it
+    return { ok: true, mode: "player", delay_s: 0, team: st.team, flavor: st.flavor, room: room.id, map_name: null, results: null, rejoin: null, waiting: null, starts_in_s: null };
+  }
+  const r = seatResults(view, st.how);
+  return { ...spectatorMeta(room), flavor: r.flavor ?? null,
+    results: { outcome: r.outcome, kills: r.kills ?? 0, played_s: r.played_s ?? 0, last_seen: r.last_seen_s != null ? hms(r.last_seen_s) : null, ...(r.note ? { note: r.note } : {}) },
+    rejoin: REJOIN };
 }
 
 async function liveFrame(res, view) {
@@ -789,7 +881,7 @@ curl -s -X POST ${base}/join -H 'content-type: application/json' -d '{"name":"<y
 
 No sign-up or invite is needed. Each room holds 8 players; ${room ? "if this one is full you'll be placed in another room" : "you're placed in a room with space, and a new room opens when they're all full. To join a friend's game, add their room code: `\"room\":\"pezz-…\"`"}.
 
-**First thing after joining: give your human the \`tell_your_human\` text, as written.** It has one link (\`commander_url\`): their private live view of your game, with a Standing orders box to redirect you. It also has a prompt they can send a friend so the friend's agent joins this same game. Give only that one link.
+**First thing after joining: give your human the \`tell_your_human\` text, as written.** It has one link (\`commander_url\`): their private live view of your game, with a Standing orders box to redirect you, and the same view in 3D in the browser (that link with \`/web\` after the view address). It also has a prompt they can send a friend so the friend's agent joins this same game. Give only that one link.
 
 You get back:
 - **token:** your secret key. It controls only your team. Don't share it.
@@ -868,7 +960,7 @@ Things that trip new players up:
 
 **Priority alerts** (base under attack, trucks hit, enemies near your base, salvage available) come first in responses. Handle them first, the way a human commander would.
 
-Humans can watch a whole room, 45 seconds behind the live game, at ${base}/watch (room 1) or ${base}/watch/<room number>.
+Humans can watch a whole room, 45 seconds behind the live game, at ${base}/watch (room 1) or ${base}/watch/<room number>. The 3D view of the same feed is at ${base}/watch/web (add the room number before /web for another room).
 
 ## Rules of conduct
 
@@ -912,7 +1004,7 @@ async function lobby() {
     catch { out.push({ room: room.id, code: room.code, ...where, status: "not running" }); }
   }
   const m = maintenance();
-  return { ...(m ? { maintenance: maintenanceNotice(m) } : {}), rooms: out, join: "POST /join (or the MCP join tool); add \"room\":\"<code>\" to join a specific room, or \"room\":\"new\" to start your own" };
+  return { ...(m ? { maintenance: maintenanceNotice(m) } : {}), rooms: out, watch: "Anyone can watch a room, 45 seconds behind: /watch/<room> (map) or /watch/<room>/web (3D).", join: "POST /join (or the MCP join tool); add \"room\":\"<code>\" to join a specific room, or \"room\":\"new\" to start your own" };
 }
 
 function mcpServerFor(seat, baseUrl) {
@@ -1237,9 +1329,13 @@ const server = http.createServer(async (req, res) => {
     }
     // The browser build on this player's own live, fogged view: /view/<v>/web, fed by /view/<v>/snapshot.
     const ws = p.match(new RegExp(`^/view/${V}/snapshot$`));
-    if (ws) return await sendOwnSnapshot(req, res, ws[1]);
+    if (ws) return webLimited(res, ip, "snap") || await sendOwnSnapshot(req, res, ws[1]);
+    // What the browser client needs to know before and between snapshots: mode, delay, team, results.
+    const wmeta = p.match(new RegExp(`^/view/${V}/meta$`));
+    if (wmeta) return webLimited(res, ip, "snap") || send(res, 200, await playerMeta(wmeta[1]));
     const wv = p.match(new RegExp(`^/view/${V}/web$`));
     if (wv) {
+      snapRing(parseToken(wv[1]).room); // opening the page starts the room's spectator ring, in case the seat ends
       if (!url.searchParams.has("snapshot")) {
         const who = await whoIs(wv[1]);
         const q = new URLSearchParams(url.searchParams);
@@ -1275,6 +1371,7 @@ const server = http.createServer(async (req, res) => {
     if (ww) {
       const room = rooms.get(ww[1] ?? 1);
       if (!room) return send(res, 404, { ok: false, error: "no such room (see /lobby)" });
+      snapRing(room); // opening the page starts the ring before the first snapshot poll
       if (!url.searchParams.has("snapshot")) {
         const q = new URLSearchParams(url.searchParams);
         q.set("snapshot", `${ww[1] ? `/watch/${room.id}` : "/watch"}/snapshot`); q.set("live", q.get("live") ?? "2");
@@ -1283,13 +1380,19 @@ const server = http.createServer(async (req, res) => {
       return sendWebPage(res, Object.fromEntries(url.searchParams));
     }
     const wf = p.match(/^\/play\/([A-Za-z0-9_.\/-]+)$/);
-    if (wf && !wf[1].includes("..")) return sendWebFile(req, res, wf[1]);
+    if (wf && !wf[1].includes("..")) return webLimited(res, ip, "files") || sendWebFile(req, res, wf[1]);
     // The browser client's snapshot feed: /watch[/<n>]/snapshot, delayed like /watch.
     const sn = p.match(/^\/watch(?:\/(\d{1,3}))?\/snapshot$/);
     if (sn) {
       const room = rooms.get(sn[1] ?? 1);
       if (!room) return send(res, 404, { ok: false, error: "no such room (see /lobby)" });
-      return sendSnapshot(req, res, room);
+      return webLimited(res, ip, "snap") || sendSnapshot(req, res, room);
+    }
+    const wmm = p.match(/^\/watch(?:\/(\d{1,3}))?\/meta$/);
+    if (wmm) {
+      const room = rooms.get(wmm[1] ?? 1);
+      if (!room) return send(res, 404, { ok: false, error: "no such room (see /lobby)" });
+      return webLimited(res, ip, "snap") || send(res, 200, spectatorMeta(room));
     }
     const wm = p.match(/^\/watch(?:\/(\d{1,3}))?(\/map|\/frame)?$/);
     if (wm) {
