@@ -228,6 +228,7 @@ export const Command = z
     x: z.number().optional().describe("tile x"),
     y: z.number().optional().describe("tile y"),
     target: z.number().int().optional().describe("attack/capture: enemy entity id; repair/heal: your damaged unit/structure id; refuel: a pad or depot"),
+    until: z.string().optional().describe("attack on a structure: \"capturable\" to hold fire once it's at 50% health or less (and again if it's repaired), so an engineer can capture it"),
     transport: z.number().int().optional().describe("load: id of your apc or transport_chopper"),
     ore: z.enum(["iron_ore", "copper_ore", "crystal", "uranium", "any"]).optional().describe("harvest: which ore type the trucks should mine"),
     structure_id: z.number().int().optional().describe("rally/sell: your structure id; train: which of your barracks/factories the units come out of"),
@@ -286,7 +287,7 @@ export function registerPlayTools(server, getPlayer, beforeEach = async () => {}
     {
       description: "Issue one or more commands to your team in a single call. Each returns ok/error. Examples: " +
         '{"type":"build","structure":"power_plant"} (auto-placed), {"type":"train","unit":"light_tank","count":3}, ' +
-        '{"type":"attack_move","units":"idle","x":50,"y":50}, {"type":"attack","units":[12,13],"target":40}, ' +
+        '{"type":"attack_move","units":"idle","x":50,"y":50}, {"type":"attack","units":[12,13],"target":40} (add "until":"capturable" to stop at 50% for an engineer), ' +
         '{"type":"harvest","units":[3],"ore":"crystal"}, {"type":"survey","units":[29],"x":14,"y":100} (geological_surveyor: flags the deep deposits within 12 tiles as mining zones), {"type":"prospect","units":[29],"x":40,"y":40,"radius":40} (surveyors roam the area on their own: survey, flag, move on), {"type":"drill","units":[57],"zone":12} (drill_rig drives to mining zone 12 and deploys into a deep_mine; omit zone for the nearest free one), {"type":"deploy","units":[57]} (outpost_truck -> outpost, or drill_rig -> deep_mine on a flagged zone within 3 tiles), ' +
         '{"type":"move","units":[4,5,6],"x":60,"y":60,"together":true,"waypoints":[[70,60],[70,70]],"loop":false}, {"type":"set_retreat","units":"all","below_pct":30}, {"type":"refuel","units":[12]}, {"type":"repair","units":[61],"target":12} (repair truck), {"type":"heal","units":[70],"target":33} (medic), {"type":"load","units":[20,21],"transport":40}, {"type":"unload","units":[40]}, {"type":"capture","units":[52],"target":7} (engineer), {"type":"lay_mines","units":[60],"x":30,"y":30,"count":4}, {"type":"say","text":"gg"}, {"type":"propose_tech","name":"Lancer","base":"light_tank","weapon_from":"rocket_soldier","hp":360,"dry_run":true} (quote your own unit design; drop dry_run to research it, then train its key)',
       inputSchema: { commands: z.array(Command).min(1).max(40).describe("Commands to execute in order"), format: Format },

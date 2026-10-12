@@ -854,6 +854,7 @@ namespace Pez.Sim
             e.Order = o;
             e.OrderPos = pos;
             e.TargetId = target;
+            if (o != Order.Refuel) e.UntilCapturable = false; // a refuel trip picks the order back up as it was (FinishRefuel)
             e.Path = null;
             e.RepathTimer = 0;
             e.Dock = DockStep.None; e.DockAt = 0;
@@ -1124,8 +1125,9 @@ namespace Pez.Sim
                     {
                         var t = Get(e.TargetId);
                         if (t == null || t.Team == e.Team || !e.Def.Weapon.CanHit(t.Def)) { FinishOrder(e); break; }
-                        // A derrick is a landmark: march on it unseen, and open fire once it's in sight.
-                        if (t.Def.Key == "derrick" && !IsVisibleTo(e.Team, t)) { e.OrderPos = t.Center; Chase(e, t); break; }
+                        // A derrick is a landmark: march on it unseen, and open fire once it's in sight. So is a building to be
+                        // captured (it doesn't move): an attack_move there could shoot it down past capturable.
+                        if ((t.Def.Key == "derrick" || e.UntilCapturable) && !IsVisibleTo(e.Team, t)) { e.OrderPos = t.Center; Chase(e, t); break; }
                         if (!IsVisibleTo(e.Team, t))
                         {
                             // Lost sight of it: push to where it was last seen and fight whatever is there.
@@ -1135,6 +1137,8 @@ namespace Pez.Sim
                             break;
                         }
                         e.OrderPos = t.Center; // last known position
+                        // "until":"capturable": hold fire while an engineer could take it (and open up again if it's repaired).
+                        if (e.UntilCapturable && Capturable(t)) { e.Moving = false; e.Path = null; break; }
                         Engage(e, t);
                         break;
                     }
@@ -1365,7 +1369,10 @@ namespace Pez.Sim
             int old = t.Team;
             t.Team = e.Team;
             t.Rally = null;
-            t.LastAttackerTeam = -1; // its old owner's fire isn't the new owner's kill
+            // A capture is a capture: the engineer puts any fire out and patches it up to 50%, and whoever hurt it before
+            // has no claim on it (a fire burning on would hand the kill and salvage to a third team).
+            t.Burning = false; t.LastAttackerTeam = -1; t.LastAttackerId = 0;
+            t.Hp = MathF.Max(t.Hp, t.Def.MaxHp * CaptureThreshold);
             Teams[e.Team].KnownEnemyStructures.Remove(t.Id);
             if (old >= 0) Teams[old].Stats.StructuresLost++;
             Teams[e.Team].Stats.Count(t.Def.Key);
@@ -1582,7 +1589,7 @@ namespace Pez.Sim
             }
             float rate = e.Def.MaxHp * (0.003f + 0.009f * (1f - f / BurnBelow));
             // Whoever last hurt it set the fire: the kill (and the salvage) is theirs even if that unit has since died.
-            // Nobody else's: a fire on a building its own side captured, or one that was never hit by an enemy, is no one's kill.
+            // Nobody else's: a fire on a building never hit by an enemy (a capture forgets who hit it before) is no one's kill.
             int setBy = e.LastAttackerTeam >= 0 ? e.LastAttackerTeam : e.LastAttackerId != 0 ? Get(e.LastAttackerId)?.Team ?? -1 : -1;
             Damage(e, rate * Dt, null, setBy != e.Team ? setBy : -1, burn: true);
         }

@@ -180,7 +180,7 @@ namespace Pez.Sim
             if (e.IsStructure) o.Set("origin", new List<object> { e.Origin.X, e.Origin.Y });
             o.Put("build_progress", e.BuildProgress, 1f);
             if (e.Rally.HasValue) o.Set("rally", SnapIO.V(e.Rally.Value));
-            o.PutEnum("order", e.Order, Order.Idle).PutV("order_pos", e.OrderPos).PutV("guard_pos", e.GuardPos).Put("target", e.TargetId);
+            o.PutEnum("order", e.Order, Order.Idle).PutV("order_pos", e.OrderPos).PutV("guard_pos", e.GuardPos).Put("target", e.TargetId).Put("until_capturable", e.UntilCapturable);
             if (e.Path != null) o.Set("path", SnapIO.Vs(e.Path)).Put("path_idx", e.PathIdx);
             o.Put("cooldown", e.Cooldown).Put("speed_cap", e.SpeedCap).Put("group", e.Group, 0)
              .PutV("progress_pos", e.ProgressPos).Put("progress_at", e.ProgressAt).Put("ghost_until", e.GhostUntil).Put("progress_dist", e.ProgressDist);
@@ -220,7 +220,7 @@ namespace Pez.Sim
             if (d.Has("origin", out var og) && og is List<object> ol && ol.Count >= 2) e.Origin = new Int2(SnapIO.ToI(ol[0]), SnapIO.ToI(ol[1]));
             d.Load("build_progress", ref e.BuildProgress);
             if (d.Has("rally", out _)) { var r = default(Vec2); d.Load("rally", ref r); e.Rally = r; }
-            d.LoadEnum("order", ref e.Order); d.Load("order_pos", ref e.OrderPos); d.Load("guard_pos", ref e.GuardPos); d.Load("target", ref e.TargetId);
+            d.LoadEnum("order", ref e.Order); d.Load("order_pos", ref e.OrderPos); d.Load("guard_pos", ref e.GuardPos); d.Load("target", ref e.TargetId); d.Load("until_capturable", ref e.UntilCapturable);
             if (d.Has("path", out _)) { e.Path = SnapIO.ToVecs(d.Arr("path")); d.Load("path_idx", ref e.PathIdx); }
             d.Load("cooldown", ref e.Cooldown); d.Load("speed_cap", ref e.SpeedCap); d.Load("group", ref e.Group);
             d.Load("progress_pos", ref e.ProgressPos); d.Load("progress_at", ref e.ProgressAt); d.Load("ghost_until", ref e.GhostUntil); d.Load("progress_dist", ref e.ProgressDist);

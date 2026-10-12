@@ -52,7 +52,7 @@ namespace Pez.Headless
         /// </summary>
         static readonly Dictionary<Type, string> SavedFields = new Dictionary<Type, string>
         {
-            [typeof(Entity)] = "Id Team Def Pos PrevPos Facing TurretFacing Hp Dead Origin BuildProgress Rally Order OrderPos GuardPos TargetId Path PathIdx Cooldown " +
+            [typeof(Entity)] = "Id Team Def Pos PrevPos Facing TurretFacing Hp Dead Origin BuildProgress Rally Order OrderPos GuardPos TargetId UntilCapturable Path PathIdx Cooldown " +
                 "SpeedCap Group ProgressPos ProgressAt GhostUntil ProgressDist Waypoints WaypointLoop RetreatBelow Retreating RepathTimer Moving LastAttackerId LastHitTime " +
                 "LastCallForHelp LastAttackerTeam Responding HomePos Cargo CargoType HarvestType HarvestTile WorkTimer Burning Dock DockAt DepositId Working Offline CarrierId Passengers Fuel Landed Stranded " +
                 "FuelCap AtDepot FuelWarned NoAutoRefuelUntil ResumeOrder ResumePos ResumeGuard ResumeTarget ResumeWaypoints ResumeSpeedCap MineQueue LastFiredAt " +
@@ -119,6 +119,9 @@ namespace Pez.Headless
             var r1 = Commands.Execute(w, 2, Cmd("type", "move", "units", new[] { tank.Id }, "x", hq.Center.X - 12, "y", hq.Center.Y + 4,
                 "waypoints", new List<object> { new List<object> { (double)hq.Center.X - 14, (double)hq.Center.Y + 10 }, new List<object> { (double)hq.Center.X - 6, (double)hq.Center.Y + 12 } }, "loop", true));
             Commands.Execute(w, 2, Cmd("type", "set_retreat", "units", new[] { tank.Id }, "below_pct", 30));
+            var sieger = w.SpawnUnit(2, "heavy_tank", factory);
+            var foeBase = w.Owned(0).First(e => e.IsStructure);
+            w.SetOrder(sieger, Order.Attack, foeBase.Center, foeBase.Id); sieger.UntilCapturable = true;
             var stranded = w.SpawnUnit(2, "heavy_tank", factory);
             stranded.Fuel = 0; stranded.Stranded = true;
             var apc = w.SpawnUnit(2, "apc", factory);
@@ -175,6 +178,8 @@ namespace Pez.Headless
             var tank2 = b.Get(tank.Id);
             Check(tank2 != null && tank2.Waypoints.Count == tank.Waypoints.Count && tank2.WaypointLoop && tank2.RetreatBelow == tank.RetreatBelow && tank2.Order == tank.Order &&
                   (tank.Path == null) == (tank2.Path == null), $"a patrolling tank keeps its order, waypoints, loop and retreat setting ({tank2?.OrderName}, {tank2?.Waypoints.Count} waypoints)");
+            var sg2 = b.Get(sieger.Id);
+            Check(sg2 != null && sg2.Order == Order.Attack && sg2.TargetId == foeBase.Id && sg2.UntilCapturable, $"an attack told to stop at capturable still will ({sg2?.OrderName})");
             var gs2 = b.Get(gunship.Id);
             Check(gs2 != null && gs2.Fuel == gunship.Fuel && gs2.Order == gunship.Order && gs2.ResumeOrder == gunship.ResumeOrder, $"an aircraft keeps its fuel and refuel trip ({gs2?.Fuel:0.0}s, {gs2?.OrderName})");
             Check(b.Get(stranded.Id)?.Stranded == true && b.Get(apc.Id)?.Passengers.Count == 2 && b.Get(apc.Passengers[0])?.CarrierId == apc.Id, "stranded vehicles and transport passengers survive");

@@ -23,6 +23,7 @@ namespace Pez.Headless
             ConstructionTruck();
             MatchClock();
             Derricks();
+            AttackUntilCapturable();
             DefenceUpkeep();
         }
 
@@ -72,6 +73,43 @@ namespace Pez.Headless
             t2.Stock["steel"] = 0;
             Run(w2, 30);
             Check(w2.Defences(0).All(x => !x.Offline) && t2.Stats.UpkeepPaid == 0, "a base can always defend itself: the first 4 defences are free and never go offline");
+        }
+
+        /// <summary>attack "until":"capturable": units hold fire at 50% so a commander with slow replies can still land the capture.</summary>
+        static void AttackUntilCapturable()
+        {
+            var w = new World(2, 7, 96);
+            foreach (var u in w.Entities.Where(e => !e.IsStructure).ToList()) w.Remove(u);
+            var d = w.Derricks.First();
+            d.Team = 1;
+            var hq0 = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var tanks = Enumerable.Range(0, 3).Select(i => At(w.SpawnUnit(0, "heavy_tank", hq0), d.Center + new Vec2(4, i - 1f))).ToList();
+            var ids = tanks.Select(t => t.Id).ToArray();
+            w.UpdateVisibility();
+            var r = Commands.Execute(w, 0, Cmd("type", "attack", "units", ids, "target", d.Id, "until", "capturable"));
+            Run(w, 40);
+            float held = d.Hp;
+            Run(w, 5);
+            Check(Ok(r) && d.Hp <= d.Def.MaxHp * World.CaptureThreshold && d.Hp >= d.Def.MaxHp * World.BurnBelow && d.Hp == held && tanks.All(t => t.Order == Order.Attack && t.UntilCapturable),
+                  $"attack until capturable: heavy tanks stop at 50%, short of the fire, and stand by ({Said(r)}; hp {d.Hp:0}/{d.Def.MaxHp})");
+            d.Hp = d.Def.MaxHp * 0.6f;
+            Run(w, 10);
+            Check(d.Hp <= d.Def.MaxHp * World.CaptureThreshold && d.Hp >= d.Def.MaxHp * World.BurnBelow, $"repaired above 50%, they open up again and stop again ({d.Hp:0}/{d.Def.MaxHp})");
+
+            var foe = At(w.SpawnUnit(1, "light_tank", w.Owned(1).First(e => e.IsStructure)), d.Center + new Vec2(4, 2.5f));
+            w.UpdateVisibility();
+            var again = Commands.Execute(w, 0, Cmd("type", "attack", "units", ids, "target", d.Id, "until", "capturable"));
+            var unit = Commands.Execute(w, 0, Cmd("type", "attack", "units", ids, "target", foe.Id, "until", "capturable"));
+            var bad = Commands.Execute(w, 0, Cmd("type", "attack", "units", ids, "target", d.Id, "until", "dead"));
+            w.Remove(foe);
+            Check(!Ok(again) && Said(again).Contains("capture it now") && !Ok(unit) && Said(unit).Contains("only structures") && !Ok(bad) && tanks.All(t => t.Order == Order.Attack && t.TargetId == d.Id),
+                  $"refused, orders unchanged: a target already capturable ({Said(again)}), a unit ({Said(unit)}), an unknown until ({Said(bad)})");
+
+            var eng = At(w.SpawnUnit(0, "engineer", hq0), d.Center + new Vec2(1.6f, 0.4f));
+            var rc = Commands.Execute(w, 0, Cmd("type", "capture", "units", new[] { eng.Id }, "target", d.Id));
+            Run(w, 5);
+            Check(Ok(rc) && d.Team == 0 && d.Hp == d.Def.MaxHp * World.CaptureThreshold && tanks.All(t => t.Order == Order.Idle && !t.UntilCapturable),
+                  $"the engineer takes it at 50% and the tanks stand down ({Said(rc)})");
         }
 
         static void Derricks()
@@ -511,19 +549,24 @@ namespace Pez.Headless
             Check(depot.Dead && w3.Teams[0].Stats.Kills == k0 + 1 && w3.Teams[0].Stats.SalvageLeft - salv0 == 62,
                   $"a building burned down by a fire an enemy set is that enemy's kill, and leaves salvage, even after the attacker died ({w3.Teams[0].Stats.SalvageLeft - salv0} iron ore)");
 
-            // A building the attacker then captured and let burn: its own now, so no kill and no salvage.
-            var w4 = new World(2, 7, 96);
+            // A burning building captured: the engineer puts the fire out and patches it up to 50%, and whoever hit it before
+            // (here a third team's tank, still alive) has no claim on it: no fire burns on to hand them the kill.
+            var w4 = new World(3, 7, 96);
             foreach (var u in w4.Owned(1).Where(e => !e.IsStructure).ToList()) w4.Remove(u); // nobody of the old owner's shoots at it
             var b4 = w4.SpawnStructure(1, "power_plant", w4.FindPlacement(1, "power_plant").Value, 1f);
-            var t4 = At(w4.SpawnUnit(0, "light_tank", w4.Owned(0).First(e => e.IsStructure)), b4.Center + new Vec2(5, 0));
+            var t4 = At(w4.SpawnUnit(2, "light_tank", w4.Owned(2).First(e => e.IsStructure)), b4.Center + new Vec2(5, 0));
             w4.Hurt(b4, b4.Def.MaxHp * 0.8f, t4);
+            At(t4, w4.Teams[2].StartPos); // gone home, alive
+            Run(w4, 1);
+            bool burning4 = b4.Burning;
             var eng = At(w4.SpawnUnit(0, "engineer", w4.Owned(0).First(e => e.IsStructure)), b4.Center + new Vec2(1.6f, 0));
             w4.SetOrder(eng, Order.Capture, b4.Center, b4.Id);
             Run(w4, 3);
-            int ore4 = OreNear(w4, b4.Center, 3).Sum(), kills4 = w4.Teams[0].Stats.Kills;
+            Check(burning4 && b4.Team == 0 && !b4.Burning && b4.Hp == b4.Def.MaxHp * World.CaptureThreshold && b4.LastAttackerId == 0 && b4.LastAttackerTeam == -1,
+                  $"capturing a burning building puts the fire out, lifts it to 50% and forgets who hit it (team {b4.Team}, burning {b4.Burning}, hp {b4.Hp}/{b4.Def.MaxHp}, last attacker #{b4.LastAttackerId})");
+            int kills4 = w4.Teams[2].Stats.Kills;
             Run(w4, 90);
-            Check(b4.Team == 0 && b4.Dead && OreNear(w4, b4.Center, 3).Sum() == ore4 && w4.Teams[0].Stats.Kills == kills4,
-                  $"capturing a building and letting it burn down is no kill and leaves no salvage (team {b4.Team}, dead {b4.Dead}, {OreNear(w4, b4.Center, 3).Sum() - ore4} ore)");
+            Check(!b4.Dead && b4.Team == 0 && w4.Teams[2].Stats.Kills == kills4 && !t4.Dead, "and it stands: no fire burns on to give a third team the kill");
 
             // A mining truck spills its load; salvage never lands on a tile of another ore, and never past the cap.
             var w5 = new World(2, 7, 96);

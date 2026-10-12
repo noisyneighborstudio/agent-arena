@@ -22,6 +22,7 @@ namespace Pez.Sim
       add ""waypoints"":[[x,y],...] to queue more points (x/y optional: the first waypoint is used), and ""loop"":true to patrol them
   {""type"":""set_retreat"", ""units"":[IDS], ""below_pct"":30}  units pull back to base on their own below that HP % (0 = off)
   {""type"":""attack"", ""units"":[IDS], ""target"":ID}     focus fire on a visible enemy
+      add ""until"":""capturable"" (structures only) to hold fire once it's at 50% health or less, so an engineer can capture it; they open up again if it's repaired
   {""type"":""stop"", ""units"":[IDS]}
   {""type"":""harvest"", ""units"":[IDS], ""x"":X, ""y"":Y}  send mining trucks to ore near x,y (they stick to that ore type)
   {""type"":""harvest"", ""units"":[IDS], ""ore"":""crystal""}  send mining trucks to the nearest ore of a type (iron_ore, copper_ore, crystal, uranium; ""any"" to reset)
@@ -30,7 +31,7 @@ namespace Pez.Sim
   {""type"":""heal"", ""units"":[IDS], ""target"":ID}       medics heal a wounded friendly infantry unit (free); same as repair
   {""type"":""load"", ""units"":[INFANTRY IDS], ""transport"":ID}   infantry walk to an APC / transport_chopper and board it
   {""type"":""unload"", ""units"":[TRANSPORT IDS]}          drop all passengers where the transport is
-  {""type"":""capture"", ""units"":[ENGINEER IDS], ""target"":ID}  engineer takes over an enemy structure below 50% HP, or a neutral derrick at any HP (engineer is used up); for a derrick, ""x"",""y"" of its site works instead of the id (ids change when one is rebuilt)
+  {""type"":""capture"", ""units"":[ENGINEER IDS], ""target"":ID}  engineer takes over an enemy structure below 50% HP, or a neutral derrick at any HP (engineer is used up; it puts out any fire and patches the building up to 50%); for a derrick, ""x"",""y"" of its site works instead of the id (ids change when one is rebuilt)
   {""type"":""lay_mines"", ""units"":[MINELAYER IDS], ""x"":X, ""y"":Y, ""count"":N}  lay up to 8 hidden mines around x,y (30 steel each)
   {""type"":""deploy"", ""units"":[IDS]}                   deploy an outpost_truck into an Outpost or a construction_truck into a Command Center where it stands, or a drill_rig into a Deep Mine on a surveyed deep deposit within 3 tiles
   {""type"":""survey"", ""units"":[SURVEYOR IDS], ""x"":X, ""y"":Y}  survey one spot for deep ore deposits (8s, 12-tile radius), flag each one found as a mining zone (only your team sees them), then wait
@@ -350,8 +351,16 @@ namespace Pez.Sim
             if (!w.IsVisibleTo(team, target) && target.Def.Key != "derrick") return Err("target is not currently visible; use attack_move toward its last known position");
             var able = units.Where(u => u.Def.Weapon.CanHit(target.Def)).ToList();
             if (able.Count == 0) return Err($"none of those units can hit a {(target.IsAir ? "flying" : "ground")} {target.Def.Key}");
-            foreach (var u in able) w.SetOrder(u, Order.Attack, target.Center, target.Id);
-            return Ok($"{able.Count} unit(s) attacking {target.Def.Key} #{target.Id}" + (able.Count < units.Count ? $" ({units.Count - able.Count} can't hit it)" : ""));
+            // "until":"capturable": stop at 50% so an engineer can take it (heavy tanks blow through 50%-to-burning in seconds).
+            var until = c.Str("until");
+            if (until != null && until != "capturable") return Err($"until must be \"capturable\" (hold fire once the target is at 50% health or less), not '{until}'");
+            if (until != null && !target.IsStructure) return Err($"{target.Def.Key} #{target.Id} is a unit: only structures can be captured, so drop \"until\" to attack it");
+            // An unseen derrick's health isn't told: they march on it and judge on arrival, as an engineer does.
+            if (until != null && w.IsVisibleTo(team, target) && World.Capturable(target))
+                return Err($"{target.Def.Key} #{target.Id} is already at {StateView.Pct(target.Hp / target.Def.MaxHp)}% health: an engineer can capture it now (capture); drop \"until\" to destroy it instead");
+            foreach (var u in able) { w.SetOrder(u, Order.Attack, target.Center, target.Id); u.UntilCapturable = until != null; }
+            return Ok($"{able.Count} unit(s) attacking {target.Def.Key} #{target.Id}" + (able.Count < units.Count ? $" ({units.Count - able.Count} can't hit it)" : "") +
+                      (until != null ? "; they hold fire once it's at 50% health or less (and open up again if it's repaired): then capture it with an engineer" : ""));
         }
 
         static Entity OwnStructure(World w, int team, Dictionary<string, object> c)

@@ -33,6 +33,7 @@ namespace Pez.Sim
         public Vec2 OrderPos;
         public Vec2 GuardPos;
         public int TargetId;
+        public bool UntilCapturable;  // attack "until":"capturable": hold fire while an engineer could take the target
         public List<Vec2> Path;
         public int PathIdx;
         public float Cooldown;

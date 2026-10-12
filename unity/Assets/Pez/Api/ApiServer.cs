@@ -620,7 +620,7 @@ namespace Pez.Api
                     }
                     else eo.Remove("order_pos");
                     foreach (var k in new[] { "rally", "waypoints", "waypoint_loop", "resume_order", "resume_pos", "resume_guard", "resume_target", "resume_waypoints",
-                                              "mine_queue", "home_pos", "harvest_tile", "prospect_center", "prospect_radius", "skip_sites", "passengers", "retreat_below", "fuel", "fuel_cap" })
+                                              "mine_queue", "home_pos", "harvest_tile", "prospect_center", "prospect_radius", "skip_sites", "passengers", "retreat_below", "fuel", "fuel_cap", "until_capturable" })
                         eo.Remove(k);
                     eo["guard_pos"] = eo["pos"];
                     keep.Add(eo);
