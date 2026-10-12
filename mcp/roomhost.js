@@ -17,7 +17,8 @@
 //
 // API (all under /k/<secret>):
 //   GET    /host                       name, region, platform, capacity, load, rooms
-//   POST   /rooms        {id, resume}  start a room (resume: from the snapshot this host holds for that id)
+//   POST   /rooms        {id, resume, match_hours, min_players}  start a room (resume: from the snapshot this host holds
+//                                     for that id, which carries its config; else a new waiting room with these options)
 //   DELETE /rooms/<id>                 save and stop a room (its snapshot stays, for a later resume or a move)
 //   GET    /rooms/<id>/snapshot        the room's saved game (saves first), for moving it to another host
 //   PUT    /rooms/<id>/snapshot        receive a saved game; POST /rooms {id, resume:true} then picks it up
@@ -62,7 +63,7 @@ async function alive(port) {
   try { return (await fetch(`http://127.0.0.1:${port}/api/status`, { signal: AbortSignal.timeout(1500) })).ok; } catch { return false; }
 }
 
-async function launch(id, resume) {
+async function launch(id, resume, opts = {}) {
   let port = BASE_PORT;
   const used = new Set([...rooms.values()].map((r) => r.port));
   while (used.has(port) || await alive(port)) port++;
@@ -76,7 +77,8 @@ async function launch(id, resume) {
   fs.mkdirSync(LOGS, { recursive: true });
   const out = fs.openSync(path.join(LOGS, `room-${id}.log`), "a");
   const seed = String(1 + (randomBytes(4).readUInt32BE() % 1e9));
-  const args = ["--port", String(port), "--open", "--controllers", "ai", "--seed", seed, resume ? "--resume" : "--fresh"];
+  const args = ["--port", String(port), "--open", "--controllers", "ai", "--seed", seed, resume ? "--resume" : "--fresh",
+    ...(opts.match_hours ? ["--match-hours", String(Number(opts.match_hours))] : []), ...(opts.min_players ? ["--min-players", String(Number(opts.min_players))] : [])];
   const [cmd, argv] = ENGINE.endsWith(".dll") ? ["dotnet", [ENGINE, ...args]] : [ENGINE, args];
   const proc = spawn(cmd, argv, { detached: true, stdio: ["ignore", out, out] });
   proc.unref();
@@ -151,7 +153,7 @@ const server = http.createServer(async (req, res) => {
       if (!Number.isInteger(id) || id < 1) return send(res, 400, { ok: false, error: "id is required" });
       if (rooms.has(id)) return send(res, 200, { ok: true, id, port: rooms.get(id).port, already: true });
       if (rooms.size >= CAPACITY) return send(res, 503, { ok: false, error: `${NAME} is full (${CAPACITY} rooms)` });
-      const r = await launch(id, !!b.resume);
+      const r = await launch(id, !!b.resume, b.resume ? {} : b);
       return send(res, 200, { ok: true, id, port: r.port });
     }
     const rm = /^\/rooms\/(\d+)(?:\/(.*))?$/.exec(p);

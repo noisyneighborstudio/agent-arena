@@ -1,9 +1,10 @@
 // Rooms: each room is one game with up to 8 seats. Room 1 is the host's game (the Unity app, which also renders
-// high-res live views). When every room is full, the next join opens a new room: on a room host (mcp/roomhost.js on
+// high-res live views). When no room can take a join (placementOrder), it opens a new room: on a room host (mcp/roomhost.js on
 // any tailnet machine, preferring the player's region, then the least loaded), or failing that a headless engine on
 // this machine. A room shuts down after it has had no outside players for a while. Each room has a short code: a
 // player hands it to a friend, and the friend's agent joins the same game with it. Codes pick a room; they aren't
-// secrets.
+// secrets. A room opened by a join waits, frozen, until min_players outside agents are in (the engine's waiting state);
+// a private one is left out of placement and listed without its code.
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -38,12 +39,26 @@ export function regionOf(country) {
 }
 const sameRegion = (hostRegion, region) => !!region && String(hostRegion ?? "").toLowerCase().startsWith(region);
 
+const ROOM_FIELDS = ["id", "code", "kind", "host", "region", "port", "pid", "createdAt", "announced", "private", "matchHours", "minPlayers"];
+
+/**
+ * Where a join with no code goes, given each room's lobby entry: a public playing room that isn't late (a late joiner
+ * can't win on points), then a public waiting room; never one closing or showing results. Among those, the one with more
+ * active outside players first, then more time left before sudden death.
+ */
+const activeOutside = (x) => (x.teams ?? []).filter((t) => !t.house && t.active).length;
+const byPull = (a, b) => (activeOutside(b) - activeOutside(a)) || ((b.sudden_death_in_s ?? 0) - (a.sudden_death_in_s ?? 0));
+export function placementOrder(entries) {
+  const open = entries.filter((x) => !x.private && x.joinable);
+  return [...open.filter((x) => x.status === "playing" && x.verdict !== "late").sort(byPull), ...open.filter((x) => x.status === "waiting").sort(byPull)];
+}
+
 export class Rooms {
   /**
    * @param {object} o
    * @param {string} o.hostGame   room 1's game API (the Unity app)
    * @param {string} o.hostFrames room 1's frame server (per-player live renders)
-   * @param {string} o.engine     the headless engine (dll) that local rooms run, when no room host has space
+   * @param {string} o.engine     the headless engine (a dll, or a self-contained executable) that local rooms run, when no room host has space
    * @param {string} o.stateFile  where room codes and running rooms are remembered across restarts
    * @param {string} o.hostsFile  room hosts: [{name, url, region}] (arena/roomhost.sh writes it)
    */
@@ -103,7 +118,7 @@ export class Rooms {
 
   save() {
     const data = { hostCode: this.get(1).code, hostAnnounced: this.get(1).announced ?? null,
-      rooms: this.all().filter((r) => r.kind !== "host").map(({ id, code, kind, host, region, port, pid, createdAt, announced }) => ({ id, code, kind, host, region, port, pid, createdAt, announced })) };
+      rooms: this.all().filter((r) => r.kind !== "host").map((r) => Object.fromEntries(ROOM_FIELDS.map((k) => [k, r[k]]))) };
     try {
       fs.mkdirSync(path.dirname(this.stateFile), { recursive: true, mode: 0o700 });
       fs.writeFileSync(this.stateFile, JSON.stringify(data), { mode: 0o600 });
@@ -111,11 +126,13 @@ export class Rooms {
   }
 
   /** Start a local room's headless engine on its port (resume: from its saved game) and wait until it answers. */
-  async launch(id, port, resume) {
+  async launch(id, port, resume, flags = []) {
     fs.mkdirSync(this.logDir, { recursive: true });
     const out = fs.openSync(path.join(this.logDir, `room-${id}.log`), "a");
     const seed = String(1 + (randomBytes(4).readUInt32BE() % 1e9));
-    const proc = spawn("dotnet", [this.engine, "--port", String(port), "--open", "--controllers", "ai", "--seed", seed, resume ? "--resume" : "--fresh"], { detached: true, stdio: ["ignore", out, out] });
+    const args = ["--port", String(port), "--open", "--controllers", "ai", "--seed", seed, resume ? "--resume" : "--fresh", ...flags];
+    // A .dll runs with dotnet; anything else (a self-contained pez-headless) runs as it is, as on room hosts.
+    const proc = spawn(...(this.engine.endsWith(".dll") ? ["dotnet", [this.engine, ...args]] : [this.engine, args]), { detached: true, stdio: ["ignore", out, out] });
     proc.unref();
     const game = `http://127.0.0.1:${port}`;
     for (let i = 0; i < 60 && !(await alive(game)); i++) await new Promise((r) => setTimeout(r, 250));
@@ -150,24 +167,26 @@ export class Rooms {
     return up[0]?.h ?? null;
   }
 
-  /** Open a new room and wait until its game answers. */
-  async spawn(region = null) {
+  /** Open a new room (a waiting room: match length and players to start as given) and wait until its game answers. */
+  async spawn(region = null, { matchHours = 4, minPlayers = 2, private: priv = false } = {}) {
+    const opts = { matchHours, minPlayers, private: priv };
     if (this.rooms.size >= this.maxRooms) { const e = new Error(`every room is full (${this.rooms.size} rooms of 8); try again later`); e.status = 503; throw e; }
     let id = 2; while (this.rooms.has(id)) id++;
     const host = await this.pickHost(region);
     let room;
     if (host) {
-      await call(`${host.url}/rooms`, { method: "POST", body: JSON.stringify({ id }), timeout: 60000 });
+      await call(`${host.url}/rooms`, { method: "POST", body: JSON.stringify({ id, match_hours: matchHours, min_players: minPlayers }), timeout: 60000 });
       this.hostInfo.delete(host.name);
-      room = { id, kind: "remote", host: host.name, region: host.region, game: `${host.url}/rooms/${id}`, frames: null, code: newCode(), createdAt: Date.now(), emptySince: Date.now() };
+      room = { id, kind: "remote", host: host.name, region: host.region, game: `${host.url}/rooms/${id}`, frames: null, code: newCode(), createdAt: Date.now(), emptySince: Date.now(), ...opts };
       this.log(`room ${id} started on ${host.name} (${host.region}, code ${room.code})`);
     } else {
       if (!this.localRooms) { const e = new Error("no room host has space right now; try again later"); e.status = 503; throw e; }
       let port = this.basePort + (id - 2) * 2;
       while (await alive(`http://127.0.0.1:${port}`)) port += 2;
-      const pid = await this.launch(id, port, false); // --fresh: never pick up an old room's game on this port
+      // --fresh: never pick up an old room's game on this port. (A resume needs no flags: the engine takes its config from its save.)
+      const pid = await this.launch(id, port, false, ["--match-hours", String(matchHours), "--min-players", String(minPlayers)]);
       if (!pid) throw new Error("couldn't start a new room");
-      room = { id, kind: "headless", host: "main", region: "us", game: `http://127.0.0.1:${port}`, frames: null, port, pid, code: newCode(), createdAt: Date.now(), emptySince: Date.now() };
+      room = { id, kind: "headless", host: "main", region: "us", game: `http://127.0.0.1:${port}`, frames: null, port, pid, code: newCode(), createdAt: Date.now(), emptySince: Date.now(), ...opts };
       this.log(`room ${id} started on port ${port} (pid ${pid}, code ${room.code})`);
     }
     this.rooms.set(id, room);
