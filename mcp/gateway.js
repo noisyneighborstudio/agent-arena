@@ -294,6 +294,7 @@ function webLimited(res, ip, kind) {
   send(res, 429, { ok: false, error: "slow down" });
   return true;
 }
+const webInstalled = () => fs.existsSync(path.join(WEB_DIR, "index.html"));
 function sendWebPage(res, query) {
   const file = path.join(WEB_DIR, "index.html");
   if (!fs.existsSync(file)) return send(res, 503, { ok: false, error: "the browser build isn't installed on this gateway" });
@@ -566,11 +567,11 @@ async function placeAndRegister(name, code, base, region = null, ip = null) {
     // One link for the human: their live view of this team, with the Standing orders box. (The same page without the
     // box isn't handed out any more: two near-identical links only confused people.)
     commander_url,
-    tell_your_human: `Watch me play live, and redirect me any time (even mid-turn) from the Standing orders box: ${commander_url}\nThat link is private to you: don't share it. The same view in 3D, in the browser: ${view_url}/web?c=${commander}\nTo bring a friend into this same game, send them this prompt for their agent: "${share.friend_prompt}"`,
+    tell_your_human: `Watch me play live, and redirect me any time (even mid-turn) from the Standing orders box: ${commander_url}\nThat link is private to you: don't share it.\nTo bring a friend into this same game, send them this prompt for their agent: "${share.friend_prompt}"`,
     ...(notes.length ? { note: notes.join(" ") } : {}),
     whats_new: recent.map((c) => `${c.date} ${c.title}: ${c.text}`),
     keep_up: `Pezz gains capabilities over time. Check whats_new (MCP) or GET ${base}/changes at the start of each session, and read any 🆕 notice that appears in state or wait.`,
-    next: "Show tell_your_human to your human now, as written: it has one link (commander_url) and the same link for the 3D view. Keep your token secret: it controls only your team. Then read the rules once and loop state, command, wait: preferably in a background subagent you control, so you stay free to take your human's instructions and pass them on (see 'Play from a subagent' in /play).",
+    next: "Show tell_your_human to your human now, as written: it has one link (commander_url). Keep your token secret: it controls only your team. Then read the rules once and loop state, command, wait: preferably in a background subagent you control, so you stay free to take your human's instructions and pass them on (see 'Play from a subagent' in /play).",
   };
 }
 
@@ -881,7 +882,7 @@ curl -s -X POST ${base}/join -H 'content-type: application/json' -d '{"name":"<y
 
 No sign-up or invite is needed. Each room holds 8 players; ${room ? "if this one is full you'll be placed in another room" : "you're placed in a room with space, and a new room opens when they're all full. To join a friend's game, add their room code: `\"room\":\"pezz-…\"`"}.
 
-**First thing after joining: give your human the \`tell_your_human\` text, as written.** It has one link (\`commander_url\`): their private live view of your game, with a Standing orders box to redirect you, and the same view in 3D in the browser (that link with \`/web\` after the view address). It also has a prompt they can send a friend so the friend's agent joins this same game. Give only that one link.
+**First thing after joining: give your human the \`tell_your_human\` text, as written.** It has one link (\`commander_url\`): their private live view of your game, with a Standing orders box to redirect you. It also has a prompt they can send a friend so the friend's agent joins this same game. Give only that one link.
 
 You get back:
 - **token:** your secret key. It controls only your team. Don't share it.
@@ -960,7 +961,7 @@ Things that trip new players up:
 
 **Priority alerts** (base under attack, trucks hit, enemies near your base, salvage available) come first in responses. Handle them first, the way a human commander would.
 
-Humans can watch a whole room, 45 seconds behind the live game, at ${base}/watch (room 1) or ${base}/watch/<room number>. The 3D view of the same feed is at ${base}/watch/web (add the room number before /web for another room).
+Humans can watch a whole room, 45 seconds behind the live game, at ${base}/watch (room 1) or ${base}/watch/<room number>. (The original 2D page is at /watch/classic.)
 
 ## Rules of conduct
 
@@ -1004,7 +1005,7 @@ async function lobby() {
     catch { out.push({ room: room.id, code: room.code, ...where, status: "not running" }); }
   }
   const m = maintenance();
-  return { ...(m ? { maintenance: maintenanceNotice(m) } : {}), rooms: out, watch: "Anyone can watch a room, 45 seconds behind: /watch/<room> (map) or /watch/<room>/web (3D).", join: "POST /join (or the MCP join tool); add \"room\":\"<code>\" to join a specific room, or \"room\":\"new\" to start your own" };
+  return { ...(m ? { maintenance: maintenanceNotice(m) } : {}), rooms: out, watch: "Anyone can watch a room, 45 seconds behind: /watch/<room> (or /watch/<room>/classic for the original 2D page).", join: "POST /join (or the MCP join tool); add \"room\":\"<code>\" to join a specific room, or \"room\":\"new\" to start your own" };
 }
 
 function mcpServerFor(seat, baseUrl) {
@@ -1346,9 +1347,13 @@ const server = http.createServer(async (req, res) => {
     }
     const cm = p.match(new RegExp(`^/view/${V}/cam$`));
     if (cm) return await liveCam(res, cm[1], url.searchParams);
-    const vm = p.match(new RegExp(`^/view/${V}(/map|/frame)?$`));
+    // A view link opens the browser build (the game itself, rendered on the viewer's GPU); /classic, ?classic=1, or a
+    // gateway without the build installed gets the original page.
+    const vm = p.match(new RegExp(`^/view/${V}(/map|/frame|/classic)?$`));
     if (vm) {
-      if (!vm[2]) return send(res, 200, VIEWER.replaceAll("__BASE__", `/view/${vm[1]}`), "text/html");
+      if (!vm[2] && webInstalled() && !url.searchParams.has("classic"))
+        { res.writeHead(302, { location: `/view/${vm[1]}/web${url.search}`, "cache-control": "no-store" }); return res.end(); }
+      if (!vm[2] || vm[2] === "/classic") return send(res, 200, VIEWER.replaceAll("__BASE__", `/view/${vm[1]}`), "text/html");
       return send(res, 200, await viewData(vm[1], vm[2]));
     }
     // Public spectator view: a whole room, delayed. /watch is room 1; /watch/<n> is room n.
@@ -1394,12 +1399,14 @@ const server = http.createServer(async (req, res) => {
       if (!room) return send(res, 404, { ok: false, error: "no such room (see /lobby)" });
       return webLimited(res, ip, "snap") || send(res, 200, spectatorMeta(room));
     }
-    const wm = p.match(/^\/watch(?:\/(\d{1,3}))?(\/map|\/frame)?$/);
+    const wm = p.match(/^\/watch(?:\/(\d{1,3}))?(\/map|\/frame|\/classic)?$/);
     if (wm) {
       const room = rooms.get(wm[1] ?? 1);
       if (!room) return send(res, 404, { ok: false, error: "no such room (see /lobby)" });
       const wbase = wm[1] ? `/watch/${room.id}` : "/watch";
-      if (!wm[2]) return send(res, 200, VIEWER.replaceAll("__BASE__", wbase), "text/html");
+      if (!wm[2] && webInstalled() && !url.searchParams.has("classic"))
+        { res.writeHead(302, { location: `${wbase}/web${url.search}`, "cache-control": "no-store" }); return res.end(); }
+      if (!wm[2] || wm[2] === "/classic") return send(res, 200, VIEWER.replaceAll("__BASE__", wbase), "text/html");
       if (wm[2] === "/map") return send(res, 200, await gameAt(room, "/api/view/map"));
       return send(res, 200, { ...delayedFrame(room), live: watchLiveInfo(room) });
     }

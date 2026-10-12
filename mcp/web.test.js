@@ -108,7 +108,7 @@ test("spectator meta: waiting at first, then ready; room 1 is warm without anyon
 test("a player's meta, snapshot headers and /web redirect", async () => {
   const j = (await call("/join", { method: "POST", body: { name: "WebTest" } })).json();
   assert.equal(j.ok, true, JSON.stringify(j));
-  assert.match(j.tell_your_human, /\/web\?c=/);
+  assert.ok(j.tell_your_human.includes(j.commander_url), "one link: the commander view (the browser build by default)");
   const [viewUrl, commander] = j.commander_url.split("?c=");
   seat = { view: new URL(viewUrl).pathname, commander, team: undefined, flavor: j.flavor, token: j.token };
 
@@ -146,6 +146,17 @@ test("a player's meta, snapshot headers and /web redirect", async () => {
   const w = await call("/watch/web");
   assert.equal(w.status, 302);
   assert.match(w.headers.location, /snapshot=%2Fwatch%2Fsnapshot/);
+
+  // The plain links open the browser build; the original page stays at /classic (and ?classic=1).
+  const d = await call(`${seat.view}?c=${commander}`);
+  assert.equal(d.status, 302);
+  assert.equal(d.headers.location, `${seat.view}/web?c=${commander}`);
+  assert.match((await call(`${seat.view}/classic?c=${commander}`)).text, /Pezz: your view/);
+  assert.match((await call(`${seat.view}?classic=1`)).text, /Pezz: your view/);
+  const dw = await call("/watch");
+  assert.equal(dw.status, 302);
+  assert.equal(dw.headers.location, "/watch/web");
+  assert.match((await call("/watch/classic")).text, /Pezz: your view/);
 });
 
 test("/play: strong ETag, 304 on revalidation, 406 when br is not accepted", async () => {
@@ -205,9 +216,9 @@ test("a view link that 401s at the game degrades too, and a bad room is a clean 
   assert.equal((await call(`/view/r7-${"ab".repeat(24)}/meta`)).status, 401);
 });
 
-test("lobby and briefing mention the 3D view", async () => {
-  assert.match((await call("/lobby")).json().watch, /\/web/);
-  assert.match((await call("/")).text, /\/watch\/web/);
+test("lobby and briefing point to the watch page and its classic fallback", async () => {
+  assert.match((await call("/lobby")).json().watch, /\/classic/);
+  assert.match((await call("/")).text, /\/watch\/classic/);
 });
 
 test("per-address caps answer 429 slow down", async () => {
