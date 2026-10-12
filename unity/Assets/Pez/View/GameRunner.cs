@@ -203,6 +203,7 @@ namespace Pez.View
             Camera = camGo.GetComponent<RtsCamera>();
             if (Camera == null) Camera = camGo.AddComponent<RtsCamera>();
             Camera.Follow = FollowPoint;
+            Camera.OverUi = m => Hud != null && Hud.enabled && Hud.IsOverUi(m);
 
             Input = gameObject.AddComponent<PlayerInput>();
             Input.Runner = this;

@@ -3,7 +3,7 @@ using UnityEngine;
 namespace Pez.View
 {
     /// <summary>
-    /// RTS camera: WASD/arrows/edge-pan, middle-drag pan, scroll zoom, Q/E rotate.
+    /// RTS camera: WASD/arrows/edge-pan, middle-drag pan (left drag too in the browser), scroll zoom, Q/E rotate.
     /// Default is the art pack's off-axis orthographic view (yaw 45°, pitch 55°): constant unit scale and two
     /// readable faces per building. In orthographic mode Distance is the half-height of the view in tiles.
     /// </summary>
@@ -58,6 +58,12 @@ namespace Pez.View
         public Camera Cam { get; private set; }
         Vector3 dragAnchor;
         bool dragging;
+        /// <summary>Is the mouse over the HUD (GameRunner sets it)? A browser left drag that starts there isn't a pan.</summary>
+        public System.Func<Vector2, bool> OverUi;
+        /// <summary>The last left press in the browser became a pan, so its release isn't a click.</summary>
+        public bool Panned { get; private set; }
+        Vector2 pressAt;
+        bool pressed;
 
         void Awake()
         {
@@ -108,6 +114,15 @@ namespace Pez.View
             // Middle-drag pans by grabbing the ground point.
             if (Input.GetMouseButtonDown(2)) { dragging = GroundPoint(Input.mousePosition, out dragAnchor); }
             if (Input.GetMouseButtonUp(2)) dragging = false;
+            // The browser only watches, and trackpads have no middle button: a left drag off the HUD pans there too.
+            // It starts past a few pixels, so a click still picks a unit.
+            if (GameRunner.IsWeb)
+            {
+                var mp = (Vector2)Input.mousePosition;
+                if (Input.GetMouseButtonDown(0)) { pressed = OverUi == null || !OverUi(mp); pressAt = mp; Panned = false; }
+                if (pressed && !Panned && (mp - pressAt).magnitude > 6f) Panned = dragging = GroundPoint(pressAt, out dragAnchor);
+                if (Input.GetMouseButtonUp(0)) { if (Panned) dragging = false; pressed = false; }
+            }
             if (dragging && !Following && GroundPoint(Input.mousePosition, out var now)) Focus += dragAnchor - now;
 
             Distance = Mathf.Clamp(Distance, MinDist, MaxDist); // the API and stream viewers can set it directly

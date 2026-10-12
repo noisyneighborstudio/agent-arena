@@ -48,7 +48,8 @@ namespace Pez.View
         {
             // Escape deselects (which also stops the camera following a unit), for players and spectators alike.
             if (Runner != null && !Runner.InMenu && !Hud.Typing && Input.GetKeyDown(KeyCode.Escape) && PlacingKey == null && !attackMoveArmed && !mineArmed) View.Selected.Clear();
-            if (Runner != null && !Runner.InMenu && Team < 0) { Dragging = false; ClearGhost(); Inspect(); return; }
+            // The browser only watches whichever team it shows: commands would only change its local copy of the game.
+            if (Runner != null && !Runner.InMenu && (Team < 0 || GameRunner.IsWeb)) { Dragging = false; ClearGhost(); Inspect(); return; }
             if (Runner == null || Runner.InMenu || Team < 0 || W.GameOver) { Dragging = false; ClearGhost(); return; }
             var mouse = (Vector2)Input.mousePosition;
             bool overUi = Runner.Hud != null && Runner.Hud.IsOverUi(mouse);
@@ -152,7 +153,9 @@ namespace Pez.View
         void Inspect()
         {
             var mouse = (Vector2)Input.mousePosition;
-            if (Hud.Typing || !Input.GetMouseButtonDown(0) || (Runner.Hud != null && Runner.Hud.IsOverUi(mouse))) return;
+            // In the browser a left drag pans the camera, so a pick waits for a release that didn't pan.
+            bool click = GameRunner.IsWeb ? Input.GetMouseButtonUp(0) && !Cam.Panned : Input.GetMouseButtonDown(0);
+            if (Hud.Typing || !click || (Runner.Hud != null && Runner.Hud.IsOverUi(mouse))) return;
             if (!Cam.GroundPoint(mouse, out var ground)) return;
             var p = WorldView.S(ground);
             Entity best = null; float bd = float.MaxValue;

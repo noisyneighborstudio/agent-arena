@@ -21,6 +21,7 @@ namespace Pez.View
         public bool Loaded { get; private set; }
         /// <summary>Point of view: a team's fog, or -1 for everything.</summary>
         public int Team = -1;
+        int askedTeam = -1;
 
         string url = "snapshot.json", error;
         float live;
@@ -74,7 +75,7 @@ namespace Pez.View
         {
             if (Query("snapshot") is string s && s.Length > 0) url = s;
             live = Mathf.Max(0f, Num("live", 0f));
-            Team = (int)Num("team", -1);
+            Team = askedTeam = (int)Num("team", -1);
             showFps = Query("fps") == "1";
             if (Query("cam") is string c)
             {
@@ -162,9 +163,13 @@ namespace Pez.View
             game.Restore(root);
             if (local > tick && local - tick <= 40) game.CatchUp(local, alpha); // time never runs backwards on screen (events up to here already played)
             double restoreMs = sw.Elapsed.TotalMilliseconds;
+            // The page's team may not be in this game (a seat from an earlier match, or not taken yet): watch everything until it is.
+            int team = askedTeam < game.World.Teams.Count ? askedTeam : -1;
+            if (team != Team) Debug.Log($"pez team: showing {(team < 0 ? "everything" : "team " + team)} (asked for {askedTeam}, the game has {game.World.Teams.Count})");
+            Team = team;
             sw.Restart();
-            // The same game: the view moves over to the new world. A different one (or the first): Update rebuilds the view.
-            bool rebound = sameGame && Runner.AdoptWorld(game.World);
+            // The same game: the view moves over to the new world. A different one, the first, or a new point of view: Update rebuilds the view.
+            bool rebound = sameGame && Team == Runner.HumanTeam && Runner.AdoptWorld(game.World);
             double rebindMs = sw.Elapsed.TotalMilliseconds;
             lastTick = tick;
             if (!Loaded)
