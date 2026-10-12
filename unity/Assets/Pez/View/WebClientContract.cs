@@ -67,7 +67,9 @@ namespace Pez.View
             commander = Query("c") is string c && c.Length > 0 ? c : null;
             DeriveBase();
             // Nothing else may fall to the page while its text box has focus; the bridge flips this when it does.
+#if UNITY_WEBGL
             if (GameRunner.IsWeb) WebGLInput.captureAllKeyboardInput = true;
+#endif
         }
 
         void StartContract()
@@ -285,7 +287,9 @@ namespace Pez.View
         /// <summary>Page hook: the box's text area gained (1) or lost (0) focus. While it has it Unity must not see keys.</summary>
         public void OnCommanderFocus(string focused)
         {
+#if UNITY_WEBGL
             if (GameRunner.IsWeb) WebGLInput.captureAllKeyboardInput = focused != "1";
+#endif
         }
     }
 
