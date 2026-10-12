@@ -62,7 +62,7 @@ namespace Pez.Headless
                 "SurfaceWarnedAt HomeOreWarned LastCommandAt Reserve SaveFor SaveForCost Stats",
             [typeof(World)] = "Map Paths MapVersion Open MaxPlayers MaxMapSize GrowStep SafeJoinDistance ProtectionSeconds Teams ById Entities Projectiles Events " +
                 "EventCounts Alerts Tick GameOver Winner Errors LastError nextId nextSeq seatCounter rng rateSnapshot airWarned StallGrace ArenaChampion contested Inventions GameId Regrown SuddenDeathAt DerrickRespawns " +
-                "| ErrorLog loggedErrors cells cellsW cellsH nearTarget nearHelp nearMine nearSep nearVis Showcase OreVersion oreDirty beingMined regrowNow scoreCache scoreCacheTick NextMatchIn derricksChecked groupSpan Mirror", // Showcase: the kitchen sink room is never saved (rebuilt from code); Mirror: set by the browser client on its copy
+                "| ErrorLog loggedErrors cells cellsW cellsH nearTarget nearHelp nearMine nearSep nearVis Showcase OreVersion oreDirty beingMined regrowNow scoreCache scoreCacheTick NextMatchIn derricksChecked groupSpan Mirror MirrorScores", // Showcase: the kitchen sink room is never saved (rebuilt from code); Mirror: set by the browser client on its copy
             [typeof(Invention)] = "Key Name Chassis WeaponFrom Summary Team Def ResearchCost ResearchTime Progress Novelty PriceFactor ProposedAt ResearchedAt Built Lost Kills",
             [typeof(Map)] = "W H Tiles Ore OreType Occupant Spawns Deep OreScale nextDepositId OreBase OreBaseType | writable fieldsChanged fieldTiles fieldRoots BaseMissing",
             [typeof(SimpleAI)] = "team Passive nextThink waveSize outpostTargets nextProspect prospectRadius knownSurface",
@@ -252,6 +252,8 @@ namespace Pez.Headless
             Check(cw.Errors == 0 && copy.World.Teams.Count == teams, $"the copy runs on for 20 s with no sim errors and seats no house AI of its own ({cw.LastError})");
             Check(!cw.Teams[1].Defeated && !cw.GameOver && !cw.Events.Any(e => e.Type == "defeated" || e.Type == "game_over"),
                   "a mirror doesn't decide the game: the rival it can't see isn't counted out");
+            var ms = Snapshot.Parse(json).Obj("world").Arr("mirror_scores");
+            Check(ms.Count == w.Scores().Count && ms.Count >= 2, $"a player's copy carries the server's scoreboard ({ms.Count} teams), which its fogged world can't count");
             var spec = Json.Write(ApiServer.ViewSnapshot(g));
             Check(Resume(spec).World.Get(hidden.Id) != null && !spec.Contains("Secret: rush"), "a spectator's copy still has everything but the orders");
         }

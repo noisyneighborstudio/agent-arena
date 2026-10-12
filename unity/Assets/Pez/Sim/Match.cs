@@ -114,8 +114,12 @@ namespace Pez.Sim
         /// a third each (100 points per component): territory (tiles within TerritoryReach of its finished structures),
         /// economy (ore mined, all game) and kills (the ore value of everything it destroyed). Recomputed at most once a second.
         /// </summary>
+        /// <summary>A mirror's scores as the server counted them (ApiServer.ViewSnapshot's "mirror_scores"), or null.</summary>
+        public List<MatchScore> MirrorScores;
+
         public List<MatchScore> Scores()
         {
+            if (Mirror && MirrorScores != null) return MirrorScores; // a fogged copy can't count rivals' territory: the server's own count
             if (scoreCache != null && Tick / TickRate == scoreCacheTick) return scoreCache;
             var playing = Teams.Where(t => !t.Left && !t.Defeated).ToList();
             var list = new List<MatchScore>();

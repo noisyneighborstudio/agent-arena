@@ -593,6 +593,10 @@ namespace Pez.Api
             }
             if (team < 0) return snap;
             var t0 = w.Teams[team];
+            // The scoreboard counts everyone's territory, ore and kills, which the fog hides: send the server's own count.
+            world["mirror_scores"] = w.Scores().Select(s => (object)new JObj().Set("team", s.Team).Set("name", s.Name).Set("player", s.Player)
+                .Set("territory", s.Territory).Set("ore_mined", s.OreMined).Set("kill_value", s.KillValue).Set("territory_points", s.TerritoryPoints)
+                .Set("economy_points", s.EconomyPoints).Set("kill_points", s.KillPoints).Set("score", s.Score)).ToList();
             if (world["entities"] is List<object> ents)
             {
                 var keep = new List<object>();

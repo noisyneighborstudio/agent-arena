@@ -261,17 +261,9 @@ namespace Pez.View
         // ---------------------------------------------------------------- the commander box (HTML overlay)
 
         Rect sentRect; bool sentVisible; int sentW, sentH; float sentAt = -10f;
-        static System.Reflection.MemberInfo hudRect;
 
-        /// <summary>The HUD's box in screen pixels. Read by name so this builds with or without the HUD's field.</summary>
-        Rect? HudBox()
-        {
-            var hud = Runner != null ? Runner.Hud : null;
-            if (hud == null) return null;
-            if (hudRect == null) hudRect = (System.Reflection.MemberInfo)typeof(Hud).GetField("CommanderBoxRect") ?? typeof(Hud).GetProperty("CommanderBoxRect");
-            object v = hudRect is System.Reflection.FieldInfo f ? f.GetValue(hud) : hudRect is System.Reflection.PropertyInfo p ? p.GetValue(hud) : null;
-            return v is Rect r ? r : (Rect?)null;
-        }
+        /// <summary>The HUD's box in screen pixels (top-left origin); zero when it has none (no code, folded, spectating).</summary>
+        Rect? HudBox() => Runner != null && Runner.Hud != null ? Runner.Hud.CommanderBoxRect : (Rect?)null;
 
         void UpdateContract()
         {
@@ -279,7 +271,7 @@ namespace Pez.View
             if (Status != loggedStatus) { loggedStatus = Status; Debug.Log("pez status: " + (Status ?? "ok")); }
             if (!GameRunner.IsWeb) return;
             bool show = CanCommand && Loaded && !Runner.InMenu;
-            var box = HudBox() ?? new Rect(12, Screen.height - 190, 340, 170); // (before the HUD names its own: bottom left)
+            var box = HudBox() ?? Rect.zero;
             if (box.width < 8 || box.height < 8) show = false;
             // Only when it moved, plus now and then in case the page re-laid itself out.
             if (show == sentVisible && (!show || (box == sentRect && sentW == Screen.width && sentH == Screen.height)) && Time.unscaledTime - sentAt < 2f) return;

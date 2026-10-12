@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using Pez.Sim;
 using UnityEngine;
 using UnityEngine.Networking;
@@ -210,6 +211,12 @@ namespace Pez.View
             sw.Restart();
             game.Restore(root);
             game.World.Mirror = true; // the server decides the game; this copy only shows it
+            game.World.MirrorScores = wd.Arr("mirror_scores").OfType<Dictionary<string, object>>().Select(s => new MatchScore
+            {
+                Team = (int)s.Num("team"), Name = s.Str("name"), Player = s.Str("player"), Territory = (int)s.Num("territory"),
+                OreMined = (int)s.Num("ore_mined"), KillValue = (int)s.Num("kill_value"), TerritoryPoints = (float)s.Num("territory_points"),
+                EconomyPoints = (float)s.Num("economy_points"), KillPoints = (float)s.Num("kill_points"), Score = (int)s.Num("score"),
+            }).ToList() is var ms && ms.Count > 0 ? ms : null;
             if (local > tick && local - tick <= 40) game.CatchUp(local, alpha); // time never runs backwards on screen (events up to here already played)
             double restoreMs = sw.Elapsed.TotalMilliseconds;
             // The page's team may not be in this game (a seat from an earlier match, or not taken yet): watch everything until it is.
