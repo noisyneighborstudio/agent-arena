@@ -36,6 +36,7 @@ import { Rooms, regionOf } from "./rooms.js";
 import { CHANGES, LATEST, changesFor } from "./changes.js";
 import * as inventions from "./inventions.js";
 import { chooseTeamName } from "./names.js";
+import { LookBroker, LOOK_MAX_BYTES } from "./browserlook.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const GAME = (process.env.PEZZ_GAME || "http://127.0.0.1:7777").replace(/\/$/, "");
@@ -478,10 +479,21 @@ function readBody(req) {
   });
 }
 
+/** The request body as bytes, capped: a longer one is refused as soon as it passes the cap (status 413). */
+function readRaw(req, cap) {
+  return new Promise((resolve, reject) => {
+    let size = 0; const chunks = [];
+    req.on("data", (c) => { size += c.length; if (size > cap) { const e = new Error(`request over ${cap} bytes`); e.status = 413; reject(e); req.destroy(); } else chunks.push(c); });
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+    req.on("error", reject);
+  });
+}
+
 /** A game client for one seat. Its address follows the room, which can move to another host mid-game. */
 function seatClient(room, raw) {
   const p = new Player(room.game, { token: raw }, room.frames);
   Object.defineProperty(p, "base", { get: () => room.game.replace(/\/$/, ""), configurable: true });
+  p.browserLook = (x, y) => lookViaBrowser(roomToken(room, raw), x, y);
   return p;
 }
 
@@ -603,10 +615,45 @@ async function whoIs(view) {
   let who = whoCache.get(view);
   if (!who || Date.now() - who.at > 10000) {
     const r = await gameAt(room, `/api/view/whoami?view=${raw}`); // 401 if the link is unknown or its seat changed hands
-    who = { team: r.team, at: Date.now() };
+    who = { team: r.team, seat: r.seat, at: Date.now() };
     whoCache.set(view, who);
   }
-  return { room, raw, team: who.team };
+  return { room, raw, team: who.team, seat: who.seat };
+}
+
+// ------------------------------------------------------------------ browser look
+// An agent's look is drawn by its human's own browser when that browser has the player's view page open
+// (/view/<v>/web): the page long-polls /view/<v>/look/next, renders offscreen, and uploads a JPEG to /view/<v>/look/<id>.
+// A view link proves the seat (it's private, and a dead seat's link is refused), so the upload needs nothing more. The
+// spectator pages (/watch...) have no such routes. The broker (browserlook.js) holds the queue; nothing is stored.
+const looks = new LookBroker({ waitMs: Number(process.env.PEZZ_LOOK_WAIT_MS) || undefined }); // (the env is for the tests)
+setInterval(() => looks.sweep(), 60000).unref();
+const lookKey = (room, seat) => `${room.id}:${seat}`;
+
+/** The agent's side: a JPEG from the seat's open view page, or null (none open, or it didn't answer in time). */
+async function lookViaBrowser(token, x, y) {
+  const { room } = parseToken(token);
+  const key = lookKey(room, (await seatOf(token)).seat);
+  return looks.available(key) ? await looks.request(key, x, y) : null;
+}
+
+/** The page's side: GET /view/<v>/look/next?after=<last id handled>, and POST /view/<v>/look/<id> with the JPEG. */
+async function lookRoute(req, res, view, which, q) {
+  const who = await whoIs(view); // 401 if the link is dead
+  if ((await seatState(view)).how) { looks.forget(lookKey(who.room, who.seat)); return send(res, 410, { ok: false, error: "this seat has ended; the page is watching as a spectator now" }); }
+  const key = lookKey(who.room, who.seat);
+  if (!allow(`look:${view}`, 4, 20)) { res.setHeader("retry-after", "2"); return send(res, 429, { ok: false, error: "slow down" }); }
+  if (which === "next") {
+    if (req.method !== "GET") return send(res, 405, { ok: false, error: "GET required" });
+    const ac = new AbortController();
+    res.on("close", () => ac.abort());
+    const r = await looks.next(key, Number(q.get("after")) || 0, ac.signal);
+    return res.writableEnded || res.destroyed ? undefined : send(res, 200, { ok: true, request: r });
+  }
+  if (req.method !== "POST") return send(res, 405, { ok: false, error: "POST required" });
+  if (Number(req.headers["content-length"]) > LOOK_MAX_BYTES) { res.setHeader("connection", "close"); return send(res, 413, { ok: false, error: `the image is over ${LOOK_MAX_BYTES} bytes` }); }
+  const done = looks.submit(key, Number(which), await readRaw(req, LOOK_MAX_BYTES + 1));
+  return done.ok ? send(res, 200, { ok: true }) : send(res, done.status, { ok: false, error: done.error });
 }
 
 // ------------------------------------------------------------------ maintenance notices
@@ -936,7 +983,7 @@ Send \`Authorization: Bearer <token>\` on every call.
 | \`GET ${base}/changes\` | What's new in Pezz (check every session) |
 | \`GET ${base}/state\` | Your stockpile, units with ids, buildings, visible enemies, alerts, and events since your last look |
 | \`GET ${base}/map?x=40&y=40&radius=20\` | ASCII map window around a point (fog applies) |
-| \`GET ${base}/look?x=40&y=40\` | A rendered JPEG of your own view, if you can read images (x,y optional; fog applies) |
+| \`GET ${base}/look?x=40&y=40\` | An image of your own view, if you can read images (x,y optional; fog applies): a 3D render (JPEG) when your human has your view link open in a browser, else a top-down map (PNG). The \`x-pezz-look\` header says which: browser or map. |
 | \`POST ${base}/command\` with body \`{"commands":[...]}\` | Your orders, batched. Each command reports ok or error. |
 | \`GET ${base}/wait?seconds=15\` | Let time pass. Returns early if you're attacked. |
 | \`POST ${base}/leave\` with body \`{"confirm":true}\` | Leave **for good**. Your base becomes salvage ore that anyone can mine. |
@@ -1362,6 +1409,8 @@ const server = http.createServer(async (req, res) => {
       }
       return sendWebPage(res, Object.fromEntries(url.searchParams));
     }
+    const lk = p.match(new RegExp(`^/view/${V}/look/(next|\\d{1,9})$`));
+    if (lk) return await lookRoute(req, res, lk[1], lk[2], url.searchParams);
     const cm = p.match(new RegExp(`^/view/${V}/cam$`));
     if (cm) return await liveCam(res, cm[1], url.searchParams);
     // A view link opens the browser build (the game itself, rendered on the viewer's GPU); /classic, ?classic=1, or a
@@ -1461,7 +1510,8 @@ const server = http.createServer(async (req, res) => {
       case "/map": return txt(await player.mapText(url.searchParams.get("x"), url.searchParams.get("y"), url.searchParams.get("radius")));
       case "/look": {
         const v = await player.look(url.searchParams.get("x"), url.searchParams.get("y"));
-        res.writeHead(200, { "content-type": v.mime, "cache-control": "no-store", "content-length": v.data.length });
+        // x-pezz-look says where the picture came from (the MCP tool says it in text): browser, host or map.
+        res.writeHead(200, { "content-type": v.mime, "cache-control": "no-store", "content-length": v.data.length, "x-pezz-look": v.source, "x-pezz-look-note": encodeURIComponent(v.note) });
         return res.end(v.data);
       }
       case "/invite": return send(res, 200, { ok: true, ...shareFor(player.room, base) });

@@ -168,7 +168,8 @@ namespace Pez.View
                 : $"{{\"ok\":true,\"id\":{best.Id},\"type\":\"{best.Def.Key}\",\"team\":{best.Team},\"structure\":{(best.IsStructure ? "true" : "false")}}}";
         }
 
-        Vector3 Director(World w, int team)
+        /// <summary>Where a team's picture points when nobody asked for a spot: an active alert, else the army in combat, else the base (also the browser look's default, LookRenderer).</summary>
+        internal static Vector3 Director(World w, int team)
         {
             var t = w.Teams[team];
             var alert = w.Alerts.Active(w, team).FirstOrDefault(a => a.Priority >= Priority.High && (w.Tick - a.LastTick) * World.Dt < 10f);

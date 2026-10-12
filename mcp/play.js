@@ -145,16 +145,23 @@ export class Player {
   rulesText() { return this.call("/api/rules"); }
 
   /**
-   * A fresh image of this team's own view (fog applies), optionally centred on x,y: the host's high-res render, or
-   * on a headless room a top-down map picture. Returns { data, mime, note }.
+   * A fresh image of this team's own view (fog applies), optionally centred on x,y: rendered by the human's open
+   * browser (browserLook, set by the gateway), else the host's high-res render, else a top-down map picture.
+   * Returns { data, mime, note, source }.
    */
   async look(x, y) {
     const fx = x == null ? NaN : Number(x), fy = y == null ? NaN : Number(y);
+    // The gateway sets browserLook: your human's open view page renders the picture (null when none is open or it didn't answer in time).
+    if (this.browserLook) {
+      let jpg = null;
+      try { jpg = await this.browserLook(fx, fy); } catch {}
+      if (jpg) return { data: jpg, mime: "image/jpeg", source: "browser", note: "Rendered by your human's browser: the game's own 3D view, off-axis camera looking north-east; fog shows what you can't currently see." };
+    }
     if (!this.frames) {
       const v = renderView(await this.call("/api/map"), fx, fy);
-      return { data: v.png, mime: "image/png", note: `Top-down map of your view, north up, x ${v.x0}-${v.x1}, y ${v.y0}-${v.y1}, one square per tile. Green is yours, red is enemy (solid blocks are buildings, small squares are units); orange/brown iron and copper ore, cyan crystal, light green uranium, blue water, dark grey rock, black unexplored. This room has no 3D renderer.` };
+      return { data: v.png, mime: "image/png", source: "map", note: `Map view (no browser open): a top-down map picture, north up, x ${v.x0}-${v.x1}, y ${v.y0}-${v.y1}, one square per tile. Green is yours, red is enemy (solid blocks are buildings, small squares are units); orange/brown iron and copper ore, cyan crystal, light green uranium, blue water, dark grey rock, black unexplored. When your human has your view link open in a browser, look returns a real 3D render instead.` };
     }
-    return { data: await this.lookJpeg(fx, fy), mime: "image/jpeg", note: "Off-axis camera looking north-east; fog shows what you can't currently see." };
+    return { data: await this.lookJpeg(fx, fy), mime: "image/jpeg", source: "host", note: "Rendered by the game host: off-axis camera looking north-east; fog shows what you can't currently see." };
   }
 
   /** The host's rendered image of this team's own view, optionally centred on x,y. Returns a JPEG Buffer. */
@@ -250,7 +257,7 @@ export function registerPlayTools(server, getPlayer, beforeEach = async () => {}
   };
   server.registerTool("look",
     {
-      description: "SEE the battlefield: a rendered image of your own view (your fog of war applies), centred on the action, or on x,y if given. Use it to check your base layout, spot enemy forces you can see, and judge a fight. On the main room it's the high-res 3D render; on overflow rooms it's a top-down map picture.",
+      description: "SEE the battlefield: a rendered image of your own view (your fog of war applies), centred on the action, or on x,y if given. Use it to check your base layout, spot enemy forces you can see, and judge a fight. It's the game's 3D render when your human has your view link open in a browser (or the room has a renderer); otherwise a top-down map picture. The text says which you got.",
       inputSchema: { x: z.number().optional().describe("tile x to look at"), y: z.number().optional().describe("tile y to look at") },
     },
     async (args) => {

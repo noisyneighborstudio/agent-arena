@@ -79,6 +79,7 @@ namespace Pez.View
             metaGone = false;
             StartCoroutine(MetaLoop());
             StartCoroutine(FeedLoop());
+            if (baseUrl.Contains("/view/")) StartCoroutine(LookLoop()); // (a spectator page has no look routes and never answers)
         }
 
         // ---------------------------------------------------------------- headers
@@ -215,6 +216,73 @@ namespace Pez.View
             if (list.Count > 12) list.RemoveRange(0, list.Count - 12);
             if (seen.Count > 100) seen.Clear();
             Feed = list;
+        }
+
+        // ---------------------------------------------------------------- browser look
+
+        LookRenderer lookRenderer;
+        float lastLookAt = -10f;
+
+        /// <summary>
+        /// The agent's look tool, drawn here: long-polls &lt;base&gt;/look/next (the gateway holds it ~25 s), and when it carries a
+        /// request renders the player's view offscreen (LookRenderer) and uploads the JPEG to &lt;base&gt;/look/&lt;id&gt;. Only a
+        /// live player view answers: never a spectator page, never a seat that has ended, never before the first snapshot.
+        /// </summary>
+        IEnumerator LookLoop()
+        {
+            if (!GameRunner.IsWeb) yield break;
+            int after = 0;
+            while (baseUrl != null && baseUrl.Contains("/view/"))
+            {
+                if (!Loaded || Spectator || expired || Runner == null) { yield return new WaitForSecondsRealtime(1f); continue; }
+                string body = null;
+                long code;
+                using (var req = UnityWebRequest.Get(baseUrl + "/look/next?after=" + after + "&_=" + System.DateTime.UtcNow.Ticks))
+                {
+                    req.timeout = 45; // the gateway holds an empty poll ~25 s
+                    yield return req.SendWebRequest();
+                    code = req.responseCode;
+                    if (req.result == UnityWebRequest.Result.Success) body = req.downloadHandler.text;
+                }
+                if (body == null)
+                {
+                    if (code == 404) { Debug.Log("pez look: this gateway has no browser look"); yield break; } // an older gateway
+                    yield return new WaitForSecondsRealtime(code == 410 ? 5f : 3f); // the seat ended (meta flips this page to spectator) or a hiccup
+                    continue;
+                }
+                Dictionary<string, object> r = null;
+                try { r = (Json.Parse(body) as Dictionary<string, object>)?.TryGetValue("request", out var o) == true ? o as Dictionary<string, object> : null; }
+                catch (System.Exception ex) { Debug.LogWarning("pez look: " + ex.Message); }
+                if (r == null) continue;
+                int id = (int)r.Num("id");
+                after = Mathf.Max(after, id);
+                if (Spectator || !Loaded) continue; // (it turned into a spectator page while the poll was held)
+                // One render at a time, a second apart at most: an agent that spams look doesn't cost the human their frame rate.
+                float wait = 1f - (Time.unscaledTime - lastLookAt);
+                if (wait > 0f) yield return new WaitForSecondsRealtime(wait);
+                yield return DoLook(id, r.Num("x"), r.Num("y"));
+            }
+        }
+
+        IEnumerator DoLook(int id, float x, float y)
+        {
+            if (lookRenderer == null) { lookRenderer = gameObject.AddComponent<LookRenderer>(); lookRenderer.Runner = Runner; }
+            lastLookAt = Time.unscaledTime;
+            byte[] jpg = null;
+            string why = null;
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            try { jpg = lookRenderer.Render(x, y, out why); }
+            catch (System.Exception ex) { why = ex.GetType().Name + ": " + ex.Message; }
+            if (jpg == null) { Debug.LogWarning($"pez look #{id}: not rendered: {why}"); yield break; }
+            double ms = sw.Elapsed.TotalMilliseconds;
+            using (var up = new UnityWebRequest(baseUrl + "/look/" + id, "POST"))
+            {
+                up.uploadHandler = new UploadHandlerRaw(jpg);
+                up.downloadHandler = new DownloadHandlerBuffer();
+                up.SetRequestHeader("content-type", "image/jpeg");
+                yield return up.SendWebRequest();
+                Debug.Log($"pez look #{id}: at {(float.IsNaN(x) ? "the base" : x + "," + y)}: {jpg.Length} bytes, rendered in {ms:0}ms, upload {(up.result == UnityWebRequest.Result.Success ? "ok" : up.responseCode + " " + ErrorOf(up.downloadHandler.text))}");
+            }
         }
 
         // ---------------------------------------------------------------- standing orders
