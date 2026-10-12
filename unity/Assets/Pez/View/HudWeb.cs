@@ -119,8 +119,10 @@ namespace Pez.View
             if (string.IsNullOrEmpty(msg))
             {
                 float live = LiveInterval();
-                if (live <= 0 || wc.DataAge <= 3 * live) return y;
-                msg = $"data {Mathf.RoundToInt(wc.DataAge)}s old"; subtle = true;
+                // A spectator feed is meant to be DelaySeconds behind: only lateness beyond that is worth a word.
+                float late = wc.DataAge - wc.DelaySeconds;
+                if (live <= 0 || late <= 3 * live) return y;
+                msg = $"data {Mathf.RoundToInt(late)}s late"; subtle = true;
             }
             float size = subtle ? 13 : 15, h = subtle ? 28 : 42;
             float w = Mathf.Min(BandW, TextW(msg, fSans, size) + (subtle ? 28 : 28 + 18 + 18));
