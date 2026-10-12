@@ -12,7 +12,7 @@ namespace Pez.View
         const int Sub = 3; // mesh vertices per tile edge
         Map map;
         Mesh fogMesh;
-        Color[] fogColors;
+        Texture2D fogTex;
         readonly List<(int idx, Transform t, float baseScale)> crystals = new List<(int, Transform, float)>();
         readonly List<(int idx, GameObject go)> decor = new List<(int, GameObject)>();
         bool[] explored; // null = everything revealed (spectator)
@@ -43,8 +43,6 @@ namespace Pez.View
         public static readonly Color RockC = PezPalette.TerrainLicoriceCliffTop;
         public static readonly Color Seabed = PezPalette.TerrainColaWater; // dark under the cola so lakes don't read as tan holes
         // Shroud and fog in licorice (vertex colours bypass the sRGB conversion, so convert once here).
-        static Color? fogTint;
-        static Color FogTint => fogTint ??= ((Color)PezPalette.MaterialsLicorice).linear;
 
         /// <summary>The same ground, read from a newer copy of the map (ore and tiles are polled from it; nothing is rebuilt).</summary>
         public void Rebind(Map m) { map = m; }
@@ -578,17 +576,22 @@ namespace Pez.View
 
         static Color Hex(string h) => ColorUtility.TryParseHtmlString("#" + h, out var c) ? c : Color.magenta;
 
+        /// <summary>
+        /// The fog overlay: a mesh hugging the ground, coloured by a fog texture (one texel per tile, smoothed, sampled
+        /// bilinearly by PezFog), so its edges are soft gradients rather than the mesh's triangles.
+        /// </summary>
         void BuildFog()
         {
             int vw = map.W + 1, vh = map.H + 1;
             var verts = new Vector3[vw * vh];
-            fogColors = new Color[vw * vh];
+            var uvs = new Vector2[vw * vh];
             for (int y = 0; y < vh; y++)
                 for (int x = 0; x < vw; x++)
                 {
                     // Hug the ground, rising over rock so it doesn't clip.
                     float h = Mathf.Max(Mathf.Max(TileHeight(x - 1, y - 1), TileHeight(x, y - 1)), Mathf.Max(TileHeight(x - 1, y), TileHeight(x, y)));
                     verts[y * vw + x] = new Vector3(x, Mathf.Max(0.12f, h * 1.2f + 0.15f), y);
+                    uvs[y * vw + x] = new Vector2(x / (float)map.W, y / (float)map.H); // texel i spans tile i: centres are tile centres
                 }
             var tris = new int[map.W * map.H * 6];
             int k = 0;
@@ -598,15 +601,28 @@ namespace Pez.View
                     int a = y * vw + x, b = a + 1, c = a + vw, d = c + 1;
                     tris[k++] = a; tris[k++] = c; tris[k++] = b; tris[k++] = b; tris[k++] = c; tris[k++] = d;
                 }
-            fogMesh = new Mesh { name = "fog" };
-            fogMesh.vertices = verts; fogMesh.triangles = tris; fogMesh.colors = fogColors;
-            var go = new GameObject("Fog") { layer = MainFogLayer };
+            fogMesh = new Mesh { name = "fog", indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
+            fogMesh.vertices = verts; fogMesh.uv = uvs; fogMesh.triangles = tris;
+            fogTex = FogLayer("Fog", MainFogLayer);
+            transform.Find("Fog").gameObject.SetActive(false);
+        }
+
+        static Shader fogShader;
+
+        /// <summary>One fog overlay (its own texture, on the shared mesh) on a camera layer.</summary>
+        Texture2D FogLayer(string name, int layer)
+        {
+            var go = new GameObject(name) { layer = layer };
             go.transform.SetParent(transform, false);
             go.AddComponent<MeshFilter>().sharedMesh = fogMesh;
             var r = go.AddComponent<MeshRenderer>();
-            r.sharedMaterial = Mats.Unlit(Color.white);
+            if (fogShader == null) fogShader = Resources.Load<Shader>("PezShaders/PezFog") ?? Shader.Find("Pez/Fog");
+            var tex = new Texture2D(map.W, map.H, TextureFormat.R8, false, true) { name = name, filterMode = FilterMode.Bilinear, wrapMode = TextureWrapMode.Clamp };
+            var mat = new Material(fogShader) { color = PezPalette.MaterialsLicorice };
+            mat.SetTexture("_FogTex", tex);
+            r.sharedMaterial = mat;
             r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-            go.SetActive(false);
+            return tex;
         }
 
         /// <summary>
@@ -616,50 +632,53 @@ namespace Pez.View
         // Layers: the main view's fog, and one fog per team for the per-player live streams.
         public const int MainFogLayer = 28, TeamFogLayerBase = 20;
         public static int TeamFogMask => 0xFF << TeamFogLayerBase;
-        readonly Dictionary<int, (Mesh mesh, Color[] colors, float next)> teamFogs = new Dictionary<int, (Mesh, Color[], float)>();
+        readonly Dictionary<int, (Texture2D tex, float next)> teamFogs = new Dictionary<int, (Texture2D, float)>();
 
         /// <summary>Keep a team's own fog overlay current (for its live stream). Throttled to 4 updates a second.</summary>
         public void UpdateTeamFog(World w, int team)
         {
             if (fogMesh == null || team < 0 || team > 7) return;
-            if (!teamFogs.TryGetValue(team, out var f))
-            {
-                var mesh = new Mesh { name = "fog" + team, vertices = fogMesh.vertices, triangles = fogMesh.triangles };
-                var go = new GameObject("Fog" + team) { layer = TeamFogLayerBase + team };
-                go.transform.SetParent(transform, false);
-                go.AddComponent<MeshFilter>().sharedMesh = mesh;
-                var r = go.AddComponent<MeshRenderer>();
-                r.sharedMaterial = Mats.Unlit(Color.white);
-                r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-                f = (mesh, new Color[fogColors.Length], 0f);
-            }
+            if (!teamFogs.TryGetValue(team, out var f)) f = (FogLayer("Fog" + team, TeamFogLayerBase + team), 0f);
             if (Time.time < f.next) { teamFogs[team] = f; return; }
-            FillFog(w, team, f.colors);
-            f.mesh.colors = f.colors;
-            teamFogs[team] = (f.mesh, f.colors, Time.time + 0.25f);
+            FillFog(w, team, f.tex);
+            teamFogs[team] = (f.tex, Time.time + 0.25f);
         }
 
-        void FillFog(World w, int team, Color[] colors)
+        float[] fogA, fogB;
+        byte[] fogBytes;
+
+        /// <summary>
+        /// A team's fog into its texture: per tile, shroud (never seen) 0.98, fog (seen before) 0.5, clear 0; then a 5-tap
+        /// binomial blur across and down, so the edge of sight fades over about two tiles.
+        /// </summary>
+        void FillFog(World w, int team, Texture2D tex)
         {
             var vis = w.Teams[team].Visible;
             var exp = w.Teams[team].Explored;
-            int vw = map.W + 1;
-            for (int y = 0; y <= map.H; y++)
-                for (int x = 0; x <= map.W; x++)
+            int W = map.W, H = map.H, n = W * H;
+            if (fogA == null || fogA.Length != n) { fogA = new float[n]; fogB = new float[n]; fogBytes = new byte[n]; }
+            for (int i = 0; i < n; i++)
+                fogA[i] = (i < vis.Length && vis[i] ? 0f : 0.5f) + (i < exp.Length && exp[i] ? 0f : 0.48f);
+            for (int y = 0; y < H; y++) // across
+            {
+                int row = y * W;
+                for (int x = 0; x < W; x++)
                 {
-                    int seen = 0, known = 0, total = 0;
-                    for (int dy = -1; dy <= 0; dy++)
-                        for (int dx = -1; dx <= 0; dx++)
-                        {
-                            int tx = x + dx, ty = y + dy;
-                            if (!map.InBounds(tx, ty)) continue;
-                            total++;
-                            if (vis[map.Idx(tx, ty)]) seen++;
-                            if (exp[map.Idx(tx, ty)]) known++;
-                        }
-                    float a = total == 0 ? 0 : (1f - seen / (float)total) * 0.5f + (1f - known / (float)total) * 0.48f;
-                    colors[y * vw + x] = new Color(FogTint.r, FogTint.g, FogTint.b, a);
+                    int x0 = Mathf.Max(x - 2, 0), x1 = Mathf.Max(x - 1, 0), x3 = Mathf.Min(x + 1, W - 1), x4 = Mathf.Min(x + 2, W - 1);
+                    fogB[row + x] = (fogA[row + x0] + 4f * fogA[row + x1] + 6f * fogA[row + x] + 4f * fogA[row + x3] + fogA[row + x4]) * (1f / 16f);
                 }
+            }
+            for (int y = 0; y < H; y++) // down
+            {
+                int y0 = Mathf.Max(y - 2, 0) * W, y1 = Mathf.Max(y - 1, 0) * W, y2 = y * W, y3 = Mathf.Min(y + 1, H - 1) * W, y4 = Mathf.Min(y + 2, H - 1) * W;
+                for (int x = 0; x < W; x++)
+                {
+                    float a = (fogB[y0 + x] + 4f * fogB[y1 + x] + 6f * fogB[y2 + x] + 4f * fogB[y3 + x] + fogB[y4 + x]) * (1f / 16f);
+                    fogBytes[y2 + x] = (byte)Mathf.Clamp(Mathf.RoundToInt(a * 255f), 0, 255);
+                }
+            }
+            tex.SetPixelData(fogBytes, 0);
+            tex.Apply(false);
         }
 
         /// <summary>The main view's fog overlay (only active when the host plays a team), for renders that must not show it.</summary>
@@ -682,26 +701,7 @@ namespace Pez.View
                 if (o.Go.activeSelf != on) o.Go.SetActive(on);
             }
             if (team < 0) return;
-            var vis = w.Teams[team].Visible;
-            var exp = w.Teams[team].Explored;
-            int vw = map.W + 1;
-            for (int y = 0; y <= map.H; y++)
-                for (int x = 0; x <= map.W; x++)
-                {
-                    int seen = 0, known = 0, total = 0;
-                    for (int dy = -1; dy <= 0; dy++)
-                        for (int dx = -1; dx <= 0; dx++)
-                        {
-                            int tx = x + dx, ty = y + dy;
-                            if (!map.InBounds(tx, ty)) continue;
-                            total++;
-                            if (vis[map.Idx(tx, ty)]) seen++;
-                            if (exp[map.Idx(tx, ty)]) known++;
-                        }
-                    float a = total == 0 ? 0 : (1f - seen / (float)total) * 0.5f + (1f - known / (float)total) * 0.48f;
-                    fogColors[y * vw + x] = new Color(FogTint.r, FogTint.g, FogTint.b, a);
-                }
-            fogMesh.colors = fogColors;
+            FillFog(w, team, fogTex);
         }
 
         void Update()
