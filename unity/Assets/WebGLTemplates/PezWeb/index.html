@@ -260,6 +260,19 @@
         return api;
       })();
     </script>
+    <script>
+      // WebKit (Safari, and every browser on iOS): ignore invalidateFramebuffer. Unity calls it ~4 times a frame to discard
+      // attachments it's done with; WebKit's WebGL (ANGLE on Metal) then counts them uninitialised, and the next clear() first
+      // zero-fills them on the CPU in the GPU process (rx::RenderbufferMtl::initializeContents → replaceRegion). That cost ~27 ms
+      // a frame: 17 fps at 2880×1800, against 60 with it ignored. It's only a hint, so ignoring it is always correct (the
+      // contents just stay defined). Chromium doesn't pay this, and on Android's tiling GPUs the hint helps, so it keeps it.
+      // ?glinvalidate=1 keeps the browser's own, to compare.
+      if (/AppleWebKit\//.test(navigator.userAgent) && !/(Chrome|Chromium|Edg)\//.test(navigator.userAgent) && q.get("glinvalidate") !== "1"
+          && typeof WebGL2RenderingContext !== "undefined") {
+        WebGL2RenderingContext.prototype.invalidateFramebuffer = function () {};
+        WebGL2RenderingContext.prototype.invalidateSubFramebuffer = function () {};
+      }
+    </script>
     <script src="Build/{{{ LOADER_FILENAME }}}"></script>
     <script>
       // ?dpr=<n> overrides the render scale (default: the screen's, capped at 2) so a slow GPU can trade sharpness for frames.

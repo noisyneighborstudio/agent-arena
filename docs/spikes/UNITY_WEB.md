@@ -98,7 +98,13 @@ Comparison stills are on the progress dashboard: native on the left, browser on 
 - **Spectator only.** The snapshot is the whole world. Player views need a per-team filter first. That means the fog
   rules in `ApiServer.ViewFrame` applied to the snapshot, plus stripping other teams' stock, queues, orders, visibility
   and remembered structures. Until then, the public route stays delayed like `/watch`.
-- **Not yet measured:** phones, Safari and Firefox, weak GPUs, and a congested network.
+- **Safari (2026-10-12):** ran at ~17 fps at 2880×1800, whatever the quality level or render scale. Unity calls
+  `invalidateFramebuffer` ~4 times a frame, and WebKit's ANGLE-on-Metal then zero-fills those attachments on the CPU in its GPU
+  process at the next `clear()` (`RenderbufferMtl::initializeContents` → `replaceRegion`), ~27 ms a frame, which surfaced as Unity's
+  per-frame `clientWaitSync` taking 27 ms. The page template now ignores `invalidateFramebuffer` on WebKit (a hint, so always
+  correct): 60 fps, same picture. `?glinvalidate=1` turns the workaround off. Measured in Playwright's WebKit on the Apple GPU;
+  to profile again, time the WebGL calls from the page and `sample` the `com.apple.WebKit.GPU` process.
+- **Not yet measured:** phones, Firefox, weak GPUs, and a congested network.
 - **HUD:** in the 4-AI test the team cards switch between their compact and full forms for ~12 s at a time, and the right panel's first team tab is truncated. Possibly native behaviour too; check before shipping.
 - **Throttled tabs.** A hidden or throttled tab runs at about 1 fps. That's fine for watching, and the next resync
   catches it up.
