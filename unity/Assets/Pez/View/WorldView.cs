@@ -117,6 +117,7 @@ namespace Pez.View
             mapVersion = w.MapVersion;
             lastSeq = w.Events.Count > 0 ? w.Events[w.Events.Count - 1].Seq : 0;
             Fx.Prewarm();
+            PezEmerge.OnPoof = Fx.Poof; // things leave the map in a puff (PezEmerge.PlayRemove)
             FireArea();
         }
 
@@ -454,16 +455,23 @@ namespace Pez.View
                 into.Rig.Emerge.SetBuildProgress(0f);
                 rig.Emerge.StartCoroutine(rig.Emerge.PlayDeployInto(into.Rig.Emerge));
             }
-            else if (rig.HasModel && rig.Root.gameObject.activeInHierarchy)
+            else if (rig.HasModel && rig.Root.gameObject.activeInHierarchy && !LeftSight(v))
             {
                 rig.Model.transform.SetParent(transform, true);
-                // Vehicles leave a wreck for a while; infantry and dismantled forces just sink away.
+                // Vehicles leave a wreck for a while; everything else goes poof (PezEmerge.PlayRemove).
                 bool wreck = v.Destroyed && v.E.Def.Armor != Armor.Infantry;
-                rig.Emerge.StartCoroutine(rig.Emerge.PlayRemove(wreck, v.E.IsStructure ? 1.2f : 1.5f));
+                rig.Emerge.StartCoroutine(rig.Emerge.PlayRemove(wreck));
             }
             Destroy(rig.Root.gameObject);
             if (v.Sim != null) { v.Sim.Release(); v.Sim = null; }
         }
+
+        /// <summary>
+        /// A player's own view copy (fogged) drops an enemy once it's out of sight: that's not a removal, so it just goes,
+        /// with no poof (a poof would read as a kill, and say something the player can't know). Spectators and the host see
+        /// everything, so anything gone from their world really left.
+        /// </summary>
+        bool LeftSight(EV v) => World.Mirror && PovTeam >= 0 && v.E.Team != PovTeam && !v.Destroyed && !v.Sold;
 
         void OnDestroy()
         {
@@ -1414,7 +1422,7 @@ namespace Pez.View
                             var def = Defs.Get(ev.Key);
                             if (dead != null && dead.Sold)
                             {
-                                // A sale is a dismantling: dust at the corners and the building sinks away, no blast and no
+                                // A sale is a dismantling: dust at the corners and the building goes poof, no blast and no
                                 // wreck (a spectator saw a sold deep mine "explode on its own").
                                 Fx.StageDust(W(ev.Pos), def.SizeX, def.SizeY);
                                 break;

@@ -23,7 +23,7 @@
    "structures"
   ],
   "emerge": "Rises out of its pad in stages; nothing appears instantly. stage_0 (pad) lifts from y=-0.15 to 0 during build progress 0\u201310%. stage_1, stage_2 and stage_3 each start at local y = -(stage height) and rise to 0 with ease-out cubic over progress 10\u201345%, 45\u201375% and 75\u201395%. The opaque terrain and pad hide whatever is still below ground. stage_3 ends with a 4% Y-scale overshoot that settles in 0.15 s (spring-loaded). Functional nodes (turret, spinner, door, lift) come last, at 95\u2013100%: a turret rises 0.3 out of its housing, then a spinner spins up from 0 rpm.",
-  "remove": "Destroyed: shake \u00b10.03 for 0.4 s, then stages sink in reverse order (stage_3 first), 0.35 s each, with ease-in and dust bursts at the footprint edge. A rubble decal fades in under them. Sold: plays the build sequence in reverse over 1.5 s."
+  "remove": "Destroyed: shake \u00b10.03 for 0.4 s, then poof: a soft cream cloud bursts out of the building while it swells 8% for 0.06 s and pops to nothing in 0.14 s. A rubble decal fades in under it. Sold: dust at the footprint corners, then the same poof. Nothing sinks into the ground."
  },
  {
   "key": "outpost",
@@ -34,7 +34,7 @@
   "idle": "Antenna tip blinks amber once every 2 s.",
   "produces": [],
   "emerge": "Rises out of its pad in stages; nothing appears instantly. stage_0 (pad) lifts from y=-0.15 to 0 during build progress 0\u201310%. stage_1, stage_2 and stage_3 each start at local y = -(stage height) and rise to 0 with ease-out cubic over progress 10\u201345%, 45\u201375% and 75\u201395%. The opaque terrain and pad hide whatever is still below ground. stage_3 ends with a 4% Y-scale overshoot that settles in 0.15 s (spring-loaded). Functional nodes (turret, spinner, door, lift) come last, at 95\u2013100%: a turret rises 0.3 out of its housing, then a spinner spins up from 0 rpm.",
-  "remove": "Destroyed: shake \u00b10.03 for 0.4 s, then stages sink in reverse order (stage_3 first), 0.35 s each, with ease-in and dust bursts at the footprint edge. A rubble decal fades in under them. Sold: plays the build sequence in reverse over 1.5 s."
+  "remove": "Destroyed: shake \u00b10.03 for 0.4 s, then poof: a soft cream cloud bursts out of the building while it swells 8% for 0.06 s and pops to nothing in 0.14 s. A rubble decal fades in under it. Sold: dust at the footprint corners, then the same poof. Nothing sinks into the ground."
  },
  {
   "key": "power_plant",
@@ -45,7 +45,7 @@
   "idle": "Cores pulse on a 3 s sine.",
   "produces": [],
   "emerge": "Rises out of its pad in stages; nothing appears instantly. stage_0 (pad) lifts from y=-0.15 to 0 during build progress 0\u201310%. stage_1, stage_2 and stage_3 each start at local y = -(stage height) and rise to 0 with ease-out cubic over progress 10\u201345%, 45\u201375% and 75\u201395%. The opaque terrain and pad hide whatever is still below ground. stage_3 ends with a 4% Y-scale overshoot that settles in 0.15 s (spring-loaded). Functional nodes (turret, spinner, door, lift) come last, at 95\u2013100%: a turret rises 0.3 out of its housing, then a spinner spins up from 0 rpm.",
-  "remove": "Destroyed: shake \u00b10.03 for 0.4 s, then stages sink in reverse order (stage_3 first), 0.35 s each, with ease-in and dust bursts at the footprint edge. A rubble decal fades in under them. Sold: plays the build sequence in reverse over 1.5 s."
+  "remove": "Destroyed: shake \u00b10.03 for 0.4 s, then poof: a soft cream cloud bursts out of the building while it swells 8% for 0.06 s and pops to nothing in 0.14 s. A rubble decal fades in under it. Sold: dust at the footprint corners, then the same poof. Nothing sinks into the ground."
  },
  {
   "key": "mining_refinery",
@@ -70,7 +70,7 @@
    "mining_truck (free)"
   ],
   "emerge": "Rises out of its pad in stages; nothing appears instantly. stage_0 (pad) lifts from y=-0.15 to 0 during build progress 0\u201310%. stage_1, stage_2 and stage_3 each start at local y = -(stage height) and rise to 0 with ease-out cubic over progress 10\u201345%, 45\u201375% and 75\u201395%. The opaque terrain and pad hide whatever is still below ground. stage_3 ends with a 4% Y-scale overshoot that settles in 0.15 s (spring-loaded). Functional nodes (turret, spinner, door, lift) come last, at 95\u2013100%: a turret rises 0.3 out of its housing, then a spinner spins up from 0 rpm.",
-  "remove": "Destroyed: shake \u00b10.03 for 0.4 s, then stages sink in reverse order (stage_3 first), 0.35 s each, with ease-in and dust bursts at the footprint edge. A rubble decal fades in under them. Sold: plays the build sequence in reverse over 1.5 s."
+  "remove": "Destroyed: shake \u00b10.03 for 0.4 s, then poof: a soft cream cloud bursts out of the building while it swells 8% for 0.06 s and pops to nothing in 0.14 s. A rubble decal fades in under it. Sold: dust at the footprint corners, then the same poof. Nothing sinks into the ground."
  },
  {
   "key": "barracks",
@@ -92,7 +92,7 @@
    "medic"
   ],
   "emerge": "Rises out of its pad in stages; nothing appears instantly. stage_0 (pad) lifts from y=-0.15 to 0 during build progress 0\u201310%. stage_1, stage_2 and stage_3 each start at local y = -(stage height) and rise to 0 with ease-out cubic over progress 10\u201345%, 45\u201375% and 75\u201395%. The opaque terrain and pad hide whatever is still below ground. stage_3 ends with a 4% Y-scale overshoot that settles in 0.15 s (spring-loaded). Functional nodes (turret, spinner, door, lift) come last, at 95\u2013100%: a turret rises 0.3 out of its housing, then a spinner spins up from 0 rpm.",
-  "remove": "Destroyed: shake \u00b10.03 for 0.4 s, then stages sink in reverse order (stage_3 first), 0.35 s each, with ease-in and dust bursts at the footprint edge. A rubble decal fades in under them. Sold: plays the build sequence in reverse over 1.5 s."
+  "remove": "Destroyed: shake \u00b10.03 for 0.4 s, then poof: a soft cream cloud bursts out of the building while it swells 8% for 0.06 s and pops to nothing in 0.14 s. A rubble decal fades in under it. Sold: dust at the footprint corners, then the same poof. Nothing sinks into the ground."
  },
  {
   "key": "factory",
@@ -118,7 +118,7 @@
    "laser_tank"
   ],
   "emerge": "Rises out of its pad in stages; nothing appears instantly. stage_0 (pad) lifts from y=-0.15 to 0 during build progress 0\u201310%. stage_1, stage_2 and stage_3 each start at local y = -(stage height) and rise to 0 with ease-out cubic over progress 10\u201345%, 45\u201375% and 75\u201395%. The opaque terrain and pad hide whatever is still below ground. stage_3 ends with a 4% Y-scale overshoot that settles in 0.15 s (spring-loaded). Functional nodes (turret, spinner, door, lift) come last, at 95\u2013100%: a turret rises 0.3 out of its housing, then a spinner spins up from 0 rpm.",
-  "remove": "Destroyed: shake \u00b10.03 for 0.4 s, then stages sink in reverse order (stage_3 first), 0.35 s each, with ease-in and dust bursts at the footprint edge. A rubble decal fades in under them. Sold: plays the build sequence in reverse over 1.5 s."
+  "remove": "Destroyed: shake \u00b10.03 for 0.4 s, then poof: a soft cream cloud bursts out of the building while it swells 8% for 0.06 s and pops to nothing in 0.14 s. A rubble decal fades in under it. Sold: dust at the footprint corners, then the same poof. Nothing sinks into the ground."
  },
  {
   "key": "electronics_plant",
@@ -129,7 +129,7 @@
   "idle": "Panels flicker softly.",
   "produces": [],
   "emerge": "Rises out of its pad in stages; nothing appears instantly. stage_0 (pad) lifts from y=-0.15 to 0 during build progress 0\u201310%. stage_1, stage_2 and stage_3 each start at local y = -(stage height) and rise to 0 with ease-out cubic over progress 10\u201345%, 45\u201375% and 75\u201395%. The opaque terrain and pad hide whatever is still below ground. stage_3 ends with a 4% Y-scale overshoot that settles in 0.15 s (spring-loaded). Functional nodes (turret, spinner, door, lift) come last, at 95\u2013100%: a turret rises 0.3 out of its housing, then a spinner spins up from 0 rpm.",
-  "remove": "Destroyed: shake \u00b10.03 for 0.4 s, then stages sink in reverse order (stage_3 first), 0.35 s each, with ease-in and dust bursts at the footprint edge. A rubble decal fades in under them. Sold: plays the build sequence in reverse over 1.5 s."
+  "remove": "Destroyed: shake \u00b10.03 for 0.4 s, then poof: a soft cream cloud bursts out of the building while it swells 8% for 0.06 s and pops to nothing in 0.14 s. A rubble decal fades in under it. Sold: dust at the footprint corners, then the same poof. Nothing sinks into the ground."
  },
  {
   "key": "optics_lab",
@@ -148,7 +148,7 @@
   "idle": "Prism rotates and bobs.",
   "produces": [],
   "emerge": "Rises out of its pad in stages; nothing appears instantly. stage_0 (pad) lifts from y=-0.15 to 0 during build progress 0\u201310%. stage_1, stage_2 and stage_3 each start at local y = -(stage height) and rise to 0 with ease-out cubic over progress 10\u201345%, 45\u201375% and 75\u201395%. The opaque terrain and pad hide whatever is still below ground. stage_3 ends with a 4% Y-scale overshoot that settles in 0.15 s (spring-loaded). Functional nodes (turret, spinner, door, lift) come last, at 95\u2013100%: a turret rises 0.3 out of its housing, then a spinner spins up from 0 rpm.",
-  "remove": "Destroyed: shake \u00b10.03 for 0.4 s, then stages sink in reverse order (stage_3 first), 0.35 s each, with ease-in and dust bursts at the footprint edge. A rubble decal fades in under them. Sold: plays the build sequence in reverse over 1.5 s."
+  "remove": "Destroyed: shake \u00b10.03 for 0.4 s, then poof: a soft cream cloud bursts out of the building while it swells 8% for 0.06 s and pops to nothing in 0.14 s. A rubble decal fades in under it. Sold: dust at the footprint corners, then the same poof. Nothing sinks into the ground."
  },
  {
   "key": "enrichment_plant",
@@ -159,7 +159,7 @@
   "idle": "Bands breathe slowly.",
   "produces": [],
   "emerge": "Rises out of its pad in stages; nothing appears instantly. stage_0 (pad) lifts from y=-0.15 to 0 during build progress 0\u201310%. stage_1, stage_2 and stage_3 each start at local y = -(stage height) and rise to 0 with ease-out cubic over progress 10\u201345%, 45\u201375% and 75\u201395%. The opaque terrain and pad hide whatever is still below ground. stage_3 ends with a 4% Y-scale overshoot that settles in 0.15 s (spring-loaded). Functional nodes (turret, spinner, door, lift) come last, at 95\u2013100%: a turret rises 0.3 out of its housing, then a spinner spins up from 0 rpm.",
-  "remove": "Destroyed: shake \u00b10.03 for 0.4 s, then stages sink in reverse order (stage_3 first), 0.35 s each, with ease-in and dust bursts at the footprint edge. A rubble decal fades in under them. Sold: plays the build sequence in reverse over 1.5 s."
+  "remove": "Destroyed: shake \u00b10.03 for 0.4 s, then poof: a soft cream cloud bursts out of the building while it swells 8% for 0.06 s and pops to nothing in 0.14 s. A rubble decal fades in under it. Sold: dust at the footprint corners, then the same poof. Nothing sinks into the ground."
  },
  {
   "key": "composite_foundry",
@@ -170,7 +170,7 @@
   "idle": "Heat shimmer over the vents.",
   "produces": [],
   "emerge": "Rises out of its pad in stages; nothing appears instantly. stage_0 (pad) lifts from y=-0.15 to 0 during build progress 0\u201310%. stage_1, stage_2 and stage_3 each start at local y = -(stage height) and rise to 0 with ease-out cubic over progress 10\u201345%, 45\u201375% and 75\u201395%. The opaque terrain and pad hide whatever is still below ground. stage_3 ends with a 4% Y-scale overshoot that settles in 0.15 s (spring-loaded). Functional nodes (turret, spinner, door, lift) come last, at 95\u2013100%: a turret rises 0.3 out of its housing, then a spinner spins up from 0 rpm.",
-  "remove": "Destroyed: shake \u00b10.03 for 0.4 s, then stages sink in reverse order (stage_3 first), 0.35 s each, with ease-in and dust bursts at the footprint edge. A rubble decal fades in under them. Sold: plays the build sequence in reverse over 1.5 s."
+  "remove": "Destroyed: shake \u00b10.03 for 0.4 s, then poof: a soft cream cloud bursts out of the building while it swells 8% for 0.06 s and pops to nothing in 0.14 s. A rubble decal fades in under it. Sold: dust at the footprint corners, then the same poof. Nothing sinks into the ground."
  },
  {
   "key": "fusion_reactor",
@@ -189,7 +189,7 @@
   "idle": "Core spins and tumbles.",
   "produces": [],
   "emerge": "Rises out of its pad in stages; nothing appears instantly. stage_0 (pad) lifts from y=-0.15 to 0 during build progress 0\u201310%. stage_1, stage_2 and stage_3 each start at local y = -(stage height) and rise to 0 with ease-out cubic over progress 10\u201345%, 45\u201375% and 75\u201395%. The opaque terrain and pad hide whatever is still below ground. stage_3 ends with a 4% Y-scale overshoot that settles in 0.15 s (spring-loaded). Functional nodes (turret, spinner, door, lift) come last, at 95\u2013100%: a turret rises 0.3 out of its housing, then a spinner spins up from 0 rpm.",
-  "remove": "Destroyed: shake \u00b10.03 for 0.4 s, then stages sink in reverse order (stage_3 first), 0.35 s each, with ease-in and dust bursts at the footprint edge. A rubble decal fades in under them. Sold: plays the build sequence in reverse over 1.5 s."
+  "remove": "Destroyed: shake \u00b10.03 for 0.4 s, then poof: a soft cream cloud bursts out of the building while it swells 8% for 0.06 s and pops to nothing in 0.14 s. A rubble decal fades in under it. Sold: dust at the footprint corners, then the same poof. Nothing sinks into the ground."
  },
  {
   "key": "airfield",
@@ -209,7 +209,7 @@
    "stealth_bomber"
   ],
   "emerge": "Rises out of its pad in stages; nothing appears instantly. stage_0 (pad) lifts from y=-0.15 to 0 during build progress 0\u201310%. stage_1, stage_2 and stage_3 each start at local y = -(stage height) and rise to 0 with ease-out cubic over progress 10\u201345%, 45\u201375% and 75\u201395%. The opaque terrain and pad hide whatever is still below ground. stage_3 ends with a 4% Y-scale overshoot that settles in 0.15 s (spring-loaded). Functional nodes (turret, spinner, door, lift) come last, at 95\u2013100%: a turret rises 0.3 out of its housing, then a spinner spins up from 0 rpm.",
-  "remove": "Destroyed: shake \u00b10.03 for 0.4 s, then stages sink in reverse order (stage_3 first), 0.35 s each, with ease-in and dust bursts at the footprint edge. A rubble decal fades in under them. Sold: plays the build sequence in reverse over 1.5 s."
+  "remove": "Destroyed: shake \u00b10.03 for 0.4 s, then poof: a soft cream cloud bursts out of the building while it swells 8% for 0.06 s and pops to nothing in 0.14 s. A rubble decal fades in under it. Sold: dust at the footprint corners, then the same poof. Nothing sinks into the ground."
  },
  {
   "key": "radar_dome",
@@ -227,7 +227,7 @@
   "idle": "The amber beacon blinks every 1 s.",
   "produces": [],
   "emerge": "Rises out of its pad in stages; nothing appears instantly. stage_0 (pad) lifts from y=-0.15 to 0 during build progress 0\u201310%. stage_1, stage_2 and stage_3 each start at local y = -(stage height) and rise to 0 with ease-out cubic over progress 10\u201345%, 45\u201375% and 75\u201395%. The opaque terrain and pad hide whatever is still below ground. stage_3 ends with a 4% Y-scale overshoot that settles in 0.15 s (spring-loaded). Functional nodes (turret, spinner, door, lift) come last, at 95\u2013100%: a turret rises 0.3 out of its housing, then a spinner spins up from 0 rpm.",
-  "remove": "Destroyed: shake \u00b10.03 for 0.4 s, then stages sink in reverse order (stage_3 first), 0.35 s each, with ease-in and dust bursts at the footprint edge. A rubble decal fades in under them. Sold: plays the build sequence in reverse over 1.5 s."
+  "remove": "Destroyed: shake \u00b10.03 for 0.4 s, then poof: a soft cream cloud bursts out of the building while it swells 8% for 0.06 s and pops to nothing in 0.14 s. A rubble decal fades in under it. Sold: dust at the footprint corners, then the same poof. Nothing sinks into the ground."
  },
  {
   "key": "gun_turret",
@@ -250,7 +250,7 @@
   "idle": "Slow \u00b145\u00b0 scan every 5 s.",
   "produces": [],
   "emerge": "Rises out of its pad in stages; nothing appears instantly. stage_0 (pad) lifts from y=-0.15 to 0 during build progress 0\u201310%. stage_1, stage_2 and stage_3 each start at local y = -(stage height) and rise to 0 with ease-out cubic over progress 10\u201345%, 45\u201375% and 75\u201395%. The opaque terrain and pad hide whatever is still below ground. stage_3 ends with a 4% Y-scale overshoot that settles in 0.15 s (spring-loaded). Functional nodes (turret, spinner, door, lift) come last, at 95\u2013100%: a turret rises 0.3 out of its housing, then a spinner spins up from 0 rpm.",
-  "remove": "Destroyed: shake \u00b10.03 for 0.4 s, then stages sink in reverse order (stage_3 first), 0.35 s each, with ease-in and dust bursts at the footprint edge. A rubble decal fades in under them. Sold: plays the build sequence in reverse over 1.5 s."
+  "remove": "Destroyed: shake \u00b10.03 for 0.4 s, then poof: a soft cream cloud bursts out of the building while it swells 8% for 0.06 s and pops to nothing in 0.14 s. A rubble decal fades in under it. Sold: dust at the footprint corners, then the same poof. Nothing sinks into the ground."
  },
  {
   "key": "sam_site",
@@ -273,7 +273,7 @@
   "idle": "Rack rests at \u221225\u00b0 and tracks the sky in a slow sweep.",
   "produces": [],
   "emerge": "Rises out of its pad in stages; nothing appears instantly. stage_0 (pad) lifts from y=-0.15 to 0 during build progress 0\u201310%. stage_1, stage_2 and stage_3 each start at local y = -(stage height) and rise to 0 with ease-out cubic over progress 10\u201345%, 45\u201375% and 75\u201395%. The opaque terrain and pad hide whatever is still below ground. stage_3 ends with a 4% Y-scale overshoot that settles in 0.15 s (spring-loaded). Functional nodes (turret, spinner, door, lift) come last, at 95\u2013100%: a turret rises 0.3 out of its housing, then a spinner spins up from 0 rpm.",
-  "remove": "Destroyed: shake \u00b10.03 for 0.4 s, then stages sink in reverse order (stage_3 first), 0.35 s each, with ease-in and dust bursts at the footprint edge. A rubble decal fades in under them. Sold: plays the build sequence in reverse over 1.5 s."
+  "remove": "Destroyed: shake \u00b10.03 for 0.4 s, then poof: a soft cream cloud bursts out of the building while it swells 8% for 0.06 s and pops to nothing in 0.14 s. A rubble decal fades in under it. Sold: dust at the footprint corners, then the same poof. Nothing sinks into the ground."
  },
  {
   "key": "laser_tower",
@@ -296,7 +296,7 @@
   "idle": "Coils breathe on a 2.5 s sine; the prism turns at 6 rpm.",
   "produces": [],
   "emerge": "Rises out of its pad in stages; nothing appears instantly. stage_0 (pad) lifts from y=-0.15 to 0 during build progress 0\u201310%. stage_1, stage_2 and stage_3 each start at local y = -(stage height) and rise to 0 with ease-out cubic over progress 10\u201345%, 45\u201375% and 75\u201395%. The opaque terrain and pad hide whatever is still below ground. stage_3 ends with a 4% Y-scale overshoot that settles in 0.15 s (spring-loaded). Functional nodes (turret, spinner, door, lift) come last, at 95\u2013100%: a turret rises 0.3 out of its housing, then a spinner spins up from 0 rpm.",
-  "remove": "Destroyed: shake \u00b10.03 for 0.4 s, then stages sink in reverse order (stage_3 first), 0.35 s each, with ease-in and dust bursts at the footprint edge. A rubble decal fades in under them. Sold: plays the build sequence in reverse over 1.5 s."
+  "remove": "Destroyed: shake \u00b10.03 for 0.4 s, then poof: a soft cream cloud bursts out of the building while it swells 8% for 0.06 s and pops to nothing in 0.14 s. A rubble decal fades in under it. Sold: dust at the footprint corners, then the same poof. Nothing sinks into the ground."
  },
  {
   "key": "mining_truck",
@@ -312,7 +312,7 @@
    "turn_in_place": true
   },
   "emerge": "Spawns inside the factory, 0.6 behind its door node. The door rolls up (localScale.y 1\u21920.05, 0.35 s), the unit drives out along \u2212Z at 60% speed to a point 1.5 tiles south, then takes its rally order. The door rolls down 0.5 s after the unit clears.",
-  "remove": "Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540\u00b0/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then sinks into the ground over 2 s.",
+  "remove": "Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540\u00b0/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then goes poof.",
   "mechanics": "Tracked: pivot-turns in place at 110\u00b0/s. When it has to turn more than 60\u00b0 it stops and turns first, then drives. Accelerating pitches the hull nose-up 2\u00b0 and braking pitches it nose-down 3\u00b0 (spring, 0.25 s). On slopes the hull follows the ground normal (lerp 8/s). The cutter's teeth always turn at 60 rpm while the engine runs. Harvest loop: drive onto an ore tile; while harvesting, ramp the spinner up to 240 rpm over 0.4 s and creep forward at 0.15 tiles/s across the tile. Each 1 s tick takes one load, and the bin's ore bricks rise in steps of 1/5. When full, the bin bricks reach max height and the truck drives to the nearest refinery dock. It reverses into the dock along +Z, the dock door rolls up, the bin tips 35\u00b0 about its rear edge for 1.2 s to unload, the bin resets and the door closes.",
   "nodes": {
    "spinner": {
@@ -345,7 +345,7 @@
    "turn_in_place": false
   },
   "emerge": "Spawns inside the factory, 0.6 behind its door node. The door rolls up (localScale.y 1\u21920.05, 0.35 s), the unit drives out along \u2212Z at 60% speed to a point 1.5 tiles south, then takes its rally order. The door rolls down 0.5 s after the unit clears.",
-  "remove": "Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540\u00b0/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then sinks into the ground over 2 s.",
+  "remove": "Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540\u00b0/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then goes poof.",
   "mechanics": "Wheeled: cannot turn in place. Minimum turn radius 0.8 tiles; steering follows a curve and reverses for tight corners. Body rolls up to 4\u00b0 into turns and pitches 2\u00b0 under acceleration. Repair: parks 0.8 tiles from the target. The turret (crane base) yaws to face it at 120\u00b0/s and the barrel (crane arm) pitches down from \u221225\u00b0 to \u221210\u00b0. The amber welder tip pulses 6 Hz and the welding beam effect plays. The arm sways \u00b13\u00b0 on a 1.4 s sine while working.",
   "nodes": {
    "turret": {
@@ -376,7 +376,7 @@
    "turn_in_place": false
   },
   "emerge": "Spawns inside the factory, 0.6 behind its door node. The door rolls up (localScale.y 1\u21920.05, 0.35 s), the unit drives out along \u2212Z at 60% speed to a point 1.5 tiles south, then takes its rally order. The door rolls down 0.5 s after the unit clears.",
-  "remove": "Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540\u00b0/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then sinks into the ground over 2 s.",
+  "remove": "Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540\u00b0/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then goes poof.",
   "mechanics": "Wheeled: cannot turn in place. Minimum turn radius 1.0 tiles; steering follows a curve and reverses for tight corners. Body rolls up to 4\u00b0 into turns and pitches 2\u00b0 under acceleration. Deploy (2.5 s, all transforms): it must be on a clear 2\u00d72 area. The truck stops and aligns to the grid (rotates to the nearest 90\u00b0 over 0.4 s). Its body lowers 0.08 over 0.3 s as the jacks extend. The folded bunker lifts off the bed while the truck chassis sinks into the ground over 1.0 s. The outpost's stage_0 to stage_3 rise from the same spot using the structure build sequence, compressed to 1.8 s. Reverse this to undeploy.",
   "nodes": {},
   "idle": "Engine idle bob 0.004 at 8 Hz."
@@ -395,7 +395,7 @@
    "turn_in_place": false
   },
   "emerge": "Spawns inside the factory, 0.6 behind its door node. The door rolls up (localScale.y 1\u21920.05, 0.35 s), the unit drives out along \u2212Z at 60% speed to a point 1.5 tiles south, then takes its rally order. The door rolls down 0.5 s after the unit clears.",
-  "remove": "Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540\u00b0/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then sinks into the ground over 2 s.",
+  "remove": "Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540\u00b0/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then goes poof.",
   "mechanics": "Wheeled: cannot turn in place. Minimum turn radius 0.5 tiles; steering follows a curve and reverses for tight corners. Body rolls up to 4\u00b0 into turns and pitches 2\u00b0 under acceleration. Suspension bounce is exaggerated: body Y on a spring (k = 120, damping 10) driven by terrain noise when moving. It can fire on the move; the turret yaws independently of the body.",
   "nodes": {
    "turret": {
@@ -426,7 +426,7 @@
    "turn_in_place": true
   },
   "emerge": "Spawns inside the factory, 0.6 behind its door node. The door rolls up (localScale.y 1\u21920.05, 0.35 s), the unit drives out along \u2212Z at 60% speed to a point 1.5 tiles south, then takes its rally order. The door rolls down 0.5 s after the unit clears.",
-  "remove": "Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540\u00b0/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then sinks into the ground over 2 s.",
+  "remove": "Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540\u00b0/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then goes poof.",
   "mechanics": "Tracked: pivot-turns in place at 120\u00b0/s. When it has to turn more than 60\u00b0 it stops and turns first, then drives. Accelerating pitches the hull nose-up 2\u00b0 and braking pitches it nose-down 3\u00b0 (spring, 0.25 s). On slopes the hull follows the ground normal (lerp 8/s). Fires on the move. Each shot: the barrel recoils 0.12 along \u2212Z in 0.05 s and returns over 0.35 s, the hull kicks back 1.5\u00b0 pitch, and the muzzle flash spawns at the barrel tip.",
   "nodes": {
    "turret": {
@@ -457,7 +457,7 @@
    "turn_in_place": true
   },
   "emerge": "Spawns inside the factory, 0.6 behind its door node. The door rolls up (localScale.y 1\u21920.05, 0.35 s), the unit drives out along \u2212Z at 60% speed to a point 1.5 tiles south, then takes its rally order. The door rolls down 0.5 s after the unit clears.",
-  "remove": "Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540\u00b0/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then sinks into the ground over 2 s.",
+  "remove": "Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540\u00b0/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then goes poof.",
   "mechanics": "Tracked: pivot-turns in place at 70\u00b0/s. When it has to turn more than 60\u00b0 it stops and turns first, then drives. Accelerating pitches the hull nose-up 2\u00b0 and braking pitches it nose-down 3\u00b0 (spring, 0.25 s). On slopes the hull follows the ground normal (lerp 8/s). Twin barrels share one barrel node and fire as a pair, alternating left and right muzzles 0.15 s apart. Recoil is 0.16 with a 0.5 s return. The hull kicks back 2.5\u00b0. It must stop to fire when the target is more than 30\u00b0 off the hull heading.",
   "nodes": {
    "turret": {
@@ -488,7 +488,7 @@
    "turn_in_place": true
   },
   "emerge": "Spawns inside the factory, 0.6 behind its door node. The door rolls up (localScale.y 1\u21920.05, 0.35 s), the unit drives out along \u2212Z at 60% speed to a point 1.5 tiles south, then takes its rally order. The door rolls down 0.5 s after the unit clears.",
-  "remove": "Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540\u00b0/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then sinks into the ground over 2 s.",
+  "remove": "Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540\u00b0/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then goes poof.",
   "mechanics": "Tracked: pivot-turns in place at 80\u00b0/s. When it has to turn more than 60\u00b0 it stops and turns first, then drives. Accelerating pitches the hull nose-up 2\u00b0 and braking pitches it nose-down 3\u00b0 (spring, 0.25 s). On slopes the hull follows the ground normal (lerp 8/s). Fire cycle: stop and deploy 0.6 s (hull lowers 0.04; spade_l and spade_r, folded up 105\u00b0 for travel, slam down in 0.25 s and bite, kicking dust at their blades; the gun, stowed for travel on the bow's travel lock at about \u22123\u00b0, rises to its fixed \u221260\u00b0 over 0.6 s as it nears firing range and snaps up if a shot comes first; moving again, the spades fold and the gun stows once the turret faces forward). The turret yaws toward the target and the barrel stays at a fixed 60\u00b0 elevation. On firing, the barrel recoils 0.2 along its own axis over 0.05 s and returns over 0.6 s, and the hull pitches back 3\u00b0. It must undeploy (0.4 s) before moving. Shells fly a ballistic arc with an apex at 0.35 \u00d7 range.",
   "nodes": {
    "turret": {
@@ -519,7 +519,7 @@
    "turn_in_place": true
   },
   "emerge": "Spawns inside the factory, 0.6 behind its door node. The door rolls up (localScale.y 1\u21920.05, 0.35 s), the unit drives out along \u2212Z at 60% speed to a point 1.5 tiles south, then takes its rally order. The door rolls down 0.5 s after the unit clears.",
-  "remove": "Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540\u00b0/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then sinks into the ground over 2 s.",
+  "remove": "Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540\u00b0/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then goes poof.",
   "mechanics": "Tracked: pivot-turns in place at 70\u00b0/s. When it has to turn more than 60\u00b0 it stops and turns first, then drives. Accelerating pitches the hull nose-up 2\u00b0 and braking pitches it nose-down 3\u00b0 (spring, 0.25 s). On slopes the hull follows the ground normal (lerp 8/s). Same family as artillery with a longer hull and a far longer gun (range 12). Fire cycle as artillery: stop and deploy (hull lowers 0.04; spade_l and spade_r, folded up 105\u00b0 for travel, slam down in 0.25 s and bite, kicking dust at their blades; the gun, stowed for travel on the bow's travel lock at about \u22123\u00b0, rises to its fixed \u221260\u00b0 over 0.6 s as it nears firing range and snaps up if a shot comes first; moving again, the spades fold and the gun stows once the turret faces forward). On firing, the barrel recoils 0.24 along its own axis over 0.05 s and returns over 0.7 s, and the hull pitches back 3\u00b0.",
   "nodes": {
    "turret": {
@@ -550,7 +550,7 @@
    "turn_in_place": true
   },
   "emerge": "Spawns inside the factory, 0.6 behind its door node. The door rolls up (localScale.y 1\u21920.05, 0.35 s), the unit drives out along \u2212Z at 60% speed to a point 1.5 tiles south, then takes its rally order. The door rolls down 0.5 s after the unit clears.",
-  "remove": "Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540\u00b0/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then sinks into the ground over 2 s.",
+  "remove": "Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540\u00b0/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then goes poof.",
   "mechanics": "Tracked: pivot-turns in place at 100\u00b0/s. When it has to turn more than 60\u00b0 it stops and turns first, then drives. Accelerating pitches the hull nose-up 2\u00b0 and braking pitches it nose-down 3\u00b0 (spring, 0.25 s). On slopes the hull follows the ground normal (lerp 8/s). Laser: no recoil. Charge 0.4 s (the cyan coils brighten one after another, back to front), then a beam lasts 0.8 s while the turret keeps tracking. Cooldown is 1.2 s and the coils fade out. The barrel vibrates 0.004 at 30 Hz while the beam is on.",
   "nodes": {
    "turret": {
@@ -581,7 +581,7 @@
    "turn_in_place": true
   },
   "emerge": "Spawns on the airfield lift node, starting at y=\u22120.6 inside the pad. The lift rises to 0 over 1.2 s (ease-out). The aircraft spins up and climbs to cruise altitude (see its entry). The lift stays up until the aircraft is 1 tile away, then drops back down.",
-  "remove": "Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540\u00b0/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then sinks into the ground over 2 s.",
+  "remove": "Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540\u00b0/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then goes poof.",
   "mechanics": "Rotorcraft: it can strafe and turn in place. Cruise altitude is 2.4 above the terrain (lerp 2/s). It leans up to 12\u00b0 into its velocity and 8\u00b0 into turns. Takeoff: on the lift, the spinner (rotor) spins up 0\u2192600 rpm over 1.0 s, then the aircraft climbs to 2.4 over 1.5 s. The turret is a chin gun (\u00b1120\u00b0). Rocket pods fire as salvos of 4, alternating sides 0.1 s apart. Landing reverses this.",
   "nodes": {
    "spinner": {
@@ -618,7 +618,7 @@
    "turn_in_place": true
   },
   "emerge": "Spawns inside the factory, 0.6 behind its door node. The door rolls up (localScale.y 1\u21920.05, 0.35 s), the unit drives out along \u2212Z at 60% speed to a point 1.5 tiles south, then takes its rally order. The door rolls down 0.5 s after the unit clears.",
-  "remove": "Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540\u00b0/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then sinks into the ground over 2 s.",
+  "remove": "Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540\u00b0/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then goes poof.",
   "mechanics": "Quadcopter: four ducted fans (spinner front left, spinner_1 front right, spinner_2 rear right, spinner_3 rear left); the diagonal pairs counter-rotate (spinner_1 and spinner_3 are authored upside down). Fans spin up 0\u2192700 rpm over 0.6 s before it lifts off. It flies like a quadcopter, with no wings to bank with: the whole body tips toward its acceleration (nose down to set off, a roll toward the new heading when it changes direction, a rear-back to stop that ends in a small rock back to level, up to 30\u00b0), holding about 10\u00b0 of forward lean at cruise. Hovering, it makes tiny \u00b11.5\u00b0 corrections. The turret is its camera: a gimbal ball with a cyan lens, unarmed, so it only ever looks around.",
   "nodes": {
    "spinner": {
@@ -649,7 +649,7 @@
    "turn_in_place": true
   },
   "emerge": "Spawns on the airfield lift node, starting at y=\u22120.6 inside the pad. The lift rises to 0 over 1.2 s (ease-out). The aircraft spins up and climbs to cruise altitude (see its entry). The lift stays up until the aircraft is 1 tile away, then drops back down.",
-  "remove": "Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540\u00b0/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then sinks into the ground over 2 s.",
+  "remove": "Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540\u00b0/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then goes poof.",
   "mechanics": "Rotorcraft: it can strafe and turn in place. Two three-blade rotors (spinner front, spinner_1 rear on the raised pylon) counter-rotate (spinner_1 is authored upside down); cream blade tips trace each disc. Takeoff: spins up 0\u2192260 rpm over 1.2 s, then climbs to 2.6. Loading and unloading happen landed (the rear ramp faces the squad).",
   "nodes": {
    "spinner": {
@@ -675,7 +675,7 @@
    "turn_in_place": false
   },
   "emerge": "Spawns on the airfield lift node, starting at y=\u22120.6 inside the pad. The lift rises to 0 over 1.2 s (ease-out). The aircraft spins up and climbs to cruise altitude (see its entry). The lift stays up until the aircraft is 1 tile away, then drops back down.",
-  "remove": "Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540\u00b0/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then sinks into the ground over 2 s.",
+  "remove": "Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540\u00b0/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then goes poof.",
   "mechanics": "Fixed wing: it must keep moving, with a minimum speed of 2.5. Its turn radius comes from the turn rate and its current speed. It banks up to 35\u00b0 in turns. Takeoff: it rises on the lift, then accelerates along \u2212Z and climbs to 3.2 over 2.5 tiles. Bombing run: it flies straight over the target and drops 6 bombs spaced 0.2 s apart, then circles back to the airfield to rearm. The team-colour edge strip pulses 0.6\u21921.0 emission while it is cloaked.",
   "nodes": {},
   "idle": "When it has no orders it loiters in a 3-tile circle at 3.2."
@@ -694,7 +694,7 @@
    "turn_in_place": true
   },
   "emerge": "Spawns 0.4 behind the barracks door. The door rolls up (0.25 s) and the soldier walks out along \u2212Z for 1.0 tile, then takes its rally order. The door closes after the last soldier in the batch.",
-  "remove": "Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540\u00b0/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then sinks into the ground over 2 s.",
+  "remove": "Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540\u00b0/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then goes poof.",
   "mechanics": "Biped: it turns in place almost instantly. The body bobs 0.02 at 2\u00d7 its stride frequency while walking. A 4-soldier squad spreads out in a diamond 0.3 apart. The turret node (arms) aims at 400\u00b0/s and can aim \u00b170\u00b0 from the body heading before the body turns. The barrel (rifle) recoils 0.02 per shot in 3-round bursts. When it is shot it goes prone: root lowers 0.25 and pitches 80\u00b0 over 0.3 s.",
   "nodes": {
    "turret": {
@@ -725,7 +725,7 @@
    "turn_in_place": true
   },
   "emerge": "Spawns 0.4 behind the barracks door. The door rolls up (0.25 s) and the soldier walks out along \u2212Z for 1.0 tile, then takes its rally order. The door closes after the last soldier in the batch.",
-  "remove": "Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540\u00b0/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then sinks into the ground over 2 s.",
+  "remove": "Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540\u00b0/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then goes poof.",
   "mechanics": "Same movement as the rifleman. To fire, it stops (0.3 s), raises the launcher (barrel pitch 0 to \u221210\u00b0 for ground targets and \u221245\u00b0 for air), fires and recoils 0.06 back. Reloading takes 1.8 s: the launcher dips to +20\u00b0 and comes back up.",
   "nodes": {
    "turret": {
@@ -756,7 +756,7 @@
    "turn_in_place": true
   },
   "emerge": "Spawns 0.4 behind the barracks door. The door rolls up (0.25 s) and the soldier walks out along \u2212Z for 1.0 tile, then takes its rally order. The door closes after the last soldier in the batch.",
-  "remove": "Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540\u00b0/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then sinks into the ground over 2 s.",
+  "remove": "Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540\u00b0/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then goes poof.",
   "mechanics": "Same movement as the rifleman. It fires a 0.5 s beam after a 0.25 s charge, and the cyan rail brightens during the charge. No recoil.",
   "nodes": {
    "turret": {
@@ -787,7 +787,7 @@
    "turn_in_place": true
   },
   "emerge": "Spawns 0.4 behind the barracks door. The door rolls up (0.25 s) and the soldier walks out along \u2212Z for 1.0 tile, then takes its rally order. The door closes after the last soldier in the batch.",
-  "remove": "Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540\u00b0/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then sinks into the ground over 2 s.",
+  "remove": "Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540\u00b0/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then goes poof.",
   "mechanics": "Same movement as the rifleman. To heal, it moves within 0.8 of the target and kneels (root lowers 0.12 over 0.2 s). The green heal beam effect plays from the pack. It stands up when the target is full or leaves range.",
   "nodes": {},
   "idle": "Checks around: the body yaws \u00b125\u00b0 every 4 s."

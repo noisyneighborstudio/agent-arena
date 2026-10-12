@@ -10,8 +10,9 @@ EMERGE_STRUCTURE = ("Rises out of its pad in stages; nothing appears instantly. 
     "with ease-out cubic over progress 10–45%, 45–75% and 75–95%. The opaque terrain and pad hide whatever is still below ground. "
     "stage_3 ends with a 4% Y-scale overshoot that settles in 0.15 s (spring-loaded). Functional nodes (turret, spinner, door, lift) "
     "come last, at 95–100%: a turret rises 0.3 out of its housing, then a spinner spins up from 0 rpm.")
-REMOVE_STRUCTURE = ("Destroyed: shake ±0.03 for 0.4 s, then stages sink in reverse order (stage_3 first), 0.35 s each, with ease-in "
-    "and dust bursts at the footprint edge. A rubble decal fades in under them. Sold: plays the build sequence in reverse over 1.5 s.")
+REMOVE_STRUCTURE = ("Destroyed: shake ±0.03 for 0.4 s, then poof: a soft cream cloud bursts out of the building while it swells 8% "
+    "for 0.06 s and pops to nothing in 0.14 s. A rubble decal fades in under it. Sold: dust at the footprint corners, then the same poof. "
+    "Nothing sinks into the ground.")
 EMERGE_FROM = {
     'factory': "Spawns inside the factory, 0.6 behind its door node. The door rolls up (localScale.y 1→0.05, 0.35 s), the unit drives out along −Z at 60% speed to a point 1.5 tiles south, then takes its rally order. The door rolls down 0.5 s after the unit clears.",
     'barracks': "Spawns 0.4 behind the barracks door. The door rolls up (0.25 s) and the soldier walks out along −Z for 1.0 tile, then takes its rally order. The door closes after the last soldier in the batch.",
@@ -19,7 +20,7 @@ EMERGE_FROM = {
     'refinery': "A free mining_truck is dispensed through the refinery dock door when the refinery finishes building. It reverses out along −Z for 1.2 tiles and turns toward the nearest ore.",
 }
 REMOVE_UNIT = ("Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540°/s) and fades out over 0.6 s. "
-    "The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then sinks into the ground over 2 s.")
+    "The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then goes poof.")
 
 def U(key, role, built_at, loco, speed, accel, turn, in_place, mech, nodes, idle, extra=None):
     return dict(key=key, kind='unit', role=role, built_at=built_at,

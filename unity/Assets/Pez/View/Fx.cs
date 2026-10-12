@@ -236,7 +236,7 @@ namespace Pez.View
         }
 
         /// <summary>A vehicle blows up: blast, a secondary cook-off, its hull in pieces, and a wreck that smokes for 12 s
-        /// (flames for the first few seconds). The wreck itself darkens and stays 20 s (PezEmerge.PlayRemove).</summary>
+        /// (flames for the first few seconds). The wreck itself darkens and stays 20 s, then goes poof (PezEmerge.PlayRemove).</summary>
         public static void VehicleDestroyed(Vector3 pos, Color team)
         {
             bool ground = pos.y < 0.9f;
@@ -291,6 +291,24 @@ namespace Pez.View
             int columns = 1 + sizeX / 2;
             for (int k = 0; k < columns; k++)
                 S.Smoulder(c + new Vector3(Random.Range(-half, half) * 0.6f, 0.2f, Random.Range(-half, half) * 0.6f), 0.8f + 0.3f * n, Random.Range(8f, 10f), 6f);
+        }
+
+        /// <summary>
+        /// Poof: where something leaves the map (sold, dismantled, a wreck cleared, a building's remains), a soft cream cloud
+        /// bursts out of it, mostly outward and up, swells and thins in about a second, with a faint ring on the ground.
+        /// `size` is the model's width; the model pops to nothing underneath (PezEmerge.Poof).
+        /// </summary>
+        public static void Poof(Vector3 center, float size)
+        {
+            float s = Mathf.Clamp(size, 0.4f, 6f), sq = Mathf.Sqrt(s);
+            int n = (int)(9 + 5 * s);
+            for (int i = 0; i < n; i++)
+            {
+                var dir = Random.onUnitSphere; dir.y = Mathf.Abs(dir.y) * 0.7f + 0.15f; dir.Normalize();
+                Emit(S.Dust, center + dir * 0.22f * s, dir * Random.Range(0.8f, 1.5f) * sq + Up * 0.2f,
+                    Random.Range(0.42f, 0.7f) * sq, Random.Range(0.8f, 1.3f), Vary(Color32.Lerp(Cream, DustPale, Random.value * 0.45f), 0.05f, 230));
+            }
+            Emit(S.Ring, Ground(center) + Up * 0.05f, Vector3.zero, 1f + 1.4f * s, 0.45f, Alpha(Cream, 0.45f), Random.Range(0f, 360f));
         }
 
         /// <summary>An infantryman falls: no fireball, a puff of dust and a few kicked-up bits.</summary>

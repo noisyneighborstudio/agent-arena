@@ -1,9 +1,9 @@
-// Emerge and remove transforms: nothing in Pez pops onto or off the map.
+// Emerge and remove transforms: nothing in Pez pops onto the map, and nothing just blinks off it.
 //  - Structures: SetBuildProgress(0..1) raises stage_0..stage_3 out of the ground, then unfolds functional nodes.
 //  - Units: PlayExit(...) drives a new unit out through its producer's door, or presents it on the airfield lift.
 //  - Ores: SetClusterAmount / Regrow scale clusters, sinking empty ones.
-//  - Everything: PlayRemove() runs the reverse transform, then destroys the GameObject (a destroyed vehicle first
-//    lies as a dark wreck for 20 s, its head beside it).
+//  - Everything: PlayRemove() goes poof (a cloud from the view, OnPoof, as the model pops to nothing), then destroys the
+//    GameObject (a destroyed structure shakes first; a destroyed vehicle first lies as a dark wreck for 20 s, its head beside it).
 // Requires opaque terrain at y = 0 so geometry below ground is hidden while it rises.
 using System.Collections;
 using UnityEngine;
@@ -183,10 +183,14 @@ namespace Pez
         }
 
         // ---------------------------------------------------------------- removal
-        /// <summary>Destroyed or sold. Structures sink stage by stage; units sink, and a destroyed vehicle is left as a
-        /// charred wreck: every renderer (team stripe included) darkens to 30% over 0.5 s, the head is blown off and
-        /// lands beside the hull, and the wreck stays 20 s before it sinks. Destroys the GameObject at the end.</summary>
-        public IEnumerator PlayRemove(bool destroyed, float seconds = 1.5f)
+        /// <summary>The view's cloud where a model vanishes (Fx.Poof): world centre and size. Set by WorldView.</summary>
+        public static System.Action<Vector3, float> OnPoof;
+
+        /// <summary>Destroyed, sold or dismantled: nothing sinks into the ground, it goes poof. A destroyed structure shakes
+        /// for 0.4 s first. A destroyed vehicle is left as a charred wreck: every renderer (team stripe included) darkens to
+        /// 30% over 0.5 s, the head is blown off and lands beside the hull, and the wreck stays 20 s before it goes poof.
+        /// Everything else goes poof at once. Destroys the GameObject at the end.</summary>
+        public IEnumerator PlayRemove(bool destroyed)
         {
             var m = GetComponent<PezMotion>();
             if (m) m.enabled = false;
@@ -196,27 +200,47 @@ namespace Pez
                 if (destroyed)
                     for (float t = 0f; t < .4f; t += Time.deltaTime) { transform.position = origin + (Vector3)Random.insideUnitCircle * .03f; yield return null; }
                 transform.position = origin;
-                for (float t = 0f; t < seconds; t += Time.deltaTime) { SetBuildProgress(1f - t / seconds); yield return null; }
-                SetBuildProgress(0f);
             }
-            else
+            else if (destroyed)
             {
-                Renderer[] parts = destroyed ? GetComponentsInChildren<Renderer>() : null; // before the head leaves
+                Renderer[] parts = GetComponentsInChildren<Renderer>(); // before the head leaves
                 Transform turret = PezMotion.FindDeep(transform, "turret");
-                if (destroyed && turret) StartCoroutine(Fling(turret, origin.y));
+                if (turret) StartCoroutine(Fling(turret, origin.y));
                 for (float t = 0f; t < .5f; t += Time.deltaTime)
                 {
                     float k = t / .5f;
                     transform.position = origin + Vector3.down * .06f * k;
-                    if (destroyed) PezShade.Set(parts, Mathf.Lerp(1f, WreckDim, k * (2f - k)), 1f);
+                    PezShade.Set(parts, Mathf.Lerp(1f, WreckDim, k * (2f - k)), 1f);
                     yield return null;
                 }
                 transform.position = origin + Vector3.down * .06f;
-                if (destroyed) { PezShade.Set(parts, WreckDim, 1f); yield return new WaitForSeconds(20f); }
-                Vector3 p = transform.position;
-                for (float t = 0f; t < 2f; t += Time.deltaTime) { transform.position = p + Vector3.down * 0.6f * (t / 2f); yield return null; }
+                PezShade.Set(parts, WreckDim, 1f);
+                yield return new WaitForSeconds(20f);
             }
+            yield return Poof();
             Destroy(gameObject);
+        }
+
+        /// <summary>
+        /// Poof: a cloud bursts out of the model (OnPoof) while it swells 8% for 0.06 s and pops to nothing in 0.14 s, gone
+        /// by the time the cloud is at its fullest.
+        /// </summary>
+        IEnumerator Poof()
+        {
+            var rs = GetComponentsInChildren<Renderer>();
+            Bounds b = default; bool any = false;
+            foreach (var r in rs) { if (!r.enabled || r is ParticleSystemRenderer) continue; if (any) b.Encapsulate(r.bounds); else { b = r.bounds; any = true; } }
+            if (!any) b = new Bounds(transform.position + Vector3.up * .3f, Vector3.one * .6f);
+            OnPoof?.Invoke(b.center, Mathf.Max(b.size.x, b.size.z));
+            // Scale about the cloud's centre, not the model's feet, so it pops in place.
+            Vector3 scale = transform.localScale, pivot = b.center, pos = transform.position;
+            for (float t = 0f; t < .2f; t += Time.deltaTime)
+            {
+                float k = t < .06f ? 1f + .08f * (t / .06f) : 1.08f * (1f - Mathf.Pow((t - .06f) / .14f, 2f));
+                transform.localScale = scale * Mathf.Max(0f, k);
+                transform.position = pivot + (pos - pivot) * Mathf.Max(0f, k);
+                yield return null;
+            }
         }
 
         /// <summary>How dark a wreck goes. MOTION.md says "darkens to 30%"; that's 30% as seen, which is about 0.08 in the
