@@ -15,6 +15,7 @@
 set -u
 REPO=${0:A:h:h}
 CI="$REPO/ci-work"; WT="$CI/worktree"; LIVE="$CI/live"  # build-and-test checkout; deployed checkout (the gateway runs here)
+WEB="$CI/web"  # the browser build's checkout: its own Unity import cache on the WebGL target, so neither build switches platforms
 UNITY=/Applications/Unity/Hub/Editor/6000.3.25f1/Unity.app/Contents/MacOS/Unity
 # A fresh room 1's settings (POST /api/admin/restart): ore_scale, open, map_size, match_hours (the match clock; default 4).
 FRESH_JSON=${PEZZ_FRESH_JSON:-'{"ore_scale":0.3,"open":true}'}
@@ -28,6 +29,10 @@ setup() {
     ln -s "$REPO/mcp/node_modules" "$LIVE/mcp/node_modules"
     mkdir -p "$LIVE/arena/logs" # the gateway logs here (git-ignored, so a fresh checkout lacks it)
     (cd "$LIVE/headless" && dotnet build -c Release >/dev/null 2>&1) # the overflow rooms' engine
+  fi
+  if [ ! -e "$WEB/.git" ]; then
+    git -C "$REPO" worktree add -q --detach "$WEB" origin/main || return 1
+    cp -c -R "$REPO/unity/Library" "$WEB/unity/Library"
   fi
   [ -e "$WT/.git" ] && return 0
   log "creating the CI checkout"
@@ -92,6 +97,21 @@ pass() {
     mv "$REPO/unity/Build/tmpci/Pezz.app" "$REPO/unity/Build/next/Pezz.app" && rm -rf "$REPO/unity/Build/tmpci"
     echo "$target" > "$CI/staged"
   fi
+  # 2b. The browser build (what /view and /watch serve): built whenever the game changed, or if the live one is missing.
+  #     Installed with the gateway in step 4, so the pages and the data they read move together.
+  local web_next="$CI/web-next"
+  if [ "$(cat "$CI/web-built" 2>/dev/null)" != "$target" ] && { [ $changed_unity = 1 ] || [ ! -f "$LIVE/build/web/index.html" ]; }; then
+    log "building the browser player"
+    status building "$target" "browser player"
+    git -C "$WEB" checkout -q -f --detach "$target" || return 2
+    rm -rf "$web_next"
+    "$UNITY" -batchmode -buildTarget WebGL -projectPath "$WEB/unity" -executeMethod Pez.EditorTools.PezSetup.BuildWeb \
+      -pezOut "$web_next" -logFile "$CI/web-build.log" -quit
+    if ! grep -q "Pez build: Succeeded" "$CI/web-build.log" || [ ! -f "$web_next/index.html" ]; then
+      log "browser build failed at ${target[1,7]} (see .ci/web-build.log)"; echo "$target" > "$CI/failed"; status failed "$target" "browser build"; return 1
+    fi
+    echo "$target" > "$CI/web-built"
+  fi
   if [ $changed_unity = 1 ]; then
 
     # 3. Deploy: pause, save, swap, resume, verify (rollback on failure).
@@ -121,6 +141,12 @@ pass() {
   #    and commander links survive restarts), and the overflow rooms' engine is rebuilt there for new rooms.
   git -C "$LIVE" checkout -q -f --detach "$target"
   (cd "$LIVE/headless" && dotnet build -c Release >/dev/null 2>&1)
+  # The browser build swaps in by renaming (the gateway reads its files per request: no restart needed for it).
+  if [ -f "$web_next/index.html" ]; then
+    mkdir -p "$LIVE/build"; rm -rf "$LIVE/build/web-old"
+    [ -d "$LIVE/build/web" ] && mv "$LIVE/build/web" "$LIVE/build/web-old"
+    mv "$web_next" "$LIVE/build/web" && log "browser player live (${target[1,7]})"
+  fi
   if [ $changed_mcp = 1 ]; then
     (cd "$LIVE/mcp" && [ package.json -nt node_modules ] && npm install --silent >/dev/null 2>&1)
     launchctl kickstart -k "gui/$(id -u)/com.sethwebster.pezz-gateway" && log "gateway restarted on ${target[1,7]}"
