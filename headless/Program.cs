@@ -12,6 +12,7 @@ namespace Pez.Headless
     /// pez-headless [--port 7777] [--controllers llm,ai] [--seed N] [--map-size 80] [--speed 1] [--selftest]
     ///              [--open [--max-players 8] [--max-map-size 320] [--house-ais 1] [--house-resign-above 5]]
     ///              open arena: outside agents join through the gateway; scripted "house" seats are passive and make room
+    ///              [--battle]  a staged demo fight for looking at the renderer (Battle.cs)
     ///              [--resume | --fresh] [--snapshot ~/.config/pezz/rooms/game-PORT.json] [--save-interval 30] [--match-hours 4]
     ///              the game is saved every 30 game-seconds, soon after a join, on POST /api/admin/save and on SIGTERM/SIGINT;
     ///              --resume restores the saved game at startup (an --open arena does by default; --fresh starts over)
@@ -69,6 +70,10 @@ namespace Pez.Headless
             var signals = new[] { PosixSignal.SIGTERM, PosixSignal.SIGINT, PosixSignal.SIGHUP }
                 .Select(sig => PosixSignalRegistration.Create(sig, ctx => { ctx.Cancel = true; stopRequested = true; })).ToList();
 
+            // --battle: a staged demo fight for the renderer (Battle.cs), restaged whenever the world is replaced.
+            Battle battle = null;
+            World battleWorld = null;
+
             var sw = Stopwatch.StartNew();
             double last = 0;
             long lastSeq = 0;
@@ -81,6 +86,11 @@ namespace Pez.Headless
                 api.Pump(game);
                 saver.Tick(game, api);
                 var w = game.World;
+                if (args.Contains("--battle"))
+                {
+                    if (w != battleWorld) { battleWorld = w; battle = new Battle(w); Console.WriteLine($"Battle staged: {w.Teams.Count} armies on {w.Map.W}x{w.Map.H}"); }
+                    battle.Tick();
+                }
                 foreach (var e in w.Events.Where(e => e.Seq > lastSeq && (e.Type == "chat" || e.Type == "defeated" || e.Type == "game_over")))
                     Console.WriteLine($"[{e.Tick * World.Dt,6:0.0}s] {(e.Team >= 0 ? w.Teams[e.Team].Name : "")}: {e.Text}");
                 if (w.Events.Count > 0) lastSeq = w.Events[^1].Seq;
