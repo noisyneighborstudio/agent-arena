@@ -1,0 +1,8 @@
+{
+  "name": "pezz-webclient-checks",
+  "private": true,
+  "description": "Browser checks for the Unity WebGL view (verify.mjs is the CI room's gate). Playwright is also found at /tmp/pezweb/pw or $PEZZ_PLAYWRIGHT.",
+  "type": "module",
+  "scripts": { "verify": "node verify.mjs" },
+  "devDependencies": { "playwright": "^1.64.0" }
+}

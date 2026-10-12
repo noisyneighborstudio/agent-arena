@@ -1,5 +1,8 @@
 # The kitchen sink
 
+> The GPU-free version of this room, with the browser build as its viewer and a CI gate on top, is the CI room: `docs/CI_ROOM.md`
+> (`arena/ci-room.sh open`). What follows describes the Unity-app room and the world it shows, which is the same one.
+
 A secret, always-on live room that holds every unit and structure in every state the view can show, laid out as a
 labelled gallery for art review. It runs its own private copy of the live build, so it always shows the art that's live.
 
