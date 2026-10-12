@@ -110,7 +110,8 @@ namespace Pez.View
             while (true)
             {
                 if (expired) { yield return WaitOrWake(10f); continue; } // meta (every 10 s, or on the wake) says when the spectator feed takes over
-                nextDelay = live > 0f ? Mathf.Max(live, Spectator ? 2f : 0f) : 2f; // (before the first one arrives, keep trying)
+                // A spectator polls a little faster than the delayed feed is sampled (every 2 s), so no sample is ever skipped.
+                nextDelay = live > 0f ? (Spectator ? Mathf.Min(live, 1.5f) : live) : 2f; // (before the first one arrives, keep trying)
                 yield return Fetch();
                 if (live <= 0f && Loaded && failures == 0) yield break; // a static view: the one snapshot is all there is
                 yield return WaitOrWake(nextDelay);
@@ -131,7 +132,7 @@ namespace Pez.View
         {
             if (string.IsNullOrEmpty(newUrl)) return;
             url = newUrl;
-            lastTick = -1;
+            lastTick = -1; newestTick = -1; serverOffset = float.NaN; queue.Clear();
             StopAllCoroutines();
             fetching = false;
             expired = false; failures = 0; seatEnded = false; Result = null;
@@ -196,6 +197,24 @@ namespace Pez.View
             fetching = false;
         }
 
+        // ---------------------------------------------------------------- the jitter buffer
+        // Snapshots don't arrive on the game's clock (the server samples every so often, the page polls on its own
+        // timer, fetches take varying time). Applying each on arrival made the local copy run ahead, then get pulled
+        // back and replayed forward from the snapshot, every few seconds. Instead the copy plays a little behind the
+        // newest snapshot (one poll interval and half a second), each snapshot is swapped in when the local clock
+        // reaches its tick (same tick: nothing to replay), and the local clock runs a few percent fast or slow to hold
+        // that lag (RateScale, read by GameRunner).
+
+        struct Pending { public Dictionary<string, object> Root; public Dictionary<string, object> World; public int Tick; public int Bytes; public double ParseMs; }
+        readonly List<Pending> queue = new List<Pending>();
+        int newestTick = -1;
+        float serverOffset = float.NaN; // smoothed (server tick - local clock * tick rate): the server's clock without arrival jitter
+        /// <summary>How fast the local game clock runs (1 = real time); GameRunner scales Game.Advance by it.</summary>
+        public float RateScale { get; private set; } = 1f;
+
+        float TickRateNow => World.TickRate * Mathf.Max(0.1f, Runner.Game.Speed);
+        float BufferTicks => ((Spectator ? 2f : Mathf.Max(live, 0.5f)) + 0.5f) * TickRateNow;
+
         void Apply(string text)
         {
             var game = Runner.Game;
@@ -205,11 +224,49 @@ namespace Pez.View
             var wd = root.Obj("world");
             int tick = wd.In("tick");
             bool sameGame = Loaded && wd.Str("game_id") == game.World.GameId;
-            if (sameGame && tick < lastTick - 200) lastTick = -1; // the server went back (a restart from an older save): follow it
-            if (sameGame && tick <= lastTick) return; // nothing newer than what's on screen
-            int local = sameGame ? game.World.Tick : tick; float alpha = game.Alpha; // where the view's world is now (the snapshot is a fetch old)
-            sw.Restart();
-            game.Restore(root);
+            if (sameGame && tick < lastTick - 200) { lastTick = -1; newestTick = -1; serverOffset = float.NaN; queue.Clear(); } // the server went back (a restart from an older save): follow it
+            if (sameGame && (tick <= lastTick || tick <= newestTick)) return; // nothing newer than what's on screen or queued
+            var p = new Pending { Root = root, World = wd, Tick = tick, Bytes = text.Length, ParseMs = parseMs };
+            newestTick = tick;
+            float offset = tick - Time.unscaledTime * TickRateNow;
+            serverOffset = float.IsNaN(serverOffset) || Mathf.Abs(offset - serverOffset) > BufferTicks * 2 ? offset : Mathf.Lerp(serverOffset, offset, 0.2f);
+            // A first load, a new match, a different point of view, or far behind (a hidden tab): straight to it.
+            int local = game.World.Tick;
+            if (!sameGame || Team != WantedTeam(game.World) || tick - local > BufferTicks * 4) { queue.Clear(); ApplyNow(p, sameGame); return; }
+            queue.Add(p);
+        }
+
+        /// <summary>The team this page shows for a world (the asked-for one, if the game has it and the seat hasn't ended).</summary>
+        int WantedTeam(World w) => !seatEnded && askedTeam < w.Teams.Count ? askedTeam : -1;
+
+        /// <summary>Each frame: swap in the queued snapshot the local clock has reached, and set the clock's pace.</summary>
+        void PlayQueue()
+        {
+            if (!Loaded || Runner == null || Runner.Game == null) { RateScale = 1f; return; }
+            var game = Runner.Game;
+            int at = -1;
+            for (int i = 0; i < queue.Count; i++) if (queue[i].Tick <= game.World.Tick) at = i;
+            if (at >= 0)
+            {
+                var p = queue[at];
+                queue.RemoveRange(0, at + 1);
+                ApplyNow(p, true);
+            }
+            if (newestTick < 0 || live <= 0f) { RateScale = 1f; return; }
+            // Where the server's game is now, extrapolated from the newest snapshot, minus the lag this copy keeps.
+            float target = serverOffset + Time.unscaledTime * TickRateNow - BufferTicks;
+            float err = target - (game.World.Tick + game.Alpha);
+            RateScale = Mathf.Clamp(1f + err / (8f * TickRateNow), 0.9f, 1.12f); // closes the gap over ~8 s, within a pace nobody notices
+        }
+
+        void ApplyNow(Pending p, bool sameGame)
+        {
+            var game = Runner.Game;
+            var wd = p.World;
+            int tick = p.Tick;
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            int local = sameGame ? game.World.Tick : tick; float alpha = game.Alpha; // where the view's world is now
+            game.Restore(p.Root);
             game.World.Mirror = true; // the server decides the game; this copy only shows it
             game.World.MirrorScores = wd.Arr("mirror_scores").OfType<Dictionary<string, object>>().Select(s => new MatchScore
             {
@@ -217,10 +274,10 @@ namespace Pez.View
                 OreMined = (int)s.Num("ore_mined"), KillValue = (int)s.Num("kill_value"), TerritoryPoints = (float)s.Num("territory_points"),
                 EconomyPoints = (float)s.Num("economy_points"), KillPoints = (float)s.Num("kill_points"), Score = (int)s.Num("score"),
             }).ToList() is var ms && ms.Count > 0 ? ms : null;
-            if (local > tick && local - tick <= 40) game.CatchUp(local, alpha); // time never runs backwards on screen (events up to here already played)
+            if (local > tick && local - tick <= 40) game.CatchUp(local, alpha); // the frame or two past the snapshot's tick (events up to here already played)
             double restoreMs = sw.Elapsed.TotalMilliseconds;
             // The page's team may not be in this game (a seat from an earlier match, or not taken yet): watch everything until it is.
-            int team = !seatEnded && askedTeam < game.World.Teams.Count ? askedTeam : -1;
+            int team = WantedTeam(game.World);
             if (team != Team && !seatEnded) Debug.Log($"pez team: showing {(team < 0 ? "everything" : "team " + team)} (asked for {askedTeam}, the game has {game.World.Teams.Count})");
             Team = team;
             Spectator = seatEnded || team < 0;
@@ -236,7 +293,7 @@ namespace Pez.View
                 Runner.InMenu = false;
                 Runner.Hud.enabled = Runner.Input.enabled = true;
             }
-            Debug.Log($"pez resync: tick={tick} bytes={text.Length} parse={parseMs:0.#}ms restore={restoreMs:0.#}ms rebind={rebindMs:0.#}ms ({(rebound ? "rebound" : "rebuilt")}) local={local}");
+            Debug.Log($"pez resync: tick={tick} bytes={p.Bytes} parse={p.ParseMs:0.#}ms restore={restoreMs:0.#}ms rebind={rebindMs:0.#}ms ({(rebound ? "rebound" : "rebuilt")}) local={local} rate={RateScale:0.00} queued={queue.Count}");
         }
 
         /// <summary>GameRunner built the view: put the camera where the page asked, the first time only.</summary>
@@ -250,6 +307,7 @@ namespace Pez.View
         {
             float now = Time.unscaledTime, dt = Time.unscaledDeltaTime;
             UpdateContract();
+            PlayQueue();
             if (dt <= 0f) return;
             frames.Add(dt);
             labelFrames++;

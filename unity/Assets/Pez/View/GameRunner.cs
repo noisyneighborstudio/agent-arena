@@ -424,7 +424,7 @@ namespace Pez.View
             if (!InMenu)
             {
                 if (!IsWeb && (UnityEngine.Input.GetKeyDown(KeyCode.Pause) || (UnityEngine.Input.GetKeyDown(KeyCode.P) && HumanTeam < 0 && !Hud.Typing))) Game.Paused = !Game.Paused;
-                Game.Advance(Time.deltaTime);
+                Game.Advance(Time.deltaTime * (Web != null ? Web.RateScale : 1f)); // the browser's copy is paced to its snapshots (WebClient.PlayQueue)
                 saver?.Tick(Game, Api);
             }
             if (Time.unscaledDeltaTime > 0) Game.RenderFps = Mathf.Lerp(Game.RenderFps, 1f / Time.unscaledDeltaTime, 0.05f);
