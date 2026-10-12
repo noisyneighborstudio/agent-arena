@@ -263,6 +263,11 @@ function upsert(e, now) {
           for (const p of sides) s.vents.push(s.obj.worldToLocal(p.clone()));
         } });
       }
+      // Smokestacks: a refinery's stack mouths (the model's stack_0, stack_1 markers), in this entity's own space.
+      if (key === "mining_refinery") {
+        s.stacks = []; s.obj.updateMatrixWorld(true);
+        for (let i = 0, o; (o = m.getObjectByName(`stack_${i}`)); i++) s.stacks.push(s.obj.worldToLocal(o.getWorldPosition(new THREE.Vector3())));
+      }
       // Construction stages (PezEmerge): stage_0..stage_3 rise out of the ground in turn as the build progresses.
       s.stages = [0, 1, 2, 3].map((i) => {
         const o = m.getObjectByName(`stage_${i}`); if (!o) return null;
@@ -436,6 +441,7 @@ function tick() {
     if (s.stages) emerge(s, s.build < 0 ? 1 : s.build / 100, dt);
     const pos = s.obj.position;
     if (s.vents && (s.build < 0 || s.build >= 100)) s.vents.forEach((v, i) => particles.loop(`v${id}:${i}`, () => particles.steam(), s.obj.localToWorld(v.clone()).applyMatrix4(worldInv)));
+    if (s.stacks && (s.build < 0 || s.build >= 100)) s.stacks.forEach((v, i) => particles.loop(`k${id}:${i}`, () => particles.stackSmoke(), s.obj.localToWorld(v.clone()).applyMatrix4(worldInv)));
     if (s.size > 0 && s.build >= 100 && s.hp < 30) particles.fireAt(`f${id}`, Math.min(1, (30 - s.hp) / 30), new THREE.Vector3(pos.x, (s.top ?? 1) * 0.85, pos.z), s.size);
     const speed = Math.hypot(s.b.x - s.a.x, s.b.y - s.a.y) / Math.max(0.05, (s.b.t - s.a.t) / 1000);
     if (s.size === 0 && !AIR.has(s.key) && !/rifle|soldier|trooper|medic|engineer|sniper|commando/.test(s.key) && speed > 0.25) particles.loop(`d${id}`, () => particles.dust(), new THREE.Vector3(pos.x, 0.1, pos.z));

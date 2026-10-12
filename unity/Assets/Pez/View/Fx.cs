@@ -452,6 +452,16 @@ namespace Pez.View
             Emit(S.Dust, pos + Random.insideUnitSphere * 0.05f, new Vector3(Random.Range(-0.1f, 0.1f), Random.Range(1.3f, 1.8f), Random.Range(-0.1f, 0.1f)),
                 size * Random.Range(0.85f, 1.15f), Random.Range(1.7f, 2.3f), SteamCol);
 
+        static readonly Color32 StackGrey = new Color32(184, 176, 164, 255); // pale warm grey: industry, never a fire's smoke
+
+        /// <summary>A puff from a refinery smokestack: lit, buoyant smoke leaving the mouth and leaning downwind. `k` 1 is a
+        /// working stack's full puff, 0 a banked stack's thin wisp.</summary>
+        public static void StackSmoke(Vector3 pos, float k) =>
+            Emit(S.Smoke, pos + new Vector3(Random.Range(-0.03f, 0.03f), 0.03f, Random.Range(-0.03f, 0.03f)),
+                new Vector3(Random.Range(-0.05f, 0.05f), Random.Range(0.9f, 1.25f), Random.Range(-0.05f, 0.05f)),
+                Random.Range(0.3f, 0.42f) * Mathf.Lerp(0.6f, 1f, k), Random.Range(3.2f, 4.2f),
+                Vary(StackGrey, 0.06f, (byte)(Mathf.Lerp(0.3f, 0.7f, k) * 255f)));
+
         // ---------------------------------------------------------------- lines
 
         public static void Tracer(Vector3 a, Vector3 b, Color c)

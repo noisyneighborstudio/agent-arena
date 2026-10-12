@@ -42,7 +42,8 @@ namespace Pez.View
             // Power state on structures: emissive renderers, the smoothed glow and what was last applied, steam.
             public Renderer[] Glows;
             public float GlowK = -1f, GlowShown = -1f, RateShown = 1f;
-            public float[] SteamNext;    // per tower: when it next puffs (each tower on its own irregular rhythm)
+            public float[] SteamNext;    // per tower or smokestack: when it next puffs (each on its own irregular rhythm)
+            public RefineryWorks Works;  // refinery: the ore belt and the stacks' mouths
             public bool GlowHidden;
             public Sheen Sheen;          // newcomer protection: the sheen over its parts (null when its team isn't protected)
             public Renderer[] Halos;     // power plant: the light rising out of its open stacks      // the neutral "last seen" glow is applied (a stream render of fogged enemy state)
@@ -191,6 +192,8 @@ namespace Pez.View
                     }
                 }
             }
+            foreach (var v in Views.Values)
+                if (v.Works != null && v.Rig.Root.gameObject.activeSelf) v.Works.Show(SeesState(v.E, team)); // no live belt under fog
             Deposits?.SetPov(team, PovTeam);
             FireSim.SetPovLayer(team == PovTeam ? TerrainView.MainFogLayer : TerrainView.TeamFogLayerBase + team);
             foreach (var v in Views.Values)
@@ -691,6 +694,39 @@ namespace Pez.View
             if (emitted) Fx.Audience = null;
         }
 
+        /// <summary>
+        /// The refinery at work (MOTION.md mining_refinery): while the sim says it's refining, ore rides the belt to the
+        /// crusher (RefineryWorks) and both smokestacks puff, each on its own rhythm (slower on low power). Out of ore, the
+        /// stacks go to a thin wisp every few seconds. A burning refinery's smoke is the fire's.
+        /// </summary>
+        void Refinery(EV v)
+        {
+            var e = v.E;
+            var t = World.Teams[e.Team];
+            v.Works ??= RefineryWorks.For(v.Rig.Model);
+            v.Works.Show(SeesState(e, PovTeam));
+            v.Works.Tick(e.Working, t.Amount("iron_ore") > t.Reserved("iron_ore"), t.Amount("copper_ore") > t.Reserved("copper_ore"),
+                t.LowPower ? 0.5f : 1f, Time.deltaTime);
+            if (v.FireK >= 0.15f || v.Works.Stacks == 0) return;
+            float now = Time.time;
+            if (v.SteamNext == null)
+            {
+                v.SteamNext = new float[v.Works.Stacks];
+                for (int i = 0; i < v.SteamNext.Length; i++) v.SteamNext[i] = now + Random.Range(0f, 1f);
+            }
+            bool emitted = false;
+            for (int i = 0; i < v.SteamNext.Length; i++)
+            {
+                if (e.Working && v.SteamNext[i] > now + 0.6f) v.SteamNext[i] = now + Random.Range(0f, 0.3f); // fired up: no waiting out a wisp's gap
+                if (now < v.SteamNext[i]) continue;
+                if (!emitted) { Fx.Audience = AudienceFor(e); emitted = true; }
+                Fx.StackSmoke(v.Works.Mouth(i), e.Working ? 1f : 0f);
+                float gap = !e.Working ? Random.Range(2.5f, 5f) : (t.LowPower ? 0.65f : 0.32f) * Random.Range(0.7f, 1.3f);
+                v.SteamNext[i] = Mathf.Max(v.SteamNext[i] + gap, now + 0.05f);
+            }
+            if (emitted) Fx.Audience = null;
+        }
+
         /// <summary>Surveyor: thump while it stands surveying (each slam sends a ripple); moving off cancels.</summary>
         void Survey(EV v)
         {
@@ -761,6 +797,7 @@ namespace Pez.View
                 if (e.IsComplete || v.SmokeK > 0f || v.Sim != null) Damage(v);
                 Construction(v);
                 if (e.Def.Key == "deep_mine") DeepMine(v);
+                if (e.Def.Key == "mining_refinery" && e.IsComplete && e.Team >= 0) Refinery(v);
                 if (World.Decaying(e) && Time.time >= v.DustNext)
                 {
                     // The match's decay stage: grit crumbles off the roof every few seconds.

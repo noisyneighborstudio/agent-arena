@@ -40,8 +40,9 @@ Units are tiles (1 tile = 1 Unity unit) and seconds. Rotation speeds are in degr
 ### `mining_refinery`
 *Turns ore into stockpile.* Produces: mining_truck (free).
 
-- **Mechanics:** The dock door rolls up when a mining truck reverses in and closes after it leaves. While processing, the foil wrapper roll counter-rotates and the conveyor scrolls its UVs at 0.5/s. Dispenses one mining_truck through the dock when it finishes building.
+- **Mechanics:** The dock door rolls up when a mining truck reverses in and closes after it leaves. While refining, lumps of iron and copper ore ride the belt over the dock from the intake hood to the smelter hood at 0.5 tiles/s, flattened as they pass under the foil crusher roll (the spinner), which turns with the belt. Both smokestacks puff pale smoke from their mouths (stack_0, stack_1), each about every 0.3 s. Out of ore, the belt runs on until it's empty and stops, the roll spins down and the stacks give a thin wisp every few seconds. Low power halves the belt, the roll and the smoke. Dispenses one mining_truck through the dock when it finishes building.
 - **`door`:** mode=rollup, open_s=0.35, close_s=0.5
+- **`spinner`:** axis=Z, idle_rpm=0, active_rpm=32, spinup_s=0.5
 - **Idle:** Dock lights blink alternately at 1 Hz while a truck is docking.
 
 ### `barracks`

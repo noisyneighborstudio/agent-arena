@@ -134,8 +134,12 @@ STRUCTURES = [
  S('power_plant', 'Generates power.', "The cyan cores brighten and dim with power load (emission 0.6–1.0). Steam particles rise from both towers. When power is low, the cores flicker at 4 Hz.",
    {}, "Cores pulse on a 3 s sine."),
  S('mining_refinery', 'Turns ore into stockpile.', "The dock door rolls up when a mining truck reverses in and closes after it leaves. "
-   "While processing, the foil wrapper roll counter-rotates and the conveyor scrolls its UVs at 0.5/s. Dispenses one mining_truck through the dock when it finishes building.",
-   dict(door=dict(mode='rollup', open_s=.35, close_s=.5)), "Dock lights blink alternately at 1 Hz while a truck is docking.", ['mining_truck (free)']),
+   "While refining, lumps of iron and copper ore ride the belt over the dock from the intake hood to the smelter hood at 0.5 tiles/s, "
+   "flattened as they pass under the foil crusher roll (the spinner), which turns with the belt. Both smokestacks puff pale smoke from "
+   "their mouths (stack_0, stack_1), each about every 0.3 s. Out of ore, the belt runs on until it's empty and stops, the roll spins "
+   "down and the stacks give a thin wisp every few seconds. Low power halves the belt, the roll and the smoke. "
+   "Dispenses one mining_truck through the dock when it finishes building.",
+   dict(door=dict(mode='rollup', open_s=.35, close_s=.5), spinner=dict(axis='Z', idle_rpm=0, active_rpm=32, spinup_s=.5)), "Dock lights blink alternately at 1 Hz while a truck is docking.", ['mining_truck (free)']),
  S('barracks', 'Trains infantry.', "Each soldier comes out through the roll-up door (see each infantry unit's emerge entry). The roof heads flip up 15° in sequence while a soldier is training.",
    dict(door=dict(mode='rollup', open_s=.25, close_s=.4)), "The flag sways ±6° on a 1.8 s sine.", ['rifleman', 'rocket_soldier', 'laser_trooper', 'medic']),
  S('factory', 'Builds vehicles.', "While building, the team wrapper band pulses brighter by 10%. Each finished vehicle comes out through the roll-up door. The door takes 0.35 s to open.",

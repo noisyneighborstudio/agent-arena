@@ -79,6 +79,11 @@ class Asset:
     def torus(self, m, R_, r, x=0, y=0, z=0, node=None):
         t = trimesh.creation.torus(major_radius=R_, minor_radius=r, major_sections=32, minor_sections=10)
         t.apply_transform(axis_rot('y')); t.apply_translation((x, y, z)); self.add(node, m, t)
+    def rev(self, m, profile, x=0, z=0, node=None, sections=24):
+        """A solid of revolution about the vertical axis through (x, z): profile is a closed, counterclockwise list of
+        (radius, y) points (counterclockwise keeps the normals facing out)."""
+        s = trimesh.creation.revolve(np.array(profile, float), sections=sections)
+        s.apply_transform(axis_rot('y')); s.apply_translation((x, 0, z)); self.add(node, m, s)
     def octa(self, m, r, h, x=0, y=0, z=0, node=None):
         v = np.array([[r,0,0],[-r,0,0],[0,0,r],[0,0,-r],[0,h,0],[0,-h,0]], float)
         f = [[4,0,2],[4,2,1],[4,1,3],[4,3,0],[5,2,0],[5,1,2],[5,3,1],[5,0,3]]
@@ -197,12 +202,51 @@ def S_mining_refinery():
     door(a, .9, .6, -.48, lights=False, anim=True)              # dock (south)
     a.box('kraft', .9, .04, .9, y=.1, z=-.95)                    # dock floor
     for sx in (-1, 1): a.box('amber', .07, .07, .07, x=sx * .55, y=.55, z=-1.42)
-    for x in (-.75, .1):
-        a.cyl('cream', .38, 1.5, x=x, y=.83 + .75, z=.85)
-        a.cyl('team', .41, .14, x=x, y=1.6 + .75 - .05, z=.85)
-    a.cyl('foil', .26, 1.0, x=.95, y=1.1, z=.2, axis='x')
-    a.box('steel', .2, .08, 1.2, x=.95, y=.9, z=-.3)
-    a.box('team', 2.7, .06, .3, y=.86, z=-.3)
+    # Ore belt over the dock: in under the intake hood (-x), crushed under the foil roll, into the smelter hood (+x).
+    # The ore riding it is the view's (RefineryWorks), between the belt_in and belt_out markers.
+    a.box('team', 2.5, .09, .34, y=.875, z=-.3)                 # belt frame
+    a.box('licorice', 2.4, .02, .26, y=.93, z=-.3)              # belt
+    for x in (-1.2, 1.2): a.cyl('steel', .055, .3, x=x, y=.92, z=-.3, axis='z')
+    a.box('cream', .3, .2, .4, x=-1.12, y=1.06, z=-.3)          # intake hood
+    a.box('licorice', .02, .12, .3, x=-.97, y=1.0, z=-.3)
+    a.box('cream', .3, .26, .4, x=1.17, y=1.08, z=-.3)          # smelter hood
+    a.box('licorice', .02, .16, .3, x=1.02, y=1.02, z=-.3)
+    a.node('belt_in', a.key, (-.95, .94, -.3)); a.node('belt_out', a.key, (1.0, .94, -.3))
+    for z in (-.55, -.05):                                     # the roll's cheeks
+        a.box('steel', .24, .3, .04, x=.82, y=1.03, z=z)
+        a.cyl('steel', .05, .06, x=.82, y=1.11, z=z, axis='z')
+    # Crusher roll, turning while refining. Turned 180 deg about Y so PezMotion's positive spin rolls its underside along with
+    # the ore (Unity mirrors x on import).
+    sp = a.node('spinner', a.key, (.82, 1.11, -.3), rot=ry(180))
+    a.cyl('foil', .15, .42, axis='z', node=sp, sections=24)
+    for k in range(6):
+        t = k * math.pi / 3
+        a.box('smoke', .04, .04, .43, x=.15 * math.cos(t), y=.15 * math.sin(t), node=sp, rot=rz(math.degrees(t)))
+    # Smelter: a squat drum fed by the belt, piped to the stacks.
+    a.cyl('cream', .32, .5, x=.78, y=1.08, z=.68)
+    a.cyl('team', .335, .1, x=.78, y=1.2, z=.68)
+    a.cyl('cream', .26, .08, x=.78, y=1.37, z=.68)
+    a.cyl('steel', .05, .16, x=.9, y=1.45, z=.6)
+    a.cyl('steel', .06, .52, x=.22, y=1.2, z=.72, axis='x')
+    # Two tapered smokestacks on a boiler house: cream with team bands, a catwalk ring, a steel crown round a sooty
+    # throat. stack_0 / stack_1 mark the mouths the view's smoke leaves from.
+    a.box('cream', 1.3, .2, .6, x=-.5, y=.93, z=.75)
+    for i, (x, top, r0, r1) in enumerate(((-.82, 2.95, .25, .17), (-.16, 2.55, .22, .155))):
+        b = 1.03
+        rad = lambda y: r0 + (r1 - r0) * (y - b) / (top - .13 - b)
+        a.cyl('cream', r0 + .07, .12, x=x, y=b + .06, z=.75, sections=24)
+        a.rev('cream', [(0, b), (r0, b), (r1, top - .13), (0, top - .13)], x=x, z=.75)
+        for y in (top - .42, top - .64):
+            a.rev('team', [(0, y), (rad(y) + .014, y), (rad(y + .09) + .014, y + .09), (0, y + .09)], x=x, z=.75)
+        cw = b + (top - b) * .52
+        a.torus('steel', rad(cw) + .035, .017, x=x, y=cw, z=.75)
+        ri, ro, yb = r1 - .03, r1 + .035, top - .16
+        cx, cr = (ri + ro) / 2, (ro - ri) / 2
+        bead = [(cx + cr * math.cos(t), top - cr + cr * math.sin(t)) for t in np.linspace(0, math.pi, 9)]
+        a.rev('steel', [(ri, yb), (ro - .012, yb), (ro, yb + .02)] + bead + [(ri, yb + .02)], x=x, z=.75)
+        a.rev('dark', [(ri - .012, top - .14), (ri + .002, top - .14), (ri + .002, top - .03), (ri - .012, top - .03)], x=x, z=.75)
+        a.cyl('dark', ri, .02, x=x, y=top - .13, z=.75, sections=24)
+        a.node(f'stack_{i}', a.key, (x, top, .75))
     return a
 
 def S_barracks():

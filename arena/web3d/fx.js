@@ -122,6 +122,17 @@ export class Particles {
     });
   }
 
+  // Smoke off a refinery's smokestack: pale warm grey (never a fire's dark smoke), puffing up and leaning downwind.
+  stackSmoke() {
+    return new ParticleSystem({ ...SOFT,
+      duration: 1, looping: true, worldSpace: true, startLife: new IntervalValue(2.6, 3.6), startSpeed: new IntervalValue(0.8, 1.1),
+      startSize: new IntervalValue(0.3, 0.42), startColor: new ColorRange(V4(0.72, 0.69, 0.64, 0.7), V4(0.8, 0.77, 0.72, 0.6)),
+      emissionOverTime: new ConstantValue(3.5), shape: new ConeEmitter({ radius: 0.06, angle: 0.12 }), material: MAT.smoke, renderMode: RenderMode.BillBoard, ...PUFFS,
+      startRotation: new IntervalValue(0, 6.28),
+      behaviors: [new SizeOverLife(grow(0.7, 2.8)), new ColorOverLife(new Gradient([[new QV3(1, 1, 1), 0], [new QV3(0.95, 0.94, 0.92), 1]], [[0.0, 0], [0.7, 0.12], [0, 1]])), new ApplyForce(new QV3(0.35, 0.15, 0.2), new ConstantValue(0.25)), new RotationOverLife(new IntervalValue(-0.4, 0.4))],
+    });
+  }
+
   // A building on fire, by how hurt it is (BuildingFire: smoulder, standing, raging): flames, then dark smoke.
   fire(level, footprint = 2) { // level 0..1 (smouldering .. raging), footprint in tiles
     const rate = (10 + level * 55) * footprint / 2, size = 0.45 + level * 0.9;
