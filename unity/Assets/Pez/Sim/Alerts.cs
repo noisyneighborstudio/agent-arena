@@ -84,7 +84,7 @@ namespace Pez.Sim
         /// about what to do next, and a player who polls now and then shouldn't miss them.</summary>
         public const float StrategicWindow = 300f;
         public static bool Strategic(string kind) => kind is "surface_ore_exhausted" or "deep_mine_running_low" or "deep_mine_depleted" or "low_power"
-            or "defences_offline" or "match_clock" or "protection_ended" or "stalled" or "low_fuel";
+            or "defences_offline" or "match_clock" or "protection_ended" or "stalled" or "low_fuel" or "idle";
         /// <summary>Losses stay 2 minutes: a player polling now and then must still learn an army died (test player Oak didn't).</summary>
         public const float LossWindow = 120f;
         static float WindowFor(string kind) => Strategic(kind) ? StrategicWindow : kind is "units_lost" or "structure_lost" ? LossWindow : ActiveWindow;
@@ -115,6 +115,7 @@ namespace Pez.Sim
             "low_fuel" => "LOW FUEL, NOWHERE TO REFUEL",
             "air_contact" => "ENEMY AIRCRAFT ON RADAR",
             "stalled" => "NO WAY TO MAKE PROGRESS",
+            "idle" => "IDLE: YOUR SEAT IS ABOUT TO BE RESIGNED",
             "surface_ore_exhausted" => "SURFACE ORE RUNNING OUT",
             "arena_cleared" => "ARENA CLEARED: YOU WON THIS ROUND",
             "stockpile_lost" => "STOCKPILE SPILLED: LAST COMMAND CENTER LOST",

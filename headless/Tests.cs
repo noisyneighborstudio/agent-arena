@@ -54,6 +54,7 @@ namespace Pez.Headless
             Fuel();
             GroupMove();
             ResignWhenStalled();
+            IdleSeatsResign();
             WaitPacing();
             DeepMining();
             Prospecting();
@@ -197,6 +198,88 @@ namespace Pez.Headless
             Run(w3, 20);
             Check(w3.Teams[1].Resigned && w3.Teams[1].Left && !w3.GameOver && w3.Events.Any(e => e.Type == "left" && e.Text.Contains("resigned as lost")), "in an open arena the resigned base turns into salvage and play goes on");
             Check(w.Errors == 0 && w2.Errors == 0 && w3.Errors == 0, "no sim errors");
+        }
+
+        /// <summary>Seats nobody plays: warned at 15 minutes idle, resigned through Leave at 20. House AI is exempt.</summary>
+        static void IdleSeatsResign()
+        {
+            Console.WriteLine("\n-- idle seats resign");
+            // A house AI, a placeholder agent seat from the config (nobody plays it), and two agents who join a minute in.
+            var game = new Game(new GameConfig { Seed = 5, MapSize = 64, Open = true, Controllers = new[] { "ai", "llm" }, HouseAIs = 1 });
+            var w = game.World;
+            Step(game, 60);
+            var idler = w.AddTeam("llm", "Napper", out _);
+            var busy = w.AddTeam("llm", "Keen", out _);
+            int idlerId = idler.Id, busyId = busy.Id;
+            Check(idler.LastActiveAt == w.Time && w.Time >= 59, $"a team seated mid-match starts its idle clock at the join ({idler.LastActiveAt:0}s), not 0");
+            var derrick = w.Derricks.First();
+            derrick.Team = idlerId;
+            // Keen calls the API every minute; nobody calls for Napper or the placeholder.
+            void Until(float t) { while (w.Time < t) { Step(game, Math.Min(60f, t - w.Time)); w.Teams[busyId].LastActiveAt = w.Time; } }
+
+            Until(60 + 600);
+            var back = Resume(Snap(game));
+            Check(back.World.Teams[idlerId].LastActiveAt == w.Teams[idlerId].LastActiveAt, "the idle clock survives a save and resume");
+            game = back; w = back.World; derrick = w.Get(derrick.Id);
+
+            Until(60 + World.IdleWarnAfter + 1.5f);
+            var warn = w.Alerts.Active(w, idlerId).FirstOrDefault(a => a.Kind == "idle");
+            var said = warn == null ? "" : AlertLog.Describe(w, warn);
+            Check(warn != null && warn.Priority == Priority.Critical && said.Contains("Any command, state or wait call keeps your seat") && !w.Teams[idlerId].Left,
+                  $"15 minutes idle: a warning that says what to do ({said})");
+            Check(!w.Alerts.Active(w, busyId).Any(a => a.Kind == "idle") && !w.Alerts.Active(w, 0).Any(a => a.Kind == "idle"), "nobody active is warned, nor the house AI");
+            Check(w.Alerts.All.Count(a => a.Team == idlerId && a.Kind == "idle") == 1 && warn?.Lost.Count == 1, "one warning, said once");
+
+            Until(World.IdleResignAfter + 1.5f);
+            Check(w.Teams[1].Left && w.Events.Any(e => e.Type == "left" && e.Team == 1), "the placeholder seat nobody ever played is cleared at 20 minutes");
+            Check(!w.Teams[idlerId].Left, "Napper, seated a minute later, isn't yet");
+
+            Until(60 + World.IdleResignAfter + 1.5f);
+            Check(w.Teams[idlerId].Left && !w.Owned(idlerId).Any() && w.Events.Any(e => e.Type == "left" && e.Team == idlerId && e.Text.Contains("was resigned after 20 minutes") && e.Text.Contains("salvage")),
+                  "20 minutes idle: resigned through Leave, base salvaged");
+            Check(derrick.Team == -1, "its derrick goes back to neutral");
+            Check(w.Scores().All(s => s.Team != idlerId && s.Team != 1) && w.Scores().Any(s => s.Team == busyId), "both are off the scoreboard; the active player isn't");
+            Check(!w.Teams[busyId].Left && w.Teams[0].House && !w.Teams[0].Left, "the active player and the house AI play on");
+            Check(w.Errors == 0, $"no sim errors ({w.LastError})");
+
+            IdleOverHttp();
+        }
+
+        /// <summary>The wire: state, wait and command each reset the idle clock; the lobby reports idle_s and active.</summary>
+        static void IdleOverHttp()
+        {
+            var game = new Game(new GameConfig { Seed = 6, MapSize = 64, Open = true, Controllers = new[] { "ai" }, HouseAIs = 1 });
+            var w = game.World;
+            var api = new ApiServer(7987);
+            api.Start();
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+            // One thread: the request is answered by pumping the API here, between game ticks, like the host's loop.
+            Dictionary<string, object> Call(System.Threading.Tasks.Task<HttpResponseMessage> req)
+            {
+                while (!req.IsCompleted) { game.Advance(0.01f); api.Pump(game); Thread.Sleep(10); }
+                return (Dictionary<string, object>)Json.Parse(req.Result.Content.ReadAsStringAsync().Result);
+            }
+            const string Url = "http://127.0.0.1:7987";
+            var reg = Call(http.PostAsync($"{Url}/api/register", new StringContent("{\"name\":\"Napper\"}")));
+            var tok = reg.Str("token"); int id = (int)(double)reg["team"];
+            foreach (var (what, req) in new (string, Func<System.Threading.Tasks.Task<HttpResponseMessage>>)[] {
+                ("state", () => http.GetAsync($"{Url}/api/state?token={tok}")),
+                ("wait", () => http.GetAsync($"{Url}/api/wait?seconds=0.5&token={tok}")),
+                ("command", () => http.PostAsync($"{Url}/api/command?token={tok}", new StringContent("[{\"type\":\"say\",\"text\":\"still here\"}]"))) })
+            {
+                w.Teams[id].LastActiveAt = w.Time - 1000;
+                Call(req());
+                Check(w.Time - w.Teams[id].LastActiveAt < 3, $"a {what} call resets the idle clock ({w.Time - w.Teams[id].LastActiveAt:0.0}s idle)");
+            }
+            Dictionary<string, object> Seat(int team) => (Dictionary<string, object>)((List<object>)Call(http.GetAsync($"{Url}/api/lobby"))["teams"])[team];
+            var fresh = Seat(id);
+            Check(fresh["idle_s"] is double i0 && i0 < 2 && fresh["active"] is bool a0 && a0, $"the lobby shows a seat just heard from as active (idle_s {fresh["idle_s"]})");
+            w.Teams[id].LastActiveAt = w.Time - World.ActiveWithin - 10;
+            var stale = Seat(id);
+            Check(stale["idle_s"] is double i1 && i1 >= World.ActiveWithin && stale["active"] is bool a1 && !a1, $"and one quiet for over 5 minutes as not active (idle_s {stale["idle_s"]})");
+            var house = Seat(0);
+            Check(house["house"] is bool h && h && house["idle_s"] == null && house["active"] is bool a2 && a2, "house AI has no idle_s (no player) and counts as active");
+            api.Stop();
         }
 
         static void WaitPacing()

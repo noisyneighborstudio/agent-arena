@@ -59,7 +59,7 @@ namespace Pez.Headless
                 "Prospecting ProspectCenter ProspectRadius SkipSites SurveyFailure SurveyFailedAt ZoneId",
             [typeof(Team)] = "Id Name Controller PlayerName StandingOrders OrdersVersion Stock Rates PowerProduced PowerUsed Detected Revealed Defeated StartPos " +
                 "Visible Explored Left Resigned StalledSince House Seat ProtectedUntil StructureQueue UnitQueues KnownEnemyStructures Surveyed SurveySites Zones " +
-                "SurfaceWarnedAt HomeOreWarned LastCommandAt Reserve SaveFor SaveForCost Stats",
+                "SurfaceWarnedAt HomeOreWarned LastActiveAt Reserve SaveFor SaveForCost Stats",
             [typeof(World)] = "Map Paths MapVersion Open MaxPlayers MaxMapSize GrowStep SafeJoinDistance ProtectionSeconds Teams ById Entities Projectiles Events " +
                 "EventCounts Alerts Tick GameOver Winner Errors LastError nextId nextSeq seatCounter rng rateSnapshot airWarned StallGrace ArenaChampion contested Inventions GameId Regrown SuddenDeathAt DerrickRespawns " +
                 "| ErrorLog loggedErrors cells cellsW cellsH nearTarget nearHelp nearMine nearSep nearVis Showcase OreVersion oreDirty beingMined regrowNow scoreCache scoreCacheTick NextMatchIn derricksChecked groupSpan Mirror MirrorScores", // Showcase: the kitchen sink room is never saved (rebuilt from code); Mirror: set by the browser client on its copy
@@ -145,6 +145,7 @@ namespace Pez.Headless
             var r8 = Commands.Execute(w, 2, Cmd("type", "propose_tech", "name", "Rampart", "base", "light_tank", "hp", 480, "speed", 2.1f));
             w.SetOrders(2, "Hold the ridge; expand east.");
             w.Teams[3].ProtectedUntil = w.Time + 200;
+            t2.LastActiveAt = w.Time - 123.5f;
             var enemy = w.Owned(0).First(e => !e.IsStructure);
             w.Alerts.Raise(w, 2, "base_under_attack", Priority.Critical, hq.Center, hq, enemy);
             w.Emit("chat", 2, text: "Holding \"the ridge\" — ünïcode ok");
@@ -199,6 +200,7 @@ namespace Pez.Headless
             Check(Defs.Get("t2:lancer") == lancerDef, "key-only lookups (the view, the API) see the resumed game's inventions");
             Check(b.Alerts.Active(b, 2).Any(a => a.Kind == "base_under_attack" && a.Priority == Priority.Critical) && b.Alerts.LastSeq == w.Alerts.LastSeq, "active alerts survive");
             Check(b.IsProtected(3) && b.Teams[3].ProtectedUntil == w.Teams[3].ProtectedUntil, "newcomer protection survives");
+            Check(b.Teams.All(t => t.LastActiveAt == w.Teams[t.Id].LastActiveAt) && tb.LastActiveAt < b.Time - 120, $"every seat's idle clock survives ({b.Time - tb.LastActiveAt:0}s idle)");
             Check(b.Events.Any(e => e.Type == "chat" && e.Text.Contains("ünïcode")) && b.Events[b.Events.Count - 1].Seq == w.Events[w.Events.Count - 1].Seq, "recent events (with their sequence numbers) survive");
             Check(back.Config.Controllers.SequenceEqual(cfg.Controllers) && back.Config.Seed == cfg.Seed && back.ResumedFrom != null, "the game config survives and the game knows it was resumed");
 
@@ -284,7 +286,7 @@ namespace Pez.Headless
             var wd = (Dictionary<string, object>)root["world"];
             foreach (var k in new[] { "rng", "rate_snapshot", "air_warned", "next_id", "next_seq", "seat_counter", "event_counts", "alerts", "projectiles" }) wd.Remove(k);
             foreach (Dictionary<string, object> t in (List<object>)wd["teams"])
-                foreach (var k in new[] { "visible", "explored", "power_produced", "power_used", "rates", "stats", "unit_queues", "revealed" }) t.Remove(k);
+                foreach (var k in new[] { "visible", "explored", "power_produced", "power_used", "rates", "stats", "unit_queues", "revealed", "last_active_at" }) t.Remove(k);
             foreach (Dictionary<string, object> e in (List<object>)wd["entities"])
             {
                 foreach (var k in new[] { "fuel", "prev_pos", "path", "path_idx", "resume_order", "waypoints", "progress_pos", "landed", "stranded" }) e.Remove(k);
@@ -299,6 +301,7 @@ namespace Pez.Headless
             var orig = Resume(json).World;
             Check(w.Teams.All(t => t.PowerProduced == orig.Teams[t.Id].PowerProduced) && w.Teams[2].Explored.Any(x => x), "missing power and vision are rebuilt from the world");
             Check(w.Entities.Where(e => e.Def.UsesFuel).All(e => e.Fuel == e.Def.Fuel) && w.Get(999999) == null, "missing fuel starts full; an entity type the build no longer has is dropped");
+            Check(w.Teams.All(t => t.LastActiveAt == w.Time) && w.Time > 0, "a save from before the idle clock counts every seat as active at the load, not idle since the start");
             int nextIdBefore = w.Entities.Max(e => e.Id);
             Step(g, 30);
             Check(w.Errors == 0 && w.Entities.Where(e => e.Id > nextIdBefore).All(e => !orig.ById.ContainsKey(e.Id) || orig.ById[e.Id].Def == e.Def) && !w.GameOver,

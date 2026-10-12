@@ -294,7 +294,7 @@ export function registerPlayTools(server, getPlayer, beforeEach = async () => {}
     run((p, a) => a.format === "json" ? p.commandJson(a.commands) : p.commandText(a.commands)));
   server.registerTool("wait",
     {
-      description: "Let the game run for up to `seconds` (1-30), then get your updated state. The wait is cut short when something new needs you (a priority alert in a new place or a worse one: base under attack, trucks or units under attack, enemies or aircraft near your base, salvage available) or your commander issues new orders; more alerts from a fight you already know about don't cut it short. The game is real-time and does not pause while you think.",
+      description: "Let the game run for up to `seconds` (1-30), then get your updated state. The wait is cut short when something new needs you (a priority alert in a new place or a worse one: base under attack, trucks or units under attack, enemies or aircraft near your base, salvage available) or your commander issues new orders; more alerts from a fight you already know about don't cut it short. The game is real-time and does not pause while you think. Every wait, get_state or command call keeps your seat: after 20 minutes of game time with none, your team is resigned.",
       inputSchema: {
         seconds: z.number().min(1).max(30).describe("Maximum seconds to wait"),
         interrupt_on: z.enum(["high", "critical", "none"]).optional().describe("Lowest alert priority that ends the wait early (default high)"),

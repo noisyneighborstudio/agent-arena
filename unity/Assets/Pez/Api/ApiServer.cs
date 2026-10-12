@@ -200,7 +200,7 @@ namespace Pez.Api
             if (tok != null)
             {
                 if (!controlTokens.TryGetValue(tok, out var owner) || owner.world != w || w.Teams[owner.team].Seat != owner.seat) throw new UnauthorizedAccessException("unknown or expired token; join again");
-                if (w.Teams[owner.team].Left) throw new UnauthorizedAccessException("you left this arena; join again to play");
+                if (w.Teams[owner.team].Left) throw new UnauthorizedAccessException($"your team is out of this arena (you left, or it was resigned: {World.IdleResignAfter / 60:0} minutes with no command, state or wait call, or no way left to make progress); join again to play");
                 return owner.team;
             }
             var s = req.QueryString["team"];
@@ -240,6 +240,7 @@ namespace Pez.Api
                 case "/api/state":
                     {
                         int team = TeamParam(req, w);
+                        w.Teams[team].LastActiveAt = w.Time; // command, state and wait keep a seat (World.CheckIdle)
                         long since = long.TryParse(req.QueryString["since"], out var s) ? s : 0;
                         return Json.Write(req.QueryString["format"] == "json" ? StateData.Team(w, team, since) : StateView.TeamState(w, team, since));
                     }
@@ -258,6 +259,7 @@ namespace Pez.Api
                         // Long-poll: let the game run for `seconds`, but come back early if a new alert at or
                         // above `min` (default high) is raised for this team, the way a human hears "base under attack".
                         int team = TeamParam(req, w);
+                        w.Teams[team].LastActiveAt = w.Time;
                         float secs = Math.Max(0.5f, Math.Min(60f, float.TryParse(req.QueryString["seconds"], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var sv) ? sv : 5f));
                         var wt = new Waiter
                         {
@@ -288,7 +290,6 @@ namespace Pez.Api
                         var name = Text.Name(d?.Str("name"));
                         var team = w.AddTeam("llm", name, d?.Str("team_name"), out var err, out var nameProblem);
                         if (team == null) { status = 409; return Json.Write(new JObj().Set("ok", false).Set("error", err)); }
-                        team.LastCommandAt = w.Time;
                         var token = NewToken(); var view = NewToken();
                         controlTokens[token] = (w, team.Id, team.Seat);
                         viewTokens[view] = (w, team.Id, team.Seat);
@@ -318,8 +319,10 @@ namespace Pez.Api
                         .Set("teams", w.Teams.Select(t => new JObj().Set("flavor", t.Name).Set("player", t.PlayerName ?? t.Controller)
                             .Set("status", t.Resigned ? "resigned" : t.Left ? "left" : t.Defeated ? "eliminated" : "playing").Set("house", t.House)
                             .Set("structures", w.Owned(t.Id).Count(e => e.IsStructure)).Set("kills", t.Stats.Kills)
-                            // Seconds since this seat's player last sent a command (null: never); CI doesn't wait on idle seats.
-                            .Set("idle_s", t.LastCommandAt >= 0 ? (object)(int)(w.Time - t.LastCommandAt) : null)).ToList()));
+                            // Game seconds since this seat's player last called command, state or wait (null for house AI, which has no
+                            // player); active: still playing and heard from within World.ActiveWithin. CI and the gateway's reaper skip idle seats.
+                            .Set("idle_s", t.House ? null : (object)(int)(w.Time - t.LastActiveAt))
+                            .Set("active", !t.Left && !t.Defeated && (t.House || w.Time - t.LastActiveAt < World.ActiveWithin))).ToList()));
                 case "/api/whoami":
                     {
                         int team = TeamParam(req, w);
@@ -370,6 +373,7 @@ namespace Pez.Api
                         w.Teams[team].PlayerName = name;
                         var nameProblem = d?.Str("team_name") != null ? w.NameTeam(w.Teams[team], d.Str("team_name")) : null; // the seat keeps its name unless the player picks one
                         if (w.Teams[team].Controller != "human") w.Teams[team].Controller = "llm";
+                        w.Teams[team].LastActiveAt = w.Time; // a seat taken over now isn't already idle
                         w.Emit("chat", team, text: $"{name} has taken command of {w.Teams[team].Name}.");
                         return Json.Write(new JObj().Set("ok", true).Set("team", team).Set("name", w.Teams[team].Name).Set("team_name", w.Teams[team].Name).Put("team_name_rejected", nameProblem));
                     }
@@ -377,7 +381,7 @@ namespace Pez.Api
                     {
                         if (method != "POST") { status = 405; return "{\"ok\":false,\"error\":\"POST required\"}"; }
                         int team = TeamParam(req, w);
-                        w.Teams[team].LastCommandAt = w.Time;
+                        w.Teams[team].LastActiveAt = w.Time;
                         var parsed = Json.Parse(p.Body ?? "[]");
                         List<object> cmds = parsed is List<object> l ? l
                             : parsed is Dictionary<string, object> d && d.TryGetValue("commands", out var c) && c is List<object> cl ? cl
@@ -582,7 +586,7 @@ namespace Pez.Api
                     if (team < 0) continue;
                     foreach (var k in new[] { "stock", "rates", "power_produced", "power_used", "visible", "explored", "detected", "revealed",
                                               "structure_queue", "unit_queues", "known_enemy_structures", "surveyed", "survey_sites", "reserve",
-                                              "save_for", "save_for_cost", "zones", "stalled_since", "surface_warned_at", "home_ore_warned", "last_command_at", "orders_version" })
+                                              "save_for", "save_for_cost", "zones", "stalled_since", "surface_warned_at", "home_ore_warned", "last_active_at", "orders_version" })
                         t.Remove(k);
                     if (t["stats"] is JObj st) t["stats"] = new JObj().Set("kills", st["kills"] ?? 0);
                 }

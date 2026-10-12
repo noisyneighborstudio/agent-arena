@@ -171,31 +171,33 @@ namespace Pez.Headless
             // A short match: sudden death at 15 minutes, decay at 45, the end at 75.
             var g = new Game(new GameConfig { Seed = 3, MapSize = 80, Open = true, MatchHours = 0.25f, Controllers = new[] { "llm", "llm" } });
             var w = g.World;
+            // Both seats have agents at the controls: a seat nobody plays is resigned after 20 minutes idle (World.CheckIdle).
+            void Play(float seconds) { for (float s = 0; s < seconds; s += 60) { Step(g, Math.Min(60, seconds - s)); foreach (var t in g.World.Teams) t.LastActiveAt = g.World.Time; } }
             Check(w.SuddenDeathAt == 900 && w.Phase == MatchPhase.Normal && D(StateView.MatchJson(w)).Str("phase") == "normal" && (int)D(StateView.MatchJson(w)).Num("ends_in_s") == 4500,
                   $"a new game has a match clock: sudden death at hour N (here 0.25 h), the end an hour later ({StateView.MatchText(w)})");
             var t0 = w.Teams[0];
             t0.Stats.KillValue = 500; t0.Stats.OreMined = 900; w.Teams[1].Stats.OreMined = 100;
-            Step(g, 301);
+            Play(301);
             int warned = w.Events.Count(e => e.Type == "chat" && e.Text.Contains("Sudden death in 10 minutes"));
             bool alerted = w.Alerts.Active(w, 1).Any(a => a.Kind == "match_clock" && a.Priority == Priority.High);
-            Step(g, 540);
+            Play(540);
             warned += w.Events.Count(e => e.Type == "chat" && e.Text.Contains("Sudden death in 1 minute"));
             Check(warned == 2 && alerted, $"sudden death is announced 10 minutes and 1 minute ahead, in the chat and as a MATCH CLOCK alert ({warned} warnings)");
-            Step(g, 60);
+            Play(60);
             int regrownBefore = w.Regrown;
             for (int i = 0; i < w.Map.Ore.Length; i++) if (w.Map.OreBase[i] > 0) w.Map.Ore[i] = 0;
-            Step(g, 60);
+            Play(60);
             Check(w.Phase == MatchPhase.SuddenDeath && w.Regrown == regrownBefore && w.Events.Any(e => e.Type == "chat" && e.Text.Contains("SUDDEN DEATH")),
                   $"at sudden death ore stops regrowing ({w.Regrown - regrownBefore} regrown after it)");
             var hq = w.Owned(1).First(e => e.Def.Key == "command_center");
-            Step(g, 1800);
+            Play(1800);
             float hp = hq.Hp;
-            Step(g, 600);
+            Play(600);
             Check(w.Phase == MatchPhase.Decay && hq.Hp < hp - hq.Def.MaxHp * 0.17f && hq.Hp > hp - hq.Def.MaxHp * 0.19f && w.Events.Any(e => e.Text != null && e.Text.Contains("DECAY")),
                   $"30 minutes on, structures decay: 0.03% of max health a second ({hp:0} -> {hq.Hp:0} in 10 minutes)");
             var state = D(StateData.Team(w, 0));
             Check(state.Obj("match")?.Str("phase") == "decay" && state.Obj("match").Num("next_phase_in_s") > 0, "state shows the phase and how long until the next one");
-            Step(g, 1200);
+            Play(1200);
             Check(w.GameOver && w.MatchOver && w.Winner == 0 && w.Events.Any(e => e.Type == "game_over" && e.Text.Contains("wins the match on points")),
                   $"an hour after sudden death the match ends with a score victory ({w.Events.LastOrDefault(e => e.Type == "game_over")?.Text})");
             var m = D(StateView.MatchJson(w));

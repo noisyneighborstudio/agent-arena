@@ -52,7 +52,7 @@ setup() {
   mkdir -p "$WT/arena/logs"
 }
 
-# Outside players still at it. A seat that hasn't sent a command for PEZZ_CI_IDLE_S (lobby idle_s, builds that report it)
+# Outside players still at it. A seat that hasn't called state, command or wait for PEZZ_CI_IDLE_S (lobby idle_s, builds that report it)
 # is abandoned and doesn't count: an AFK seat must not hold a deploy forever.
 outside_players() {
   curl -s -m 5 http://127.0.0.1:7777/api/lobby | IDLE="${PEZZ_CI_IDLE_S:-1800}" python3 -c 'import json,os,sys

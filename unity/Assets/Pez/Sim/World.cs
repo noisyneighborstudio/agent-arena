@@ -104,8 +104,8 @@ namespace Pez.Sim
         public float SurfaceWarnedAt = -999;
         /// <summary>Home ores already warned about at half left (bit per ore type): each gets its own warning.</summary>
         public int HomeOreWarned;
-        /// <summary>Game time of this team's last command from its player (-1 = none yet); the lobby reports idle seats.</summary>
-        public float LastCommandAt = -1;
+        /// <summary>Game time of this team's last command, state or wait call (or of its seating): the lobby's idle_s, and CheckIdle resigns seats nobody plays.</summary>
+        public float LastActiveAt;
         /// <summary>Items converters leave alone below this amount ('reserve' command), so raw-ore costs stay payable.</summary>
         public readonly Dictionary<string, int> Reserve = new Dictionary<string, int>();
         /// <summary>What the team is saving up for ('save_for'): converters leave its cost alone until it's bought.</summary>
@@ -301,7 +301,7 @@ namespace Pez.Sim
         Team CreateTeam(Vec2 spawn, int reuse = -1)
         {
             int t = reuse >= 0 ? reuse : Teams.Count;
-            var team = new Team { Id = t, Name = Flavors[t % Flavors.Length], StartPos = spawn, Visible = new bool[Map.W * Map.H], Explored = new bool[Map.W * Map.H], Seat = ++seatCounter };
+            var team = new Team { Id = t, Name = Flavors[t % Flavors.Length], StartPos = spawn, Visible = new bool[Map.W * Map.H], Explored = new bool[Map.W * Map.H], Seat = ++seatCounter, LastActiveAt = Time };
             if (reuse >= 0)
             {
                 // A fresh occupant: drop everything that referred to the old one.
@@ -2841,6 +2841,34 @@ namespace Pez.Sim
             }
         }
 
+        /// <summary>
+        /// An outside agent's seat with no command, state or wait call for this long (game time) is warned, then resigned.
+        /// The lobby counts a seat as active if it's been heard from within ActiveWithin.
+        /// </summary>
+        public const float IdleWarnAfter = 15 * 60f, IdleResignAfter = 20 * 60f, ActiveWithin = 5 * 60f;
+
+        /// <summary>
+        /// Open arena: a seat nobody plays doesn't keep its place and score (Blueberry came second after 40 minutes with no
+        /// orders). Outside agents' seats ("llm": joined players, and placeholder seats from an older game's config) go
+        /// through Leave after IdleResignAfter: salvage, derricks back to neutral, off the scoreboard. House AI and a local
+        /// human are exempt. No game time passes in a frozen room, so it doesn't count.
+        /// </summary>
+        void CheckIdle()
+        {
+            if (!Open || Tick % TickRate != 0) return;
+            foreach (var t in Teams)
+            {
+                if (t.Controller != "llm" || t.Left || t.Defeated) continue;
+                float idle = Time - t.LastActiveAt;
+                if (idle >= IdleResignAfter) Leave(t.Id, $"was resigned after {IdleResignAfter / 60:0} minutes with no command, state or wait call");
+                else if (idle >= IdleWarnAfter && idle < IdleWarnAfter + 2f) // a 2 s window, so no once-a-second check misses it; a repeat merges into the same alert
+                {
+                    var a = Alerts.Raise(this, t.Id, "idle", Priority.Critical, t.StartPos, hit: false);
+                    if (a.Lost.Count == 0) a.Lost.Add($"no command, state or wait call from you for {IdleWarnAfter / 60:0} minutes. At {IdleResignAfter / 60:0} minutes your team is resigned and its base becomes salvage. Any command, state or wait call keeps your seat");
+                }
+            }
+        }
+
         void Resign(Team t, string why)
         {
             t.Resigned = true;
@@ -2880,6 +2908,7 @@ namespace Pez.Sim
         {
             CheckProtection();
             CheckStalled();
+            CheckIdle();
             CheckRadar();
             if (Open)
             {

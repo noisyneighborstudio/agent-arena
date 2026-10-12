@@ -86,7 +86,7 @@ namespace Pez.Sim
                 .Set("power_produced", t.PowerProduced).Set("power_used", t.PowerUsed)
                 .Set("start", SnapIO.V(t.StartPos)).Put("defeated", t.Defeated).Put("left", t.Left).Put("resigned", t.Resigned)
                 .Put("stalled_since", t.StalledSince, -1f).Put("house", t.House).Set("seat", t.Seat).Put("protected_until", t.ProtectedUntil)
-                .Put("surface_warned_at", t.SurfaceWarnedAt, -999f).Put("home_ore_warned", t.HomeOreWarned, 0).Put("last_command_at", t.LastCommandAt, -1f);
+                .Put("surface_warned_at", t.SurfaceWarnedAt, -999f).Put("home_ore_warned", t.HomeOreWarned, 0).Set("last_active_at", t.LastActiveAt);
             if (t.Visible != null) o.Set("visible", SnapIO.PackBits(t.Visible));
             if (t.Explored != null) o.Set("explored", SnapIO.PackBits(t.Explored));
             if (t.Detected.Count > 0) o.Set("detected", t.Detected.Cast<object>().ToList());
@@ -120,16 +120,17 @@ namespace Pez.Sim
             return Defs.Get(p.Key) == null ? null : p;
         }
 
-        internal static Team ReadTeam(D d, int index, Map map)
+        /// <summary>A team as saved. From a save without its idle clock it counts as active at `now` (the load), not idle since the game began.</summary>
+        internal static Team ReadTeam(D d, int index, Map map, float now)
         {
-            var t = new Team { Id = index };
+            var t = new Team { Id = index, LastActiveAt = now };
             d.Load("name", ref t.Name); d.Load("controller", ref t.Controller); d.Load("player", ref t.PlayerName);
             d.Load("standing_orders", ref t.StandingOrders); d.Load("orders_version", ref t.OrdersVersion);
             SnapIO.LoadFloats(d.Obj("stock"), t.Stock); SnapIO.LoadFloats(d.Obj("rates"), t.Rates);
             d.Load("power_produced", ref t.PowerProduced); d.Load("power_used", ref t.PowerUsed);
             d.Load("start", ref t.StartPos); d.Load("defeated", ref t.Defeated); d.Load("left", ref t.Left); d.Load("resigned", ref t.Resigned);
             d.Load("stalled_since", ref t.StalledSince); d.Load("house", ref t.House); d.Load("seat", ref t.Seat);
-            d.Load("protected_until", ref t.ProtectedUntil); d.Load("surface_warned_at", ref t.SurfaceWarnedAt); d.Load("home_ore_warned", ref t.HomeOreWarned); d.Load("last_command_at", ref t.LastCommandAt);
+            d.Load("protected_until", ref t.ProtectedUntil); d.Load("surface_warned_at", ref t.SurfaceWarnedAt); d.Load("home_ore_warned", ref t.HomeOreWarned); d.Load("last_active_at", ref t.LastActiveAt);
             t.Visible = SnapIO.UnpackBits(d.Str("visible"), map.W * map.H);
             t.Explored = SnapIO.UnpackBits(d.Str("explored"), map.W * map.H);
             foreach (var x in d.Arr("detected")) if (x is double id) t.Detected.Add((int)id);
@@ -537,7 +538,7 @@ namespace Pez.Sim
             int i = 0;
             foreach (var td in d.Objs("teams"))
             {
-                var t = Snapshot.ReadTeam(td, i++, w.Map);
+                var t = Snapshot.ReadTeam(td, i++, w.Map, w.Time);
                 rebuildPower |= !td.ContainsKey("power_produced");
                 rebuildVision |= !td.ContainsKey("visible");
                 w.Teams.Add(t);
