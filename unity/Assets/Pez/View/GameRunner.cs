@@ -60,7 +60,7 @@ namespace Pez.View
             SetupScene();
             if (IsWeb)
             {
-                // Nothing to show or run until the first snapshot arrives; WebClient draws "Loading game" meanwhile.
+                // Nothing to show or run until the first snapshot arrives; the page's loading screen covers it meanwhile (WebClient.ReportLoading).
                 Hud.enabled = Input.enabled = false;
                 Web = gameObject.AddComponent<WebClient>();
                 Web.Runner = this;

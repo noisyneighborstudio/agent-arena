@@ -8,15 +8,67 @@
     <style>
       html, body { margin: 0; height: 100%; background: #14110d; overflow: hidden; }
       #unity-canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; outline: none; }
-      #load { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 320px; font: 13px system-ui, sans-serif; color: #d8c9b0; text-align: center; }
-      #bar { height: 4px; margin-top: 10px; background: #2b241b; } #bar > div { height: 100%; width: 0; background: #f5a623; }
-      #load a, #classic { color: #e8a33d; }
-      #slow { margin-top: 12px; min-height: 16px; color: #e8a33d; font-size: 12px; }
-      #load button { margin-top: 12px; background: #2a262b; color: #ece4d2; border: 1px solid #3a343b; border-radius: 8px; padding: 6px 12px; font: inherit; cursor: pointer; }
+      /* The loading screen: up from the first byte until the world is drawn (the engine, then the game, then the view). */
+      #load { position: fixed; inset: 0; z-index: 30; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 28px; padding: 24px; box-sizing: border-box;
+        font: 13px system-ui, sans-serif; color: #ece4d2; background: radial-gradient(ellipse 90% 70% at 50% 42%, #221d17 0%, #14110d 55%, #0d0b09 100%); transition: opacity .6s ease, visibility .6s; overflow: hidden; }
+      #load.gone { opacity: 0; visibility: hidden; pointer-events: none; }
+      #load a, #classic { color: #ffa22e; }
+      /* The ground: the game's camera (yaw 45°, pitch 55°) over a tile grid, drifting. */
+      #ground { position: absolute; left: 50%; top: 50%; width: 240vmax; height: 240vmax; margin: -120vmax 0 0 -120vmax; pointer-events: none; opacity: .9;
+        transform: perspective(900px) rotateX(55deg) rotateZ(45deg); animation: drift 40s linear infinite;
+        background-image: linear-gradient(rgba(236,228,210,.05) 1px, transparent 1px), linear-gradient(90deg, rgba(236,228,210,.05) 1px, transparent 1px),
+          radial-gradient(rgba(236,228,210,.07) 1px, transparent 1.5px);
+        background-size: 48px 48px, 48px 48px, 16px 16px;
+        -webkit-mask-image: radial-gradient(circle at 50% 50%, #000 0%, transparent 32%); mask-image: radial-gradient(circle at 50% 50%, #000 0%, transparent 32%); }
+      @keyframes drift { to { background-position: 48px 48px, 48px 48px, 16px 16px; } }
+      .ld-hero { position: relative; display: flex; flex-direction: column; align-items: center; }
+      /* A dispenser: the flip-top head cycles the four flavours, and each one dispenses a candy. */
+      .disp { position: relative; width: 120px; height: 150px; margin-bottom: 18px; }
+      .disp .stem { position: absolute; left: 38px; bottom: 0; width: 44px; height: 92px; border-radius: 11px; background: linear-gradient(90deg, #3d4148, #4a4f57 35%, #565b63 60%, #3d4148); box-shadow: inset 0 1px 0 rgba(255,255,255,.08), 0 10px 24px rgba(0,0,0,.45); }
+      .disp .win { position: absolute; left: 13px; top: 14px; width: 18px; height: 62px; border-radius: 5px; background: #1e1b1d; display: flex; flex-direction: column-reverse; gap: 3px; padding: 3px; box-sizing: border-box; overflow: hidden; }
+      .disp .win i { flex: none; height: 11px; border-radius: 3px; background: var(--c); box-shadow: inset 0 1px 0 rgba(255,255,255,.35); }
+      .disp .neck { position: absolute; left: 44px; bottom: 90px; width: 32px; height: 10px; background: #8e979f; border-radius: 3px; }
+      .disp .head { position: absolute; left: 32px; bottom: 98px; width: 56px; height: 40px; border-radius: 14px 14px 10px 10px; transform-origin: 90% 100%;
+        background: #2e73ff; box-shadow: inset 0 2px 0 rgba(255,255,255,.35), inset 0 -6px 10px rgba(0,0,0,.18); animation: head 6.4s infinite, flip 1.6s cubic-bezier(.34,1.56,.64,1) infinite; z-index: 2; }
+      .disp .head::after { content: ""; position: absolute; left: 9px; top: 9px; width: 12px; height: 6px; border-radius: 4px; background: rgba(255,255,255,.4); }
+      .disp .candy { position: absolute; left: 43px; bottom: 98px; width: 34px; height: 14px; border-radius: 6px; background: var(--c); opacity: 0; z-index: 1;
+        box-shadow: inset 0 2px 0 rgba(255,255,255,.4), inset 0 -3px 4px rgba(0,0,0,.18); animation: candy 6.4s cubic-bezier(.34,1.4,.64,1) infinite; }
+      .disp .candy:nth-of-type(2) { animation-delay: 1.6s; } .disp .candy:nth-of-type(3) { animation-delay: 3.2s; } .disp .candy:nth-of-type(4) { animation-delay: 4.8s; }
+      .disp .shadow { position: absolute; left: 22px; bottom: -8px; width: 76px; height: 12px; border-radius: 50%; background: rgba(0,0,0,.45); filter: blur(4px); }
+      @keyframes head { 0%, 24.9% { background: #2e73ff; } 25%, 49.9% { background: #f22e1f; } 50%, 74.9% { background: #33d94d; } 75%, 100% { background: #ffd126; } }
+      @keyframes flip { 0%, 15% { transform: rotate(0); } 35%, 62% { transform: rotate(38deg); } 80%, 100% { transform: rotate(0); } }
+      @keyframes candy {
+        0%, 4% { opacity: 0; transform: translate(0, 4px); }
+        6% { opacity: 1; transform: translate(0, 4px); }
+        10% { opacity: 1; transform: translate(-6px, -12px); }
+        15% { opacity: 1; transform: translate(-44px, -8px) rotate(-16deg); }
+        22%, 100% { opacity: 0; transform: translate(-66px, 34px) rotate(-48deg); }
+      }
+      .ld-word { margin: 0; font: 800 54px/1 system-ui, sans-serif; letter-spacing: .06em; color: #f6f2e8; text-shadow: 0 2px 0 rgba(0,0,0,.4); }
+      .ld-tag { margin: 8px 0 0; color: #9a9184; font-size: 13px; letter-spacing: .02em; }
+      .ld-panel { position: relative; width: min(380px, 100%); box-sizing: border-box; padding: 16px 18px 14px; border: 1px solid #2a3138; border-radius: 12px; background: rgba(16,19,23,.88); box-shadow: 0 12px 40px rgba(0,0,0,.45); }
+      .ld-panel h2 { margin: 0 0 10px; font: 600 11px system-ui, sans-serif; letter-spacing: .14em; text-transform: uppercase; color: #9a9184; }
+      #steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; }
+      #steps li { display: grid; grid-template-columns: 16px 1fr auto; align-items: center; gap: 10px; color: #6d675e; transition: color .3s; }
+      #steps li .dot { width: 10px; height: 10px; border-radius: 50%; box-sizing: border-box; border: 1.5px solid #4a4238; justify-self: center; }
+      #steps li .val { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: #9a9184; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      #steps li.on { color: #ece4d2; } #steps li.on .dot { border: 0; background: #ffa22e; box-shadow: 0 0 0 0 rgba(255,162,46,.6); animation: pulse 1.4s ease-out infinite; }
+      #steps li.ok { color: #b9ae98; } #steps li.ok .dot { border: 0; width: 12px; height: 12px; background: #ece4d2; -webkit-mask: var(--tick) center / contain no-repeat; mask: var(--tick) center / contain no-repeat; }
+      #steps li.bad { color: #ece4d2; } #steps li.bad .dot { border: 0; border-radius: 2px; background: repeating-linear-gradient(-45deg, #ece4d2 0 2px, #1e1b1d 2px 4px); }
+      #steps { --tick: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2 6.5l2.6 2.6L10 3.4' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); }
+      @keyframes pulse { 70% { box-shadow: 0 0 0 7px rgba(255,162,46,0); } 100% { box-shadow: 0 0 0 0 rgba(255,162,46,0); } }
+      #bar { height: 4px; margin-top: 14px; border-radius: 2px; background: #2a262b; overflow: hidden; } #bar > div { height: 100%; width: 0; border-radius: 2px; background: #ece4d2; transition: width .35s ease; }
+      #loadText { margin-top: 10px; min-height: 16px; color: #b9ae98; font-size: 12px; line-height: 16px; }
+      #loadText.bad { color: #ece4d2; }
+      #slow { margin-top: 4px; min-height: 16px; color: #ffa22e; font-size: 12px; line-height: 16px; }
+      #slow:empty, #loadBtn:empty { display: none; }
+      #load button { margin-top: 12px; width: 100%; height: 32px; border: 0; border-radius: 8px; background: #ece4d2; color: #101317; font: 600 13px system-ui, sans-serif; cursor: pointer; }
+      @media (max-height: 520px) { .disp { display: none; } #load { gap: 16px; } }
+      @media (prefers-reduced-motion: reduce) { #ground, .disp .head, .disp .candy, #steps li.on .dot { animation: none; } #load { transition: none; } }
       #classic { position: fixed; right: 8px; bottom: 6px; z-index: 5; font: 11px system-ui, sans-serif; opacity: .45; text-decoration: none; display: none; }
       #classic:hover { opacity: 1; text-decoration: underline; }
       @media (max-width: 640px) { #classic { display: none !important; } } /* a phone's HUD drawers own that corner; the no-WebGL2 notice still offers it */
-      #notice { position: fixed; inset: 0; z-index: 20; display: none; align-items: center; justify-content: center; background: #14110d; color: #d8c9b0; font: 14px system-ui, sans-serif; text-align: center; padding: 24px; }
+      #notice { position: fixed; inset: 0; z-index: 40; display: none; align-items: center; justify-content: center; background: #14110d; color: #d8c9b0; font: 14px system-ui, sans-serif; text-align: center; padding: 24px; }
       /* The commander's standing-orders box: placed over the canvas where the HUD asks (PezCommander.place). */
       #cmd { position: fixed; display: none; z-index: 10; box-sizing: border-box; flex-direction: column; gap: 4px; padding: 6px; font: 12px system-ui, sans-serif; color: #ece4d2; }
       #cmd textarea { flex: 1 1 auto; min-height: 0; width: 100%; box-sizing: border-box; resize: none; padding: 6px 8px; border: 1px solid #4a4238; border-radius: 6px; background: #101317; color: #ece4d2; font: 16px system-ui, sans-serif; } /* 16px: under it iOS zooms the page on focus, the HUD relays itself out and the box vanished */
@@ -31,7 +83,31 @@
   </head>
   <body>
     <canvas id="unity-canvas" tabindex="-1"></canvas>
-    <div id="load"><span id="loadText">Loading Pezz…</span><div id="bar"><div></div></div><div id="slow"></div><div id="loadBtn"></div></div>
+    <div id="load" role="status" aria-live="polite">
+      <div id="ground"></div>
+      <div class="ld-hero">
+        <div class="disp" aria-hidden="true">
+          <div class="shadow"></div>
+          <i class="candy" style="--c:#2e73ff"></i><i class="candy" style="--c:#f22e1f"></i><i class="candy" style="--c:#33d94d"></i><i class="candy" style="--c:#ffd126"></i>
+          <div class="stem"><div class="win"><i style="--c:#ffd126"></i><i style="--c:#33d94d"></i><i style="--c:#f22e1f"></i><i style="--c:#2e73ff"></i></div></div>
+          <div class="neck"></div><div class="head"></div>
+        </div>
+        <h1 class="ld-word">PEZZ</h1><p class="ld-tag">Four flavours go to war over sugar.</p>
+      </div>
+      <div class="ld-panel">
+        <h2>Getting you in</h2>
+        <ol id="steps">
+          <li data-step="download"><span class="dot"></span><span>Downloading the game</span><span class="val"></span></li>
+          <li data-step="start"><span class="dot"></span><span>Starting the engine</span><span class="val"></span></li>
+          <li data-step="join"><span class="dot"></span><span id="joinLabel">Joining the match</span><span class="val"></span></li>
+          <li data-step="build"><span class="dot"></span><span>Building the world</span><span class="val"></span></li>
+        </ol>
+        <div id="bar"><div></div></div>
+        <div id="loadText"></div>
+        <div id="slow"></div>
+        <div id="loadBtn"></div>
+      </div>
+    </div>
     <a id="classic" title="The simple 2D page">Classic view</a>
     <div id="notice"></div>
     <div id="cmd"><textarea id="cmdText" maxlength="600" placeholder="New orders for your agent (they interrupt whatever it's waiting on)" aria-label="New orders for your agent"></textarea><div class="row"><button id="cmdSend" disabled>Send</button><button id="cmdClear">Clear</button></div><div id="cmdNote"></div></div>
@@ -47,6 +123,66 @@
       }
       const classic = classicUrl();
       if (classic) { const a = document.getElementById("classic"); a.href = classic; a.style.display = "block"; }
+      const classicLink = classic ? ` <a href="${classic}">Try the classic view</a>` : "";
+
+      // The loading screen's four steps. The loader drives the first two (download, start); the game reports the rest
+      // through PezLoad (Plugins/WebGL/PezOverlay.jslib): "join" (with its waiting line), "trouble", "build", then "ready".
+      window.PezLoading = (() => {
+        const el = document.getElementById("load"), fill = document.querySelector("#bar > div"), text = document.getElementById("loadText"), slow = document.getElementById("slow");
+        const steps = [...document.querySelectorAll("#steps li")], order = steps.map((li) => li.dataset.step);
+        const span = { download: [0, .7], start: [.7, .8], join: [.8, .95], build: [.95, 1] }; // each step's share of the bar
+        // Nothing new for 8 s in one step: say which, so a slow link or GPU is told apart from a broken page.
+        const stalled = { download: "Still downloading… a slow connection?", start: "Still starting… a slow device or GPU?", join: "Still waiting for the game server…", build: "Still building the world…" };
+        const t0 = performance.now();
+        let at = -1, stall = 0, over = false;
+        document.getElementById("joinLabel").textContent = /^\/watch/.test(location.pathname) ? "Tuning in to the match" : /^\/view\//.test(location.pathname) ? "Joining your game" : "Loading the match";
+        const val = (s, v) => { steps[order.indexOf(s)].querySelector(".val").textContent = v || ""; };
+        const say = (t, bad) => { text.textContent = t || ""; text.classList.toggle("bad", !!bad); if (t) slow.innerHTML = ""; };
+        // Steps only go forward: the game can report before the loader's promise has settled.
+        function step(s, f = 0) {
+          const i = order.indexOf(s);
+          if (over || i < at) return;
+          if (i > at) {
+            at = i; slow.innerHTML = ""; say("");
+            clearTimeout(stall);
+            stall = setTimeout(() => { if (!text.textContent) slow.innerHTML = stalled[s] + classicLink; }, 8000);
+            steps.forEach((li, j) => { li.className = j < i ? "ok" : j === i ? "on" : ""; });
+            if (i > 0) val("download", "");
+          }
+          const [a, b] = span[s];
+          fill.style.width = (100 * (a + (b - a) * Math.min(1, Math.max(0, f)))) + "%";
+        }
+        function fail(message, retry = true) {
+          if (over) return;
+          over = true; clearTimeout(stall);
+          window.pezFailed = true; // (a framing page reloads it rather than posting to a build that never started)
+          if (at >= 0) steps[at].className = "bad";
+          say(message, true);
+          slow.innerHTML = classic ? `<a href="${classic}">Open the classic view instead</a>` : "";
+          if (retry) document.getElementById("loadBtn").innerHTML = `<button onclick="location.reload()">Try again</button>`;
+          document.getElementById("bar").style.display = "none";
+        }
+        function ready() {
+          if (over) return;
+          over = true; clearTimeout(stall);
+          steps.forEach((li) => { li.className = "ok"; });
+          fill.style.width = "100%";
+          window.pezReadyMs = Math.round(performance.now() - t0);
+          console.log("pez: world on screen in " + window.pezReadyMs + " ms");
+          setTimeout(() => { el.classList.add("gone"); setTimeout(() => el.remove(), 700); }, 250);
+        }
+        return {
+          step, val, fail,
+          // From the game: what it's waiting on until the first view is drawn. place is the map's name, once meta has it.
+          game(state, status, place) {
+            if (state === "ready") return ready();
+            if (state === "build") return step("build");
+            step("join", state === "join" && status ? .5 : 0);
+            val("join", place);
+            say(state === "trouble" && status ? status + ". Trying again…" : status, state === "trouble"); // (the game keeps retrying)
+          },
+        };
+      })();
       // No WebGL2 (or ?lite=1): the 3D build can't run, so go to the old page with a one-line notice.
       let noGl = false;
       try { noGl = !document.createElement("canvas").getContext("webgl2"); } catch (e) { noGl = true; }
@@ -57,7 +193,7 @@
         n.style.display = "flex";
         setTimeout(() => location.replace(classic), 900);
       } else if (noGl) {
-        document.getElementById("loadText").textContent = "This browser can't run the 3D view (it needs WebGL2).";
+        PezLoading.fail("This browser can't run the 3D view (it needs WebGL2).", false);
       }
       const startBoot = !noGl && !(lite && classic);
 
@@ -128,18 +264,8 @@
     <script>
       // ?dpr=<n> overrides the render scale (default: the screen's, capped at 2) so a slow GPU can trade sharpness for frames.
       const t0 = performance.now();
-      const loadText = document.getElementById("loadText"), slow = document.getElementById("slow");
-      const classicLink = classic ? ` <a href="${classic}">Try the classic view</a>` : "";
-      // Nothing yet after 8 s: say so, so a slow link or GPU is told apart from a broken page.
-      const stall = setTimeout(() => { slow.innerHTML = "Still loading… a slow connection or GPU?" + classicLink; }, 8000);
-      function failed(message) {
-        clearTimeout(stall);
-        window.pezFailed = true; // (a framing page reloads it rather than posting to a build that never started)
-        loadText.textContent = "Pezz failed to start: " + message;
-        slow.innerHTML = classic ? `<a href="${classic}">Open the classic view instead</a>` : "";
-        document.getElementById("loadBtn").innerHTML = `<button onclick="location.reload()">Try again</button>`;
-        document.getElementById("bar").style.display = "none";
-      }
+      const failed = (message) => PezLoading.fail("Pezz failed to start: " + message);
+      if (startBoot) PezLoading.step("download");
       if (startBoot && typeof createUnityInstance !== "function") failed("the game engine didn't download");
       else if (startBoot) createUnityInstance(document.querySelector("#unity-canvas"), {
         arguments: [],
@@ -153,13 +279,16 @@
         productName: {{{ JSON.stringify(PRODUCT_NAME) }}},
         productVersion: {{{ JSON.stringify(PRODUCT_VERSION) }}},
         devicePixelRatio: Math.min(Number(q.get("dpr")) || window.devicePixelRatio || 1, 2),
-      }, (p) => { document.querySelector("#bar > div").style.width = (100 * p) + "%"; }).then((unityInstance) => {
+      }, (p) => {
+        // The loader reports the download as 0–0.9, then 1 once the engine is up.
+        if (p < 0.9) { PezLoading.step("download", p / 0.9); PezLoading.val("download", Math.floor(100 * p / 0.9) + "%"); }
+        else if (p < 1) PezLoading.step("start");
+      }).then((unityInstance) => {
         window.unityInstance = unityInstance;
         if (pendingLook) unityInstance.SendMessage("Pez", "LookAt", pendingLook);
         window.pezLoadMs = Math.round(performance.now() - t0);
         console.log("pez: engine ready in " + window.pezLoadMs + " ms");
-        clearTimeout(stall);
-        document.getElementById("load").remove();
+        PezLoading.step("join"); // the screen stays up until the game says its world is drawn
       }).catch((message) => failed(message));
     </script>
   </body>

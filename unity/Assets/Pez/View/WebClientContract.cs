@@ -361,7 +361,7 @@ namespace Pez.View
         }
     }
 
-    /// <summary>The bridge to the page's commander box (Plugins/WebGL/PezOverlay.jslib; a no-op anywhere else).</summary>
+    /// <summary>The bridge to the page's commander box and loading screen (Plugins/WebGL/PezOverlay.jslib; a no-op anywhere else).</summary>
     static class PezOverlay
     {
 #if UNITY_WEBGL && !UNITY_EDITOR
@@ -372,10 +372,14 @@ namespace Pez.View
         public static void Box(float x, float y, float w, float h, bool visible) => PezCommanderBox(x, y, w, h, visible ? 1 : 0, Screen.width, Screen.height);
         public static void SetStatus(string text) => PezCommanderStatus(text ?? "");
         public static void SetText(string text, bool force) => PezCommanderText(text ?? "", force ? 1 : 0);
+        [System.Runtime.InteropServices.DllImport("__Internal")] static extern void PezLoad(string state, string status, string place);
+        /// <summary>The page's loading screen: join (status = the waiting line), trouble (status = the error), build, ready.</summary>
+        public static void Loading(string state, string status, string place) => PezLoad(state, status ?? "", place ?? "");
 #else
         public static void Box(float x, float y, float w, float h, bool visible) { }
         public static void SetStatus(string text) { }
         public static void SetText(string text, bool force) { }
+        public static void Loading(string state, string status, string place) { }
 #endif
     }
 }

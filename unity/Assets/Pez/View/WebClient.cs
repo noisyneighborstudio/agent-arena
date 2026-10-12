@@ -29,7 +29,6 @@ namespace Pez.View
         float live;
         int lastTick = -1;
         bool fetching, showFps;
-        float startedAt;
         Vector3? camPos;
         float camZoom = float.NaN;
 
@@ -78,7 +77,6 @@ namespace Pez.View
         {
             if (Query("snapshot") is string s && s.Length > 0) url = s;
             Instance = this;
-            startedAt = Time.unscaledTime;
             // Opened without live=: a player's own view follows its game, a spectator's follows the delayed feed.
             live = Mathf.Max(0f, Num("live", url.Contains("/view/") ? 1f : url.Contains("/watch") ? 2f : 0f));
             Team = askedTeam = (int)Num("team", -1);
@@ -325,6 +323,7 @@ namespace Pez.View
             float now = Time.unscaledTime, dt = Time.unscaledDeltaTime;
             UpdateContract();
             PlayQueue();
+            ReportLoading();
             if (dt <= 0f) return;
             frames.Add(dt);
             labelFrames++;
@@ -339,16 +338,27 @@ namespace Pez.View
             windowStart = now;
         }
 
+        // The page's loading screen covers everything until the first view has been drawn: it hears what the game is
+        // waiting on (the waiting line, an error) and the map's name, then "ready" two frames after the view is built.
+        string sentLoad;
+        int drawnFrames;
+
+        void ReportLoading()
+        {
+            if (sentLoad == "ready") return;
+            string state = !Loaded ? (error != null ? "trouble" : "join") : Runner.View == null || drawnFrames++ < 2 ? "build" : "ready";
+            string status = Loaded ? null : error ?? Status;
+            var key = $"{state}|{status}|{MapName}";
+            if (key == sentLoad) return;
+            sentLoad = state == "ready" ? "ready" : key;
+            PezOverlay.Loading(state, status, MapName);
+        }
+
         void OnGUI()
         {
-            if (style == null) style = new GUIStyle(GUI.skin.label) { fontSize = 22, alignment = TextAnchor.MiddleCenter, normal = { textColor = Color.white } };
-            if (!Loaded) GUI.Label(new Rect(0, 0, Screen.width, Screen.height), error ?? Status ?? (Time.unscaledTime - startedAt > 8f ? "Still loading the game…" : "Loading game…"), style);
-            if (showFps)
-            {
-                style.fontSize = 14; style.alignment = TextAnchor.MiddleRight;
-                GUI.Label(new Rect(Screen.width - 130, 4, 124, 22), $"{labelFps:0} fps", style);
-                style.fontSize = 22; style.alignment = TextAnchor.MiddleCenter;
-            }
+            if (!showFps) return;
+            if (style == null) style = new GUIStyle(GUI.skin.label) { fontSize = 14, alignment = TextAnchor.MiddleRight, normal = { textColor = Color.white } };
+            GUI.Label(new Rect(Screen.width - 130, 4, 124, 22), $"{labelFps:0} fps", style);
         }
     }
 }
