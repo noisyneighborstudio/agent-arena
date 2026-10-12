@@ -558,7 +558,7 @@ namespace Pez.Sim
         /// 28: agents can name their own team when they join (team_name).
         /// 29: surface-ore alerts and rules spell out the only two ways on once home ore is gone: survey underground, or explore for fields.
         /// </summary>
-        public const int RulesVersion = 29;
+        public const int RulesVersion = 30;
 
         public static JObj Rules()
         {
