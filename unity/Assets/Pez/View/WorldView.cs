@@ -229,12 +229,26 @@ namespace Pez.View
                 if (shellShadows.TryGetValue(id, out var sh)) { Destroy(sh.gameObject); shellShadows.Remove(id); }
             }
             World = w;
+            var stale = new List<int>();
             foreach (var v in Views.Values)
                 if (w.ById.TryGetValue(v.E.Id, out var ne) && !ne.Dead)
                 {
+                    // Ids are the server's, but a copy that ran on between snapshots may have numbered something it made
+                    // itself (a unit off the line, a respawned derrick) with an id the server gave to something else. A
+                    // different kind or owner under the same id gets a new view, not the old model (by key: an invention's
+                    // def is rebuilt with every snapshot).
+                    if (ne.Def.Key != v.E.Def.Key || ne.Team != v.E.Team) { stale.Add(v.E.Id); continue; }
                     v.E = ne; // the rest keep their old entity until Sync retires them
                     if (!ne.IsStructure && v.Rig.Root.gameObject.activeSelf) v.EaseFrom = v.Rig.Root.position; // the next Sync eases over from here
                 }
+            foreach (var id in stale)
+            {
+                var v = Views[id];
+                Destroy(v.Rig.Root.gameObject); // quietly: nothing died, the copy had the wrong thing there
+                if (v.Sim != null) { v.Sim.Release(); v.Sim = null; }
+                Views.Remove(id); Selected.Remove(id); Plinths.Unregister(id);
+                for (int t = 0; t < 8; t++) lastSeen.Remove((t, id));
+            }
             foreach (var t in shields.Values) Destroy(t.gameObject); // the newcomer domes are keyed by team: redrawn
             shields.Clear();
             if (sameMap) Terrain.Rebind(w.Map); else RebuildTerrain(); // the arena grew or changed hands: a new ground
