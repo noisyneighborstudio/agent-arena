@@ -142,8 +142,15 @@ STRUCTURES = [
    "The amber beacon on the crane's apex blinks once every 1.5 s.", ['structures']),
  S('outpost', 'Forward bunker and ore drop-off.', "Created only by deploying an outpost_truck (see that entry). Mining trucks unload on the south drop pad: they reverse onto it and tip their bin. No door.",
    {}, "Antenna tip blinks amber once every 2 s."),
- S('power_plant', 'Generates power.', "The cyan cores brighten and dim with power load (emission 0.6–1.0). Steam particles rise from both towers. When power is low, the cores flicker at 4 Hz.",
-   {}, "Cores pulse on a 3 s sine."),
+ S('power_plant', 'Generates power.', "A spring under load. The cyan cores brighten and dim with power load (emission 0.6–1.0) and steam rises from both stacks (stack_0, stack_1), "
+   "faster under load. The cream springs round the towers (coil_0, coil_1, pivots at their feet) are pressed down by their collars as the base draws more: "
+   "full height with nothing drawing, 78% at full load, eased over 0.4 s. The flywheel on the generator house turns with the load, 40 to 140 rpm. "
+   "Electric arcs jump between the stacks' lips (and one in four down to an insulator on the transformer, insulator_N): every 5 to 8 s with nothing drawing, "
+   "every 1.5 to 2.5 s at full load. When power is low the cores flicker at 4 Hz, the steam sputters, the springs bottom out at 70% and chatter at 4 Hz, "
+   "the flywheel surges and stalls, and the arcs come in stuttering bursts of two or three.",
+   dict(coil=dict(mode='scale_y_with_load', full=1.0, loaded=.78, low=.7),
+        flywheel=dict(axis='X', rpm='40–140 with load')),
+   "Cores pulse on a 3 s sine."),
  S('mining_refinery', 'Turns ore into stockpile.', "The dock door rolls up when a mining truck reverses in and closes after it leaves. "
    "While refining, lumps of iron and copper ore ride the belt over the dock from the intake hood to the smelter hood at 0.5 tiles/s, "
    "flattened as they pass under the foil crusher roll (the spinner), which turns with the belt. Both smokestacks puff pale smoke from "

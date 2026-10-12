@@ -37,7 +37,9 @@ Units are tiles (1 tile = 1 Unity unit) and seconds. Rotation speeds are in degr
 ### `power_plant`
 *Generates power.*
 
-- **Mechanics:** The cyan cores brighten and dim with power load (emission 0.6–1.0). Steam particles rise from both towers. When power is low, the cores flicker at 4 Hz.
+- **Mechanics:** A spring under load. The cyan cores brighten and dim with power load (emission 0.6–1.0) and steam rises from both stacks (stack_0, stack_1), faster under load. The cream springs round the towers (coil_0, coil_1, pivots at their feet) are pressed down by their collars as the base draws more: full height with nothing drawing, 78% at full load, eased over 0.4 s. The flywheel on the generator house turns with the load, 40 to 140 rpm. Electric arcs jump between the stacks' lips (and one in four down to an insulator on the transformer, insulator_N): every 5 to 8 s with nothing drawing, every 1.5 to 2.5 s at full load. When power is low the cores flicker at 4 Hz, the steam sputters, the springs bottom out at 70% and chatter at 4 Hz, the flywheel surges and stalls, and the arcs come in stuttering bursts of two or three.
+- **`coil`:** mode=scale_y_with_load, full=1.0, loaded=0.78, low=0.7
+- **`flywheel`:** axis=X, rpm=40–140 with load
 - **Idle:** Cores pulse on a 3 s sine.
 
 ### `mining_refinery`

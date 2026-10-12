@@ -87,6 +87,27 @@ class Asset:
     def strut(self, m, p0, p1, r, node=None, sections=8):
         """A round bar from p0 to p1 (a lattice member, a tie, a cable)."""
         self.add(node, m, trimesh.creation.cylinder(radius=r, segment=[p0, p1], sections=sections))
+    def coil(self, m, R_, r, y0, y1, turns, x=0, z=0, node=None, per_turn=18, sides=6):
+        """A helical spring of wire radius r around the vertical axis through (x, z), from y0 to y1."""
+        n = int(turns * per_turn) + 1
+        t = np.linspace(0, turns * 2 * math.pi, n)
+        path = np.c_[x + R_ * np.cos(t), np.linspace(y0, y1, n), z + R_ * np.sin(t)]
+        tan = np.gradient(path, axis=0); tan /= np.linalg.norm(tan, axis=1)[:, None]
+        out = np.c_[np.cos(t), np.zeros(n), np.sin(t)]                          # radial, roughly normal to the wire
+        out -= tan * (out * tan).sum(1)[:, None]; out /= np.linalg.norm(out, axis=1)[:, None]
+        up = np.cross(tan, out)
+        a = np.linspace(0, 2 * math.pi, sides, endpoint=False)
+        v = (path[:, None, :] + r * (np.cos(a)[None, :, None] * out[:, None, :] + np.sin(a)[None, :, None] * up[:, None, :])).reshape(-1, 3)
+        f = []
+        for i in range(n - 1):
+            for j in range(sides):
+                p0, p1 = i * sides + j, i * sides + (j + 1) % sides
+                f += [[p0, p1, p1 + sides], [p0, p1 + sides, p0 + sides]]
+        v = np.vstack([v, path[0], path[-1]]); c0, c1 = len(v) - 2, len(v) - 1
+        for j in range(sides):
+            f += [[c0, (j + 1) % sides, j], [c1, (n - 1) * sides + j, (n - 1) * sides + (j + 1) % sides]]
+        mesh = trimesh.Trimesh(v, np.array(f)); mesh.fix_normals()
+        self.add(node, m, mesh)
     def octa(self, m, r, h, x=0, y=0, z=0, node=None):
         v = np.array([[r,0,0],[-r,0,0],[0,0,r],[0,0,-r],[0,h,0],[0,-h,0]], float)
         f = [[4,0,2],[4,2,1],[4,1,3],[4,3,0],[5,2,0],[5,1,2],[5,3,1],[5,0,3]]
@@ -265,13 +286,47 @@ def S_outpost():
 
 def S_power_plant():
     a = Asset('power_plant', 'structures', 2); pad(a, 2)
-    for (x, z, h) in ((-.42, -.3, 1.3), (.42, .32, 1.5)):
-        a.cyl('steel', .36, h, x=x, y=.08 + h / 2, z=z)
-        for k in range(5): a.cyl('cream', .385, .05, x=x, y=.25 + k * h / 5.5, z=z)
-        a.cyl('team', .39, .16, x=x, y=.08 + h * .55, z=z)
+    # Two reactor towers of different heights on the diagonal (the open glowing stacks are built on their dark rims and
+    # cyan cores by PowerCores in Unity, so those stay the only dark and cyan parts up top). Each wears a cream coil
+    # spring under a collar (coil_0, coil_1, pivots at their feet, under stage_2 so they rise with the build):
+    # PowerWorks presses them down with the base's power load, and they bottom out and chatter on low power.
+    a.node('stage_2', a.key)
+    for i, (x, z, h) in enumerate(((-.42, -.3, 1.3), (.42, .32, 1.5))):
+        a.cyl('steel', .45, .1, x=x, y=.13, z=z, sections=24)                 # foot flange
+        a.cyl('smoke', .27, h, x=x, y=.08 + h / 2, z=z, sections=24)
+        a.cyl('cream', .385, .06, x=x, y=.2, z=z, sections=24)                # the spring's seat
+        c = a.node(f'coil_{i}', 'stage_2', (x, .23, z))
+        a.coil('cream', .37, .04, .02, h - .44, 4 if i == 0 else 5, node=c)
+        a.cyl('cream', .4, .05, y=h - .4, node=c, sections=24)                # the collar pressing on it
+        a.cyl('team', .37, .14, x=x, y=h - .04, z=z, sections=24)
         a.cyl('dark', .33, .04, x=x, y=.08 + h + .01, z=z)
         a.cyl('cyan', .24, .05, x=x, y=.08 + h + .02, z=z)
-    a.box('dark', .5, .3, .05, x=.4, y=.23, z=-.92)
+        a.node(f'stack_{i}', a.key, (x, h + .27, z))                          # the open stack's lip (PowerCores builds it)
+    # Generator house in the free front corner: cream, team roof band, a dark louvred vent, and the flywheel (its own
+    # node, turned by PowerWorks with the load) in a steel cradle on its side.
+    gx, gz = .5, -.5
+    a.box('cream', .62, .36, .55, x=gx, y=.26, z=gz)
+    a.box('team', .66, .09, .59, x=gx, y=.475, z=gz)
+    for k in range(3): a.box('dark', .34, .035, .03, x=gx - .05, y=.17 + k * .08, z=gz - .28)
+    a.box('steel', .1, .2, .3, x=gx + .34, y=.18, z=gz)
+    fw = a.node('flywheel', 'stage_2', (gx + .42, .3, gz))
+    a.cyl('foil', .17, .06, axis='x', node=fw, sections=24)
+    a.cyl('steel', .05, .1, axis='x', node=fw, sections=12)
+    for k in range(4):                                                         # spokes, so its turning shows
+        a.box('steel', .015, .3, .04, x=.035, rot=rx(45 * k), node=fw)
+    # Conduits from each tower's foot into the generator.
+    a.box('steel', .07, .07, .5, x=.47, y=.12, z=.0)
+    a.box('steel', .6, .07, .07, x=.1, y=.12, z=-.42)
+    # Transformer in the back corner: a steel box with three cream insulators, and the line it feeds runs off the pad.
+    # PowerWorks throws electric arcs between the stacks' lips (stack_0, stack_1), now and then down to an insulator.
+    tx, tz = -.48, .5
+    a.box('steel', .42, .34, .3, x=tx, y=.25, z=tz)
+    for k in range(3):
+        for j in range(3): a.cyl('cream', .045 - j * .006, .035, x=tx - .13 + k * .13, y=.45 + j * .05, z=tz, sections=12)
+        a.cyl('steel', .012, .1, x=tx - .13 + k * .13, y=.6, z=tz, sections=8)
+        a.node(f'insulator_{k}', a.key, (tx - .13 + k * .13, .65, tz))         # where the arcs come down to
+    a.box('dark', .3, .08, .02, x=tx, y=.22, z=tz - .16)
+    a.box('steel', .07, .07, .5, x=tx, y=.12, z=.75)
     return a
 
 def S_mining_refinery():

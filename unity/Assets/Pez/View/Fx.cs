@@ -20,6 +20,40 @@ namespace Pez.View
         }
     }
 
+    /// <summary>An electric arc's jagged line (Fx.Arc): re-forked every 0.04 s, bowing up over the gap, fading over its life.</summary>
+    public class FxArc : MonoBehaviour
+    {
+        public Vector3 A, B;
+        public float Life = 0.22f;
+        public Material Mat;
+        public Color Color;
+        public LineRenderer Line;
+        const int Points = 12;
+        float age, next;
+
+        void Update()
+        {
+            age += Time.deltaTime;
+            float t = age / Life;
+            if (t >= 1f) { Destroy(gameObject); if (Mat != null) Destroy(Mat); return; }
+            if (Mat != null) { var c = Color; c.a *= 1f - t * t; Mat.color = c; }
+            if (age < next) return;
+            next = age + 0.04f;
+            var d = B - A;
+            var side = Vector3.Cross(d, Vector3.up).normalized;
+            if (side.sqrMagnitude < 0.5f) side = Vector3.right;
+            float jag = Mathf.Max(0.06f, d.magnitude * 0.14f);
+            Line.positionCount = Points;
+            for (int i = 0; i < Points; i++)
+            {
+                float u = i / (Points - 1f), env = Mathf.Sin(u * Mathf.PI);
+                var p = A + d * u + Vector3.up * env * (0.12f + d.magnitude * 0.2f);
+                if (i > 0 && i < Points - 1) p += (side * Random.Range(-1f, 1f) + Vector3.up * Random.Range(-1f, 1f)) * jag * env;
+                Line.SetPosition(i, p);
+            }
+        }
+    }
+
     /// <summary>
     /// Battle effects. Explosions are particle physics (see <see cref="FxSystems"/>): a flash and a point light, a fireball
     /// of hot gas that expands, rises and cools white to yellow to orange to red to soot, lit smoke that billows up and
@@ -496,6 +530,31 @@ namespace Pez.View
             lr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             var f = go.AddComponent<FxLife>();
             f.Life = 0.07f; f.Mat = mat; f.Color = c;
+        }
+
+        /// <summary>An electric arc from a to b: a jagged line that re-forks every 0.04 s for `life` seconds, fading, with a
+        /// flash of light at its middle. Shown to Fx.Audience's layers when it's set.</summary>
+        public static void Arc(Vector3 a, Vector3 b, Color c, float width, float life = 0.22f)
+        {
+            if (Audience == null) Arc(a, b, c, width, life, -1);
+            else foreach (var layer in Audience) Arc(a, b, c, width, life, layer);
+            S.Lamp((a + b) * 0.5f, c, 2.5f, 2.5f, life);
+            MuzzleFlash(a, 0.04f); MuzzleFlash(b, 0.04f); // sparks where it strikes
+        }
+
+        static void Arc(Vector3 a, Vector3 b, Color c, float width, float life, int layer)
+        {
+            var go = new GameObject("arc");
+            if (layer >= 0) go.layer = layer;
+            var lr = go.AddComponent<LineRenderer>();
+            var hot = Hot(c, 2.2f);
+            var mat = Mats.UnlitInstance(hot, true);
+            lr.sharedMaterial = mat;
+            lr.startWidth = width; lr.endWidth = width * 0.7f;
+            lr.startColor = lr.endColor = Color.white;
+            lr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            var f = go.AddComponent<FxArc>();
+            f.A = a; f.B = b; f.Life = life; f.Mat = mat; f.Color = hot; f.Line = lr;
         }
 
         public static void Beam(Vector3 a, Vector3 b, Color c, float width, bool lamp = true)

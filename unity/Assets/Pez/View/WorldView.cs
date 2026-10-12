@@ -46,6 +46,7 @@ namespace Pez.View
             public float GlowK = -1f, GlowShown = -1f, RateShown = 1f;
             public float[] SteamNext;    // per tower or smokestack: when it next puffs (each on its own irregular rhythm)
             public RefineryWorks Works;  // refinery: the ore belt and the stacks' mouths
+            public PowerWorks Plant;     // power plant: the springs under load and the flywheel
             public bool GlowHidden;
             public Sheen Sheen;          // newcomer protection: the sheen over its parts (null when its team isn't protected)
             public Renderer[] Halos;     // power plant: the light rising out of its open stacks      // the neutral "last seen" glow is applied (a stream render of fogged enemy state)
@@ -528,7 +529,8 @@ namespace Pez.View
             v.Rig.Motion.SetOreLevel(d.Initial > 0 ? d.Amount / d.Initial : 0);
         }
 
-        // Power plant tower tops in model space (the two M_E_Cyan cores; the pack's glTF x is mirrored on import).
+        // Power plant tower tops in model space, for a model without stack_0 / stack_1 markers (the two M_E_Cyan cores; the
+        // pack's glTF x is mirrored on import).
         static readonly Vector3[] Towers = { new Vector3(0.42f, 1.78f, -0.30f), new Vector3(-0.42f, 1.78f, 0.32f) }; // the mouths of the open stacks (PowerCores)
 
         /// <summary>
@@ -536,7 +538,9 @@ namespace Pez.View
         /// PowerProduced and LowPower:
         ///  - power plant cores glow 0.6 to 1.0 with the load (eased over 0.4 s); on low power they flicker at 4 Hz
         ///    between 0.25 and 1 with a 0.1 s dropout every 2-3 s; dark until the plant is complete (the sim counts only
-        ///    complete plants). Steam rises from both towers, faster under load; on low power it sputters.
+        ///    complete plants). Steam rises from both towers, faster under load; on low power it sputters. The springs
+        ///    round the towers press down with the load, the flywheel turns with it and arcs jump between the stacks,
+        ///    more often under load and in stuttering bursts on low power (PowerWorks).
         ///  - consumers (Power &lt; 0) dim their emissives to 50% and run their machinery at half speed on low power, as
         ///    the sim halves their production.
         /// </summary>
@@ -561,7 +565,14 @@ namespace Pez.View
                     float cyc = now / 2.5f + e.Id * 0.61f, inCyc = (cyc - Mathf.Floor(cyc)) * 2.5f;
                     if (inCyc < 0.1f) glow = 0.05f;
                 }
-                if (e.IsComplete && v.FireK < 0.15f) Steam(v, load, t.LowPower); // a burning plant's towers stop steaming (white smoke means it's being fought)
+                if (e.IsComplete) (v.Plant ??= PowerWorks.For(v.Rig.Model, e.Id)).Tick(load, t.LowPower, dt);
+                if (e.IsComplete && v.FireK < 0.15f)
+                {
+                    Steam(v, load, t.LowPower); // a burning plant's towers stop steaming (white smoke means it's being fought)
+                    Fx.Audience = AudienceFor(e);
+                    v.Plant.Arcs(load, t.LowPower);
+                    Fx.Audience = null;
+                }
             }
             else
             {
@@ -731,7 +742,8 @@ namespace Pez.View
             {
                 if (now < v.SteamNext[i]) continue;
                 if (!emitted) { Fx.Audience = AudienceFor(v.E); emitted = true; }
-                Fx.Steam(v.Rig.Model.transform.TransformPoint(Towers[i]), low ? 0.3f : 0.38f);
+                var mouth = v.Plant != null && v.Plant.Stacks == Towers.Length ? v.Plant.Mouth(i) : v.Rig.Model.transform.TransformPoint(Towers[i]);
+                Fx.Steam(mouth, low ? 0.3f : 0.38f);
                 float gap = low ? (Random.value < 0.3f ? Random.Range(0.7f, 1.5f) : Random.Range(0.12f, 0.3f))
                                 : 0.8f / Mathf.Max(load, 0.2f) * Random.Range(0.6f, 1.4f);
                 v.SteamNext[i] = Mathf.Max(v.SteamNext[i] + gap, now + 0.05f);

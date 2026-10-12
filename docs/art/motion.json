@@ -54,8 +54,19 @@
   "key": "power_plant",
   "kind": "structure",
   "role": "Generates power.",
-  "mechanics": "The cyan cores brighten and dim with power load (emission 0.6\u20131.0). Steam particles rise from both towers. When power is low, the cores flicker at 4 Hz.",
-  "nodes": {},
+  "mechanics": "A spring under load. The cyan cores brighten and dim with power load (emission 0.6\u20131.0) and steam rises from both stacks (stack_0, stack_1), faster under load. The cream springs round the towers (coil_0, coil_1, pivots at their feet) are pressed down by their collars as the base draws more: full height with nothing drawing, 78% at full load, eased over 0.4 s. The flywheel on the generator house turns with the load, 40 to 140 rpm. Electric arcs jump between the stacks' lips (and one in four down to an insulator on the transformer, insulator_N): every 5 to 8 s with nothing drawing, every 1.5 to 2.5 s at full load. When power is low the cores flicker at 4 Hz, the steam sputters, the springs bottom out at 70% and chatter at 4 Hz, the flywheel surges and stalls, and the arcs come in stuttering bursts of two or three.",
+  "nodes": {
+   "coil": {
+    "mode": "scale_y_with_load",
+    "full": 1.0,
+    "loaded": 0.78,
+    "low": 0.7
+   },
+   "flywheel": {
+    "axis": "X",
+    "rpm": "40\u2013140 with load"
+   }
+  },
   "idle": "Cores pulse on a 3 s sine.",
   "produces": [],
   "emerge": "Rises out of its pad in stages; nothing appears instantly. stage_0 (pad) lifts from y=-0.15 to 0 during build progress 0\u201310%. stage_1, stage_2 and stage_3 each start at local y = -(stage height) and rise to 0 with ease-out cubic over progress 10\u201345%, 45\u201375% and 75\u201395%. The opaque terrain and pad hide whatever is still below ground. stage_3 ends with a 4% Y-scale overshoot that settles in 0.15 s (spring-loaded). Functional nodes (turret, spinner, door, lift) come last, at 95\u2013100%: a turret rises 0.3 out of its housing, then a spinner spins up from 0 rpm.",
