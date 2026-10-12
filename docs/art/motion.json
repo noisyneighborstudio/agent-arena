@@ -307,11 +307,11 @@
   },
   "emerge": "Spawns inside the factory, 0.6 behind its door node. The door rolls up (localScale.y 1\u21920.05, 0.35 s), the unit drives out along \u2212Z at 60% speed to a point 1.5 tiles south, then takes its rally order. The door rolls down 0.5 s after the unit clears.",
   "remove": "Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540\u00b0/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then sinks into the ground over 2 s.",
-  "mechanics": "Tracked: pivot-turns in place at 110\u00b0/s. When it has to turn more than 60\u00b0 it stops and turns first, then drives. Accelerating pitches the hull nose-up 2\u00b0 and braking pitches it nose-down 3\u00b0 (spring, 0.25 s). On slopes the hull follows the ground normal (lerp 8/s). Harvest loop: drive onto an ore tile; while harvesting, ramp the spinner up to 240 rpm over 0.4 s and creep forward at 0.15 tiles/s across the tile. Each 1 s tick takes one load, and the bin's ore bricks rise in steps of 1/5. When full, the bin bricks reach max height and the truck drives to the nearest refinery dock. It reverses into the dock along +Z, the dock door rolls up, the bin tips 35\u00b0 about its rear edge for 1.2 s to unload, the bin resets and the door closes.",
+  "mechanics": "Tracked: pivot-turns in place at 110\u00b0/s. When it has to turn more than 60\u00b0 it stops and turns first, then drives. Accelerating pitches the hull nose-up 2\u00b0 and braking pitches it nose-down 3\u00b0 (spring, 0.25 s). On slopes the hull follows the ground normal (lerp 8/s). The cutter's teeth always turn at 60 rpm while the engine runs. Harvest loop: drive onto an ore tile; while harvesting, ramp the spinner up to 240 rpm over 0.4 s and creep forward at 0.15 tiles/s across the tile. Each 1 s tick takes one load, and the bin's ore bricks rise in steps of 1/5. When full, the bin bricks reach max height and the truck drives to the nearest refinery dock. It reverses into the dock along +Z, the dock door rolls up, the bin tips 35\u00b0 about its rear edge for 1.2 s to unload, the bin resets and the door closes.",
   "nodes": {
    "spinner": {
     "axis": "X",
-    "idle_rpm": 0,
+    "idle_rpm": 60,
     "active_rpm": 240,
     "spinup_s": 0.4
    },
@@ -323,7 +323,7 @@
     "note": "bin visible always; ore bricks inside scale Y 0\u21921 with load"
    }
   },
-  "idle": "Spinner coasts down 240\u21920 over 1.5 s; tiny idle hull vibration 0.005 at 12 Hz while the engine runs."
+  "idle": "Spinner coasts down 240\u219260 rpm when harvesting stops, and to a stop when the truck parks; tiny idle hull vibration 0.005 at 12 Hz while the engine runs."
  },
  {
   "key": "repair_truck",

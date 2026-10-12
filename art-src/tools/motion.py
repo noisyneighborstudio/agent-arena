@@ -42,12 +42,12 @@ WHEELED = ("Wheeled: cannot turn in place. Minimum turn radius {r} tiles; steeri
 
 UNITS = [
  U('mining_truck', 'Harvests ore and returns it to a refinery or outpost.', 'factory', 'tracked', 1.6, 1.2, 110, True,
-   TRACKED.format(t=110) + " Harvest loop: drive onto an ore tile; while harvesting, ramp the spinner up to 240 rpm over 0.4 s and creep forward at 0.15 tiles/s across the tile. "
+   TRACKED.format(t=110) + " The cutter's teeth always turn at 60 rpm while the engine runs. Harvest loop: drive onto an ore tile; while harvesting, ramp the spinner up to 240 rpm over 0.4 s and creep forward at 0.15 tiles/s across the tile. "
    "Each 1 s tick takes one load, and the bin's ore bricks rise in steps of 1/5. When full, the bin bricks reach max height and the truck drives to the nearest refinery dock. "
    "It reverses into the dock along +Z, the dock door rolls up, the bin tips 35° about its rear edge for 1.2 s to unload, the bin resets and the door closes.",
-   dict(spinner=dict(axis='X', idle_rpm=0, active_rpm=240, spinup_s=.4),
+   dict(spinner=dict(axis='X', idle_rpm=60, active_rpm=240, spinup_s=.4),
         bin=dict(mode='fill_steps', steps=5, tip_deg=35, tip_s=1.2, note='bin visible always; ore bricks inside scale Y 0→1 with load')),
-   "Spinner coasts down 240→0 over 1.5 s; tiny idle hull vibration 0.005 at 12 Hz while the engine runs."),
+   "Spinner coasts down 240→60 rpm when harvesting stops, and to a stop when the truck parks; tiny idle hull vibration 0.005 at 12 Hz while the engine runs."),
  U('repair_truck', 'Repairs friendly vehicles and structures in range.', 'factory', 'wheeled', 2.0, 1.6, 90, False,
    WHEELED.format(r=0.8) + " Repair: parks 0.8 tiles from the target. The turret (crane base) yaws to face it at 120°/s and the barrel (crane arm) pitches down from −25° to −10°. "
    "The amber welder tip pulses 6 Hz and the welding beam effect plays. The arm sways ±3° on a 1.4 s sine while working.",

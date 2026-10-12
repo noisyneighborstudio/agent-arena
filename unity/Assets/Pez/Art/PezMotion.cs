@@ -233,7 +233,8 @@ namespace Pez
             if (spinner && crane) Crane(dt);
             else if (spinner)
             {
-                float goalRpm = working ? profile.spinnerActiveRpm : profile.spinnerIdleRpm;
+                // A parked machine (a mining truck with nothing left to mine) powers its spinner down entirely.
+                float goalRpm = parkGoal > 0f ? 0f : working ? profile.spinnerActiveRpm : profile.spinnerIdleRpm;
                 float rate = Mathf.Max(profile.spinnerActiveRpm, profile.spinnerIdleRpm, 1f) / Mathf.Max(profile.spinupTime, 0.05f);
                 rpm = Mathf.MoveTowards(rpm, goalRpm, rate * dt);
                 Vector3 axis = profile.spinnerAxis == 'X' ? Vector3.right : profile.spinnerAxis == 'Z' ? Vector3.forward : Vector3.up;
