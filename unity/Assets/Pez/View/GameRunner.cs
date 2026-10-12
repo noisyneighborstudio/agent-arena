@@ -390,7 +390,7 @@ namespace Pez.View
             return true;
         }
 
-        static Vec2 OpeningFocus(World w, int team)
+        internal static Vec2 OpeningFocus(World w, int team)
         {
             var seats = team >= 0 ? new[] { w.Teams[team] } : w.Teams.Where(t => !t.Left && !t.Defeated).ToArray();
             foreach (var t in seats)

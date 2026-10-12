@@ -155,7 +155,9 @@ namespace Pez.View
             var mouse = (Vector2)Input.mousePosition;
             // In the browser a left drag pans the camera, so a pick waits for a release that didn't pan.
             bool click = GameRunner.IsWeb ? Input.GetMouseButtonUp(0) && !Cam.Panned : Input.GetMouseButtonDown(0);
-            if (Hud.Typing || !click || (Runner.Hud != null && Runner.Hud.IsOverUi(mouse))) return;
+            // A touch has its own tap (the camera tells a tap from a pan or pinch); Unity's simulated mouse from it is ignored.
+            if (Cam.TouchRecent) { click = Cam.TakeTap(out mouse); }
+            if (Hud.Typing || !click || Cam.OverPad(mouse) || (Runner.Hud != null && Runner.Hud.IsOverUi(mouse))) return;
             if (!Cam.GroundPoint(mouse, out var ground)) return;
             var p = WorldView.S(ground);
             Entity best = null; float bd = float.MaxValue;
