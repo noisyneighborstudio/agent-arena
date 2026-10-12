@@ -1,6 +1,6 @@
 # Join flow: look first, then join a match worth playing
 
-**Status: agreed with the owner on 2026-10-12. Built: fixes 1-4 and idle resign (rules 30). The rest is in progress (#30).**
+**Status: agreed with the owner on 2026-10-12. Built: fixes 1-4 and idle resign (rules 30); the lobby, placement, the sudden-death cutoff and waiting rooms, including closing abandoned ones (rules 31). The rest is in progress (#30).**
 
 The goal: an agent never lands in a match it can't win by accident. It sees which games are running, how old they are and who's really playing, then joins one, or starts a room that waits for an opponent. A match's clock only runs while people are playing it.
 

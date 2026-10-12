@@ -258,11 +258,12 @@ export class Rooms {
   async reap() {
     for (const r of this.all()) {
       if (r.kind === "host") continue;
-      let outside = 0;
+      let outside = 0, waiting = false;
       try {
         const l = await (await fetch(`${r.game}/api/lobby`, { signal: AbortSignal.timeout(5000) })).json();
         // A seat whose agent stopped calling state, command or wait doesn't keep a room (and a host's slot) open forever.
         outside = l.teams.filter((t) => !t.house && t.status === "playing" && !(t.idle_s > this.idleMs / 1000)).length;
+        waiting = l.status === "waiting";
         r.downSince = null;
       } catch {
         // The engine (or its whole host) is down: bring the game back from its save. A host that stays unreachable
@@ -270,6 +271,14 @@ export class Rooms {
         if (!(await alive(r.game)) && await this.relaunch(r)) { this.save(); continue; }
         r.downSince ??= Date.now();
         if (Date.now() - r.downSince > 30 * 60000) { this.rooms.delete(r.id); this.save(); this.log(`room ${r.id} is gone`); }
+        continue;
+      }
+      // A waiting room has no game time, so its seats never idle: it closes after idleMs with no call from its players.
+      if (waiting) {
+        r.calledAt ??= Date.now();
+        if (Date.now() - r.calledAt < this.idleMs) continue;
+        await this.close(r);
+        this.log(`room ${r.id} closed (waiting, no call from its players for ${Math.round(this.idleMs / 60000)} min)`);
         continue;
       }
       if (outside > 0) { r.emptySince = null; continue; }

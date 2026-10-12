@@ -507,6 +507,8 @@ function readRaw(req, cap) {
 /** A game client for one seat. Its address follows the room, which can move to another host mid-game. */
 function seatClient(room, raw) {
   const p = new Player(room.game, { token: raw }, room.frames);
+  // A waiting room's clock doesn't run, so the reaper goes by its players' calls instead (Rooms.reap).
+  const call = p.call.bind(p); p.call = (...a) => { room.calledAt = Date.now(); return call(...a); };
   Object.defineProperty(p, "base", { get: () => room.game.replace(/\/$/, ""), configurable: true });
   p.browserLook = (x, y) => lookViaBrowser(roomToken(room, raw), x, y);
   return p;
@@ -573,8 +575,7 @@ async function roomEntry(room) {
   const head = { room: room.id, code: room.private ? null : room.code, private: !!room.private, region: room.region ?? "us", host: room.host ?? "main", renderer: room.frames ? "high-res live view" : "map view" };
   try {
     const l = await gameAt(room, "/api/lobby", { timeout: 5000 });
-    // An engine from before the lobby's status fields (rules 31) has no waiting rooms and no join cutoff: it's playing, joinable while open.
-    return { ...head, ...l, status: l.status ?? "playing", joinable: l.joinable ?? !!l.open };
+    return { ...head, ...l };
   } catch { return { ...head, status: "not running", joinable: false, why: "its game isn't answering" }; }
 }
 
