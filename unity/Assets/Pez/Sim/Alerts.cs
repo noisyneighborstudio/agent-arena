@@ -51,7 +51,13 @@ namespace Pez.Sim
                 a = new Alert { Seq = nextSeq++, Team = team, Kind = kind, Priority = p, Pos = pos, StartTick = w.Tick };
                 All.Add(a);
                 open.Add(a);
-                if (All.Count > 500) All.RemoveRange(0, All.Count - 500);
+                if (All.Count > 500)
+                {
+                    // Trimmed alerts stop merging too: one left open but out of All wasn't saved, so a resumed game raised afresh what the original merged.
+                    var cut = new HashSet<Alert>(All.GetRange(0, All.Count - 500));
+                    All.RemoveRange(0, All.Count - 500);
+                    open.RemoveAll(cut.Contains);
+                }
             }
             else if (p > a.Priority) a.Priority = p;
             a.LastTick = w.Tick;

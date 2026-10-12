@@ -125,11 +125,18 @@ namespace Pez
         Vector3 craneTarget, hookLocal;
         Quaternion craneRest;
         float craneYaw, jibAngle, craneIdlePhase;
+        // A tower crane's trolley runs along the jib; its hook hangs on a cable from it (nodes trolley, hook, cable).
+        Transform trolley, hook, cable;
+        Vector3 trolleyRest, jibDir, hookRest;
+        float trolleyAlong, trolleyHome, cableLen, hookDrop, releaseT = -1f;
 
         /// <summary>
         /// Command center: drive the spinner as a crane (MOTION.md aim_then_swing). With a target it slews its jib toward
         /// the site at 90 deg/s and swings +-5 deg at 0.4 Hz while it works; without one it idles in a +-10 deg sweep
-        /// every 8 s. The jib's direction and the hook are read from the spinner's meshes once.
+        /// every 8 s. A tower crane (a trolley node under the spinner) also runs its trolley out along the jib with the
+        /// site's distance (0.35 tiles/s) and lets its hook down 0.12 to work, bobbing on the cable; idle, the trolley
+        /// goes home and the hook sways. Without a trolley the jib's direction and the hook are read from the spinner's
+        /// meshes once.
         /// </summary>
         public void SetCraneTarget(bool on, Vector3 world)
         {
@@ -138,24 +145,41 @@ namespace Pez
             {
                 crane = true;
                 craneRest = spinner.localRotation;
-                var lo = new Vector3(float.MaxValue, float.MaxValue, float.MaxValue); var hi = -lo;
-                foreach (var mf in spinner.GetComponentsInChildren<MeshFilter>(true))
+                trolley = FindDeep(spinner, "trolley");
+                hook = trolley ? FindDeep(trolley, "hook") : null;
+                cable = trolley ? FindDeep(trolley, "cable") : null;
+                Vector2 jib;
+                if (trolley)
                 {
-                    var b = mf.sharedMesh.bounds;
-                    for (int c = 0; c < 8; c++)
-                    {
-                        var p = spinner.InverseTransformPoint(mf.transform.TransformPoint(new Vector3((c & 1) == 0 ? b.min.x : b.max.x, (c & 2) == 0 ? b.min.y : b.max.y, (c & 4) == 0 ? b.min.z : b.max.z)));
-                        lo = Vector3.Min(lo, p); hi = Vector3.Max(hi, p);
-                    }
+                    trolleyRest = trolley.localPosition;
+                    jibDir = new Vector3(trolleyRest.x, 0f, trolleyRest.z);
+                    trolleyHome = trolleyAlong = jibDir.magnitude;
+                    jibDir = trolleyHome > 1e-4f ? jibDir / trolleyHome : Vector3.forward;
+                    jib = new Vector2(jibDir.x, jibDir.z);
+                    if (hook) hookRest = hook.localPosition;
+                    if (hook && cable) cableLen = Mathf.Max(0.05f, cable.localPosition.y - hookRest.y);
                 }
-                var mid = (lo + hi) * 0.5f;
-                var jib = new Vector2(mid.x, mid.z);
-                if (jib.sqrMagnitude < 1e-4f) jib = Vector2.up;
-                jib.Normalize();
+                else
+                {
+                    var lo = new Vector3(float.MaxValue, float.MaxValue, float.MaxValue); var hi = -lo;
+                    foreach (var mf in spinner.GetComponentsInChildren<MeshFilter>(true))
+                    {
+                        var b = mf.sharedMesh.bounds;
+                        for (int c = 0; c < 8; c++)
+                        {
+                            var p = spinner.InverseTransformPoint(mf.transform.TransformPoint(new Vector3((c & 1) == 0 ? b.min.x : b.max.x, (c & 2) == 0 ? b.min.y : b.max.y, (c & 4) == 0 ? b.min.z : b.max.z)));
+                            lo = Vector3.Min(lo, p); hi = Vector3.Max(hi, p);
+                        }
+                    }
+                    var mid = (lo + hi) * 0.5f;
+                    jib = new Vector2(mid.x, mid.z);
+                    if (jib.sqrMagnitude < 1e-4f) jib = Vector2.up;
+                    jib.Normalize();
+                    // The hook hangs at the jib's far end, a third of the way down from its top.
+                    float reach = Mathf.Max(Mathf.Abs(jib.x) > 0.5f ? (jib.x > 0 ? hi.x : -lo.x) : (jib.y > 0 ? hi.z : -lo.z), 0.3f);
+                    hookLocal = new Vector3(jib.x * reach, Mathf.Lerp(hi.y, lo.y, 0.4f), jib.y * reach);
+                }
                 jibAngle = Mathf.Atan2(jib.x, jib.y) * Mathf.Rad2Deg;
-                // The hook hangs at the jib's far end, a third of the way down from its top.
-                float reach = Mathf.Max(Mathf.Abs(jib.x) > 0.5f ? (jib.x > 0 ? hi.x : -lo.x) : (jib.y > 0 ? hi.z : -lo.z), 0.3f);
-                hookLocal = new Vector3(jib.x * reach, Mathf.Lerp(hi.y, lo.y, 0.4f), jib.y * reach);
                 craneIdlePhase = Random.value * 8f;
             }
             craneHasTarget = on;
@@ -163,19 +187,41 @@ namespace Pez
         }
 
         /// <summary>The crane hook in world space (where the construction beam starts).</summary>
-        public Vector3 CraneHook => spinner ? spinner.TransformPoint(hookLocal) : transform.position;
+        public Vector3 CraneHook => hook ? hook.position : spinner ? spinner.TransformPoint(hookLocal) : transform.position;
+
+        /// <summary>A structure is finished: the hook gives a little bounce, let go of its load.</summary>
+        public void CraneRelease() => releaseT = 0f;
 
         void Crane(float dt)
         {
-            float goal;
+            float goal, along = trolleyHome;
             if (craneHasTarget)
             {
                 var local = spinner.parent.InverseTransformPoint(craneTarget) - spinner.localPosition;
                 goal = Mathf.Atan2(local.x, local.z) * Mathf.Rad2Deg - jibAngle + Mathf.Sin(Time.time * 0.4f * 6.2831853f) * 5f;
+                // Farther sites, farther out: 2 tiles away works close to the mast, 8 or more at the jib's end.
+                along = Mathf.Lerp(0.45f, 1.55f, Mathf.InverseLerp(2f, 8f, new Vector2(local.x, local.z).magnitude));
             }
             else goal = Mathf.Sin((Time.time + craneIdlePhase) * 6.2831853f / 8f) * 10f;
             craneYaw = Mathf.MoveTowardsAngle(craneYaw, goal, 90f * machineRate * dt);
             spinner.localRotation = Quaternion.Euler(0f, craneYaw, 0f) * craneRest;
+            if (!trolley) return;
+            trolleyAlong = Mathf.MoveTowards(trolleyAlong, along, 0.35f * machineRate * dt);
+            trolley.localPosition = new Vector3(jibDir.x * trolleyAlong, trolleyRest.y, jibDir.z * trolleyAlong);
+            if (!hook) return;
+            // Down 0.12 to work, bobbing 0.02 on a 1.8 s sine; idle, a slow 0.008 sway. A release kicks it up 0.06 and
+            // lets it settle over 0.6 s.
+            hookDrop = Mathf.MoveTowards(hookDrop, craneHasTarget ? 0.12f : 0f, 0.2f * dt);
+            float bob = craneHasTarget ? Mathf.Sin(Time.time * 6.2831853f / 1.8f) * 0.02f : Mathf.Sin((Time.time + craneIdlePhase) * 6.2831853f / 3f) * 0.008f;
+            if (releaseT >= 0f)
+            {
+                releaseT += dt;
+                bob -= 0.06f * Mathf.Exp(-releaseT * 6f) * Mathf.Cos(releaseT * 18f);
+                if (releaseT > 0.8f) releaseT = -1f;
+            }
+            float down = hookDrop + bob;
+            hook.localPosition = hookRest + Vector3.down * down;
+            if (cable) cable.localScale = new Vector3(1f, (cableLen + down) / cableLen, 1f);
         }
         float machineRate = 1f;
         public void SetDoorOpen(bool open) => doorTarget = open ? 0.05f : 1f;

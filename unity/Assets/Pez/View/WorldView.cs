@@ -68,6 +68,9 @@ namespace Pez.View
             // Construction: the staked site, the last progress seen (stage landings) and the crane's beam cadence.
             public SiteView Site;
             public float PrevBuild = -1f, BeamT;
+            // The command center: its dish, beacon and flip-top head, and the structure its crane was last building.
+            public HqWorks Hq;
+            public int CraneSite;
             // The dump: the last bay step seen, the laden squat (eased), and the pour's dust cadence.
             public DockStep PrevDock;
             // Roll-out anticipation: the lamps' blink factor, the vent puffs already given, the dark bay behind the door.
@@ -595,8 +598,10 @@ namespace Pez.View
         /// StructureQueue, so low power slows it automatically and nothing waits on the view:
         ///  - the site is staked out from the moment it's placed (SiteView), with a pallet of bricks while it's queued;
         ///  - each stage landing (progress crossing 0.10, 0.45, 0.75) kicks dust out at the footprint's corners;
-        ///  - the command center's crane slews to the queue head and a cream construction beam runs from its hook to the
-        ///    rising structure every 0.25 s (stuttering on low power); with nothing queued the crane idles in a sweep.
+        ///  - the command center's crane slews to the queue head, runs its trolley out and lets its hook down, and a cream
+        ///    construction beam runs from the hook to the rising structure every 0.25 s (stuttering on low power); with
+        ///    nothing queued the crane idles in a sweep. When the structure is finished the CC's flip-top head pops and the
+        ///    hook bounces (HqWorks).
         /// </summary>
         void Construction(EV v)
         {
@@ -622,7 +627,13 @@ namespace Pez.View
             var team = World.Teams[v.E.Team];
             var head = team.StructureQueue.Count > 0 ? World.Get(team.StructureQueue[0].StructureId) : null;
             var m = v.Rig.Motion;
+            m.SetRate(team.LowPower ? 0.5f : 1f); // low power halves building, so the crane works at half speed
             m.SetCraneTarget(head != null, head != null ? W(head.Center) : Vector3.zero);
+            v.Hq ??= HqWorks.For(v.Rig.Model, v.E.Id);
+            v.Hq.Tick(team.LowPower, Time.deltaTime);
+            // The structure it was building is finished: the head pops and the hook lets go.
+            if (v.CraneSite != 0 && World.Get(v.CraneSite) is { IsComplete: true }) { v.Hq.Pop(); m.CraneRelease(); v.CraneSite = 0; }
+            if (head != null && !head.IsComplete) v.CraneSite = head.Id;
             if (head == null || head.IsComplete || !Views.TryGetValue(head.Id, out var hv)) return;
             if ((v.BeamT -= Time.deltaTime) > 0f) return;
             v.BeamT = 0.25f;

@@ -55,6 +55,7 @@ namespace Pez.Headless
             Fuel();
             RetreatOncePerWound();
             NoDancing();
+            RunOver();
             GroupMove();
             ResignWhenStalled();
             IdleSeatsResign();
@@ -240,6 +241,74 @@ namespace Pez.Headless
             int idle = army.Count(u => u.Order == Order.Idle && !u.Moving);
             Check(idle >= army.Count - 1 && moved < 4f, $"40 mixed units sent to one spot settle ({idle} idle, {moved:0.0} tiles of shuffling in the next 20s)");
             Check(w.Errors == 0 && w2.Errors == 0, $"no sim errors ({w.LastError ?? w2.LastError})");
+        }
+
+        static void RunOver()
+        {
+            // An enemy soldier in the middle of a fast tank's path, busy shooting at it, is run over: a kill for the tank's side.
+            var w = new World(2, 7, 80);
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var road = hq.Center + new Vec2(10, 12);
+            var tank = At(w.SpawnUnit(0, "light_tank", hq), road);
+            var foe = At(w.SpawnUnit(1, "rifleman", w.Owned(1).First()), road + new Vec2(4, 0));
+            foe.Hp = 5000; // the tank's gun can't do it first
+            int kills0 = w.Teams[0].Stats.Kills;
+            w.SetOrder(tank, Order.Move, road + new Vec2(9, 0));
+            tank.Facing = 0;
+            Run(w, 6);
+            Check(foe.Dead && w.Events.Any(e => e.Type == "crushed" && e.A == foe.Id && e.B == tank.Id) && w.Teams[0].Stats.Kills > kills0,
+                  $"an enemy soldier shooting at a light tank bearing down on it is run over (dead {foe.Dead}, tank at {tank.Pos}, soldier at {foe.Pos})");
+
+            // A slow heavy tank gives one who sees it coming time to get out of the way, even from near the middle of its path.
+            var w2 = new World(2, 7, 80);
+            var hq2 = w2.Owned(0).First(e => e.Def.Key == "command_center");
+            var t2 = At(w2.SpawnUnit(0, "heavy_tank", hq2), road);
+            var edge = At(w2.SpawnUnit(1, "engineer", w2.Owned(1).First()), road + new Vec2(4, 0.15f)); // unarmed: alert, not busy shooting
+            edge.Hp = 5000;
+            w2.SetOrder(t2, Order.Move, road + new Vec2(9, 0)); t2.Facing = 0;
+            Run(w2, 6);
+            Check(!edge.Dead && Vec2.Dist(t2.Pos, road + new Vec2(9, 0)) < 1f, $"a soldier near the middle of a heavy tank's path dodges it (alive {!edge.Dead}, at {edge.Pos})");
+
+            // A tank never rolls onto its own: it waits while they get clear, and gets where it's going.
+            var w3 = new World(2, 7, 80);
+            var hq3 = w3.Owned(0).First(e => e.Def.Key == "command_center");
+            var t3 = At(w3.SpawnUnit(0, "mammoth_tank", hq3), road);
+            var mates = Enumerable.Range(0, 4).Select(i => At(w3.SpawnUnit(0, i % 2 == 0 ? "rifleman" : "engineer", hq3), road + new Vec2(2 + i * 1.3f, 0.05f * i))).ToList();
+            w3.SetOrder(t3, Order.Move, road + new Vec2(9, 0)); t3.Facing = 0;
+            Run(w3, 15);
+            Check(mates.All(m => !m.Dead) && Vec2.Dist(t3.Pos, road + new Vec2(9, 0)) < 1.5f && !w3.Events.Any(e => e.Type == "crushed"),
+                  $"a mammoth drives through its own soldiers without running any over ({mates.Count(m => m.Dead)} dead, tank at {t3.Pos})");
+
+            // Walking into a parked tank is harmless; a scout buggy is too light to crush anyone.
+            var parked = At(w3.SpawnUnit(1, "heavy_tank", w3.Owned(1).First()), road + new Vec2(0, 6));
+            var walker = At(w3.SpawnUnit(0, "rifleman", hq3), road + new Vec2(-3, 6));
+            w3.SetOrder(walker, Order.Move, road + new Vec2(3, 6));
+            Run(w3, 8);
+            Check(!walker.Dead || w3.Events.All(e => !(e.Type == "crushed" && e.A == walker.Id)), "a soldier walking into a parked tank isn't run over");
+            Check(!World.Crusher(At(w3.SpawnUnit(0, "scout_buggy", hq3), road + new Vec2(0, 10))) && World.Crusher(t3), "scout buggies don't crush, tanks do");
+
+            // Fighting enemy infantry close by, an armed tank drives at it.
+            var w4 = new World(2, 7, 80);
+            var hq4 = w4.Owned(0).First(e => e.Def.Key == "command_center");
+            var hunter = At(w4.SpawnUnit(0, "light_tank", hq4), road);
+            var prey = At(w4.SpawnUnit(1, "rocket_soldier", w4.Owned(1).First()), road + new Vec2(2.5f, 0));
+            prey.Hp = 1e6f; // only a run-over can stop it
+            w4.SetOrder(hunter, Order.Attack, prey.Pos, prey.Id);
+            Run(w4, 6);
+            Check(w4.Events.Any(e => e.Type == "crushed" && e.A == prey.Id), $"a tank fighting a soldier 2.5 tiles away runs it down (prey at {prey.Pos}, tank at {hunter.Pos})");
+
+            // Newcomer protection covers being run over too.
+            var w5 = new World(2, 7, 80);
+            var hq5 = w5.Owned(0).First(e => e.Def.Key == "command_center");
+            var t5 = At(w5.SpawnUnit(0, "heavy_tank", hq5), road);
+            var safe = At(w5.SpawnUnit(1, "rifleman", w5.Owned(1).First()), road + new Vec2(4, 0));
+            w5.Teams[1].ProtectedUntil = w5.Time + 300;
+            w5.SetOrder(t5, Order.Move, road + new Vec2(9, 0)); t5.Facing = 0;
+            Run(w5, 6);
+            Check(!safe.Dead, "a protected newcomer's soldier isn't run over");
+            var st = string.Join("\n", StateView.EventsFor(w, 1, 0, 200));
+            Check(st.Contains("was run over by enemy light_tank"), "the victim's side hears its soldier was run over");
+            Check(w.Errors == 0 && w2.Errors == 0 && w3.Errors == 0 && w4.Errors == 0 && w5.Errors == 0, $"no sim errors ({w.LastError ?? w2.LastError ?? w3.LastError ?? w4.LastError ?? w5.LastError})");
         }
 
         static void GroupMove()
@@ -1261,7 +1330,7 @@ namespace Pez.Headless
             medic.Pos = medic.PrevPos = new Vec2(10.5f, 6.5f);
             r = Commands.Execute(w, 0, Cmd("type", "heal", "units", new[] { medic.Id }, "target", far.Id));
             Check(Ok(r), $"heal order accepted: {r["result"]}");
-            Run(w, 25);
+            Run(w, 30); // (it steps out of the way of trucks around the base)
             Check(far.Hp >= far.Def.MaxHp - 1, $"medic travels to and heals a distant rifleman ({far.Hp:0}/{far.Def.MaxHp})");
             Check(medic.Order == Order.Idle, "medic goes idle once the patient is healed");
         }

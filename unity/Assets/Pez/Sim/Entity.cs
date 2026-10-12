@@ -57,6 +57,8 @@ namespace Pez.Sim
         public bool RetreatSpent;
         // On a short move out of a moving friendly's way (World.GiveWay): it doesn't move anyone else aside on the way.
         public bool GivingWay;
+        // A crusher held up by its own soldiers in its path: since when (0 = it isn't). It forces its way through after World.OwnBlockLimit.
+        public float OwnBlockedSince;
         public float RepathTimer;
         public bool Moving;
         public int LastAttackerId;

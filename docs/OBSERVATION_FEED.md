@@ -229,9 +229,9 @@ clients on loopback.
 
 | measure | result |
 |---|---|
-| Target destroyed → army's `command_completed` (outcome `target_destroyed`, `now_idle`) logged, game time | p50 600 ms, max 850 ms (n=5); always within one sample |
-| Logged → agent holds it, engine long-poll | p50 0-1 ms, p95 3 ms, max 5 ms (n≈69) |
-| Logged → SSE client holds it, through the gateway | p50 2 ms, max 3 ms (n=6, live events) |
+| Target destroyed → army's `command_completed` (outcome `target_destroyed`, `now_idle`) logged, game time | p50 400 ms, max 450 ms (n=5); always within one sample |
+| Logged → agent holds it, engine long-poll | p50 0 ms, p95 4 ms, max 4 ms (n=55) |
+| Logged → SSE client holds it, through the gateway | p50 1 ms, max 3 ms (n=4, live events) |
 | Human orders sent → waiting reader has them | under 300 ms at the engine and under 1.5 s through the gateway (asserted; immediate, no batching) |
 | Command → units actually moving (`movement_started.after_s`) | 50 ms (one tick), every time (n=10) |
 | Command POST → `movement_started` delivered | about 1000 ms: the movement happens within a tick, and its report waits for the next 1 s sample |

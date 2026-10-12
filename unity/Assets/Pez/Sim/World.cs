@@ -929,7 +929,9 @@ namespace Pez.Sim
             }
             if (Profile) Timings["units"] = (Timings.TryGetValue("units", out var uv) ? uv : 0) + profileClock.Elapsed.TotalSeconds - tu;
             Guard("projectiles", UpdateProjectiles);
+            Guard("dodge", DodgeVehicles);
             Guard("separation", Separate);
+            Guard("run over", RunOver);
             Guard("cleanup", Cleanup);
             if (Tick % 4 == 0) Guard("visibility", UpdateVisibility);
             if (!Mirror) Guard("victory", CheckVictory);
@@ -1318,6 +1320,13 @@ namespace Pez.Sim
         void Engage(Entity e, Entity t)
         {
             float d = t.DistFrom(e.Pos);
+            if (RunsDown(e, t, d))
+            {
+                // Close enough to drive over: run it down, shooting on the way if the gun bears.
+                if (d <= e.Def.Weapon.Range) FireAt(e, t);
+                Chase(e, t);
+                return;
+            }
             if (d <= e.Def.Weapon.Range * 0.95f)
             {
                 e.Moving = false;
@@ -2596,6 +2605,19 @@ namespace Pez.Sim
             }
             float step = MathF.Min(len, speed * Dt);
             var next = e.Pos + d / len * step;
+            // Never roll onto its own infantry: wait for them to get clear (they dodge). Only a vehicle held up by its own for
+            // OwnBlockLimit seconds forces its way through, and can catch one with nowhere to go.
+            if (Crusher(e) && OntoOwnInfantry(e, next) is Entity inWay)
+            {
+                if (e.OwnBlockedSince <= 0f) e.OwnBlockedSince = Time;
+                if (Time - e.OwnBlockedSince < OwnBlockLimit)
+                {
+                    GiveWay(inWay, e); // one standing still steps aside to a clear spot; one on the move dodges (DodgeVehicles)
+                    e.Moving = true;
+                    return;
+                }
+            }
+            else e.OwnBlockedSince = 0f;
             var nt = Int2.Of(next);
             var ct = Int2.Of(e.Pos);
             if (e.IsAir) { if (Map.InBounds(nt.X, nt.Y)) e.Pos = next; }
@@ -2653,6 +2675,114 @@ namespace Pez.Sim
             }
         }
 
+        // ------------------------------------------------------------------ run over
+
+        /// <summary>Ground vehicles from a light tank up (trucks too) crush infantry they drive over. Scout buggies are too light.</summary>
+        public static bool Crusher(Entity e) => !e.IsAir && !e.IsStructure && !e.IsMine && e.Def.Armor == Armor.Vehicle && e.Def.Radius >= 0.45f;
+        /// <summary>Moved this tick (rolling, even creeping), not just nudged by a neighbour.</summary>
+        static bool Rolling(Entity v) => v.Moving && !v.Stranded && Vec2.DistSq(v.Pos, v.PrevPos) > 0.004f * 0.004f;
+        /// <summary>Seconds a vehicle waits on its own soldiers in its path before it forces its way through.</summary>
+        public const float OwnBlockLimit = 6f;
+        /// <summary>How close an armed vehicle drives at enemy infantry it's fighting, to run it over.</summary>
+        public const float RunDownRange = 5f;
+
+        bool RunsDown(Entity e, Entity t, float d) =>
+            Crusher(e) && t.Def.Armor == Armor.Infantry && !t.IsAir && !t.IsCarried && t.Team != e.Team && d <= RunDownRange && !IsProtected(t.Team) && !IsProtected(e.Team);
+
+        /// <summary>A vehicle rolling into enemy infantry: separation leaves them to dodge or be crushed.</summary>
+        bool Overruns(Entity v, Entity s) =>
+            Crusher(v) && Rolling(v) && s.Def.Armor == Armor.Infantry && s.Team != v.Team && !IsProtected(s.Team) && !IsProtected(v.Team);
+
+        /// <summary>The soldier of its own that moving v to next would put (closer) under its hull, if any.</summary>
+        Entity OntoOwnInfantry(Entity v, Vec2 next)
+        {
+            Near(next, v.Def.Radius + 0.5f, nearCrush);
+            foreach (var s in nearCrush)
+            {
+                if (s.Dead || s.Team != v.Team || s.Def.Armor != Armor.Infantry || s.IsCarried || s.IsAir) continue;
+                float d = Vec2.Dist(s.Pos, next);
+                if (d < v.Def.Radius * 0.6f + s.Def.Radius && d < Vec2.Dist(s.Pos, v.Pos)) return s;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Infantry get out of a vehicle's way, friend's or foe's: anyone in its path sprints sideways, the short way out, at
+        /// 1.4x their pace, once they see it coming (about 0.45 s before it reaches them, 0.25 s if they're shooting). That's
+        /// all a body can do: one near the middle of a tank's path, boxed in (rock, buildings, a crowd) or too slow is run over.
+        /// </summary>
+        void DodgeVehicles()
+        {
+            foreach (var s in Entities)
+            {
+                if (s.Dead || s.Def.Armor != Armor.Infantry || s.IsCarried || s.IsAir || s.IsStructure || s.Stranded) continue;
+                Near(s.Pos, 3.2f, nearCrush);
+                foreach (var v in nearCrush)
+                {
+                    if (v.Dead || !Crusher(v) || !v.Moving || v.Stranded || v.IsCarried) continue; // driving, or waiting for them to clear
+                    var heading = new Vec2(MathF.Cos(v.Facing), MathF.Sin(v.Facing));
+                    var rel = s.Pos - v.Pos;
+                    float ahead = rel.X * heading.X + rel.Y * heading.Y, lateral = rel.X * heading.Y - rel.Y * heading.X;
+                    float clear = v.Def.Radius + s.Def.Radius + 0.25f;
+                    // Its own side's soldiers clear its path in good time (a driver they know is coming). An enemy's get moving
+                    // about 0.45 s before it reaches them (0.25 s if they're busy shooting).
+                    float react = Time - s.LastFiredAt < 1f ? 0.25f : 0.45f;
+                    float reach = s.Team == v.Team ? v.Def.Radius + 1.5f : MathF.Max(0.3f, Vec2.Dist(v.Pos, v.PrevPos) / Dt * react);
+                    if (ahead < -0.2f || ahead > reach || MathF.Abs(lateral) >= clear) continue;
+                    float sign = MathF.Abs(lateral) > 0.02f ? MathF.Sign(lateral) : ((s.Id & 1) == 0 ? 1f : -1f);
+                    var away = new Vec2(heading.Y, -heading.X) * sign; // perpendicular, on the side it's already on
+                    float step = s.Def.Speed * 1.4f * Dt;
+                    if (TryStep(s, away * step)) s.Facing = away.Angle;
+                    else if (TryStep(s, away * -step)) s.Facing = (away * -1f).Angle;
+                    else continue; // boxed in
+                    break;
+                }
+            }
+        }
+
+        /// <summary>Move e by delta if it lands on open ground and not inside a structure; whether it moved.</summary>
+        bool TryStep(Entity e, Vec2 delta)
+        {
+            var next = e.Pos + delta;
+            var t = Int2.Of(next);
+            if (!Map.Passable(t.X, t.Y)) return false;
+            e.Pos = next;
+            return true;
+        }
+
+        /// <summary>
+        /// Infantry a vehicle drives over (moving at 30% of its speed or more, towards them) are crushed: an enemy's anywhere
+        /// under the hull; one of its own only right under it (it won't roll onto its own and they dodge, so it takes a
+        /// vehicle forcing its way out of a jam and a soldier with nowhere to go). Walking into a parked tank is harmless.
+        /// </summary>
+        void RunOver()
+        {
+            for (int i = 0; i < Entities.Count; i++)
+            {
+                var v = Entities[i];
+                if (v.Dead || !Crusher(v) || !Rolling(v) || v.IsCarried) continue;
+                Near(v.Pos, v.Def.Radius + 0.5f, nearCrush);
+                foreach (var s in nearCrush)
+                {
+                    if (s.Dead || s.Def.Armor != Armor.Infantry || s.IsCarried || s.IsAir || s.IsStructure) continue;
+                    bool own = s.Team == v.Team;
+                    float under = Vec2.Dist(s.Pos, v.Pos);
+                    if (under > v.Def.Radius * (own ? 0.45f : 1f)) continue;
+                    // Driven over, not walked into: the vehicle is really moving (not inching), and towards the soldier.
+                    var moved = v.Pos - v.PrevPos; var rel = s.Pos - v.PrevPos;
+                    if (moved.Length < v.Def.Speed * Dt * 0.3f || moved.X * rel.X + moved.Y * rel.Y <= 0f) continue;
+                    if (IsProtected(s.Team) || (!own && IsProtected(v.Team))) continue;
+                    if (own && (Time < s.GhostUntil || v.OwnBlockedSince <= 0f || Time - v.OwnBlockedSince < OwnBlockLimit)) continue; // only a vehicle forcing its way through
+                    string what = $"{s.Def.Key} #{s.Id}", by = $"{v.Def.Key} #{v.Id}";
+                    Emit("crushed", s.Team, s.Id, v.Id, s.Pos, key: s.Def.Key,
+                         text: own ? $"{what} was run over by your own {by}: it couldn't get out of the way" : $"{what} was run over by enemy {by}");
+                    if (!own) Emit("crushed", v.Team, s.Id, v.Id, s.Pos, key: s.Def.Key, text: $"your {by} ran over enemy {what}");
+                    Damage(s, s.Hp + 1f, v);
+                }
+            }
+        }
+        readonly List<Entity> nearCrush = new List<Entity>();
+
         /// <summary>Whether another ground unit already stands where e would stand at p.</summary>
         bool Crowded(Entity e, Vec2 p)
         {
@@ -2675,6 +2805,7 @@ namespace Pez.Sim
                     if (b.Id <= a.Id) continue; // each pair once
                     if (b.Dead || b.IsStructure || b.IsCarried || b.IsMine || a.IsAir != b.IsAir) continue;
                     if (Time < a.GhostUntil && a.Moving || Time < b.GhostUntil && b.Moving) continue; // unjamming: pass through
+                    if (Overruns(a, b) || Overruns(b, a)) continue; // a rolling vehicle isn't held off by enemy infantry: it goes over them
                     float min = a.Def.Radius + b.Def.Radius;
                     var d = b.Pos - a.Pos;
                     float dsq = d.LengthSq;

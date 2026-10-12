@@ -52,6 +52,7 @@ namespace Pez
         {
             p = Mathf.Clamp01(p);
             float shellOffset = 0f; bool shellSet = false;   // doors and lifts ride up with the first wall stage
+            float crownOffset = 0f;                          // turrets and spinners ride up with the top stage
             for (int i = 0; i < 4; i++)
             {
                 if (!stages[i]) continue;
@@ -59,6 +60,7 @@ namespace Pez
                 float k = Mathf.Clamp01((p - w.x) / (w.y - w.x));
                 stages[i].localPosition = new Vector3(0f, -stageHeights[i] * (1f - EaseOutCubic(k)), 0f);
                 if (i >= 1 && !shellSet) { shellOffset = stages[i].localPosition.y; shellSet = true; }
+                crownOffset = stages[i].localPosition.y;
                 float over = (i == 3 && k >= 1f) ? 1f + 0.04f * Mathf.Exp(-(p - w.y) * 60f) * Mathf.Cos((p - w.y) * 120f) : 1f;
                 stages[i].localScale = new Vector3(1f, over, 1f);
             }
@@ -67,7 +69,7 @@ namespace Pez
             {
                 if (!functional[i]) continue;
                 bool hidesInside = Functional[i] == "turret" || Functional[i] == "spinner";
-                if (hidesInside) functional[i].localPosition = functionalRest[i] + Vector3.down * 0.3f * (1f - EaseOutCubic(f));
+                if (hidesInside) functional[i].localPosition = functionalRest[i] + Vector3.up * crownOffset + Vector3.down * 0.3f * (1f - EaseOutCubic(f));
                 else functional[i].localPosition = functionalRest[i] + Vector3.up * shellOffset;
                 if (hidesInside) functional[i].localScale = Vector3.one * Mathf.Lerp(0.6f, 1f, EaseOutCubic(f));
             }

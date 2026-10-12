@@ -60,6 +60,11 @@ namespace Pez.View
         Texture2D minimap;
         Color[] miniPixels;
         float nextMini;
+        // What the team last saw of each tile (ground and ore), kept for the fog: the minimap shows ground out of sight as
+        // it was when last seen, out of date or not, never as it is now. Reset with the team or the map's size.
+        Color[] miniSeen;
+        bool[] miniSeenSet;
+        int miniSeenTeam = -2;
         Rect miniMapRect;
 
         // ------------------------------------------------------------------ icons
@@ -564,6 +569,10 @@ namespace Pez.View
             else TeamPanel(new Rect(x, y, RightW, SH - Edge - y));
         }
 
+        /// <summary>How much dimmer the minimap draws what's out of sight (as last seen) than what's in sight.</summary>
+        const float FogDim = 0.8f;
+        static Color Dim(Color c) => new Color(c.r * FogDim, c.g * FogDim, c.b * FogDim, 1f);
+
         void Minimap(Rect panel)
         {
             Panel(panel);
@@ -586,8 +595,16 @@ namespace Pez.View
                 nextMini = Time.unscaledTime + 0.5f;
                 bool[] vis = Team >= 0 ? W.Teams[Team].Visible : null;
                 bool[] exp = Team >= 0 ? W.Teams[Team].Explored : null;
+                if (miniSeen == null || miniSeen.Length != miniPixels.Length || miniSeenTeam != Team)
+                {
+                    miniSeen = new Color[miniPixels.Length]; miniSeenSet = new bool[miniPixels.Length]; miniSeenTeam = Team;
+                }
                 for (int i = 0; i < miniPixels.Length; i++)
                 {
+                    if (exp != null && !exp[i]) { var dark = Mats.Licorice.linear; dark.a = 1f; miniPixels[i] = dark; continue; }
+                    // Out of sight: as last seen (dimmed a touch, so what's live stands out). A tile explored before this view
+                    // started (a loaded game) is taken as it is the first time, then kept.
+                    if (vis != null && !vis[i] && miniSeenSet[i]) { miniPixels[i] = Dim(miniSeen[i]); continue; }
                     int tx = i % m.W, ty = i / m.W;
                     Color c = m.Tiles[i] switch
                     {
@@ -598,11 +615,10 @@ namespace Pez.View
                         _ => Color.Lerp(TerrainView.GrassA, TerrainView.GrassB, 0.5f * TerrainView.Smooth(0.35f, 0.65f, Mathf.PerlinNoise(tx * 0.06f + 3.3f, ty * 0.06f + 1.7f))),
                     };
                     if (m.Ore[i] > 0) c = Color.Lerp(c, WorldView.OreColors[m.OreType[i]], 0.75f);
-                    if (vis != null && !vis[i]) c *= 0.6f;
-                    if (exp != null && !exp[i]) c = Mats.Licorice;
                     c.a = 1;
                     var lc = c.linear; lc.a = 1f; // raw texel values are displayed as linear (see L)
-                    miniPixels[i] = lc;
+                    if (vis != null) { miniSeen[i] = lc; miniSeenSet[i] = true; }
+                    miniPixels[i] = vis != null && !vis[i] ? Dim(lc) : lc;
                 }
                 minimap.SetPixels(miniPixels);
                 minimap.Apply();
@@ -610,12 +626,23 @@ namespace Pez.View
             // Texture row 0 (south) draws at the bottom of the rect: north up.
             Tex(map, minimap);
 
-            // Entities: structures as their footprint, units as small squares, all in team colour.
+            // Entities: structures as their footprint, units as small squares, all in team colour. Out of sight, an enemy
+            // building is drawn as the team last saw it (where it stood, whose it was), gone or not: units only in sight.
+            if (Repaint && Team >= 0)
+                foreach (var kv in W.Teams[Team].KnownEnemyStructures)
+                {
+                    var e = W.Get(kv.Key);
+                    if (e != null && !e.Dead && W.IsVisibleTo(Team, e)) continue; // in sight: drawn live below
+                    var d = Defs.Get(kv.Value.key);
+                    if (d == null) continue;
+                    var o = kv.Value.origin;
+                    Fill(new Rect(map.x + o.X * scale, map.y + (m.H - o.Y - d.SizeY) * scale, Mathf.Max(4, d.SizeX * scale), Mathf.Max(4, d.SizeY * scale)), Dim(Mats.Team(kv.Value.team)));
+                }
             if (Repaint)
                 foreach (var e in W.Entities)
                 {
                     if (e.Dead || e.IsMine || e.IsCarried) continue;
-                    if (Team >= 0 && e.Team != Team && !W.IsVisibleTo(Team, e) && !(e.IsStructure && W.Teams[Team].KnownEnemyStructures.ContainsKey(e.Id))) continue;
+                    if (Team >= 0 && e.Team != Team && !W.IsVisibleTo(Team, e)) continue;
                     var c = Mats.Team(e.Team);
                     if (e.IsStructure)
                         Fill(new Rect(map.x + e.Origin.X * scale, map.y + (m.H - e.Origin.Y - e.Def.SizeY) * scale, Mathf.Max(4, e.Def.SizeX * scale), Mathf.Max(4, e.Def.SizeY * scale)), c);

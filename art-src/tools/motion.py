@@ -126,10 +126,20 @@ UNITS = [
 ]
 
 STRUCTURES = [
- S('command_center', 'HQ. Builds structures.', "Construction yard. While it is building, the spinner (crane) yaws toward the placement site at 30°/s and swings ±20° on a 2.5 s sine. "
-   "The hook bobs 0.05. A cream construction beam runs from the hook to the site. The door opens only during the deploy intro.",
-   dict(spinner=dict(axis='Y', idle_rpm=0, active_rpm=0, mode='aim_then_swing', aim_speed_deg=30),
-        door=dict(mode='rollup', open_s=.35, close_s=.5)), "Crane idles with a slow ±10° sweep every 8 s; the amber beacon blinks once every 1.5 s.", ['structures']),
+ S('command_center', 'HQ. Builds structures.', "Construction yard, built around a tower crane on its own footing (the tallest thing in any base). "
+   "While a structure is building, the spinner (the crane's slewing top) yaws toward the site at 90°/s and swings ±5° at 0.4 Hz. "
+   "The trolley runs along the jib at 0.35 tiles/s, out with the site's distance (0.45 at 2 tiles, the jib's end at 8 or more), and the hook drops 0.12 on its cable "
+   "and bobs 0.02 on a 1.8 s sine. A cream construction beam runs from the hook to the site every 0.25 s, with welding sparks where it lands. "
+   "When the structure is finished, the hook bounces up 0.06 and settles, and the flip-top head (the dispenser's head node, hinged at its back edge) "
+   "pops open 35° in 0.12 s and drops shut with a bounce. Low power halves the crane's speed and the beam stutters. "
+   "The door rolls up for a mining truck unloading at it.",
+   dict(spinner=dict(axis='Y', idle_rpm=0, active_rpm=0, mode='aim_then_swing', aim_speed_deg=90),
+        trolley=dict(mode='slide_along_jib', speed=.35, travel='0.45–1.55'),
+        head=dict(mode='hinge_pop', open_deg=35, open_s=.12),
+        dish=dict(axis='Y', deg_per_s=30),
+        door=dict(mode='rollup', open_s=.35, close_s=.5)),
+   "The crane idles in a slow ±10° sweep every 8 s, its trolley home and the hook swaying 0.008 on a 3 s sine. The comms dish turns at 30°/s (15 on low power). "
+   "The amber beacon on the crane's apex blinks once every 1.5 s.", ['structures']),
  S('outpost', 'Forward bunker and ore drop-off.', "Created only by deploying an outpost_truck (see that entry). Mining trucks unload on the south drop pad: they reverse onto it and tip their bin. No door.",
    {}, "Antenna tip blinks amber once every 2 s."),
  S('power_plant', 'Generates power.', "The cyan cores brighten and dim with power load (emission 0.6–1.0). Steam particles rise from both towers. When power is low, the cores flicker at 4 Hz.",

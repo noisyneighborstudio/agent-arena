@@ -84,6 +84,9 @@ class Asset:
         (radius, y) points (counterclockwise keeps the normals facing out)."""
         s = trimesh.creation.revolve(np.array(profile, float), sections=sections)
         s.apply_transform(axis_rot('y')); s.apply_translation((x, 0, z)); self.add(node, m, s)
+    def strut(self, m, p0, p1, r, node=None, sections=8):
+        """A round bar from p0 to p1 (a lattice member, a tie, a cable)."""
+        self.add(node, m, trimesh.creation.cylinder(radius=r, segment=[p0, p1], sections=sections))
     def octa(self, m, r, h, x=0, y=0, z=0, node=None):
         v = np.array([[r,0,0],[-r,0,0],[0,0,r],[0,0,-r],[0,h,0],[0,-h,0]], float)
         f = [[4,0,2],[4,2,1],[4,1,3],[4,3,0],[5,2,0],[5,1,2],[5,3,1],[5,0,3]]
@@ -154,22 +157,99 @@ def door(a, w, h, z, y0=0.08, lights=True, anim=False):
 
 def S_command_center():
     a = Asset('command_center', 'structures', 3); pad(a, 3)
-    a.box('cream', 2.6, .9, 2.5, y=.53)
-    door(a, .9, .6, -1.27, anim=True)
-    a.box('smoke', 1.2, 1.0, 1.0, y=1.48, z=.2)
-    a.box('dark', .45, .7, .05, y=1.45, z=-.32)
-    for i in range(4): a.box('team', .38, .1, .03, y=1.2 + i * .17, z=-.35)
-    a.box('team', 1.4, .32, 1.2, y=2.14, z=.2, rot=rx(-8))   # flip-top head
-    a.box('steel', 1.2, .08, .08, y=2.0, z=.78)               # hinge
-    sp = a.node('spinner', a.key, (.75, .98, -.6))             # crane
-    a.cyl('steel', .09, 1.3, y=.65, node=sp)
-    a.box('steel', .9, .1, .1, x=.2, y=1.3, node=sp)
-    a.box('dark', .22, .22, .22, x=-.2, y=1.3, node=sp)
-    a.cyl('steel', .015, .5, x=.58, y=1.05, node=sp)
-    a.box('dark', .1, .08, .1, x=.58, y=.78, node=sp)
-    a.cyl('steel', .04, .5, x=-1.0, y=1.23, z=-.9)
-    a.cyl('foil', .22, .05, x=-1.0, y=1.5, z=-.9)
-    a.box('amber', .06, .06, .06, x=-1.0, y=1.53, z=-.9)
+    # The hall: a long cream deck with the truck door in front, a team wrapper band and porthole windows down its side;
+    # behind it a taller wing that the dispenser stands on, and the corner beside that left to the crane's footing
+    # (north-west in the pack's space: -x, +z).
+    a.box('cream', 2.7, .7, 1.75, y=.43, z=-.345)
+    a.box('cream', 1.75, .95, .82, x=.47, y=.555, z=.89)
+    a.box('team', 2.74, .09, 1.79, y=.6, z=-.345)                 # wrapper bands
+    a.box('team', 1.79, .09, .86, x=.47, y=.85, z=.89)
+    door(a, .9, .6, -1.23, anim=True)
+    for z in (-.85, -.45, -.05, .35, .75): a.cyl('dark', .07, .03, x=1.35, y=.38, z=z, axis='x', sections=16)
+    # The dispenser: a smoke-plastic stem with grip slats, and the team flip-top head hinged at its back edge (the head
+    # node's pivot), sitting a little open. HqWorks pops it open each time a structure is finished. The head and the dish
+    # hang under stage_2, so they rise with the stem and the mast when a deployed HQ builds.
+    a.node('stage_2', a.key)
+    a.box('smoke', .8, .7, .6, x=.55, y=1.38, z=.85)
+    for i in range(3): a.box('team', .5, .07, .03, x=.55, y=1.2 + i * .15, z=.54)
+    a.box('dark', .5, .05, .08, x=.55, y=1.71, z=.55)             # the dispensing lip
+    hd = a.node('head', 'stage_2', (.55, 1.73, 1.15), rot=rx(10))
+    a.box('team', .96, .4, .78, y=.22, z=-.37, node=hd)
+    a.box('team', .9, .1, .1, y=.04, z=-.74, node=hd)             # the snout over the lip
+    a.cyl('steel', .05, .86, axis='x', node=hd)                   # hinge pin
+    # Comms mast with a dish that turns (the dish node, yawed by HqWorks).
+    a.cyl('steel', .035, .55, x=-1.05, y=1.05, z=-.9)
+    a.cyl('steel', .07, .06, x=-1.05, y=.81, z=-.9)
+    dish = a.node('dish', 'stage_2', (-1.05, 1.34, -.9))
+    a.cyl('steel', .05, .08, node=dish)
+    pr = [(0, .0), (.24, .1), (.26, .13), (.235, .13), (.0, .035)]
+    bowl = trimesh.creation.revolve(np.array(pr[::-1], float), sections=24); bowl.apply_transform(axis_rot('y'))
+    bowl.apply_transform(rx(-60)); bowl.apply_translation((0, .08, 0)); a.add(dish, 'foil', bowl)
+    a.strut('steel', (0, .08, 0), (0, .08 + .2 * math.sin(math.radians(30)), -.2 * math.cos(math.radians(30))), .012, node=dish)
+    a.sphere('dark', .03, y=.08 + .2 * math.sin(math.radians(30)), z=-.2 * math.cos(math.radians(30)), node=dish)
+    # The tower crane, on its own footing: the tallest thing in any base. A square lattice mast; on top the slewing
+    # spinner with the team cab, an A-frame apex with the amber beacon, the jib (along +x) with its trolley and hook,
+    # and the counter-jib with its counterweights. PezMotion slews it to the site being built, runs the trolley out with
+    # the distance and lowers the hook while it works.
+    cx, cz, w, top = -.92, .93, .24, 2.55
+    a.box('smoke', .62, .16, .62, x=cx, y=.16, z=cz)
+    for sx in (-1, 1):
+        for sz in (-1, 1): a.cyl('steel', .03, .04, x=cx + sx * .22, y=.25, z=cz + sz * .22, sections=10)
+    h = w / 2
+    corners = [(-h, -h), (h, -h), (h, h), (-h, h)]
+    ys = [.24 + i * (top - .24) / 6 for i in range(7)]
+    for k in range(6):                                             # six panels, so the mast rises with the stages
+        y0, y1 = ys[k], ys[k + 1]
+        for (px, pz) in corners: a.strut('steel', (cx + px, y0, cz + pz), (cx + px, y1, cz + pz), .022, sections=6)
+        for i in range(4):
+            (ax, az), (bx, bz) = corners[i], corners[(i + 1) % 4]
+            a.strut('steel', (cx + ax, y1, cz + az), (cx + bx, y1, cz + bz), .012, sections=6)
+            if k % 2: ax, az, bx, bz = bx, bz, ax, az
+            a.strut('steel', (cx + ax, y0, cz + az), (cx + bx, y1, cz + bz), .01, sections=6)
+    sp = a.node('spinner', a.key, (cx, top, cz))
+    a.cyl('steel', .2, .07, y=.035, node=sp)                       # slewing ring
+    a.box('team', .26, .24, .26, x=.1, y=.16, z=-.2, node=sp)      # the cab
+    a.box('dark', .2, .1, .03, x=.1, y=.2, z=-.335, node=sp)       # its window
+    a.box('dark', .03, .1, .16, x=.235, y=.2, z=-.2, node=sp)
+    for sz in (-1, 1): a.strut('steel', (-.08, .07, sz * .08), (0, .55, 0), .016, node=sp)  # A-frame
+    for sz in (-1, 1): a.strut('steel', (.08, .07, sz * .08), (0, .55, 0), .016, node=sp)
+    a.sphere('steel', .035, y=.55, node=sp)
+    a.cyl('dark', .025, .05, y=.6, node=sp)
+    a.sphere('amber', .04, y=.65, node=sp)                         # beacon: blinks every 1.5 s
+    # Jib: a triangular lattice, two bottom chords and a top chord, 1.65 long.
+    L, jw, jh = 1.75, .08, .15
+    a.strut('steel', (.1, .08, -jw), (L, .08, -jw), .016, node=sp)
+    a.strut('steel', (.1, .08, jw), (L, .08, jw), .016, node=sp)
+    a.strut('steel', (.1, .08 + jh, 0), (L - .05, .08 + jh * .4, 0), .016, node=sp)
+    n = 7
+    for i in range(n + 1):
+        x0 = .1 + (L - .1) * i / n
+        yt = .08 + jh * (1 - .6 * i / n)
+        a.strut('steel', (x0, .08, -jw), (x0, .08, jw), .009, node=sp, sections=6)
+        if i < n:
+            x1 = .1 + (L - .1) * (i + .5) / n
+            for sz in (-1, 1):
+                a.strut('steel', (x0, .08, sz * jw), (x1, .08 + jh * (1 - .6 * (i + .5) / n), 0), .008, node=sp, sections=6)
+                x2 = .1 + (L - .1) * (i + 1) / n
+                a.strut('steel', (x1, .08 + jh * (1 - .6 * (i + .5) / n), 0), (x2, .08, sz * jw), .008, node=sp, sections=6)
+    a.box('team', .1, .06, .2, x=L, y=.09, node=sp)                # jib tip
+    # Counter-jib and its weights.
+    for sz in (-1, 1): a.box('steel', .75, .045, .035, x=-.45, y=.09, z=sz * .07, node=sp)
+    for i, x in enumerate((-.62, -.72)): a.box('smoke' if i else 'cream', .09, .2, .22, x=x, y=.01, node=sp)
+    a.box('team', .2, .05, .23, x=-.67, y=.12, node=sp)
+    # Pendant ties from the apex to the jib and to the counter-jib.
+    a.strut('steel', (0, .55, 0), (L * .62, .08 + jh * .63, 0), .006, node=sp)
+    a.strut('steel', (0, .55, 0), (-.78, .1, 0), .006, node=sp)
+    # Trolley (slides along the jib) with the hook on its cable; the cable node hangs from the trolley and stretches with
+    # the hook.
+    tr = a.node('trolley', sp, (.75, .06, 0))
+    a.box('steel', .12, .05, .2, node=tr)
+    cb = a.node('cable', tr, (0, -.02, 0))
+    for sz in (-1, 1): a.strut('dark', (0, 0, sz * .025), (0, -.36, sz * .025), .006, node=cb, sections=6)
+    hk = a.node('hook', tr, (0, -.38, 0))
+    a.box('team', .08, .09, .1, y=-.02, node=hk)
+    t = trimesh.creation.torus(major_radius=.035, minor_radius=.011, major_sections=16, minor_sections=8)
+    t.apply_translation((0, -.1, 0)); a.add(hk, 'steel', t)
     return a
 
 def S_outpost():
