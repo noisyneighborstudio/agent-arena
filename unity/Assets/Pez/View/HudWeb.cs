@@ -322,15 +322,31 @@ namespace Pez.View
         }
 
         /// <summary>
+        /// Whether a team still has a card on the strip: everyone playing, the viewer's own team, and a team that's out
+        /// (defeated or left) for 30 s after it went out, by its last "defeated" or "left" event. No such event in the
+        /// recent window means it went out long ago.
+        /// </summary>
+        bool OnStrip(Sim.Team t)
+        {
+            if ((!t.Defeated && !t.Left) || t.Id == Team) return true;
+            for (int i = W.Events.Count - 1; i >= 0; i--)
+            {
+                var e = W.Events[i];
+                if (e.Team == t.Id && (e.Type == "defeated" || e.Type == "left")) return (W.Tick - e.Tick) * World.Dt < 30f;
+            }
+            return false;
+        }
+
+        /// <summary>
         /// The team cards between `left` and `right`. A player's own card is pinned at the left (never clipped or scrolled),
-        /// then "VS", then everyone else; when the rest don't fit they loop as a ticker (35 CSS px a second, paused under
+        /// then "VS", then everyone else (a team that's out stays, struck through, for 30 s: OnStrip); when the rest don't fit they loop as a ticker (35 CSS px a second, paused under
         /// the pointer) instead of being dropped. Native cards pick the compact or full form once per width (with hysteresis,
         /// so a growing number doesn't flip it), and tick when even compact is too wide.
         /// </summary>
         void TeamStrip(float left, float right, float y, float h)
         {
             bool web = GameRunner.IsWeb;
-            var teams = W.Teams.Where(t => !t.Left || W.Teams.Count <= 4).ToList();
+            var teams = W.Teams.Where(OnStrip).ToList();
             if (teams.Count == 0) return;
             unitCount.Clear();
             foreach (var e in W.Entities)
