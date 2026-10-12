@@ -481,7 +481,7 @@ namespace Pez.Api
                     }
                 case "/api/admin/kick":
                     {
-                        // Host-only (the gateway never forwards /api/admin): remove a seat as if it had left.
+                        // Operator-only (the gateway forwards /api/admin only from /admin, with the operator secret): remove a seat as if it had left.
                         var d = Json.Parse(p.Body ?? "{}") as Dictionary<string, object>;
                         int team = (int)d.Num("team", -1);
                         if (team < 0 || team >= w.Teams.Count || w.Teams[team].Left) { status = 400; return Json.Write(new JObj().Set("ok", false).Set("error", "no such active team")); }

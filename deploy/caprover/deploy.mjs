@@ -2,7 +2,8 @@
 // Deploy Pezz to CapRover: the engine, the gateway and the browser build, in one app with a persistent volume.
 //
 //   node deploy/caprover/deploy.mjs [--app pezz-staging] [--machine captain-01] [--domain pezz-staging.sethwebster.com]
-//                                   [--web <browser build dir>] [--dry-run <dir>]
+//                                   [--aliases <other domains>] [--web <browser build dir>] [--dry-run <dir>]
+// --domain is the public address (the one agents are given); --aliases (comma-separated) serve the same app.
 //
 // Run from a clean checkout of the commit to ship (CI runs it from its checkout of the commit that passed the gate). It:
 //   1. publishes the engine here (`dotnet publish`; a framework-dependent .dll, so no .NET SDK on the server) and stages it
@@ -28,7 +29,8 @@ const opt = (n, d) => { const i = args.indexOf("--" + n); return i >= 0 && args[
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const APP = opt("app", "pezz-staging");
 const MACHINE = opt("machine", "captain-01");
-const DOMAIN = opt("domain", "pezz-staging.sethwebster.com");
+const DOMAIN = opt("domain", process.env.PEZZ_CAPROVER_DOMAIN || "pezz-staging.sethwebster.com");
+const DOMAINS = [DOMAIN, ...opt("aliases", process.env.PEZZ_CAPROVER_ALIASES || "").split(",").map((d) => d.trim()).filter((d) => d && d !== DOMAIN)];
 const WEB = path.resolve(opt("web", path.join(ROOT, "build", "web")));
 const DRY = opt("dry-run", "");
 const log = (s) => console.log(`${new Date().toISOString().replace("T", " ").slice(0, 19)} caprover: ${s}`);
@@ -106,7 +108,7 @@ if (loggedIn) {
   env.set("PEZZ_ADMIN_SECRET", fs.readFileSync(adminFile, "utf8").trim());
   env.set("PEZZ_ADMIN_REMOTE", "1");
   env.set("PEZZ_CLIENT_IP_HEADER", "x-real-ip"); // CapRover's nginx sets it to the caller; X-Forwarded-For can be forged
-  await api("/user/apps/appDefinitions/update", {
+  const want = {
     ...writable(def),
     appName: APP,
     instanceCount: 1,                // one game state; rooms live in this container
@@ -118,10 +120,14 @@ if (loggedIn) {
     // Docker's default 10 s stop is tight for several rooms saving at once.
     serviceUpdateOverride: def.serviceUpdateOverride || JSON.stringify({ TaskTemplate: { ContainerSpec: { StopGracePeriod: 30e9 } } }),
     appDeployTokenConfig: def.appDeployTokenConfig?.enabled ? def.appDeployTokenConfig : { enabled: true },
-  });
+  };
+  // Every settings update restarts the container (the rooms save and resume, but players see a pause): only when needed.
+  const key = (d) => JSON.stringify([d.instanceCount, d.containerHttpPort, d.notExposeAsWebApp, d.websocketSupport, d.volumes, d.serviceUpdateOverride, !!d.appDeployTokenConfig?.enabled,
+    Object.fromEntries((d.envVars ?? []).map((e) => [e.key, e.value]))]);
+  if (key(want) !== key(def)) await api("/user/apps/appDefinitions/update", want);
   const tok = (await appDef()).appDeployTokenConfig?.appDeployToken;
   if (tok && tok !== deployToken) writeSecret(deployTokenFile, tok);
-  log(`app ${APP} configured (volume /data, port 8080, websockets, deploy token kept${env.has("CLAUDE_CODE_OAUTH_TOKEN") ? ", Claude token set" : ""})`);
+  log(`app ${APP} ${key(want) !== key(def) ? "configured" : "already set up"} (volume /data, port 8080, websockets, deploy token kept${env.has("CLAUDE_CODE_OAUTH_TOKEN") ? ", Claude token set" : ""})`);
 } else log(`CapRover login expired: deploying with ${APP}'s deploy token (settings unchanged; caprover login to change them)`);
 
 // ------------------------------------------------------------------ 3. upload, build, swap
@@ -143,17 +149,19 @@ if (loggedIn) {
   }
   if (failed) die("the image build failed (log above; the old container keeps running)");
 
-  // The domain, and HTTPS for it (once; Let's Encrypt needs the DNS record to point at the server already).
+  // The domains, and HTTPS for each (once; Let's Encrypt needs the DNS record to point at the server already).
   let def = await appDef();
-  if (!(def.customDomain ?? []).some((d) => d.publicDomain === DOMAIN)) {
-    await api("/user/apps/appDefinitions/customdomain", { appName: APP, customDomain: DOMAIN });
-    log(`added ${DOMAIN}`);
-    def = await appDef();
-  }
-  if (!(def.customDomain ?? []).find((d) => d.publicDomain === DOMAIN)?.hasSsl) {
-    await api("/user/apps/appDefinitions/enablecustomdomainssl", { appName: APP, customDomain: DOMAIN });
-    log(`HTTPS on for ${DOMAIN}`);
-    def = await appDef();
+  for (const domain of DOMAINS) {
+    if (!(def.customDomain ?? []).some((d) => d.publicDomain === domain)) {
+      await api("/user/apps/appDefinitions/customdomain", { appName: APP, customDomain: domain });
+      log(`added ${domain}`);
+      def = await appDef();
+    }
+    if (!(def.customDomain ?? []).find((d) => d.publicDomain === domain)?.hasSsl) {
+      await api("/user/apps/appDefinitions/enablecustomdomainssl", { appName: APP, customDomain: domain });
+      log(`HTTPS on for ${domain}`);
+      def = await appDef();
+    }
   }
   if (!def.forceSsl) await api("/user/apps/appDefinitions/update", { ...writable(def), forceSsl: true });
 }

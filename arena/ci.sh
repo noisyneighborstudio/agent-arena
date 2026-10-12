@@ -1,6 +1,7 @@
 #!/bin/zsh
-# Continuous integration for the live arena. Whenever origin/main moves: test it, build it, and deploy it into room 1
-# WITHOUT ending anyone's game (arena/deploy.sh pauses with a notice, saves, swaps, resumes, verifies, rolls back).
+# Continuous integration for the live arena. Whenever origin/main moves: test it, build it (engine and browser player), check
+# it in the CI room's browser UI check, deploy it into room 1 on this Mac WITHOUT ending anyone's game (arena/deploy.sh
+# pauses with a notice, saves, swaps, resumes, verifies, rolls back), then ship it to the CapRover app (deploy/caprover).
 #
 #   arena/ci.sh once     one pass: deploy origin/main if it isn't live yet
 #   PEZZ_CI_FORCE_FRESH=1 arena/ci.sh once   the owner's call: when the running build can't resume, restart room 1 fresh
@@ -21,6 +22,9 @@ UNITY=/Applications/Unity/Hub/Editor/6000.3.25f1/Unity.app/Contents/MacOS/Unity
 # Playwright for the CI room's UI check (arena/webclient/verify.mjs): a stable install outside any checkout.
 export PEZZ_PLAYWRIGHT=${PEZZ_PLAYWRIGHT:-$HOME/.local/share/pezz/playwright}
 FRESH_JSON=${PEZZ_FRESH_JSON:-'{"ore_scale":0.3,"open":true}'}
+# Room 1 and its gateway on this Mac (arena/deploy.sh, the gateway LaunchAgent, the room 1 watchdog): pezz.sethwebster.com
+# until it moves to the CapRover app (docs/CAPROVER.md). PEZZ_CI_ROOM1=0 stops deploying them here.
+ROOM1=${PEZZ_CI_ROOM1:-1}
 mkdir -p "$CI"
 log() { echo "$(date '+%F %T') $*"; }
 status() { printf '{"at":"%s","state":"%s","commit":"%s","detail":"%s"}\n' "$(date '+%FT%T%z')" "$1" "${2:-}" "${3:-}" > "$CI/status.json"; }
@@ -150,7 +154,7 @@ pass() {
       log "the CI room couldn't run its check (exit $gate; see .ci/ci-room.log): not deploying, will retry"; status error "$target" "CI room check couldn't run"; return 2
     fi
   fi
-  if [ $changed_unity = 1 ]; then
+  if [ $changed_unity = 1 ] && [ $ROOM1 = 1 ]; then
 
     # 3. Deploy: pause, save, swap, resume, verify (rollback on failure).
     status deploying "$target"
@@ -185,7 +189,7 @@ pass() {
     [ -d "$LIVE/build/web" ] && mv "$LIVE/build/web" "$LIVE/build/web-old"
     mv "$web_next" "$LIVE/build/web" && log "browser player live (${target[1,7]})"
   fi
-  if [ $changed_mcp = 1 ]; then
+  if [ $changed_mcp = 1 ] && [ $ROOM1 = 1 ]; then
     (cd "$LIVE/mcp" && [ package.json -nt node_modules ] && npm install --silent >/dev/null 2>&1)
     launchctl kickstart -k "gui/$(id -u)/com.sethwebster.pezz-gateway" && log "gateway restarted on ${target[1,7]}"
   fi
@@ -213,6 +217,7 @@ kitchen_sink() {
 # after every pass, if it doesn't answer twice 20 s apart, it's relaunched from its save (deploy.sh --restart resumes the
 # game, tokens and seats). To keep it down on purpose, touch ci-work/room1-hold.
 room1_watchdog() {
+  [ $ROOM1 = 1 ] || return 0
   [ -e "$CI/room1-hold" ] && return 0
   curl -s -m 5 -o /dev/null http://127.0.0.1:7777/api/status && return 0
   sleep 20
