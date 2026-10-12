@@ -13,6 +13,8 @@ namespace Pez.Headless
     ///              [--open [--max-players 8] [--max-map-size 320] [--house-ais 1] [--house-resign-above 5]]
     ///              open arena: outside agents join through the gateway; scripted "house" seats are passive and make room
     ///              [--battle]  a staged demo fight for looking at the renderer (Battle.cs)
+    ///              [--kitchen-sink]  the showcase room (Sim/KitchenSink.cs, docs/art/KITCHEN_SINK.md): every unit and structure in every
+    ///              state, nobody playing, spectator snapshots only. Rebuilt from code on every start: never saved or resumed
     ///              [--resume | --fresh] [--snapshot ~/.config/pezz/rooms/game-PORT.json] [--save-interval 30] [--match-hours 4]
     ///              the game is saved every 30 game-seconds, soon after a join, on POST /api/admin/save and on SIGTERM/SIGINT;
     ///              --resume restores the saved game at startup (an --open arena does by default; --fresh starts over)
@@ -38,6 +40,14 @@ namespace Pez.Headless
                 Controllers = Arg("--controllers", "llm,ai").Split(','),
                 MatchHours = float.Parse(Arg("--match-hours", "4"), System.Globalization.CultureInfo.InvariantCulture),
             };
+            bool sink = args.Contains("--kitchen-sink");
+            if (sink)
+            {
+                // Same as the Unity app's -kitchensink: four showcase seats (no AI, no agents), normal speed, a fixed seed.
+                cfg.KitchenSink = true; cfg.Open = false; cfg.Speed = 1f; cfg.Seed = 1;
+                cfg.Controllers = new[] { "showcase", "showcase", "showcase", "showcase" };
+                cfg.Orders = new string[cfg.Controllers.Length];
+            }
             World.Profile = args.Contains("--profile");
             World.RegrowthDisabled = args.Contains("--no-regrowth"); // balance baselines
             if (args.Contains("--selftest")) return SelfTest(cfg, int.Parse(Arg("--max-minutes", "30")));
@@ -52,17 +62,21 @@ namespace Pez.Headless
             int port = int.Parse(Arg("--port", "7777"));
             var api = new ApiServer(port) { Log = Console.WriteLine };
             api.OnCommand = (team, cmd, res) => Console.WriteLine($"[{game.World.Time,6:0.0}s] team{team} {cmd} -> {res}");
-            var saver = new RoomSaver(Arg("--snapshot", RoomSaver.DefaultFile(port)))
+            // The kitchen sink is rebuilt from code every launch: nothing to save or resume (--snapshot is ignored).
+            var saver = sink ? null : new RoomSaver(Arg("--snapshot", RoomSaver.DefaultFile(port)))
             {
                 Log = Console.WriteLine,
                 IntervalSeconds = float.Parse(Arg("--save-interval", "30"), System.Globalization.CultureInfo.InvariantCulture),
             };
-            bool resumed = saver.TryResume(game, api, args.Contains("--resume"), cfg.Open, args.Contains("--fresh"));
-            api.OnRestart = () => saver.Forget(game);
-            game.Restarted = () => saver.Forget(game); // the next match, after one ends on points (open arenas)
-            api.OnSave = () => saver.Save(game, api, "requested");
+            bool resumed = saver != null && saver.TryResume(game, api, args.Contains("--resume"), cfg.Open, args.Contains("--fresh"));
+            if (saver != null)
+            {
+                api.OnRestart = () => saver.Forget(game);
+                game.Restarted = () => saver.Forget(game); // the next match, after one ends on points (open arenas)
+                api.OnSave = () => saver.Save(game, api, "requested");
+            }
             api.Start();
-            Console.WriteLine(resumed
+            Console.WriteLine(sink ? "Headless kitchen sink: the showcase room (spectator snapshots; nobody plays)" : resumed
                 ? $"Headless game resumed at {game.World.Time:0}s: controllers [{string.Join(",", game.Config.Controllers)}], speed {game.Speed}"
                 : $"Headless game: seed {cfg.Seed}, controllers [{string.Join(",", cfg.Controllers)}], speed {cfg.Speed}");
 
@@ -84,7 +98,7 @@ namespace Pez.Headless
                 game.Advance((float)(now - last));
                 last = now;
                 api.Pump(game);
-                saver.Tick(game, api);
+                saver?.Tick(game, api);
                 var w = game.World;
                 if (args.Contains("--battle"))
                 {
@@ -98,7 +112,7 @@ namespace Pez.Headless
                 if (!w.GameOver) announcedOver = false;
                 Thread.Sleep(5);
             }
-            saver.Save(game, api, "shutdown");
+            saver?.Save(game, api, "shutdown");
             api.Stop();
             GC.KeepAlive(signals);
             return 0;
