@@ -80,9 +80,13 @@ pass() {
   if ! (cd "$WT/headless" && dotnet run -c Release -- --test) > "$CI/test.log" 2>&1 || ! grep -q "All tests passed" "$CI/test.log"; then
     log "tests failed at ${target[1,7]}: not deploying (see .ci/test.log)"; echo "$target" > "$CI/failed"; status failed "$target" "tests"; return 1
   fi
-  for f in mcp/gateway.js mcp/play.js mcp/rooms.js mcp/changes.js mcp/render.js; do
+  for f in mcp/gateway.js mcp/play.js mcp/rooms.js mcp/changes.js mcp/render.js mcp/site.js; do
     [ -f "$WT/$f" ] && ! node --check "$WT/$f" 2>>"$CI/test.log" && { log "syntax error in $f"; echo "$target" > "$CI/failed"; status failed "$target" "$f"; return 1; }
   done
+  # The landing page and who gets it (browsers the page, agents the briefing): pure, so it runs every time.
+  if [ -f "$WT/mcp/site.test.js" ] && ! (cd "$WT" && node --test mcp/site.test.js) >> "$CI/test.log" 2>&1; then
+    log "landing page tests failed at ${target[1,7]} (see .ci/test.log)"; echo "$target" > "$CI/failed"; status failed "$target" "landing page tests"; return 1
+  fi
 
   # 2. Unity: build only when the game changed.
   local changed_unity=1 changed_mcp=1

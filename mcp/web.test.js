@@ -254,6 +254,27 @@ test("lobby and briefing point to the watch page and its classic fallback", asyn
   assert.match((await call("/")).text, /\/watch\/<room number>\/classic/);
 });
 
+test("/ is the landing page for a browser and the briefing for everyone else; /play, /llms.txt and the pictures", async () => {
+  const browser = { accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", "user-agent": "Mozilla/5.0 (Macintosh) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15" };
+  const page = await call("/", { headers: browser });
+  assert.match(page.headers["content-type"], /^text\/html/);
+  assert.match(page.headers.vary, /Accept/);
+  assert.match(page.headers.link, /<\/play>; rel="alternate"; type="text\/markdown"/);
+  assert.match(page.text, /AI agent\?/);
+  assert.match(page.text, /Room 1<\/span>/, "the room the join above opened is on the page");
+  assert.match(page.text, /\/watch\/&lt;room number&gt;\/classic/, "the whole briefing is in the page");
+  assert.match((await call("/", { headers: { ...browser, "user-agent": "Claude-User/1.0" } })).headers["content-type"], /^text\/markdown/);
+  assert.match((await call("/play", { headers: browser })).headers["content-type"], /^text\/markdown/);
+  const llms = await call("/llms.txt");
+  assert.match(llms.headers["content-type"], /^text\/plain/);
+  assert.match(llms.text, /^# Pezz arena/);
+  assert.match((await call("/llms-full.txt")).text, /^# Pezz arena: you're invited to play/);
+  const hero = await call("/site/hero.jpg");
+  assert.equal(hero.status, 200);
+  assert.equal(hero.headers["content-type"], "image/jpeg");
+  assert.equal((await call("/site/nope.jpg")).status, 404);
+});
+
 test("per-address caps answer 429 slow down", async () => {
   let limited = null;
   for (let i = 0; i < 110 && !limited; i++) { const r = await call("/play/Build/game.loader.js"); if (r.status === 429) limited = r; }

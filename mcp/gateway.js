@@ -41,6 +41,7 @@ import * as inventions from "./inventions.js";
 import { chooseTeamName } from "./names.js";
 import { LookBroker, LOOK_MAX_BYTES } from "./browserlook.js";
 import { opsSite } from "./ops.js";
+import { wantsPage, landingPage, llmsTxt } from "./site.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const GAME = process.env.PEZZ_GAME?.replace(/\/$/, "") || null;
@@ -56,6 +57,8 @@ const VIEW3D = fs.readFileSync(path.join(WEB3D, "view.html"), "utf8");
 const NO_GAMES = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Pezz: no games right now</title></head>
 <body style="font:16px system-ui;background:#111;color:#ddd;text-align:center;padding:4em 1em"><h1>No games right now</h1>
 <p>A room opens when an agent joins (<a style="color:#8cf" href="/play">/play</a>). Try again in a while, or see <a style="color:#8cf" href="/lobby">/lobby</a>.</p></body></html>`;
+// The landing page's pictures (mcp/site.js draws the page itself).
+const SITE = path.join(HERE, "site");
 const MAX_BODY = 64 * 1024;
 const WATCH_DELAY_S = Number(process.env.PEZZ_WATCH_DELAY || 45);
 // A PEZZ_GAME room's renderer (frames, live video, `look` pictures): the Unity app's frame server beside the game (its
@@ -459,9 +462,9 @@ function watchStream(res, room, ip) {
   });
 }
 
-function send(res, status, body, type = "application/json") {
+function send(res, status, body, type = "application/json", extra = {}) {
   const data = typeof body === "string" ? body : JSON.stringify(body, null, 1);
-  res.writeHead(status, { "content-type": `${type}; charset=utf-8`, "cache-control": "no-store", "x-content-type-options": "nosniff" });
+  res.writeHead(status, { "content-type": `${type}; charset=utf-8`, "cache-control": "no-store", "x-content-type-options": "nosniff", ...extra });
   res.end(data);
 }
 
@@ -1002,6 +1005,16 @@ async function liveCam(res, view, q) {
   return send(res, 200, { ok: true });
 }
 
+// ------------------------------------------------------------------ the landing page, for people
+// Drawn with the lobby as it is now (if it answers within a second; the page's script fills it in otherwise), and the
+// whole briefing, so an agent that gets the HTML can still play from it.
+async function sendLanding(res, base, code) {
+  const room = code ? rooms.byCode(code) : null;
+  const now = await Promise.race([lobby().catch(() => null), new Promise((r) => setTimeout(() => r(null), 1000))]);
+  const html = landingPage({ base, briefingMd: briefing(base, room?.code ?? null), lobby: now, changes: CHANGES.slice().reverse(), invite: room ? { id: room.id, code: room.code } : null });
+  return send(res, 200, html, "text/html", { vary: "Accept, User-Agent", link: '</play>; rel="alternate"; type="text/markdown", </llms.txt>; rel="alternate"; type="text/plain"' });
+}
+
 // ------------------------------------------------------------------ the briefing an agent reads
 function briefing(base, code) {
   const room = code ? rooms.byCode(code) : null;
@@ -1446,7 +1459,13 @@ const server = http.createServer(async (req, res) => {
       if (p === "/admin/fleet") return send(res, 200, { ok: true, hosts: await rooms.fleet(), rooms: rooms.all().map(({ id, code, kind, host, region }) => ({ id, code, kind, host, region })) });
       return send(res, 404, { ok: false, error: "not found" });
     }
-    if (p === "/" || p === "/play") return send(res, 200, briefing(base, url.searchParams.get("room")), "text/markdown");
+    // /: people's browsers get the landing page, everything else (agents, curl) the briefing. /play is always the briefing.
+    if (p === "/" && wantsPage(req, url)) return await sendLanding(res, base, url.searchParams.get("room"));
+    if (p === "/" || p === "/play") return send(res, 200, briefing(base, url.searchParams.get("room")), "text/markdown", { vary: "Accept, User-Agent" });
+    if (p === "/llms.txt") return send(res, 200, llmsTxt(base), "text/plain");
+    if (p === "/llms-full.txt") return send(res, 200, briefing(base, null), "text/plain");
+    const site = p.match(/^\/site\/([a-z0-9-]+\.jpg)$/);
+    if (site) return sendStatic(req, res, path.join(SITE, site[1]), "image/jpeg", 86400);
     // For deploys: the gateway answers, and on which build. Rooms come and go with players, so their count is only information.
     if (p === "/healthz") return send(res, 200, { ok: true, build: process.env.PEZZ_BUILD || null, rooms: rooms.all().length, you: ip }); // you: the address rate limits see
     if (p === "/lobby") return send(res, 200, await lobby());
