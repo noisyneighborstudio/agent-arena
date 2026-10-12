@@ -166,7 +166,7 @@ const server = http.createServer(async (req, res) => {
       if (r) await hold(r);
       if (!fs.existsSync(heldSnapshot(id))) return send(res, 404, { ok: false, error: `no saved game for room ${id}` });
       res.writeHead(200, { "content-type": "application/json" });
-      return fs.createReadStream(heldSnapshot(id)).pipe(res);
+      return fs.createReadStream(heldSnapshot(id)).on("error", () => res.destroy()).pipe(res); // a read error ends this response, not the host
     }
     if (!r) return send(res, 404, { ok: false, error: `room ${id} isn't running on ${NAME}` });
     if (rest === "" && req.method === "DELETE") { await stop(r); return send(res, 200, { ok: true, stopped: id }); }

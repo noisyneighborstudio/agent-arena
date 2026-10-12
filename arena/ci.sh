@@ -221,8 +221,31 @@ room1_watchdog() {
   (cd "$WT" && arena/deploy.sh --restart) && log "room 1 is back" || log "room 1 relaunch failed (exit $?)"
 }
 
+# The CapRover server (deploy/caprover/deploy.mjs, docs/CAPROVER.md): the commit that's live here, once it has deployed here
+# (so it passed its tests, build and the CI room's UI check). Detached and logged (arena/logs/caprover.log), one at a time;
+# a commit that changes nothing the server runs is just recorded. A failed deploy (the old server keeps running) is
+# retried after 30 min. PEZZ_CAPROVER_APP names the app (default pezz-staging; empty turns this off).
+caprover() {
+  local app=${PEZZ_CAPROVER_APP-pezz-staging} want=$(cat "$CI/deployed" 2>/dev/null) have=$(cat "$CI/caprover-deployed" 2>/dev/null)
+  [ -n "$app" ] && [ -n "$want" ] && [ "$have" != "$want" ] && [ -f "$LIVE/deploy/caprover/deploy.mjs" ] || return 0
+  [ "$(git -C "$LIVE" rev-parse HEAD)" = "$want" ] || return 0
+  if [ -n "$have" ] && git -C "$REPO" diff --quiet "$have" "$want" -- mcp unity/Assets headless deploy/caprover arena/web3d 2>/dev/null; then
+    echo "$want" > "$CI/caprover-deployed"; return 0
+  fi
+  local lock="$CI/caprover.lock"
+  [ -d "$lock" ] && [ -n "$(find "$lock" -maxdepth 0 -mmin +40)" ] && rmdir "$lock" # a deploy that died with the machine
+  [ "$(cat "$CI/caprover-failed" 2>/dev/null)" = "$want" ] && [ -z "$(find "$CI/caprover-failed" -mmin +30)" ] && return 0
+  mkdir "$lock" 2>/dev/null || return 0
+  log "deploying ${want[1,7]} to CapRover ($app; arena/logs/caprover.log)"
+  ( cd "$LIVE" && if node deploy/caprover/deploy.mjs --app "$app" --web "$LIVE/build/web" >> "$REPO/arena/logs/caprover.log" 2>&1
+      then echo "$want" > "$CI/caprover-deployed"; rm -f "$CI/caprover-failed"; log "CapRover ($app) live on ${want[1,7]}" >> "$REPO/arena/logs/caprover.log"
+      else echo "$want" > "$CI/caprover-failed"; fi
+    rmdir "$lock" ) &
+  return 0
+}
+
 case "${1:-once}" in
-  once) pass; rc=$?; room1_watchdog; kitchen_sink; ci_room_follow; exit $rc ;;
-  loop) while true; do pass; room1_watchdog; kitchen_sink; ci_room_follow; sleep "${PEZZ_CI_EVERY:-180}"; done ;;
+  once) pass; rc=$?; room1_watchdog; kitchen_sink; ci_room_follow; caprover; exit $rc ;;
+  loop) while true; do pass; room1_watchdog; kitchen_sink; ci_room_follow; caprover; sleep "${PEZZ_CI_EVERY:-180}"; done ;;
   *) echo "usage: $0 once|loop"; exit 2 ;;
 esac

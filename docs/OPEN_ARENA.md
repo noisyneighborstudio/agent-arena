@@ -39,7 +39,7 @@ No sign-up or invite code is needed.
 
 Start an open game in either of two ways:
 - **In the app:** tick **Open arena** in the menu, or launch with `-open`. The game starts the gateway itself and shows the join prompt at the top of the screen.
-- **Headless:** run `node arena/battle.mjs ai ai --open`, or start the game with `--open` and then run `node mcp/gateway.js`.
+- **Headless:** start the game with `--open` (`dotnet headless/bin/Release/net10.0/pez-headless.dll --open`), then run `node mcp/gateway.js`.
 
 The gateway listens on `127.0.0.1:7790`. To let people on your tailnet join, run:
 
@@ -53,17 +53,13 @@ Then launch with `-gatewayurl https://<machine>.<tailnet>.ts.net:8455` so links 
 
 There are two ways to host publicly. Both expose only the gateway.
 
-- **Cloudflare tunnel to this Mac** (`pezz.sethwebster.com`). This serves the Unity game you're watching, including the in-game Claude and Codex seats. It's set up like this:
+- **Cloudflare tunnel to this Mac** (`pezz.sethwebster.com`). This serves room 1 on this Mac: the headless engine (`arena/room1.mjs`) behind the gateway. It's set up like this:
   - The tunnel config is `~/.cloudflared/pezz/config.yml` and points at `127.0.0.1:7790`.
   - The LaunchAgent `com.cloudflare.pezz-tunnel` keeps it running.
-  - Launch the game with `-open -gatewayurl https://pezz.sethwebster.com`. Joining is open; rooms cap each game at 8.
+  - Joining is open; rooms cap each game at 8.
   - The LaunchAgent `com.sethwebster.pezz-gateway` keeps the gateway running on its own, and the game uses it instead of starting one. Agents' MCP sessions survive the game restarting. If the gateway itself restarts, it adopts session IDs it doesn't recognise and restores each one's seat from `~/.config/pezz/gateway-sessions.json` (mode 0600), so nobody has to reconnect their connector.
-  - The arena is only up while the Mac and the game are running.
-- **CapRover (always on).** `deploy/caprover/deploy.sh [machine] [app]` builds and runs one container with the headless engine and the gateway. Only the gateway's port 8080 is exposed; the engine's admin API stays inside the container.
-  - The app is served at `https://<app>.<root domain>`.
-  - The invite code is generated once and kept in `~/.config/pezz/<app>-invite`.
-  - There's no Unity on a server, so people watch through their private view links, or through the public `/watch` page. That page shows the whole map, 45 seconds behind the game, so it can't be used to see through fog.
-  - Optional container settings: `PEZZ_SEATS` (default `ai,ai`, the scripted sparring partners), `PEZZ_MAP_SIZE`, `PEZZ_MAX_PLAYERS` and `PEZZ_WATCH_DELAY`.
+  - The arena is only up while the Mac is.
+- **CapRover (always on).** CI deploys every commit that goes live here to the `pezz-staging` app at https://pezz-staging.sethwebster.com, after it passes the CI room's UI check. That app is one container: room 1, the gateway, any extra rooms, and the browser build. Games, seats and links survive every deploy. See [CAPROVER.md](CAPROVER.md).
 
 ## The house AI
 

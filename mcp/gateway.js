@@ -24,7 +24,7 @@ import { Readable } from "node:stream";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { randomUUID, randomBytes, createHash } from "node:crypto";
+import { randomUUID, randomBytes, createHash, timingSafeEqual } from "node:crypto";
 import zlib from "node:zlib";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -57,8 +57,10 @@ const WATCH_DELAY_S = Number(process.env.PEZZ_WATCH_DELAY || 45);
 const FRAMES = process.env.PEZZ_FRAMES === "none" ? null
   : (process.env.PEZZ_FRAMES || GAME.replace(/:(\d+)$/, (m, p) => `:${Number(p) + 1}`)).replace(/\/$/, ""); // public spectator view lags so players can't use it to see through fog
 const CONFIG_DIR = path.join(os.homedir(), ".config", "pezz");
-// Operator secret for /admin (arena/rooms.sh reads the same file). Made on first start.
-const ADMIN_SECRET = (() => {
+// Operator secret for /admin (arena/rooms.sh reads the same file). Made on first start, unless PEZZ_ADMIN_SECRET gives it.
+// /admin answers only on this machine, unless PEZZ_ADMIN_REMOTE=1 (a server with no shell for the operator: CapRover).
+const ADMIN_REMOTE = process.env.PEZZ_ADMIN_REMOTE === "1";
+const ADMIN_SECRET = process.env.PEZZ_ADMIN_SECRET?.trim() || (() => {
   const f = process.env.PEZZ_ADMIN_SECRET_FILE || path.join(CONFIG_DIR, "admin-secret");
   try { return fs.readFileSync(f, "utf8").trim(); } catch {}
   try { fs.mkdirSync(path.dirname(f), { recursive: true, mode: 0o700 }); const s = randomBytes(24).toString("hex"); fs.writeFileSync(f, s, { mode: 0o600 }); return s; } catch { return null; }
@@ -100,7 +102,13 @@ function publicBase(req) {
 }
 
 // Behind Cloudflare or tailscale every request comes from localhost, so use the proxy's client-address header.
-function clientIp(req) { return String(req.headers["cf-connecting-ip"] || req.headers["x-forwarded-for"] || req.socket.remoteAddress || "?").split(",")[0].trim(); }
+// The client's address, for rate limits and session records. PEZZ_CLIENT_IP_HEADER names the one header the proxy in front
+// sets itself (x-real-ip behind CapRover's nginx); without it, Cloudflare's header, else the first forwarded address.
+const IP_HEADER = (process.env.PEZZ_CLIENT_IP_HEADER || "").toLowerCase();
+function clientIp(req) {
+  const v = IP_HEADER ? req.headers[IP_HEADER] : req.headers["cf-connecting-ip"] || req.headers["x-forwarded-for"];
+  return String(v || req.socket.remoteAddress || "?").split(",")[0].trim();
+}
 
 // ------------------------------------------------------------------ what's new
 // Each player is told about new capabilities once (as a 🆕 notice in state/wait), only those their room's build has.
@@ -289,7 +297,12 @@ function sendWebFile(req, res, rel) {
   const inm = String(req.headers["if-none-match"] ?? "");
   if (inm && (inm.trim() === "*" || inm.split(",").some((t) => t.trim().replace(/^W\//, "") === etag))) { res.writeHead(304, head); return res.end(); }
   res.writeHead(200, { ...head, "content-length": st.size });
-  fs.createReadStream(file).pipe(res);
+  pipeFile(file, res);
+}
+
+/** Stream a file into a response. A read error (a file that went away or can't be read) ends that response, never the gateway. */
+function pipeFile(file, res) {
+  fs.createReadStream(file).on("error", (e) => { console.error(`gateway: reading ${file}: ${e.message}`); res.destroy(); }).pipe(res);
 }
 /** Per-address caps for the browser build's own traffic (files and snapshot polls), on top of the gateway-wide one. */
 function webLimited(res, ip, kind) {
@@ -1310,9 +1323,21 @@ const server = http.createServer(async (req, res) => {
     // Operator commands, from this machine only (never through the public tunnel, which adds cf-connecting-ip), and
     // only with the admin secret: move a room between hosts, drain a host, see the fleet.
     if (p.startsWith("/admin/")) {
-      if (req.headers["cf-connecting-ip"] || !["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(req.socket.remoteAddress)) return send(res, 404, { ok: false, error: "not found" });
-      if (!ADMIN_SECRET || req.headers["x-pezz-admin"] !== ADMIN_SECRET) return send(res, 403, { ok: false, error: "admin secret required" });
+      const local = !req.headers["cf-connecting-ip"] && ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(req.socket.remoteAddress);
+      if (!local && !ADMIN_REMOTE) return send(res, 404, { ok: false, error: "not found" });
+      const given = Buffer.from(String(req.headers["x-pezz-admin"] ?? "")), want = Buffer.from(ADMIN_SECRET ?? "");
+      if (!ADMIN_SECRET || given.length !== want.length || !timingSafeEqual(given, want)) return send(res, 403, { ok: false, error: "admin secret required" });
       await rooms.ready;
+      // A room's own engine: its operator API (/api/admin/*: save, kick, announce, speed, restart, ...) and its status.
+      const ea = p.match(/^\/admin\/rooms\/(\d+)\/api\/(admin\/[a-z_]+|status|lobby)$/);
+      if (ea) {
+        const room = rooms.get(Number(ea[1]));
+        if (!room) return send(res, 404, { ok: false, error: `no room ${ea[1]}` });
+        const body = req.method === "POST" ? JSON.stringify((await readBody(req)) ?? {}) : undefined;
+        const r = await fetch(`${room.game}/api/${ea[2]}${url.search}`, { method: req.method, body, headers: body ? { "content-type": "application/json" } : {}, signal: AbortSignal.timeout(30000) });
+        res.writeHead(r.status, { "content-type": r.headers.get("content-type") || "application/json", "cache-control": "no-store" });
+        return res.end(Buffer.from(await r.arrayBuffer()));
+      }
       const mv = p.match(/^\/admin\/rooms\/(\d+)\/move$/);
       if (mv && req.method === "POST") { const b = (await readBody(req)) ?? {}; return send(res, 200, await rooms.move(Number(mv[1]), String(b.to ?? ""))); }
       const dr = p.match(/^\/admin\/hosts\/([\w.-]+)\/drain$/);
@@ -1321,6 +1346,10 @@ const server = http.createServer(async (req, res) => {
       return send(res, 404, { ok: false, error: "not found" });
     }
     if (p === "/" || p === "/play") return send(res, 200, briefing(base, url.searchParams.get("room")), "text/markdown");
+    if (p === "/healthz") { // for deploys: which build is serving, and does room 1 answer
+      const game = await fetch(GAME + "/api/status", { signal: AbortSignal.timeout(3000) }).then((r) => r.ok).catch(() => false);
+      return send(res, game ? 200 : 503, { ok: game, build: process.env.PEZZ_BUILD || null, room1: game, you: ip }); // you: the address rate limits see
+    }
     if (p === "/lobby") return send(res, 200, await lobby());
     if (p === "/loop.sh") return send(res, 200, loopScript(base), "text/x-shellscript");
     if (p === "/changes") {
@@ -1481,7 +1510,7 @@ const server = http.createServer(async (req, res) => {
       const f = path.join(ICONS, `${im[1]}.png`);
       if (!fs.existsSync(f)) { res.writeHead(404, { "content-type": "text/plain", "cache-control": "max-age=3600" }); return res.end("no icon"); } // cached: pages fall back once, not every poll
       res.writeHead(200, { "content-type": "image/png", "cache-control": "max-age=3600" });
-      return fs.createReadStream(f).pipe(res);
+      return pipeFile(f, res);
     }
 
     // The rules are public reading (the /play briefing links them): without a token, serve room 1's, or the first
