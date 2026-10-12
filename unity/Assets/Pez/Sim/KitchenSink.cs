@@ -355,7 +355,8 @@ namespace Pez.Sim
             var cc = Bldg(Yellow, "command_center", 4, 15);
             Item("Command center crane", "slews to the site under construction; cream beam and welding sparks every 0.25 s", 4, 15);
 
-            // The site being built: rises from a fresh stake-out to 97% over 24 s, then is cleared and staked again.
+            // The site being built: rises from a fresh stake-out over 24 s and is finished (the command center's head pops),
+            // stands for 5 s, then is cleared and staked again.
             var team = w.Teams[Yellow];
             Entity site = null; ProdItem head = null; float started = 0;
             var siteAt = Spot("barracks", 10.5f, 15); // closures run later, after cur has moved on: positions are taken now
@@ -370,14 +371,15 @@ namespace Pez.Sim
             holds.Add(() =>
             {
                 float age = T - started;
-                if (age >= 28f) { w.Remove(site); NewSite(); age = 0; }
-                float p = Math.Clamp((age - 2f) / 24f, 0f, 0.97f);
+                if (age >= 31f) { w.Remove(site); NewSite(); age = 0; }
+                if (site.IsComplete) { team.StructureQueue.Remove(head); return; }
+                float p = Math.Clamp((age - 2f) / 24f, 0f, 1f);
                 site.BuildProgress = p;
                 head.Progress = p * site.Def.BuildTime;
                 site.Hp = site.Def.MaxHp * (0.1f + 0.9f * p);
                 if (team.StructureQueue.Count == 0 || team.StructureQueue[0] != head) { team.StructureQueue.Remove(head); team.StructureQueue.Insert(0, head); }
             });
-            Item("Site under construction", "staked, then rising through stages 0-3 with stage dust; loops every 28 s", 10.5f, 15);
+            Item("Site under construction", "staked, rising through stages 0-3 with stage dust, then finished (the head pops); loops every 31 s", 10.5f, 15);
 
             Bldg(Yellow, "power_plant", 16.5f, 15, 0f);
             Item("Queued site", "staked out with its pallet of bricks, waiting in the queue", 16.5f, 15);
