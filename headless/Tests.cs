@@ -1444,6 +1444,15 @@ namespace Pez.Headless
                   $"with the edges camped, the map grows wider so the newcomer starts {clear:0} tiles from any enemy (map {w.Map.W}x{w.Map.H}, base {t.StartPos})");
             Run(w, 5);
             Check(w.Errors == 0, "the game runs on after a wide growth");
+            // Three hours into a match a newcomer is placed farther out still: the clearance grows with the match.
+            var late = new World(2, 7, 80) { Open = true, MaxMapSize = 320 };
+            late.Tick = (int)(3 * 3600 * World.TickRate);
+            var lhq = late.Owned(0).First(e => e.IsStructure);
+            foreach (var p in new[] { new Vec2(40, 74), new Vec2(74, 40) }) At(late.SpawnUnit(0, "heavy_tank", lhq), p);
+            var lt = late.AddTeam("llm", "Late", out _);
+            float lclear = late.Entities.Where(e => !e.Dead && e.Team >= 0 && e.Team != lt.Id && (e.IsStructure || e.IsArmed)).Min(e => Vec2.Dist(e.Pos, lt.StartPos));
+            Check(lt != null && late.JoinClearance > 140 && lclear >= late.JoinClearance,
+                  $"three hours in, a newcomer starts {lclear:0} tiles from any enemy (wanted {late.JoinClearance:0}; map {late.Map.W}x{late.Map.H})");
         }
         static void NewcomerProtection()
         {

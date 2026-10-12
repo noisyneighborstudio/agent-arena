@@ -141,6 +141,12 @@ namespace Pez.Sim
         public int GrowStep = 32;
         /// <summary>A joiner's base goes at least this far from any enemy structure or armed unit, if the map can grow that far.</summary>
         public float SafeJoinDistance = 56f;
+        /// <summary>
+        /// The later the join, the farther out: established players have bigger armies that range farther, so the clearance
+        /// grows this many tiles per hour of match time, up to MaxJoinClearance (the map grows a wider strip to fit it).
+        /// </summary>
+        public const float JoinClearancePerHour = 32f, MaxJoinClearance = 160f;
+        public float JoinClearance => MathF.Min(SafeJoinDistance + JoinClearancePerHour * Time / 3600f, MathF.Max(SafeJoinDistance, MaxJoinClearance));
         /// <summary>Open arena: seconds of protection a joiner gets to set up before they can be attacked.</summary>
         public float ProtectionSeconds = 300f;
 
@@ -356,7 +362,7 @@ namespace Pez.Sim
                 {
                     var m = Map.Grown(Map.W + grow, Map.H + grow, Tick * 7919 + Teams.Count, bases, threats, out var sp, out float clear);
                     if (clear > bestClear) { best = m; bestSpawn = sp; bestClear = clear; }
-                    if (clear >= SafeJoinDistance) break;
+                    if (clear >= JoinClearance) break;
                 }
                 spawn = bestSpawn;
                 ReplaceMap(best);
