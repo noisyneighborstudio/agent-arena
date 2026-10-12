@@ -2,8 +2,10 @@
 // Deploy Pezz to CapRover: the engine, the gateway and the browser build, in one app with a persistent volume.
 //
 //   node deploy/caprover/deploy.mjs [--app pezz-staging] [--machine captain-01] [--domain pezz.sethwebster.com]
-//                                   [--aliases pezz-staging.sethwebster.com] [--web <browser build dir>] [--dry-run <dir>]
-// --domain is the public address (the one agents are given); --aliases (comma-separated) serve the same app.
+//                                   [--aliases pezz-staging.sethwebster.com] [--ops pezz-ops.sethwebster.com]
+//                                   [--web <browser build dir>] [--dry-run <dir>]
+// --domain is the public address (the one agents are given); --aliases (comma-separated) serve the same app; --ops is the
+// operator's dashboard (mcp/ops.js), behind the key in ~/.config/pezz/ops-key ("" to leave it off).
 //
 // Run from a clean checkout of the commit to ship (CI runs it from its checkout of the commit that passed the gate). It:
 //   1. publishes the engine here (`dotnet publish`; a framework-dependent .dll, so no .NET SDK on the server) and stages it
@@ -30,7 +32,8 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const APP = opt("app", "pezz-staging");
 const MACHINE = opt("machine", "captain-01");
 const DOMAIN = opt("domain", process.env.PEZZ_CAPROVER_DOMAIN || "pezz.sethwebster.com");
-const DOMAINS = [DOMAIN, ...opt("aliases", process.env.PEZZ_CAPROVER_ALIASES ?? "pezz-staging.sethwebster.com").split(",").map((d) => d.trim()).filter((d) => d && d !== DOMAIN)];
+const OPS = opt("ops", process.env.PEZZ_CAPROVER_OPS ?? "pezz-ops.sethwebster.com").trim();
+const DOMAINS = [...new Set([DOMAIN, ...opt("aliases", process.env.PEZZ_CAPROVER_ALIASES ?? "pezz-staging.sethwebster.com").split(","), OPS].map((d) => d.trim()).filter(Boolean))];
 const WEB = path.resolve(opt("web", path.join(ROOT, "build", "web")));
 const DRY = opt("dry-run", "");
 const log = (s) => console.log(`${new Date().toISOString().replace("T", " ").slice(0, 19)} caprover: ${s}`);
@@ -108,6 +111,13 @@ if (loggedIn) {
   env.set("PEZZ_ADMIN_SECRET", fs.readFileSync(adminFile, "utf8").trim());
   env.set("PEZZ_ADMIN_REMOTE", "1");
   env.set("PEZZ_CLIENT_IP_HEADER", "x-real-ip"); // CapRover's nginx sets it to the caller; X-Forwarded-For can be forged
+  // The ops dashboard's key: the operator's own (the same link and cookie as ever), made here if there isn't one yet.
+  if (OPS) {
+    const opsFile = path.join(PEZZ, "ops-key");
+    if (!fs.existsSync(opsFile)) writeSecret(opsFile, randomBytes(24).toString("base64url"));
+    env.set("PEZZ_OPS_HOST", OPS);
+    env.set("PEZZ_OPS_KEY", fs.readFileSync(opsFile, "utf8").trim());
+  } else { env.delete("PEZZ_OPS_HOST"); env.delete("PEZZ_OPS_KEY"); }
   const want = {
     ...writable(def),
     appName: APP,
@@ -158,8 +168,9 @@ if (loggedIn) {
       def = await appDef();
     }
     if (!(def.customDomain ?? []).find((d) => d.publicDomain === domain)?.hasSsl) {
-      await api("/user/apps/appDefinitions/enablecustomdomainssl", { appName: APP, customDomain: domain });
-      log(`HTTPS on for ${domain}`);
+      // Let's Encrypt fails until the name's DNS points here: say so and carry on; the next deploy tries again.
+      try { await api("/user/apps/appDefinitions/enablecustomdomainssl", { appName: APP, customDomain: domain }); log(`HTTPS on for ${domain}`); }
+      catch (e) { log(`no HTTPS for ${domain} yet (does its DNS point at the server?): ${e.message}`); }
       def = await appDef();
     }
   }

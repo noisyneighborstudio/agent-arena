@@ -5,6 +5,7 @@ The public arena, https://pezz.sethwebster.com (also https://pezz-staging.sethwe
 - **The gateway** in front of it: `/join`, `/mcp`, `/view`, `/watch`, `/play`, `/admin`.
 - **Extra rooms:** the gateway opens them in the same container when room 1 is full.
 - **The browser build:** Unity Web, the default viewer.
+- **The ops dashboard,** https://pezz-ops.sethwebster.com: every room, its match and every seat, with links to the spectator view and each player's own view. Look only. The gateway serves it on that hostname only (`mcp/ops.js`); without its cookie every page there is a bare 404. Open `https://pezz-ops.sethwebster.com/k/<key>` once per browser, with the key from `~/.config/pezz/ops-key`.
 
 There's no GPU anywhere: browsers draw the game, and `look` uses the player's own browser (or the map picture).
 
@@ -29,11 +30,11 @@ What it does:
    - the `/data` volume, port 8080 and websockets;
    - a 30 s stop grace, so every room saves;
    - the app's deploy token;
-   - the env vars: `PEZZ_PUBLIC_URL`, the operator secret, `PEZZ_ADMIN_REMOTE=1`, `PEZZ_CLIENT_IP_HEADER=x-real-ip`, and the Claude token.
+   - the env vars: `PEZZ_PUBLIC_URL`, the operator secret, `PEZZ_ADMIN_REMOTE=1`, `PEZZ_CLIENT_IP_HEADER=x-real-ip`, the Claude token, and the ops dashboard's hostname and key (`PEZZ_OPS_HOST`, `PEZZ_OPS_KEY`).
 3. **Upload.** It uploads the bundle and CapRover builds `deploy/caprover/Dockerfile`. The old container gets SIGTERM, and every engine in it saves its game. The new container resumes them all: same seats, tokens and commander links.
-4. **Domains and check.** It adds each domain with HTTPS once, then waits for `/healthz` to report the new build with room 1 up.
+4. **Domains and check.** It adds each domain (the arena, its alias, pezz-ops) with HTTPS once, then waits for `/healthz` to report the new build with room 1 up.
 
-**DNS:** both names are DNS-only CNAMEs to `pezz-staging.projects.sethwebster.com`, in Cloudflare. The `pezz` Cloudflare tunnel on the Mac now carries only pezz-ops.sethwebster.com.
+**DNS:** all three names are DNS-only CNAMEs to `pezz-staging.projects.sethwebster.com`, in Cloudflare. Nothing public runs on the Mac any more.
 
 **Moving a game between servers** (as done for the cutover):
 1. Post a notice (`maintenance on 60 ... --preserved`) and stop the old server; the engine saves on SIGTERM.
@@ -51,6 +52,7 @@ Everything lives on this Mac, owner-only, and is never printed:
 | The app's deploy token | `~/.config/pezz/pezz-staging-deploy-token` | Saved by the first logged-in deploy. It doesn't expire. With only this, deploys still upload new builds, but can't change settings. |
 | Claude token for the team-name check | `~/.config/pezz/pezz-staging-claude-token` | Run `claude setup-token`, then `pbpaste > ~/.config/pezz/pezz-staging-claude-token; chmod 600 ~/.config/pezz/pezz-staging-claude-token`. The next logged-in deploy sets it as the app's `CLAUDE_CODE_OAUTH_TOKEN`. Without it, teams keep their fruit names. |
 | Operator secret | `~/.config/pezz/pezz-staging-admin-secret` | Made by the first deploy. |
+| Ops dashboard key | `~/.config/pezz/ops-key` | Replace it and redeploy to sign every browser out. |
 
 ## Running it
 

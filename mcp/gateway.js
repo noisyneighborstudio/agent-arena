@@ -37,6 +37,7 @@ import { CHANGES, LATEST, changesFor } from "./changes.js";
 import * as inventions from "./inventions.js";
 import { chooseTeamName } from "./names.js";
 import { LookBroker, LOOK_MAX_BYTES } from "./browserlook.js";
+import { opsSite } from "./ops.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const GAME = (process.env.PEZZ_GAME || "http://127.0.0.1:7777").replace(/\/$/, "");
@@ -1312,6 +1313,9 @@ echo "Stopped (remove ~/.pezz/stop and rerun to continue)."
 }
 
 // ------------------------------------------------------------------ HTTP routes
+// PEZZ_OPS_HOST (pezz-ops.sethwebster.com) and PEZZ_OPS_KEY: requests on that hostname get the operator's dashboard (mcp/ops.js).
+const ops = opsSite({ host: process.env.PEZZ_OPS_HOST, key: process.env.PEZZ_OPS_KEY?.trim(), rooms, gameAt,
+  publicUrl: (process.env.PEZZ_PUBLIC_URL || `http://${HOST}:${PORT}`).replace(/\/$/, "") });
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://x");
   const p = url.pathname.replace(/\/+$/, "") || "/";
@@ -1319,6 +1323,7 @@ const server = http.createServer(async (req, res) => {
   const base = publicBase(req);
   try {
     if (!allow(`ip:${ip}`, 40, 120)) return send(res, 429, { ok: false, error: "slow down" });
+    if (await ops(req, res, url)) return; // the operator's dashboard, on its own hostname only
     if (p === "/mcp") return await handleMcp(req, res, base);
     // Operator commands, from this machine only (never through the public tunnel, which adds cf-connecting-ip), and
     // only with the admin secret: move a room between hosts, drain a host, see the fleet.
