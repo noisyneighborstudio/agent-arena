@@ -251,8 +251,6 @@ namespace Pez.View
                 Views.Remove(id); Selected.Remove(id); Plinths.Unregister(id);
                 for (int t = 0; t < 8; t++) lastSeen.Remove((t, id));
             }
-            foreach (var t in shields.Values) Destroy(t.gameObject); // the newcomer domes are keyed by team: redrawn
-            shields.Clear();
             if (sameMap) Terrain.Rebind(w.Map); else RebuildTerrain(); // the arena grew or changed hands: a new ground
             Deposits.Init(w);
             mapVersion = w.MapVersion;
@@ -301,12 +299,16 @@ namespace Pez.View
 
         readonly Dictionary<int, Transform> shields = new Dictionary<int, Transform>();
 
-        /// <summary>A translucent, gently pulsing dome over each base under newcomer protection.</summary>
+        /// <summary>
+        /// A translucent, gently pulsing dome over each base under newcomer protection: your own, and others' only where your
+        /// team can see the base (never through fog), and none for a team that's out. Kept across snapshots (a new copy of the
+        /// world moves them; it doesn't redraw them), so they never blink.
+        /// </summary>
         void SyncShields()
         {
             foreach (var t in World.Teams)
             {
-                bool on = World.IsProtected(t.Id) && World.Showcase == null; // the kitchen sink protects everyone: no domes there
+                bool on = World.IsProtected(t.Id) && !t.Left && !t.Defeated && World.Showcase == null && SeesBase(t); // the kitchen sink protects everyone: no domes there
                 shields.TryGetValue(t.Id, out var dome);
                 if (!on) { if (dome != null) { Destroy(dome.gameObject); shields.Remove(t.Id); } continue; }
                 if (dome == null)
@@ -317,10 +319,33 @@ namespace Pez.View
                     dome.GetComponent<Renderer>().shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
                     shields[t.Id] = dome;
                 }
+                dome.localPosition = W(t.StartPos);
                 float k = 1f + Mathf.Sin(Time.time * 1.5f + t.Id) * 0.02f;
                 dome.localScale = new Vector3(13f, 7f, 13f) * k;
             }
+            if (shields.Count > 0)
+            {
+                staleShields.Clear();
+                foreach (var id in shields.Keys) if (id >= World.Teams.Count) staleShields.Add(id); // a new game with fewer seats
+                foreach (var id in staleShields) { Destroy(shields[id].gameObject); shields.Remove(id); }
+            }
         }
+        readonly List<int> staleShields = new List<int>();
+
+        /// <summary>Does this view's team see that base right now (its centre or any side of the dome)? Spectators see every base.</summary>
+        bool SeesBase(Team t)
+        {
+            if (PovTeam < 0 || t.Id == PovTeam || PovTeam >= World.Teams.Count) return true;
+            var vis = World.Teams[PovTeam].Visible;
+            if (vis == null) return false;
+            foreach (var (dx, dy) in ShieldProbes)
+            {
+                int x = (int)(t.StartPos.X + dx), y = (int)(t.StartPos.Y + dy);
+                if (World.Map.InBounds(x, y) && World.Map.Idx(x, y) < vis.Length && vis[World.Map.Idx(x, y)]) return true;
+            }
+            return false;
+        }
+        static readonly (float, float)[] ShieldProbes = { (0, 0), (5, 0), (-5, 0), (0, 5), (0, -5) };
 
         /// <summary>Nothing pops off the map: art-pack models sink or collapse (wrecks linger) before they're destroyed.</summary>
         void Board(EV v)
