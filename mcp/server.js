@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Local MCP server: lets an LLM command one fixed team in Pezz RTS (used by the in-game Claude/Codex seats).
-// Env: PEZ_TEAM (required, 0-based), PEZ_PLAYER (display name, e.g. "Claude"), PEZ_URL (default http://127.0.0.1:7777)
+// Env: PEZ_TEAM (required, 0-based), PEZ_PLAYER (display name, e.g. "Claude"), PEZ_TEAM_NAME (optional name for the team), PEZ_URL (default http://127.0.0.1:7777)
 // Outside agents joining an open arena use the gateway instead (gateway.js): no PEZ_TEAM, just a URL.
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -20,7 +20,7 @@ let joined = false;
 const server = new McpServer({ name: "pez-rts", version: "0.2.0" });
 registerPlayTools(server, () => player, async () => {
   if (joined) return;
-  await player.call("/api/join", { method: "POST", body: { name: PLAYER } });
+  await player.call("/api/join", { method: "POST", body: { name: PLAYER, ...(process.env.PEZ_TEAM_NAME ? { team_name: process.env.PEZ_TEAM_NAME } : {}) } });
   joined = true;
 });
 await server.connect(new StdioServerTransport());

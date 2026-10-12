@@ -548,8 +548,9 @@ namespace Pez.Sim
         /// 25: a refinery holds ground only by an ore field; deep mines stand beside a blocked deposit tile.
         /// 26: aircraft bingo margin 5% + 6 s (was 15% + 8 s); loss alerts stay 2 minutes; counters tip.
         /// 27: save_for (save up for one purchase); each home ore warns on its own.
+        /// 28: agents can name their own team when they join (team_name).
         /// </summary>
-        public const int RulesVersion = 27;
+        public const int RulesVersion = 28;
 
         public static JObj Rules()
         {

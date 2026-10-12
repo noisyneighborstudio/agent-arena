@@ -155,7 +155,30 @@ namespace Pez.Sim
         }
 
         public bool IsProtected(int team) => team >= 0 && team < Teams.Count && Teams[team].ProtectedUntil > Time;
+        /// <summary>The default team names, by seat. An agent can name its own team instead (NameTeam); the colour stays with the seat.</summary>
         public static readonly string[] Flavors = { "Blueberry", "Cherry", "Lime", "Lemon", "Grape", "Blackberry", "Spearmint", "Plum" };
+        /// <summary>Names that would pass for the game itself in chat ("arena: ...") or in the lobby.</summary>
+        static readonly string[] ReservedTeamNames = { "arena", "server", "neutral", "spectator", "nobody", "you" };
+        static string NameKey(string s) => new string(s.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
+
+        /// <summary>
+        /// Give a team a name of its own. Names are cleaned (Text.TeamName), and must differ from every other team's name
+        /// and from the other seats' default flavours, ignoring case, spaces and punctuation. Returns null when applied,
+        /// else the reason it wasn't (the team keeps the name it had).
+        /// </summary>
+        public string NameTeam(Team team, string wanted)
+        {
+            var n = Text.TeamName(wanted);
+            if (n == null) return "a team name needs some letters or digits";
+            var key = NameKey(n);
+            if (ReservedTeamNames.Contains(key)) return "that name is reserved";
+            for (int i = 0; i < Flavors.Length; i++)
+                if (i != team.Id % Flavors.Length && NameKey(Flavors[i]) == key) return "that is another seat's default name";
+            foreach (var o in Teams)
+                if (o != team && NameKey(o.Name ?? "") == key) return "another team already has that name";
+            team.Name = n;
+            return null;
+        }
         public readonly List<Team> Teams = new List<Team>();
         public readonly Dictionary<int, Entity> ById = new Dictionary<int, Entity>();
         public readonly List<Entity> Entities = new List<Entity>();
@@ -301,9 +324,15 @@ namespace Pez.Sim
         /// room and add resources, up to MaxMapSize; at the cap, a free base site is reused. Returns null with a
         /// reason if the arena is full.
         /// </summary>
-        public Team AddTeam(string controller, string playerName, out string error)
+        public Team AddTeam(string controller, string playerName, out string error) => AddTeam(controller, playerName, null, out error, out _);
+
+        /// <summary>
+        /// As above, and the joiner may name their team (NameTeam). If the name can't be used the team keeps its flavour
+        /// and nameProblem says why. A recycled seat starts over: its old occupant's name goes with them.
+        /// </summary>
+        public Team AddTeam(string controller, string playerName, string teamName, out string error, out string nameProblem)
         {
-            error = null;
+            error = null; nameProblem = null;
             if (!Open) { error = "this game is not open for joining"; return null; }
             if (ActivePlayers >= MaxPlayers) { error = $"arena is full ({MaxPlayers} players)"; return null; }
             // Flavours (and colours) are capped at eight, so long-running arenas recycle the seats of departed players.
@@ -343,6 +372,7 @@ namespace Pez.Sim
             var team = CreateTeam(spawn, reuse);
             team.Controller = controller;
             team.PlayerName = playerName;
+            if (teamName != null) nameProblem = NameTeam(team, teamName);
             GiveCatchUp(team);
             team.ProtectedUntil = Time + ProtectionSeconds;
             UpdatePower();

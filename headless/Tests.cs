@@ -47,6 +47,7 @@ namespace Pez.Headless
             MapSizes();
             OpenArena();
             HousePolicy();
+            TeamNames();
             NewcomerProtection();
             SafeSpawn();
             Fuel();

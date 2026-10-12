@@ -33,5 +33,26 @@ namespace Pez.Sim
             if (n.Length > 24) n = n.Substring(0, 24).Trim();
             return n.Length == 0 ? "Player" : n;
         }
+
+        /// <summary>
+        /// Team names an agent chose for itself: the same characters as player names, whitespace collapsed, at most 24
+        /// characters. Null when nothing usable is left (no letter or digit).
+        /// </summary>
+        public static string TeamName(string s)
+        {
+            var sb = new StringBuilder();
+            bool gap = false;
+            foreach (var c in Clean(s, 64))
+            {
+                if (char.IsWhiteSpace(c)) { gap = sb.Length > 0; continue; }
+                if (!(char.IsLetterOrDigit(c) || c == '-' || c == '_' || c == '.')) continue;
+                if (gap) { sb.Append(' '); gap = false; }
+                sb.Append(c);
+            }
+            var n = sb.ToString();
+            if (n.Length > 24) n = n.Substring(0, 24).Trim();
+            foreach (var c in n) if (char.IsLetterOrDigit(c)) return n;
+            return null;
+        }
     }
 }

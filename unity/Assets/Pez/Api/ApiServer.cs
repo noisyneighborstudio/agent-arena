@@ -286,7 +286,7 @@ namespace Pez.Api
                         if (method != "POST") { status = 405; return "{\"ok\":false,\"error\":\"POST required\"}"; }
                         var d = Json.Parse(p.Body ?? "{}") as Dictionary<string, object>;
                         var name = Text.Name(d?.Str("name"));
-                        var team = w.AddTeam("llm", name, out var err);
+                        var team = w.AddTeam("llm", name, d?.Str("team_name"), out var err, out var nameProblem);
                         if (team == null) { status = 409; return Json.Write(new JObj().Set("ok", false).Set("error", err)); }
                         team.LastCommandAt = w.Time;
                         var token = NewToken(); var view = NewToken();
@@ -295,7 +295,7 @@ namespace Pez.Api
                         TokensVersion++;
                         Log($"Player joined: {name} as {team.Name} (team {team.Id}); map now {w.Map.W}x{w.Map.H}");
                         return Json.Write(new JObj().Set("ok", true).Set("token", token).Set("view_token", view)
-                            .Set("team", team.Id).Set("flavor", team.Name).Set("name", name)
+                            .Set("team", team.Id).Set("flavor", team.Name).Set("team_name", team.Name).Put("team_name_rejected", nameProblem).Set("name", name)
                             .Set("base", $"{(int)team.StartPos.X},{(int)team.StartPos.Y} sector {StateView.Sector(w.Map, team.StartPos)}")
                             .Set("map", $"{w.Map.W}x{w.Map.H}")
                             // Late joiners: how long this match has left, and what comes next.
@@ -368,9 +368,10 @@ namespace Pez.Api
                         var d = p.Body != null ? Json.Parse(p.Body) as Dictionary<string, object> : null;
                         var name = Text.Name(d?.Str("name") ?? "LLM");
                         w.Teams[team].PlayerName = name;
+                        var nameProblem = d?.Str("team_name") != null ? w.NameTeam(w.Teams[team], d.Str("team_name")) : null; // the seat keeps its name unless the player picks one
                         if (w.Teams[team].Controller != "human") w.Teams[team].Controller = "llm";
                         w.Emit("chat", team, text: $"{name} has taken command of {w.Teams[team].Name}.");
-                        return Json.Write(new JObj().Set("ok", true).Set("team", team).Set("name", w.Teams[team].Name));
+                        return Json.Write(new JObj().Set("ok", true).Set("team", team).Set("name", w.Teams[team].Name).Set("team_name", w.Teams[team].Name).Put("team_name_rejected", nameProblem));
                     }
                 case "/api/command":
                     {
