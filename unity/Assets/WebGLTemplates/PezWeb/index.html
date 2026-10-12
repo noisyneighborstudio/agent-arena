@@ -2,7 +2,7 @@
 <html lang="en-us">
   <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Pezz</title>
     <link rel="icon" href="data:,">
     <style>
@@ -19,7 +19,7 @@
       #notice { position: fixed; inset: 0; z-index: 20; display: none; align-items: center; justify-content: center; background: #14110d; color: #d8c9b0; font: 14px system-ui, sans-serif; text-align: center; padding: 24px; }
       /* The commander's standing-orders box: placed over the canvas where the HUD asks (PezCommander.place). */
       #cmd { position: fixed; display: none; z-index: 10; box-sizing: border-box; flex-direction: column; gap: 4px; padding: 6px; font: 12px system-ui, sans-serif; color: #ece4d2; }
-      #cmd textarea { flex: 1 1 auto; min-height: 0; width: 100%; box-sizing: border-box; resize: none; padding: 6px 8px; border: 1px solid #4a4238; border-radius: 6px; background: #101317; color: #ece4d2; font: 14px system-ui, sans-serif; }
+      #cmd textarea { flex: 1 1 auto; min-height: 0; width: 100%; box-sizing: border-box; resize: none; padding: 6px 8px; border: 1px solid #4a4238; border-radius: 6px; background: #101317; color: #ece4d2; font: 16px system-ui, sans-serif; } /* 16px: under it iOS zooms the page on focus, the HUD relays itself out and the box vanished */
       #cmd textarea:focus { outline: none; border-color: #e8a33d; }
       #cmd.editing { background: rgba(16,19,23,.96); border: 1px solid #2a3138; border-radius: 10px; box-shadow: 0 6px 24px rgba(0,0,0,.5); z-index: 20; }
       #cmd .row { display: flex; gap: 6px; flex: none; }
@@ -102,6 +102,7 @@
           place(x, y, w, h, visible, sw, sh) {
             placed = [x, y, w, h, visible, sw, sh];
             if (editing) return; // docked over the keyboard until the typing is done
+            if (!visible && document.activeElement === text) return; // never pulled out from under someone typing (a relayout can blink the slot away)
             if (!visible) { if (box.style.display !== "none") { box.style.display = "none"; if (document.activeElement === text) text.blur(); } return; }
             const r = document.getElementById("unity-canvas").getBoundingClientRect(), kx = r.width / (sw || r.width), ky = r.height / (sh || r.height);
             box.style.left = (r.left + x * kx) + "px"; box.style.top = (r.top + y * ky) + "px";
