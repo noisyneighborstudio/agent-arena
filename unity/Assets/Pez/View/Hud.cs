@@ -13,7 +13,7 @@ namespace Pez.View
     /// Laid out in 1920x1080 design units and drawn in screen pixels (k pixels per unit), so text stays crisp at any size.
     /// Panels are rounded 9-slices from textures generated at runtime for the current scale.
     /// </summary>
-    public class Hud : MonoBehaviour
+    public partial class Hud : MonoBehaviour
     {
         public GameRunner Runner;
         World W => Runner.Game.World;
@@ -32,8 +32,11 @@ namespace Pez.View
         static readonly Color Fuel = new Color32(143, 228, 255, 255), BtnHot = new Color32(46, 53, 60, 255);
         /// <summary>The kit's panel fill rgba(16,19,23,a), with the alpha raised to look like the board's gamma-space blend.</summary>
         static Color PanelFill(float a = 0.9f) => new Color(16 / 255f, 19 / 255f, 23 / 255f, 1f - (1f - a) * 0.45f);
-        const float Edge = 16f, Gap = 12f, RightW = 384f, FeedW = 560f, SelW = 520f;
-        const string MapName = "Sugar Flats";
+        const float Gap = 12f, SelW = 520f;
+        // Margins and column widths: the 1920x1080 board's, narrower in the browser's small windows (Layout, HudWeb.cs).
+        float Edge = 16f, RightW = 384f, FeedW = 560f;
+        /// <summary>The map's name: the server's when the web view knows it.</summary>
+        static string MapName => WebClient.Instance?.MapName ?? "Sugar Flats";
 
         float k = 1f;      // screen pixels per design unit
         float SW, SH;      // screen size in design units
@@ -123,8 +126,7 @@ namespace Pez.View
             if (Runner == null || Runner.Game == null) return;
             Setup();
             var ev = Event.current;
-            k = Mathf.Max(0.5f, Mathf.Min(Screen.height / 1080f, Screen.width / 1600f));
-            SW = Screen.width / k; SH = Screen.height / k;
+            Layout();
 
             // Clicking anywhere but a text box drops its focus; Escape does too.
             var mouse = ev.mousePosition / k;
@@ -134,22 +136,24 @@ namespace Pez.View
             uiRects.Clear(); fieldRects.Clear(); sectorHits.Clear();
             hoverKey = null;
 
-            if (Runner.InMenu) Menu();
+            if (Runner.InMenu && !GameRunner.IsWeb) Menu(); // the browser view has no menu to go back to
             else if (Runner.View != null)
             {
                 WorldOverlays();
                 DragBox();
                 TopBar();
-                float y = 92;
+                float y = below;
+                y = StatusBanner(y);
                 y = JoinPanel(y);
                 AlertBanner(y);
                 RightColumn();
                 Feed();
                 Selection();
                 BuildTooltip();
+                if (GameRunner.IsWeb) ResultsCard(y + 58);
                 if (W.GameOver) GameOver();
             }
-            if (ev.type == EventType.Repaint) lastUi = new List<Rect>(uiRects);
+            if (ev.type == EventType.Repaint) { lastUi = new List<Rect>(uiRects); CommanderBoxRect = pendingCommander; }
         }
 
         void Setup()
@@ -443,22 +447,30 @@ namespace Pez.View
 
         void TopBar()
         {
-            const float y = 16, h = 60;
-            // Brand: PEZ | clock, map and players.
+            float y = Edge; const float h = 60;
+            bool web = GameRunner.IsWeb;
+            // Brand: PEZ | clock, map and players (the narrow browser view keeps the clock only).
             string clock = FormatTime(W.Time);
-            string where = $"{MapName} · {W.ActivePlayers} player{(W.ActivePlayers == 1 ? "" : "s")} · {W.Map.W}×{W.Map.H}{MatchClock()}";
+            string where = web ? WebWhere() : $"{MapName} · {W.ActivePlayers} player{(W.ActivePlayers == 1 ? "" : "s")} · {W.Map.W}×{W.Map.H}{MatchClock()}";
+            bool showWhere = !(web && narrow);
+            float bpad = narrow ? 14 : 20, bgap = narrow ? 12 : 16;
             float wPez = Spaced(0, 0, 0, "PEZ", fHeadBold, 24, Ink, 0.04f, false);
-            float bw = 20 + wPez + 16 + 1 + 16 + TextW(clock, fMonoMed, 22) + 16 + TextW(where, fSans, 14) + 20;
+            float bw = bpad + wPez + bgap + 1 + bgap + TextW(clock, fMonoMed, 22) + (showWhere ? 16 + TextW(where, fSans, 14) : 0) + bpad;
             var brand = new Rect(Edge, y, bw, h);
             Panel(brand, 0.88f);
-            float x = brand.x + 20;
-            x += Spaced(x, y + 21, 18, "PEZ", fHeadBold, 24, Ink, 0.04f) + 16;
-            Fill(new Rect(x, y + 16, 1, 28), Border); x += 17;
+            float x = brand.x + bpad;
+            x += Spaced(x, y + 21, 18, "PEZ", fHeadBold, 24, Ink, 0.04f) + bgap;
+            Fill(new Rect(x, y + 16, 1, 28), Border); x += 1 + bgap;
             Text(new Rect(x, y, 120, h), clock, fMonoMed, 22, Ink); x += TextW(clock, fMonoMed, 22) + 16;
-            Text(new Rect(x, y, 400, h), where, fSans, 14, Muted);
+            if (showWhere) Text(new Rect(x, y, 400, h), where, fSans, 14, Muted);
 
-            // The browser view follows the server's clock: no pause or speed of its own.
-            if (GameRunner.IsWeb) { TeamCards(brand.xMax + Gap, SW - Edge, y, h); return; }
+            // The browser view follows the server's clock: no pause or speed of its own. A phone's strip takes a second row.
+            if (web)
+            {
+                if (phone) TeamStrip(Edge, SW - Edge, y + h + 8, h);
+                else TeamStrip(brand.xMax + Gap, SW - Edge, y, h);
+                return;
+            }
             // Speed: pause, 1x 2x 4x, fog.
             var game = Runner.Game;
             string fog = Team >= 0 ? "Fog on" : "Fog off";
@@ -487,64 +499,7 @@ namespace Pez.View
             Text(new Rect(x + 13, y, 100, h), fog, fSans, 14, Muted);
 
             // Team cards, centred between the two.
-            TeamCards(brand.xMax + Gap, speed.x - Gap, y, h);
-        }
-
-        void TeamCards(float left, float right, float y, float h)
-        {
-            var teams = W.Teams.Where(t => !t.Left || W.Teams.Count <= 4).ToList();
-            if (Team >= 0) teams = teams.OrderBy(t => t.Id == Team ? 0 : 1).ToList();
-            var power = HudIcon("power"); var stock = HudIcon("stock"); var units = HudIcon("units");
-            List<(string icon, string text)> Stats(Sim.Team t, bool full)
-            {
-                int n = W.Entities.Count(e => !e.Dead && e.Team == t.Id && !e.IsStructure && !e.IsMine);
-                if (!full) return new List<(string, string)> { ("units", n.ToString()) };
-                return new List<(string, string)> { ("power", $"{t.PowerUsed}/{t.PowerProduced}"), ("stock", Num(t.Amount("steel"))), ("units", n.ToString()) };
-            }
-            float CardW(Sim.Team t, bool full)
-            {
-                float w = 8 + 16 + Mathf.Max(TextW(t.Name, fSansBold, 16), TextW(Player(t.Id), fSans, 13)) + 18;
-                foreach (var (_, text) in Stats(t, full)) w += 16 + 16 + 6 + TextW(text, fMono, 15);
-                return w;
-            }
-            bool vs = teams.Count == 2;
-            float avail = right - left;
-            bool full = true;
-            float total = teams.Sum(t => CardW(t, true)) + (teams.Count - 1) * Gap + (vs ? 24 + Gap : 0);
-            if (total > avail) { full = false; total = teams.Sum(t => CardW(t, false)) + (teams.Count - 1) * 8; }
-            float x = left + Mathf.Max(0, (avail - total) / 2);
-            for (int i = 0; i < teams.Count; i++)
-            {
-                var t = teams[i];
-                float w = CardW(t, full);
-                if (x + w > right) break;
-                bool out_ = t.Defeated || t.Left;
-                float was = fade;
-                if (out_) fade *= 0.45f;
-                var r = new Rect(x, y, w, h);
-                Panel(r, 0.88f);
-                SolidShape(new Rect(x + 1, y + 1, 8, h - 2), Mats.Team(t.Id), 11, 0);
-                float cx = x + 8 + 16;
-                Text(new Rect(cx, y + 9, w, 22), t.Name, fSansBold, 16, Ink);
-                if (out_) Fill(new Rect(cx, y + 20, TextW(t.Name, fSansBold, 16), 1.5f), Ink);
-                Text(new Rect(cx, y + 31, w, 18), out_ ? (t.Left ? "left" : "defeated") : Player(t.Id), fSans, 13, Muted);
-                cx += Mathf.Max(TextW(t.Name, fSansBold, 16), TextW(Player(t.Id), fSans, 13));
-                foreach (var (icon, text) in Stats(t, full))
-                {
-                    cx += 16;
-                    Tex(new Rect(cx, y + 22, 16, 16), icon == "power" ? power : icon == "stock" ? stock : units);
-                    cx += 22;
-                    Text(new Rect(cx, y, 120, h), text, fMono, 15, t.LowPower && icon == "power" ? Amber : Ink);
-                    cx += TextW(text, fMono, 15);
-                }
-                fade = was;
-                x += w + (full ? Gap : 8);
-                if (vs && i == 0)
-                {
-                    Text(new Rect(x, y, 24, h), "VS", fHead, 15, Muted, TextAnchor.MiddleCenter);
-                    x += 24 + Gap;
-                }
-            }
+            TeamStrip(brand.xMax + Gap, speed.x - Gap, y, h);
         }
 
         // ------------------------------------------------------------------ open arena prompt and alert banner
@@ -566,6 +521,7 @@ namespace Pez.View
         /// <summary>The newest alarm per the kit: CRITICAL hazard tab, HIGH amber, INFO grey. Click to fly there.</summary>
         void AlertBanner(float y)
         {
+            if (GameRunner.IsWeb && WebClient.Instance?.Result != null) return; // a finished seat is a spectator now, not on alert
             var recent = W.Alerts.All.Where(a => (Team < 0 || a.Team == Team) && (W.Tick - a.LastTick) * World.Dt < 8f)
                 .OrderByDescending(a => a.Priority).ThenByDescending(a => a.LastTick).ToList();
             if (recent.Count == 0) return;
@@ -576,7 +532,13 @@ namespace Pez.View
             string more = recent.Count > 1 ? $"+{recent.Count - 1} more" : null;
             float lw = Spaced(0, 0, 0, level, fHeadBold, 14, Ink, 0.12f, false);
             float w = 28 + 18 + lw + 12 + TextW(msg, fSans, 15) + TextW(sector, fMono, 15) + (more != null ? 12 + TextW(more, fSans, 13) : 0) + 18;
-            var r = new Rect(SW / 2 - w / 2, y, w, 42);
+            if (w > BandW) // a narrow window: the message gives way
+            {
+                float over = w - BandW;
+                msg = Ellipsize(msg, fSans, 15, TextW(msg, fSans, 15) - over);
+                w = BandW;
+            }
+            var r = new Rect(BandCx - w / 2, y, w, 42);
             Round(r, 10, PanelFill(0.92f), Line, 1f);
             uiRects.Add(r);
             var tab = new Rect(r.x + 1, r.y + 1, 28, r.height - 2);
@@ -594,6 +556,7 @@ namespace Pez.View
 
         void RightColumn()
         {
+            if (GameRunner.IsWeb) { WebRightColumn(); return; }
             float x = SW - Edge - RightW, y = 92;
             Minimap(new Rect(x, y, RightW, RightW));
             y += RightW + Gap;
@@ -605,9 +568,10 @@ namespace Pez.View
         {
             Panel(panel);
             var m = W.Map;
-            // The svg area: 360 square at padding 12; letters in a 20-unit band on top, numbers in one on the left.
-            var area = new Rect(panel.x + 12, panel.y + 12, 360, 360);
-            float scale = 340f / Mathf.Max(m.W, m.H);
+            // The svg area: 360 square at padding 12 (216 at 8 in a narrow window, 150 on a phone); letters in a 20-unit band on top, numbers in one on the left.
+            float pad = (panel.width - mmCanvas) / 2;
+            var area = new Rect(panel.x + pad, panel.y + pad, mmCanvas, mmCanvas);
+            float scale = (mmCanvas - 20f) / Mathf.Max(m.W, m.H);
             var map = new Rect(area.x + 20, area.y + 20, m.W * scale, m.H * scale);
             miniMapRect = map;
             if (minimap == null || minimap.width != m.W || minimap.height != m.H)
@@ -796,27 +760,39 @@ namespace Pez.View
             if (!teams.Any(t => t.Id == tabTeam)) tabTeam = (teams.FirstOrDefault(t => IsAgentTeam(t.Id) && !t.Defeated) ?? teams[0]).Id;
             var team = W.Teams[tabTeam];
             bool showProd = Team < 0 || tabTeam == Team;
-            var prod = showProd ? Production(team).Take(4).ToList() : new List<ProdRow>();
             bool agent = IsAgentTeam(tabTeam) && !team.Defeated;
-            const float pad = 16, inner = RightW - 2 * pad;
+            const float pad = 16;
+            float inner = col.width - 2 * pad;
+            bool web = GameRunner.IsWeb, open = !web || DrawerOpen("side");
+            var prod = showProd && open ? Production(team).Take(4).ToList() : new List<ProdRow>();
 
             // Measure, then draw (the panel sits behind its content).
             int perRow = Mathf.Min(teams.Count, 4);
             int tabRows = (teams.Count + perRow - 1) / perRow;
             float tabH = teams.Count > 2 ? 36 : 44;
             string orders = team.StandingOrders;
-            string ordersText = agent ? (orders.Length > 0 ? orders : "None yet: the agent is using its own judgment.")
+            // A commander's orders are private to their team: the browser's copy has them blanked for everyone else.
+            string ordersText = agent ? (orders.Length > 0 ? orders : web ? "Each commander's human can set standing orders for their agent." : "None yet: the agent is using its own judgment.")
                 : team.Controller == "human" ? "A human commands this team." : team.Defeated ? "Out of the game." : "Scripted AI: it takes no standing orders.";
             float ordersH = Mathf.Min(TextH(ordersText, fSans, 14, inner) * 1.08f, 110);
-            float h = pad + tabRows * tabH + (tabRows - 1) * 6 + 14;
+            float headH = web ? DrawerHeadH : 0, top = web && !open ? 10 : pad;
+            float h = top + headH + tabRows * tabH + (tabRows - 1) * 6 + 14;
             if (showProd) h += 18 + 10 + (prod.Count == 0 ? 20 : prod.Count * 42 + (prod.Count - 1) * 10) + 14;
             h += 18 + 8 + ordersH;
-            if (agent) h += 6 + 18 + 8 + 72 + 8 + 44;
+            if (agent && !web) h += 6 + 18 + 8 + 72 + 8 + 44;
             h += pad;
+            if (web && !open) h = top + 28 + top;
             if (h > col.height) h = col.height;
-            var r = new Rect(col.x, col.y, RightW, h);
+            var r = new Rect(col.x, col.y, col.width, h);
+            sideBottom = r.yMax;
             Panel(r);
-            float x = r.x + pad, y = r.y + pad;
+            float x = r.x + pad, y = r.y + top;
+            if (web)
+            {
+                DrawerHead(r, "side", "ARENA", null, top);
+                if (!open) return;
+                y += headH;
+            }
 
             // Tabs
             float tw = (inner - (perRow - 1) * 6) / perRow;
@@ -838,31 +814,16 @@ namespace Pez.View
             y += tabRows * tabH + (tabRows - 1) * 6 + 14;
 
             // Building now
-            if (showProd)
-            {
-                Head(x, y, "BUILDING NOW"); y += 28;
-                if (prod.Count == 0) { Text(new Rect(x, y, inner, 20), "Nothing in production.", fSans, 13, Muted); y += 20; }
-                foreach (var p in prod)
-                {
-                    IconBox(new Rect(x, y, 56, 42), p.Key, p.Name, 6);
-                    float bx = x + 56 + 12, bwid = inner - 68;
-                    Text(new Rect(bx, y + 4, bwid, 18), p.Name + (p.Count > 1 ? $" ×{p.Count}" : ""), fSans, 14, Ink);
-                    Text(new Rect(bx, y + 4, bwid, 18), $"{(int)(p.Pct * 100)}%", fMono, 14, Muted, TextAnchor.MiddleRight);
-                    Round(new Rect(bx, y + 28, bwid, 6), 3, Border);
-                    if (p.Pct > 0.01f) Round(new Rect(bx, y + 28, Mathf.Max(6, bwid * Mathf.Clamp01(p.Pct)), 6), 3, Cream);
-                    y += 52;
-                }
-                y += 4;
-            }
+            if (showProd) y = ProductionBlock(prod, x, y, inner);
 
             // Standing orders (the commander's instructions to an LLM team)
             Head(x, y, "STANDING ORDERS");
             if (Team >= 0 && Hover(new Rect(r.xMax - 120, y, 104, 18)) && Click(new Rect(r.xMax - 120, y, 104, 18))) ShowOrders = false;
-            if (Team >= 0) Text(new Rect(r.xMax - pad - 100, y, 100, 18), "<u>Build panel</u>", fSans, 13, Cream, TextAnchor.MiddleRight);
+            if (Team >= 0 && !web) Text(new Rect(r.xMax - pad - 100, y, 100, 18), "<u>Build panel</u>", fSans, 13, Cream, TextAnchor.MiddleRight);
             y += 26;
             Text(new Rect(x, y, inner, ordersH), ordersText, fSans, 14, agent && orders.Length > 0 ? Soft : Muted, TextAnchor.UpperLeft, true);
             y += ordersH;
-            if (!agent || GameRunner.IsWeb) return; // the browser view only watches: orders would reach its local copy, not the agent
+            if (!agent || web) return; // the browser view only watches: orders would reach its local copy, not the agent
             y += 6;
             Text(new Rect(x, y, inner, 18), $"New order for {team.PlayerName ?? "the agent"}", fSans, 13, Muted); y += 26;
             if (!drafts.ContainsKey(team.Id)) drafts[team.Id] = "";
@@ -878,6 +839,24 @@ namespace Pez.View
             {
                 W.SetOrders(team.Id, ""); drafts[team.Id] = ""; GUIUtility.keyboardControl = 0;
             }
+        }
+
+        /// <summary>The "building now" block: structure and unit production with progress. Returns the y below it.</summary>
+        float ProductionBlock(List<ProdRow> prod, float x, float y, float inner)
+        {
+            Head(x, y, "BUILDING NOW"); y += 28;
+            if (prod.Count == 0) { Text(new Rect(x, y, inner, 20), "Nothing in production.", fSans, 13, Muted); y += 20; }
+            foreach (var p in prod)
+            {
+                IconBox(new Rect(x, y, 56, 42), p.Key, p.Name, 6);
+                float bx = x + 56 + 12, bwid = inner - 68;
+                Text(new Rect(bx, y + 4, bwid, 18), p.Name + (p.Count > 1 ? $" ×{p.Count}" : ""), fSans, 14, Ink);
+                Text(new Rect(bx, y + 4, bwid, 18), $"{(int)(p.Pct * 100)}%", fMono, 14, Muted, TextAnchor.MiddleRight);
+                Round(new Rect(bx, y + 28, bwid, 6), 3, Border);
+                if (p.Pct > 0.01f) Round(new Rect(bx, y + 28, Mathf.Max(6, bwid * Mathf.Clamp01(p.Pct)), 6), 3, Cream);
+                y += 52;
+            }
+            return y + 4;
         }
 
         /// <summary>An entity's art-pack icon with rounded corners (dimmed when locked), or a placeholder with its initials.</summary>
@@ -907,7 +886,8 @@ namespace Pez.View
             var t = W.Teams[Team];
             var input = Runner.Input;
             Panel(col);
-            const float pad = 16, inner = RightW - 2 * pad;
+            const float pad = 16;
+            float inner = col.width - 2 * pad;
             float x = col.x + pad, y = col.y + pad;
 
             // Tabs: structures / units (+ orders when agents play).
@@ -925,33 +905,7 @@ namespace Pez.View
             if (agents && Button(new Rect(x + inner - ow, y, ow, 36), "Orders (O)", false, true, true, 13)) ShowOrders = true;
             y += 36 + 12;
 
-            // Stockpile: the kit's icons, amounts in mono.
-            var items = Defs.Items.ToList();
-            float cw = inner / 5f;
-            for (int i = 0; i < items.Count; i++)
-            {
-                var cr = new Rect(x + (i % 5) * cw, y + (i / 5) * 22, cw, 20);
-                Tex(new Rect(cr.x, cr.y + 1, 18, 18), HudIcon(items[i]));
-                int n = t.Amount(items[i]);
-                Text(new Rect(cr.x + 22, cr.y, cw - 22, 20), n >= 10000 ? $"{n / 1000}k" : n.ToString(), fMono, 13, n > 0 ? Ink : Muted);
-                if (Hover(cr)) { hoverKey = "item:" + items[i]; hoverRect = cr; }
-            }
-            y += 2 * 22 + 10;
-
-            // Power: cream when fine, amber near capacity, hazard stripe when out.
-            float frac = t.PowerProduced == 0 ? (t.PowerUsed > 0 ? 1.2f : 0) : t.PowerUsed / (float)t.PowerProduced;
-            string plabel = t.LowPower ? "Out: production at half speed, radar offline" : frac >= 0.9f ? "Low: near capacity" : "Power";
-            Text(new Rect(x, y, inner, 18), plabel, fSans, 14, t.LowPower ? Ink : frac >= 0.9f ? Amber : Ink);
-            Text(new Rect(x, y, inner, 18), $"{t.PowerUsed} / {t.PowerProduced}", fMono, 14, Muted, TextAnchor.MiddleRight);
-            y += 24;
-            var bar = new Rect(x, y, inner, 12);
-            if (t.LowPower) Hazard(bar, 6, 6, 6);
-            else
-            {
-                Round(bar, 6, Border);
-                if (frac > 0.01f) Round(new Rect(x, y, Mathf.Max(12, inner * Mathf.Clamp01(frac)), 12), 6, frac >= 0.9f ? Amber : Cream);
-            }
-            y += 12 + 14;
+            y = StockPower(t, x, y, inner);
 
             // Build buttons: 4 across, 4:3 like the icons.
             var defs = buildUnits
@@ -997,6 +951,39 @@ namespace Pez.View
                 Text(new Rect(x, fy, inner, 26), Ellipsize(input.LastError, fSans, 13, inner), fSans, 13, Amber);
             else
                 Text(new Rect(x, fy, inner, 26), Ellipsize("Click build · shift ×5 · right-click cancel · F attack-move · G deploy · Del sell", fSans, 12, inner), fSans, 12, Muted);
+        }
+
+        /// <summary>The stockpile (the kit's icons, amounts in mono) and the power bar. Returns the y below them.</summary>
+        float StockPower(Sim.Team t, float x, float y, float inner)
+        {
+            var items = Defs.Items.ToList();
+            float cw = inner / 5f;
+            for (int i = 0; i < items.Count; i++)
+            {
+                var cr = new Rect(x + (i % 5) * cw, y + (i / 5) * 22, cw, 20);
+                Tex(new Rect(cr.x, cr.y + 1, 18, 18), HudIcon(items[i]));
+                int n = t.Amount(items[i]);
+                Text(new Rect(cr.x + 22, cr.y, cw - 22, 20), n >= 10000 ? $"{n / 1000}k" : n.ToString(), fMono, 13, n > 0 ? Ink : Muted);
+                if (Hover(cr)) { hoverKey = "item:" + items[i]; hoverRect = cr; }
+            }
+            y += 2 * 22 + 10;
+
+            // Power: cream when fine, amber near capacity, hazard stripe when out.
+            float frac = t.PowerProduced == 0 ? (t.PowerUsed > 0 ? 1.2f : 0) : t.PowerUsed / (float)t.PowerProduced;
+            string plabel = t.LowPower ? "Out: production at half speed, radar offline" : frac >= 0.9f ? "Low: near capacity" : "Power";
+            Text(new Rect(x, y, inner, 18), plabel, fSans, 14, t.LowPower ? Ink : frac >= 0.9f ? Amber : Ink);
+            Text(new Rect(x, y, inner, 18), $"{t.PowerUsed} / {t.PowerProduced}", fMono, 14, Muted, TextAnchor.MiddleRight);
+            y += 24;
+            var bar = new Rect(x, y, inner, 12);
+            if (t.LowPower) Hazard(bar, 6, 6, 6);
+            else
+            {
+                Round(bar, 6, Border);
+                if (frac > 0.01f) Round(new Rect(x, y, Mathf.Max(12, inner * Mathf.Clamp01(frac)), 12), 6, frac >= 0.9f ? Amber : Cream);
+            }
+            y += 12 + 14;
+
+            return y;
         }
 
         readonly Dictionary<string, (Texture2D tex, int pct, int w, int h)> sweeps = new Dictionary<string, (Texture2D, int, int, int)>();
@@ -1103,7 +1090,12 @@ namespace Pez.View
             float bh = TextH(body, fSans, 13, w - 28);
             float eh = extra != null ? TextH(extra, fMono, 12, w - 28) + 8 : 0;
             float h = 14 + 22 + 4 + bh + eh + 14;
-            var r = new Rect(SW - Edge - RightW - Gap - w, Mathf.Clamp(hoverRect.center.y - h / 2, 92, SH - Edge - h), w, h);
+            var r = new Rect(Mathf.Max(Edge, SW - Edge - RightW - Gap - w), Mathf.Clamp(hoverRect.center.y - h / 2, below, SH - Edge - h), w, h);
+            if (narrow) // a narrow column leaves no room beside it: above the item (or under it), kept on screen
+            {
+                float ty = hoverRect.y - 6 - h >= below ? hoverRect.y - 6 - h : hoverRect.yMax + 6;
+                r = new Rect(Mathf.Clamp(hoverRect.center.x - w / 2, Edge, SW - Edge - w), Mathf.Min(ty, SH - Edge - h), w, h);
+            }
             Panel(r, 0.95f);
             Text(new Rect(r.x + 14, r.y + 14, w - 28, 22), title, fHead, 16, Ink);
             Text(new Rect(r.x + 14, r.y + 40, w - 28, bh), body, fSans, 13, Soft, TextAnchor.UpperLeft, true);
@@ -1112,7 +1104,7 @@ namespace Pez.View
 
         // ------------------------------------------------------------------ command feed (bottom-left)
 
-        struct Tok { public string S; public Font F; public Color C; public bool Chip, Glue; }
+        struct Tok { public string S; public Font F; public Color C; public bool Chip, Glue, Break; }
         static readonly System.Text.RegularExpressions.Regex SectorRx = new System.Text.RegularExpressions.Regex(@"^[\[(]?([A-H][1-8])[\])]?([.,;:!?)]*)$");
 
         void Words(List<Tok> toks, string text, Font f, Color c)
@@ -1136,6 +1128,7 @@ namespace Pez.View
             float cx = 0, cy = 0, space = TextW("a a", fSans, size) - TextW("aa", fSans, size);
             foreach (var t in toks)
             {
+                if (t.Break) { cx = 0; cy += lineH; continue; } // a second line (a failed command's error)
                 float w = TextW(t.S, t.F, size) + (t.Chip ? 10 : 0);
                 float lead = cx > 0 && !t.Glue ? space : 0;
                 if (cx > 0 && cx + lead + w > width && !t.Glue) { cx = 0; cy += lineH; lead = 0; }
@@ -1176,6 +1169,7 @@ namespace Pez.View
                 }
                 else if (e.Type == "orders")
                 {
+                    if (string.IsNullOrWhiteSpace(e.Text)) continue; // another team's orders are blanked in the browser's copy
                     toks.Add(new Tok { S = "Commander", F = fSansBold, C = Ink });
                     Words(toks, $"to {Player(e.Team)}: {e.Text}", fSans, Soft);
                     rows.Add((t, e.Team, toks, "orders", 0));
@@ -1186,38 +1180,69 @@ namespace Pez.View
                     rows.Add((t, e.Team, toks, null, 0));
                 }
             }
-            foreach (var c in Runner.CommandFeed)
-            {
-                var toks = new List<Tok> { new Tok { S = Player(c.team), F = fSansBold, C = Ink } };
-                Words(toks, c.text, fSans, Ink);
-                if (!c.ok && !string.IsNullOrEmpty(c.error)) Words(toks, "· " + c.error, fSans, Muted);
-                rows.Add((c.time, c.team, toks, c.ok ? "done" : "failed", c.ok ? 0 : 2));
-            }
             // An agent's newest plan is still running; older ones are done.
             for (int i = 0; i < rows.Count; i++)
                 if (rows[i].chip == null && rows[i].team >= 0 && latestChat.TryGetValue(rows[i].team, out var lt) && rows[i].toks.Count > 1)
                     rows[i] = (rows[i].t, rows[i].team, rows[i].toks, lt == rows[i].t && W.Time - lt < 60f ? "running" : "done", lt == rows[i].t && W.Time - lt < 60f ? 1 : 0);
-            var recent = rows.Where(r => W.Time - r.t < 180f).OrderBy(r => r.t).ToList();
-            if (recent.Count == 0) return;
+            var recent = rows.Where(r => W.Time - r.t < 180f).ToList();
+            if (GameRunner.IsWeb)
+            {
+                // The browser view's commands come from the server's feed (the last few, whatever their age).
+                var wc = WebClient.Instance;
+                if (wc != null && !wc.Spectator)
+                    foreach (var c in wc.Feed)
+                    {
+                        var toks = new List<Tok> { new Tok { S = Player(c.Team), F = fSansBold, C = Ink } };
+                        Words(toks, c.Text, fSans, Ink);
+                        if (!string.IsNullOrEmpty(c.Error)) { toks.Add(new Tok { Break = true }); Words(toks, c.Error, fSans, Muted); }
+                        recent.Add((c.TimeS, c.Team, toks, c.Done == null ? "running" : c.Done.Value ? "done" : "failed", c.Done == null ? 1 : c.Done.Value ? 0 : 2));
+                    }
+            }
+            else
+                foreach (var c in Runner.CommandFeed)
+                {
+                    if (W.Time - c.time >= 180f) continue;
+                    var toks = new List<Tok> { new Tok { S = Player(c.team), F = fSansBold, C = Ink } };
+                    Words(toks, c.text, fSans, Ink);
+                    if (!c.ok && !string.IsNullOrEmpty(c.error)) Words(toks, "· " + c.error, fSans, Muted);
+                    recent.Add((c.time, c.team, toks, c.ok ? "done" : "failed", c.ok ? 0 : 2));
+                }
+            recent = recent.OrderBy(r => r.t).ToList();
+            bool web = GameRunner.IsWeb;
+            if (recent.Count == 0 && !web) return;
 
             const float pad = 16, size = 14, lineH = 20.3f;
+            bool open = !web || DrawerOpen("feed");
             float textW = FeedW - 2 * pad - 52 - 10 - 8 - 10 - 10 - 64;
-            float maxRows = Mathf.Min(320, SH - 92 - 300);
+            float maxRows = web ? (phone ? 132 : narrow ? 180 : 260) : Mathf.Min(320, SH - 92 - 300);
             var shown = new List<(float t, int team, List<Tok> toks, string chip, int kind, float h)>();
             float total = 0;
-            for (int i = recent.Count - 1; i >= 0 && shown.Count < 6; i--)
+            for (int i = recent.Count - 1; open && i >= 0 && shown.Count < 6; i--)
             {
                 float h = Flow(recent[i].toks, 0, 0, textW, size, lineH, false);
                 if (total + h + (shown.Count > 0 ? 12 : 0) > maxRows) break;
                 total += h + (shown.Count > 0 ? 12 : 0);
                 shown.Insert(0, (recent[i].t, recent[i].team, recent[i].toks, recent[i].chip, recent[i].chipKind, h));
             }
-            float ph = 14 + 18 + 10 + total + 14;
+            string empty = web && open && shown.Count == 0 ? (WebClient.Instance != null && WebClient.Instance.Spectator || Team < 0 ? "The agents' chat will appear here." : "Your agent's orders will appear here.") : null;
+            if (empty != null) total = 20;
+            float ph = web ? (open ? 14 + 28 + 10 + total + 14 : 10 + 28 + 10) : 14 + 18 + 10 + total + 14;
             var r = new Rect(Edge, SH - Edge - ph, FeedW, ph);
+            feedTop = stackTop = r.y;
             Panel(r);
-            Head(r.x + pad, r.y + 14, "COMMAND FEED");
-            Text(new Rect(r.x + pad, r.y + 14, FeedW - 2 * pad, 18), "Click a sector to fly there", fSans, 13, Muted, TextAnchor.MiddleRight);
-            float y = r.y + 14 + 18 + 10;
+            if (web)
+            {
+                bool spectating = Team < 0;
+                DrawerHead(r, "feed", spectating ? "ARENA CHAT" : "COMMAND FEED", FeedHelp, open ? 14 : 10);
+                if (!open) return;
+            }
+            else
+            {
+                Head(r.x + pad, r.y + 14, "COMMAND FEED");
+                Text(new Rect(r.x + pad, r.y + 14, FeedW - 2 * pad, 18), "Click a sector to fly there", fSans, 13, Muted, TextAnchor.MiddleRight);
+            }
+            float y = r.y + 14 + (web ? 28 : 18) + 10;
+            if (empty != null) Text(new Rect(r.x + pad + 52 + 10 + 8 + 10, y, textW, 20), empty, fSans, 13, Muted);
             foreach (var row in shown)
             {
                 float x = r.x + pad;
@@ -1254,6 +1279,8 @@ namespace Pez.View
             float x = Edge + FeedW + 24;
             float w = Mathf.Min(SelW, SW - Edge - RightW - 24 - x);
             if (w < 360) { x = SW - Edge - RightW - 24 - 360; w = 360; }
+            if (narrow) { x = Edge; w = FeedW; } // narrow windows stack it over the feed
+            float iw = narrow ? 96 : 128, ih = narrow ? 72 : 96;
             var e = sel[0];
             var groups = sel.GroupBy(s => s.Def.Key).OrderByDescending(g => g.Count()).ToList();
             bool one = sel.Count == 1;
@@ -1262,11 +1289,15 @@ namespace Pez.View
             var deposit = one && e.Def.Key == "deep_mine" ? W.Map.DepositById(e.DepositId) : null;
             if (deposit != null) fuelRow = true; // the reserve row sits where a vehicle's fuel would
             string detail = one ? UnitDetail(e) : null;
-            float h = 14 + Mathf.Max(96, 26 + 8 + 12 + 8 + 20 + 8 + 18 + (fuelRow ? 8 + 12 : 0) + (detail != null ? 8 + 18 : 0)) + 14;
-            var r = new Rect(x, SH - Edge - h, w, h);
+            // The browser's card ends with how to let go of it (or the camera).
+            string hint = GameRunner.IsWeb && one ? (!e.IsStructure && Runner.Camera != null && Runner.Camera.Following ? "Following this unit · Esc or click empty ground to stop" : "Esc or click empty ground to deselect") : null;
+            float hintH = hint != null ? TextH(hint, fSans, 13, w - 14 - iw - 16 - 14) : 0; // (wraps on a phone)
+            float h = 14 + Mathf.Max(ih, 26 + 8 + 12 + 8 + 20 + 8 + 18 + (fuelRow ? 8 + 12 : 0) + (detail != null ? 8 + 18 : 0) + (hint != null ? 8 + hintH : 0)) + 14;
+            var r = new Rect(x, (narrow ? feedTop - 8 : SH - Edge) - h, w, h);
             Panel(r);
-            IconBox(new Rect(r.x + 14, r.y + 14, 128, 96), e.Def.Key, e.Def.Name, 8);
-            float cx = r.x + 14 + 128 + 16, cw = r.xMax - 14 - cx, y = r.y + 14;
+            stackTop = Mathf.Min(stackTop, r.y);
+            IconBox(new Rect(r.x + 14, r.y + 14, iw, ih), e.Def.Key, e.Def.Name, 8);
+            float cx = r.x + 14 + iw + 16, cw = r.xMax - 14 - cx, y = r.y + 14;
 
             // Name row
             Round(new Rect(cx, y + 8, 10, 10), 3, Mats.Team(e.Team));
@@ -1335,7 +1366,9 @@ namespace Pez.View
                 var fc = reserve ? WorldView.OreColors[deposit.Type] : ff < 0.3f ? Amber : Fuel;
                 if (ff > 0.01f) Round(new Rect(fx, y + 2, Mathf.Max(8, fw * ff), 8), 4, fc);
                 Text(new Rect(fx + fw + 8, y - 3, vw + 4, 18), val, fMono, 13, Muted);
+                y += 12;
             }
+            if (hint != null) Text(new Rect(cx, y + 8 - 3, cw, hintH), hint, fSans, 13, Muted, TextAnchor.UpperLeft, true);
         }
 
         /// <summary>The rest of what you'd want to know about one unit: whose it is and what it's up to.</summary>
@@ -1355,7 +1388,7 @@ namespace Pez.View
                 if (e.Waypoints.Count > 0) parts.Add($"{e.Waypoints.Count} more waypoint{(e.Waypoints.Count == 1 ? "" : "s")}{(e.WaypointLoop ? " (patrol)" : "")}");
                 if (e.RetreatBelow > 0) parts.Add(e.Retreating ? "retreating" : $"retreats below {(int)(e.RetreatBelow * 100)}%");
                 if (e.IsCarried) parts.Add($"inside #{e.CarrierId}");
-                if (Runner.Camera != null && Runner.Camera.Following) parts.Add("camera following (Esc to stop)");
+                if (!GameRunner.IsWeb && Runner.Camera != null && Runner.Camera.Following) parts.Add("camera following (Esc to stop)");
             }
             else if (e.Rally.HasValue) parts.Add($"rally {StateView.Sector(W.Map, e.Rally.Value)}");
             return string.Join(" · ", parts);
@@ -1416,6 +1449,8 @@ namespace Pez.View
 
         void GameOver()
         {
+            bool web = GameRunner.IsWeb;
+            if (web && W.MatchOver) return; // the match card (ResultsCard) tells it
             string msg = W.Winner >= 0 ? $"{W.Teams[W.Winner].Name.ToUpperInvariant()} WINS" : "DRAW";
             string who = W.Winner >= 0 ? Player(W.Winner) : "Nobody left standing";
             if (W.MatchOver)
@@ -1425,7 +1460,7 @@ namespace Pez.View
                 if (Runner.Game.RestartIn >= 0) who += $" · new match in {FormatLong(Runner.Game.RestartIn)}";
             }
             float tw = Spaced(0, 0, 0, msg, fHeadBold, 44, Ink, 0.04f, false);
-            float w = Mathf.Max(520, tw + 120), h = 210;
+            float w = Mathf.Min(Mathf.Max(520, tw + 120), SW - 24), h = web ? 150 : 210; // the browser has no menu to go back to
             var r = new Rect(SW / 2 - w / 2, SH / 2 - h / 2, w, h);
             Panel(r, 0.94f);
             float hw = Spaced(0, 0, 0, "GAME OVER", fHead, 13, Muted, 0.14f, false);
@@ -1434,7 +1469,7 @@ namespace Pez.View
             if (W.Winner >= 0) { Round(new Rect(x, r.y + 66, 18, 18), 4, Mats.Team(W.Winner)); x += 30; }
             Spaced(x, r.y + 48, 54, msg, fHeadBold, 44, Ink, 0.04f);
             Text(new Rect(r.x, r.y + 104, w, 20), who, fSans, 15, Muted, TextAnchor.MiddleCenter);
-            if (Button(new Rect(SW / 2 - 100, r.yMax - 64, 200, 44), "Back to menu", true)) Runner.InMenu = true;
+            if (!web && Button(new Rect(SW / 2 - 100, r.yMax - 64, 200, 44), "Back to menu", true)) Runner.InMenu = true;
         }
 
         // ------------------------------------------------------------------ main menu
