@@ -130,6 +130,12 @@ namespace Pez.Sim
 
         // ---- Open arena: players can join and leave mid-game
         public bool Open;
+        /// <summary>
+        /// A copy of a game the server owns (the browser build): it moves and fights on between snapshots, but never
+        /// decides the game: no defeats, stalls, arena clears, match clock or next match. Those arrive in the next
+        /// snapshot. A player's copy is fogged, so its own count of who's still standing would be wrong anyway.
+        /// </summary>
+        public bool Mirror;
         public int MaxPlayers = 8;
         public int MaxMapSize = Map.MaxSize;
         public int GrowStep = 32;
@@ -875,8 +881,8 @@ namespace Pez.Sim
             Guard("separation", Separate);
             Guard("cleanup", Cleanup);
             if (Tick % 4 == 0) Guard("visibility", UpdateVisibility);
-            Guard("victory", CheckVictory);
-            Guard("match", MatchClock);
+            if (!Mirror) Guard("victory", CheckVictory);
+            if (!Mirror) Guard("match", MatchClock);
             Guard("derricks", DerrickUpkeepTick);
             Guard("upkeep", Upkeep);
             Guard("regrowth", Regrow);

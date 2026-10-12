@@ -161,6 +161,7 @@ namespace Pez.View
             int local = sameGame ? game.World.Tick : tick; float alpha = game.Alpha; // where the view's world is now (the snapshot is a fetch old)
             sw.Restart();
             game.Restore(root);
+            game.World.Mirror = true; // the server decides the game; this copy only shows it
             if (local > tick && local - tick <= 40) game.CatchUp(local, alpha); // time never runs backwards on screen (events up to here already played)
             double restoreMs = sw.Elapsed.TotalMilliseconds;
             // The page's team may not be in this game (a seat from an earlier match, or not taken yet): watch everything until it is.

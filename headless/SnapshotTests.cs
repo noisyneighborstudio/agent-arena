@@ -62,7 +62,7 @@ namespace Pez.Headless
                 "SurfaceWarnedAt HomeOreWarned LastCommandAt Reserve SaveFor SaveForCost Stats",
             [typeof(World)] = "Map Paths MapVersion Open MaxPlayers MaxMapSize GrowStep SafeJoinDistance ProtectionSeconds Teams ById Entities Projectiles Events " +
                 "EventCounts Alerts Tick GameOver Winner Errors LastError nextId nextSeq seatCounter rng rateSnapshot airWarned StallGrace ArenaChampion contested Inventions GameId Regrown SuddenDeathAt DerrickRespawns " +
-                "| ErrorLog loggedErrors cells cellsW cellsH nearTarget nearHelp nearMine nearSep nearVis Showcase OreVersion oreDirty beingMined regrowNow scoreCache scoreCacheTick NextMatchIn derricksChecked groupSpan", // Showcase: the kitchen sink room is never saved (rebuilt from code)
+                "| ErrorLog loggedErrors cells cellsW cellsH nearTarget nearHelp nearMine nearSep nearVis Showcase OreVersion oreDirty beingMined regrowNow scoreCache scoreCacheTick NextMatchIn derricksChecked groupSpan Mirror", // Showcase: the kitchen sink room is never saved (rebuilt from code); Mirror: set by the browser client on its copy
             [typeof(Invention)] = "Key Name Chassis WeaponFrom Summary Team Def ResearchCost ResearchTime Progress Novelty PriceFactor ProposedAt ResearchedAt Built Lost Kills",
             [typeof(Map)] = "W H Tiles Ore OreType Occupant Spawns Deep OreScale nextDepositId OreBase OreBaseType | writable fieldsChanged fieldTiles fieldRoots BaseMissing",
             [typeof(SimpleAI)] = "team Passive nextThink waveSize outpostTargets nextProspect prospectRadius knownSurface",
@@ -212,11 +212,50 @@ namespace Pez.Headless
             Check(w.Errors == 0 && b.Errors == 0, $"no sim errors ({w.LastError ?? b.LastError})");
 
             BusyGame();
+            FoggedSnapshots();
             OlderSnapshotsLoad(json);
             TokensSurviveRestart();
         }
 
         /// <summary>Four scripted AIs fighting on a big map for 20 minutes: how big is the save, and does it resume exactly?</summary>
+        /// <summary>A player's browser copy (ViewSnapshot with a team): what fog hides stays out, and it still runs.</summary>
+        static void FoggedSnapshots()
+        {
+            var g = new Game(new GameConfig { Seed = 3, MapSize = 64, Controllers = new[] { "llm", "ai" } });
+            Step(g, 3);
+            var w = g.World;
+            foreach (var t in w.Teams) t.ProtectedUntil = 0;
+            var hq0 = w.Owned(0).First(e => e.IsStructure); var hq1 = w.Owned(1).First(e => e.IsStructure);
+            var mine = At(w.SpawnUnit(0, "light_tank", hq0), hq0.Center + new Vec2(3, 0));
+            var hidden = At(w.SpawnUnit(1, "heavy_tank", hq1), hq1.Center + new Vec2(-3, 0));
+            var seen = At(w.SpawnUnit(1, "scout_buggy", hq1), mine.Pos + new Vec2(2, 0));
+            Commands.Execute(w, 1, Cmd("type", "move", "units", new[] { seen.Id }, "x", hq1.Center.X, "y", hq1.Center.Y));
+            w.SetOrders(1, "Secret: rush their refinery at minute five.");
+            w.Teams[1].Stock["steel"] = 4321;
+            Step(g, 0.5f);
+            Check(w.IsVisibleTo(0, seen) && !w.IsVisibleTo(0, hidden), "set up: one enemy in sight, one hidden at its base");
+            var json = Json.Write(ApiServer.ViewSnapshot(g, 0));
+            var copy = Resume(json);
+            var cw = copy.World;
+            Check(cw.Get(mine.Id) != null && cw.Get(seen.Id) != null && cw.Get(hidden.Id) == null && cw.Get(hq1.Id) == null,
+                  $"the copy has its own units and the enemy it sees, not the hidden enemy or an unscouted base ({cw.Entities.Count} entities of {w.Entities.Count})");
+            var cs = cw.Get(seen.Id);
+            Check(cs.Path == null || cs.Path.Count <= 4, $"a seen enemy's path is cut to its next steps ({seen.Path?.Count} -> {cs.Path?.Count})");
+            Check(!json.Contains("Secret: rush") && string.IsNullOrEmpty(cw.Teams[1].StandingOrders) && cw.Teams[1].Amount("steel") == 0 &&
+                  !(Snapshot.Parse(json).Obj("world").Arr("teams")[1] as Dictionary<string, object>).ContainsKey("visible"),
+                  "a rival's orders, stockpile and vision aren't in the copy (the copy works out what the rival's units it has can see)");
+            Check(cw.Teams[0].Amount("steel") == w.Teams[0].Amount("steel") && cw.Teams[0].Visible.SequenceEqual(w.Teams[0].Visible), "the player's own stockpile and vision are");
+            Check(cw.Teams[1].Name == w.Teams[1].Name && cw.Teams[1].Stats.Kills == w.Teams[1].Stats.Kills, "rivals keep their public face: name and kills");
+            int teams = cw.Teams.Count;
+            cw.Mirror = true; // as the browser runs it
+            Step(copy, 20);
+            Check(cw.Errors == 0 && copy.World.Teams.Count == teams, $"the copy runs on for 20 s with no sim errors and seats no house AI of its own ({cw.LastError})");
+            Check(!cw.Teams[1].Defeated && !cw.GameOver && !cw.Events.Any(e => e.Type == "defeated" || e.Type == "game_over"),
+                  "a mirror doesn't decide the game: the rival it can't see isn't counted out");
+            var spec = Json.Write(ApiServer.ViewSnapshot(g));
+            Check(Resume(spec).World.Get(hidden.Id) != null && !spec.Contains("Secret: rush"), "a spectator's copy still has everything but the orders");
+        }
+
         static void BusyGame()
         {
             var game = new Game(new GameConfig { Seed = 21, MapSize = 160, Controllers = new[] { "ai", "ai", "ai", "ai" } });
@@ -343,7 +382,9 @@ namespace Pez.Headless
             Check(!vjson.Contains("\"token\"") && !vjson.Contains("view_token") && !vjson.Contains(token) && !vjson.Contains(view) && !vsnap.ContainsKey("api"), "the spectator snapshot carries no tokens or api section");
             Check(!vjson.Contains("flank west") && vgame.World.Teams.All(t => string.IsNullOrEmpty(t.StandingOrders)) && vsnap.Obj("config").Arr("orders").All(o => string.IsNullOrEmpty(o as string)),
                   "the spectator snapshot carries no standing orders or commander orders");
-            Check(Convert.ToInt32(Call(7794, $"/api/view/snapshot?team={team}")["_status"]) == 400, "a per-team snapshot is refused until it is fog-filtered");
+            var own = Call(7794, $"/api/view/snapshot?view={view}");
+            Check(Convert.ToInt32(own["_status"]) == 200 && own.Obj("world") != null && !Json.Write(own).Contains(token),
+                  "a view token gets that team's own (fogged) snapshot, still without tokens");
             Call(7794, "/api/admin/restart", body: "{}");
             Thread.Sleep(200);
             Check(!File.Exists(file) && Convert.ToInt32(Call(7794, "/api/whoami", token)["_status"]) == 401, "an admin restart starts a fresh game and drops the saved one (old tokens end)");

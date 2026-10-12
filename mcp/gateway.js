@@ -216,6 +216,61 @@ function sendSnapshot(req, res, room) {
   res.end(body);
 }
 
+// A player's own snapshot (GET /view/<v>/snapshot): their team's fogged copy (the game filters it), live, for the
+// browser build. One fetch per link every SNAP_OWN_MS at most, shared by every tab on that link.
+const SNAP_OWN_MS = 800;
+const ownSnaps = new Map(); // view token -> { at, gz, pending }
+async function sendOwnSnapshot(req, res, view) {
+  const { room, raw } = parseToken(view);
+  let c = ownSnaps.get(view);
+  if (!c || Date.now() - c.at > SNAP_OWN_MS) {
+    if (!c?.pending) {
+      const pending = (async () => {
+        const r = await fetch(`${room.game}/api/view/snapshot?view=${raw}`, { signal: AbortSignal.timeout(8000) });
+        if (r.status === 401 || r.status === 400) { const e = new Error("this view link isn't valid any more (its seat changed hands or the game restarted)"); e.status = 401; throw e; }
+        if (!r.ok) throw new Error(`game returned ${r.status}`);
+        return { at: Date.now(), gz: zlib.gzipSync(Buffer.from(await r.text()), { level: 4 }) };
+      })();
+      c = { ...(c ?? { at: 0, gz: null }), pending };
+      ownSnaps.set(view, c);
+      pending.then((v) => ownSnaps.set(view, v), () => ownSnaps.delete(view));
+    }
+    try { c = await c.pending; } catch (e) { return send(res, e.status ?? 502, { ok: false, error: e.message }); }
+  }
+  if (ownSnaps.size > 2000) for (const [k, v] of ownSnaps) if (Date.now() - v.at > 60000) ownSnaps.delete(k);
+  const gz = /\bgzip\b/.test(req.headers["accept-encoding"] ?? "");
+  const body = gz ? c.gz : zlib.gunzipSync(c.gz);
+  res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", vary: "accept-encoding", "x-content-type-options": "nosniff",
+    ...(gz ? { "content-encoding": "gzip" } : {}), "content-length": body.length });
+  res.end(body);
+}
+
+// The browser build (Unity Web): /play/... serves its files (precompressed .br with the real file's type), and
+// /view/<v>/web or /watch[/<n>]/web opens it on the right feed. PEZZ_WEB_DIR is the build (PezSetup.BuildWeb's output).
+const WEB_DIR = process.env.PEZZ_WEB_DIR || path.join(HERE, "..", "build", "web");
+const WEB_TYPES = { ".html": "text/html; charset=utf-8", ".js": "application/javascript", ".wasm": "application/wasm", ".data": "application/octet-stream",
+  ".json": "application/json", ".png": "image/png", ".ico": "image/x-icon", ".css": "text/css" };
+function sendWebFile(req, res, rel) {
+  const file = path.resolve(WEB_DIR, rel);
+  if (!file.startsWith(path.resolve(WEB_DIR) + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile())
+    return send(res, 404, { ok: false, error: "not found" });
+  const enc = file.endsWith(".br") ? "br" : file.endsWith(".gz") ? "gzip" : null;
+  const base = enc ? file.slice(0, -3) : file;
+  const head = { "content-type": WEB_TYPES[path.extname(base)] || "application/octet-stream", "content-length": fs.statSync(file).size, "x-content-type-options": "nosniff",
+    // Unity revalidates its cached data itself; the files keep their names between builds, so no long max-age yet.
+    "cache-control": "no-cache" };
+  if (enc) head["content-encoding"] = enc;
+  res.writeHead(200, head);
+  fs.createReadStream(file).pipe(res);
+}
+function sendWebPage(res, query) {
+  const file = path.join(WEB_DIR, "index.html");
+  if (!fs.existsSync(file)) return send(res, 503, { ok: false, error: "the browser build isn't installed on this gateway" });
+  // The page's own files come from /play/; the query (snapshot feed, live, team) stays on this address for the game to read.
+  const html = fs.readFileSync(file, "utf8").replace("<head>", `<head><base href="/play/">`);
+  return send(res, 200, html.replace("</head>", `<script>window.PEZ_QUERY=${JSON.stringify(query)}</script></head>`), "text/html");
+}
+
 // ------------------------------------------------------------------ the public spectator's live video, delayed
 // Rooms with a renderer (the Unity host) have a spectator camera: the whole map, no fog, with its own director. The
 // gateway holds one upstream connection to it per room, keeps about WATCH_FPS frames a second in a ring a little
@@ -1180,6 +1235,19 @@ const server = http.createServer(async (req, res) => {
       let seat = null; try { seat = (await gameAt(room, `/api/view/whoami?view=${raw}`)).seat; } catch {}
       return send(res, 200, { items: seat == null ? [] : (feeds.get(`${room.id}:${seat}`) ?? []).slice(-12) });
     }
+    // The browser build on this player's own live, fogged view: /view/<v>/web, fed by /view/<v>/snapshot.
+    const ws = p.match(new RegExp(`^/view/${V}/snapshot$`));
+    if (ws) return await sendOwnSnapshot(req, res, ws[1]);
+    const wv = p.match(new RegExp(`^/view/${V}/web$`));
+    if (wv) {
+      if (!url.searchParams.has("snapshot")) {
+        const who = await whoIs(wv[1]);
+        const q = new URLSearchParams(url.searchParams);
+        q.set("snapshot", `/view/${wv[1]}/snapshot`); q.set("live", q.get("live") ?? "1"); q.set("team", String(who.team));
+        res.writeHead(302, { location: `/view/${wv[1]}/web?${q}`, "cache-control": "no-store" }); return res.end();
+      }
+      return sendWebPage(res, Object.fromEntries(url.searchParams));
+    }
     const cm = p.match(new RegExp(`^/view/${V}/cam$`));
     if (cm) return await liveCam(res, cm[1], url.searchParams);
     const vm = p.match(new RegExp(`^/view/${V}(/map|/frame)?$`));
@@ -1202,7 +1270,21 @@ const server = http.createServer(async (req, res) => {
       if (!room) return send(res, 404, { ok: false, error: "no such room (see /lobby)" });
       return send3d(res, w3[1] ? `/watch/${room.id}` : "/watch", `spectator · room ${room.id}`);
     }
-    // The browser client's snapshot feed (spike; not linked from any page): /watch[/<n>]/snapshot, delayed like /watch.
+    // The browser build, spectating: /watch[/<n>]/web on /watch[/<n>]/snapshot (the whole room, delayed like /watch).
+    const ww = p.match(/^\/watch(?:\/(\d{1,3}))?\/web$/);
+    if (ww) {
+      const room = rooms.get(ww[1] ?? 1);
+      if (!room) return send(res, 404, { ok: false, error: "no such room (see /lobby)" });
+      if (!url.searchParams.has("snapshot")) {
+        const q = new URLSearchParams(url.searchParams);
+        q.set("snapshot", `${ww[1] ? `/watch/${room.id}` : "/watch"}/snapshot`); q.set("live", q.get("live") ?? "2");
+        res.writeHead(302, { location: `${ww[1] ? `/watch/${room.id}` : "/watch"}/web?${q}`, "cache-control": "no-store" }); return res.end();
+      }
+      return sendWebPage(res, Object.fromEntries(url.searchParams));
+    }
+    const wf = p.match(/^\/play\/([A-Za-z0-9_.\/-]+)$/);
+    if (wf && !wf[1].includes("..")) return sendWebFile(req, res, wf[1]);
+    // The browser client's snapshot feed: /watch[/<n>]/snapshot, delayed like /watch.
     const sn = p.match(/^\/watch(?:\/(\d{1,3}))?\/snapshot$/);
     if (sn) {
       const room = rooms.get(sn[1] ?? 1);

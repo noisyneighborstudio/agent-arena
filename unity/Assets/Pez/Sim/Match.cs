@@ -220,7 +220,7 @@ namespace Pez.Sim
         void ResultsCountdown(float realDt)
         {
             var w = World;
-            if (!Config.Open || Config.KitchenSink || !w.MatchOver) return;
+            if (!Config.Open || Config.KitchenSink || !w.MatchOver || w.Mirror) return;
             if (restartIn < 0) restartIn = ResultsSeconds;
             float before = restartIn;
             restartIn -= realDt * Speed;

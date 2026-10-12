@@ -234,7 +234,7 @@ namespace Pez.Api
                 case "":
                 case "/api":
                     contentType = "text/plain";
-                    return "Pezz RTS control API\n\nGET  /api/rules\nGET  /api/state?team=N[&since=SEQ]\nGET  /api/map?team=N\nGET  /api/alerts?team=N[&since=SEQ&min=medium|high|critical]\nGET  /api/wait?team=N&seconds=S[&since=ALERT_SEQ&events_since=SEQ&min=high|critical|none]  (returns early on a new priority alert)\nPOST /api/command?team=N   body: {\"commands\":[...]} | [...] | {...}\nPOST /api/join?team=N      body: {\"name\":\"Claude\"}\nGET  /api/status\nGET  /api/view/snapshot  (spectator: the whole world as a saved-game snapshot, no tokens or orders)\nPOST /api/admin/restart    body: {\"seed\":1,\"map_size\":112,\"controllers\":[\"llm\",\"llm\"],\"speed\":1,\"match_hours\":4}\nPOST /api/admin/speed      body: {\"speed\":0.5}\nPOST /api/admin/save       (saves the game now; a restarted host resumes it)\nGET  /api/admin/inventions (every agent-invented unit in this game, with its record)\nPOST /api/admin/orders?team=N  body: {\"text\":\"standing orders for that team's commander\"}\n\n" + Commands.Help;
+                    return "Pezz RTS control API\n\nGET  /api/rules\nGET  /api/state?team=N[&since=SEQ]\nGET  /api/map?team=N\nGET  /api/alerts?team=N[&since=SEQ&min=medium|high|critical]\nGET  /api/wait?team=N&seconds=S[&since=ALERT_SEQ&events_since=SEQ&min=high|critical|none]  (returns early on a new priority alert)\nPOST /api/command?team=N   body: {\"commands\":[...]} | [...] | {...}\nPOST /api/join?team=N      body: {\"name\":\"Claude\"}\nGET  /api/status\nGET  /api/view/snapshot[?view=V]  (the world as a saved-game snapshot, no tokens or orders; with a view token, that team's fogged copy)\nPOST /api/admin/restart    body: {\"seed\":1,\"map_size\":112,\"controllers\":[\"llm\",\"llm\"],\"speed\":1,\"match_hours\":4}\nPOST /api/admin/speed      body: {\"speed\":0.5}\nPOST /api/admin/save       (saves the game now; a restarted host resumes it)\nGET  /api/admin/inventions (every agent-invented unit in this game, with its record)\nPOST /api/admin/orders?team=N  body: {\"text\":\"standing orders for that team's commander\"}\n\n" + Commands.Help;
                 case "/api/rules":
                     return Json.Write(StateView.Rules());
                 case "/api/state":
@@ -338,12 +338,11 @@ namespace Pez.Api
                     return Json.Write(ViewFrame(w, ViewTeam(req, w)));
                 case "/api/view/snapshot":
                     {
-                        // The whole world for a client that renders it itself (the browser build). Spectator only: like
-                        // team=-1 frames it has no fog, so the gateway serves it delayed (/watch/snapshot) and never raw.
-                        // TODO team=N: filter through ViewFrame's fog rules (shroud, IsVisibleTo, KnownEnemyStructures) before a player can use it.
-                        if (ViewTeam(req, w) >= 0) { status = 400; return Json.Write(new JObj().Set("ok", false).Set("error", "snapshots are spectator-only for now")); }
+                        // The whole world for a client that renders it itself (the browser build). Without a view token it
+                        // has no fog, like team=-1 frames, so the gateway serves that delayed (/watch/snapshot) and never raw.
+                        // A view token (?view=) gets that team's fogged copy instead, live: the gateway's /view/<token>/snapshot.
                         p.Bulk = true;
-                        return Json.Write(ViewSnapshot(game));
+                        return Json.Write(ViewSnapshot(game, ViewTeam(req, w)));
                     }
                 case "/api/viewlink":
                     {
@@ -552,21 +551,98 @@ namespace Pez.Api
             return o;
         }
 
-        /// <summary>The saved-game snapshot minus what a spectator must not read: no API section (tokens), no orders text.</summary>
-        public static JObj ViewSnapshot(Game game)
+        /// <summary>
+        /// The saved-game snapshot for a client that renders it itself, minus what the viewer must not read: never the API
+        /// section (tokens) or anyone else's orders. A spectator (team -1) gets the whole world, so it's served delayed. A
+        /// player's team gets ViewFrame's fog rules: its own team in full; rivals cut to what's public (name, seat, status,
+        /// kills); enemy units and buildings only while it sees them (buildings also once seen), with their plans cut to the
+        /// next few steps of their path; events, shots and alerts only where it can see. Nothing here starts a rival's AI or
+        /// a house seat in the client's local copy: that would be a guess, corrected by the next snapshot anyway.
+        /// </summary>
+        public static JObj ViewSnapshot(Game game, int team = -1)
         {
+            var w = game.World;
             var snap = Snapshot.Write(game); // the host's `api` (tokens) section is added by RoomSaver, never here
             snap.Remove("api");
             if (snap["config"] is JObj cfg && cfg["orders"] is List<object> orders)
-                cfg["orders"] = orders.Select(_ => (object)"").ToList();
-            if (snap["world"] is JObj world)
+                cfg["orders"] = orders.Select((o, i) => (object)(i == team ? o : "")).ToList();
+            if (snap["game"] is JObj g)
             {
-                if (world["teams"] is List<object> teams)
-                    foreach (var t in teams.OfType<JObj>()) t.Remove("standing_orders"); // a commander's orders are the team's plan
-                if (world["events"] is List<object> events)
-                    foreach (var e in events.OfType<JObj>()) if ((e["type"] as string) == "orders") e.Remove("text"); // World.SetOrders logs the text as an event
+                g["next_house_check"] = 1e9; // the host seats house AIs; the client's copy waits for its snapshot to say so
+                if (team >= 0 && g["ais"] is List<object> ais) g["ais"] = ais.OfType<JObj>().Where(a => Num(a["team"]) == team).Cast<object>().ToList();
             }
+            if (!(snap["world"] is JObj world)) return snap;
+            if (world["teams"] is List<object> teams)
+                foreach (var t in teams.OfType<JObj>())
+                {
+                    int id = (int)Num(t["id"]);
+                    if (id == team) continue;
+                    t.Remove("standing_orders"); // a commander's orders are the team's plan
+                    if (team < 0) continue;
+                    foreach (var k in new[] { "stock", "rates", "power_produced", "power_used", "visible", "explored", "detected", "revealed",
+                                              "structure_queue", "unit_queues", "known_enemy_structures", "surveyed", "survey_sites", "reserve",
+                                              "save_for", "save_for_cost", "zones", "stalled_since", "surface_warned_at", "home_ore_warned", "last_command_at", "orders_version" })
+                        t.Remove(k);
+                    if (t["stats"] is JObj st) t["stats"] = new JObj().Set("kills", st["kills"] ?? 0);
+                }
+            if (world["events"] is List<object> events)
+            {
+                foreach (var e in events.OfType<JObj>()) if ((e["type"] as string) == "orders" && (team < 0 || Num(e["team"] ?? -1) != team)) e.Remove("text"); // World.SetOrders logs the text as an event
+                if (team >= 0)
+                    world["events"] = events.OfType<JObj>().Where(e => PublicEvent(e["type"] as string) || Num(e["team"] ?? -1) == team || Sees(w, team, e["pos"])).Cast<object>().ToList();
+            }
+            if (team < 0) return snap;
+            var t0 = w.Teams[team];
+            if (world["entities"] is List<object> ents)
+            {
+                var keep = new List<object>();
+                foreach (var eo in ents.OfType<JObj>())
+                {
+                    var e = w.Get((int)Num(eo["id"]));
+                    if (e == null || e.Team == team) { keep.Add(eo); continue; }
+                    if (e.IsCarried || !(w.IsVisibleTo(team, e) || (e.IsStructure && t0.KnownEnemyStructures.ContainsKey(e.Id)))) continue;
+                    // Where it's going is its owner's business: keep the next few steps so it moves on smoothly until the next snapshot.
+                    if (eo["path"] is List<object> path)
+                    {
+                        int at = (int)Num(eo["path_idx"] ?? 0);
+                        var next = path.Skip(at).Take(4).ToList();
+                        eo["path"] = next; eo["path_idx"] = 0;
+                        if (next.Count > 0) eo["order_pos"] = next[next.Count - 1];
+                    }
+                    else eo.Remove("order_pos");
+                    foreach (var k in new[] { "rally", "waypoints", "waypoint_loop", "resume_order", "resume_pos", "resume_guard", "resume_target", "resume_waypoints",
+                                              "mine_queue", "home_pos", "harvest_tile", "prospect_center", "prospect_radius", "skip_sites", "passengers", "retreat_below", "fuel", "fuel_cap" })
+                        eo.Remove(k);
+                    eo["guard_pos"] = eo["pos"];
+                    keep.Add(eo);
+                }
+                world["entities"] = keep;
+            }
+            if (world["projectiles"] is List<object> shots)
+                world["projectiles"] = shots.OfType<JObj>().Where(p => Num(p["team"]) == team || Sees(w, team, p["pos"])).Cast<object>().ToList();
+            if (world["alerts"] is JObj al && al["alerts"] is List<object> alerts)
+                al["alerts"] = alerts.OfType<JObj>().Where(a => Num(a["team"]) == team).Cast<object>().ToList();
+            if (world["rate_snapshot"] is List<object> rates)
+                world["rate_snapshot"] = rates.OfType<JObj>().Where(r => Num(r["team"]) == team).Cast<object>().ToList();
+            if (world["air_warned"] is List<object> aw)
+                world["air_warned"] = aw.OfType<List<object>>().Where(x => x.Count > 0 && Num(x[0]) == team).Cast<object>().ToList();
+            // Deep deposits are found by surveying: a player's copy only has the ones it surveyed.
+            if (world["map"] is JObj map && map["deep"] is List<object> deep)
+                map["deep"] = deep.OfType<JObj>().Where(d => t0.Surveyed.Contains((int)Num(d["id"]))).Cast<object>().ToList();
             return snap;
+        }
+
+        static double Num(object o) => o is double d ? d : o is float f ? f : o is int i ? i : o is long l ? l : o is IConvertible c ? c.ToDouble(System.Globalization.CultureInfo.InvariantCulture) : 0;
+
+        /// <summary>Events everyone hears about (the scoreboard and chat), wherever they happen.</summary>
+        static bool PublicEvent(string type) => type == "chat" || type == "defeated" || type == "game_over" || type == "joined" || type == "left" || type == "resigned" || type == "match";
+
+        static bool Sees(World w, int team, object pos)
+        {
+            if (!(pos is List<object> p) || p.Count < 2) return false;
+            var m = w.Map;
+            int x = Math.Clamp((int)Num(p[0]), 0, m.W - 1), y = Math.Clamp((int)Num(p[1]), 0, m.H - 1);
+            return w.Teams[team].Visible[m.Idx(x, y)];
         }
 
         static JObj ViewFrame(World w, int team)
