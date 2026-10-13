@@ -2917,7 +2917,7 @@ namespace Pez.Headless
             string gamesCsv = System.IO.File.ReadAllText(System.IO.Path.Combine(csvDir, "games.csv"));
             System.IO.Directory.Delete(csvDir, true);
             // games.csv carries each seat's exact final counters; a game that ended between minute boundaries is one minutes.csv alone can't total.
-            var gamesLines = gamesCsv.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            var gamesLines = gamesCsv.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => l.TrimEnd('\r')).ToArray();
             var gamesHead = gamesLines[0].Split(',');
             string[] knockRow = gamesLines.Skip(1).Select(l => l.Split(',')).First(c => c[Array.IndexOf(gamesHead, "ended")] == "knockout");
             string Col(string name) => knockRow[Array.IndexOf(gamesHead, name)];

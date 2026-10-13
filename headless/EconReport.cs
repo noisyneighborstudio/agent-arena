@@ -976,15 +976,15 @@ namespace Pez.Headless
         {
             Directory.CreateDirectory(dir);
             var g = new StringBuilder("mode,size,ore,seed,game_over,ended,winner,end_min,errors,surface_start,deep_start,deep_left,far_ore_end,surface_end,seat0_mined,seat0_deep_mined,seat0_salvage_mined,seat1_mined,seat1_deep_mined,seat1_salvage_mined\n");
-            foreach (var x in games) g.AppendLine(string.Join(",", x.Mode, x.Size, OreLabel(x.Ore), x.Seed, x.GameOver ? 1 : 0, x.Ended, x.Winner, F(x.EndMinute, "0.0"), x.Errors, F(x.SurfaceStart, "0"), F(x.DeepStart, "0"), F(x.DeepLeft, "0"), F(x.FarOreEnd, "0"), F(x.SurfaceEnd, "0"),
-                x.Teams[0].Mined, x.Teams[0].Deep, x.Teams[0].SalvageMined, x.Teams[1].Mined, x.Teams[1].Deep, x.Teams[1].SalvageMined));
+            foreach (var x in games) g.Append(string.Join(",", x.Mode, x.Size, OreLabel(x.Ore), x.Seed, x.GameOver ? 1 : 0, x.Ended, x.Winner, F(x.EndMinute, "0.0"), x.Errors, F(x.SurfaceStart, "0"), F(x.DeepStart, "0"), F(x.DeepLeft, "0"), F(x.FarOreEnd, "0"), F(x.SurfaceEnd, "0"),
+                x.Teams[0].Mined, x.Teams[0].Deep, x.Teams[0].SalvageMined, x.Teams[1].Mined, x.Teams[1].Deep, x.Teams[1].SalvageMined)).Append('\n');
             File.WriteAllText(Path.Combine(dir, "games.csv"), g.ToString());
             var items = Defs.Items.ToArray();
             var m = new StringBuilder("mode,size,ore,seed,team,min,mined,deep,salvage,derrick_steel,cc_trickle,upkeep,lowpower_s,spent,trucks,deep_mines,derricks,refineries,power_made,power_used,units,structures,kills,home_ore," + string.Join(",", items) + "\n");
             foreach (var x in games)
                 foreach (var t in x.Teams)
                     foreach (var r in t.Rows)
-                        m.AppendLine(string.Join(",", x.Mode, x.Size, OreLabel(x.Ore), x.Seed, t.Id, r.Min, r.Mined, r.Deep, r.Salvage, F(r.Derrick), F(r.Trickle), F(r.Upkeep), F(r.LowPowerS), F(r.Spent, "0"), r.Trucks, r.DeepMines, r.DerricksHeld, r.Refineries, r.PowerProduced, r.PowerUsed, r.Units, r.Structures, r.Kills, F(r.HomeOre, "0"), string.Join(",", r.Stock.Select(v => F(v, "0")))));
+                        m.Append(string.Join(",", x.Mode, x.Size, OreLabel(x.Ore), x.Seed, t.Id, r.Min, r.Mined, r.Deep, r.Salvage, F(r.Derrick), F(r.Trickle), F(r.Upkeep), F(r.LowPowerS), F(r.Spent, "0"), r.Trucks, r.DeepMines, r.DerricksHeld, r.Refineries, r.PowerProduced, r.PowerUsed, r.Units, r.Structures, r.Kills, F(r.HomeOre, "0"), string.Join(",", r.Stock.Select(v => F(v, "0"))))).Append('\n');
             File.WriteAllText(Path.Combine(dir, "minutes.csv"), m.ToString());
         }
     }
