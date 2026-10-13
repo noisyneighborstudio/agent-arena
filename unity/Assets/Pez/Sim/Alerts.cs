@@ -62,16 +62,18 @@ namespace Pez.Sim
         }
 
         /// <summary>
-        /// The log holds 500 alerts. Over that, the oldest alerts that have stopped merging go: one still open is saved with the game, so a
-        /// resumed game (which starts with far fewer alerts and never reaches the cap at the same moment) keeps merging into it, and the
-        /// original must too. Checked on every raise, merged or new: a burst of alerts that are all open can't be trimmed, and the ones
-        /// that close afterwards have to be dropped by a later raise even if it only refreshes one of them.
+        /// The log holds 500 alerts. Over that, the alerts that have stopped merging and were last updated longest ago go: one still open is
+        /// saved with the game, so a resumed game (which starts with far fewer alerts and never reaches the cap at the same moment) keeps
+        /// merging into it, and the original must too. The same goes for one a save still keeps (updated within the last
+        /// AlertKeepSeconds): going by when an alert was last updated, not by its number, a long-running fight's alert isn't the first to
+        /// go while the resumed game still holds it. Checked on every raise, merged or new: a burst of alerts that are all open can't be
+        /// trimmed, and the ones that close afterwards have to be dropped by a later raise even if it only refreshes one of them.
         /// </summary>
         void TrimToCap()
         {
             if (All.Count <= 500) return;
             var stillOpen = new HashSet<Alert>(open);
-            var cut = new HashSet<Alert>(All.Where(x => !stillOpen.Contains(x)).Take(All.Count - 500));
+            var cut = new HashSet<Alert>(All.Where(x => !stillOpen.Contains(x)).OrderBy(x => x.LastTick).Take(All.Count - 500));
             if (cut.Count > 0) All.RemoveAll(cut.Contains);
         }
 
