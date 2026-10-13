@@ -111,12 +111,12 @@ namespace Pez.Sim
             return o;
         }
 
-        static JObj WriteItem(ProdItem p) => new JObj().Set("key", p.Key).Put("progress", p.Progress).Put("structure_id", p.StructureId);
+        static JObj WriteItem(ProdItem p) => new JObj().Set("key", p.Key).Put("progress", p.Progress).Put("structure_id", p.StructureId).Put("worker_id", p.WorkerId);
 
         static ProdItem ReadItem(D d)
         {
             var p = new ProdItem();
-            d.Load("key", ref p.Key); d.Load("progress", ref p.Progress); d.Load("structure_id", ref p.StructureId);
+            d.Load("key", ref p.Key); d.Load("progress", ref p.Progress); d.Load("structure_id", ref p.StructureId); d.Load("worker_id", ref p.WorkerId);
             return Defs.Get(p.Key) == null ? null : p;
         }
 

@@ -33,10 +33,12 @@ One command, `propose_tech`. It goes through `/api/command`, and the MCP `comman
   "weapon_from": "rocket_soldier",   // optional: mount another buildable unit's weapon
   "hp": 360, "speed": 2.6,           // absolute values; omit any to keep the chassis/donor value
   "damage": 60, "range": 6, "cooldown": 2.2, "sight": 7, "fuel": 200,
-  "dry_run": true }                  // quote only, free; without it a valid design is paid for and researched
+  "dry_run": true }                  // a JSON boolean: quote only, free; without it a valid design is paid for and researched
 ```
 
 Agents can't set cost, build time, price, power, armour, flight, stealth, splash, description or research time. Any of those fields, or any unknown field, is rejected with the reason ("'cost' can't be set: cost is computed from your stats, not proposed").
+
+`dry_run` must be a real JSON boolean. Anything else (the string `"true"`, a number) is an error and nothing is researched: it used to read as "not a dry run" and pay for real research and one of the three permanent slots.
 
 A real dry-run reply, copied from the test output:
 
@@ -45,7 +47,7 @@ A real dry-run reply, copied from the test output:
  "spec":"hp 360, speed 2.6, sight 7, fuel 200s; rocket 60 dmg every 2.2s, range 6, hits air",
  "unit_cost":"330 steel, 70 copper","build_time_s":11,
  "price":{"cost_se":435,"base_cost_se":260,"factor":1.63,"curve":1.46,"lanchester_floor":1.2,"novelty":1.12,
-          "efficiency_vs_base":0.51,"mass_ratio":1.03},
+          "efficiency_vs_base":0.51,"mass_ratio":1.03,"weapon_unit_floor":1.14,"efficiency_vs_weapon_unit":0.46},
  "research_cost":"270 steel, 165 circuits","research_time_s":87},
  "result":"valid. Send the same proposal without dry_run to research it for 270 steel, 165 circuits (87s)"}
 ```
@@ -81,6 +83,8 @@ flags   = air ×1.5, stealth ×1.6, ×(1 + 0.06·capacity), self-repair ×1.3   
 
 The rms log error is 0.24, so the curve prices a typical unit within about ±27%. Actual cost over fitted cost per unit: rifleman 0.90, rocket_soldier 0.76, laser_trooper 0.83, scout_buggy 0.87, light_tank 1.00, heavy_tank 0.99, artillery 1.12, laser_tank 1.17, sniper 1.67, commando 1.17, apc 1.30, flak_track 0.60, mammoth_tank 0.95, gunship 1.24, stealth_bomber 1.08. (Refitted after main slowed infantry; the first fit had 0.215 · HP^0.47 · e^(0.137·range) · e^(0.218·speed).) The sniper and the flak track sit furthest off the curve because they're specialists.
 
+The script skips high-altitude units (the Reaper drone), as the validator does (`Tech.IsChassis`: "high altitude isn't priced"). It briefly included the Reaper, whose 4,200-se price sits far off the curve (3.7× the fit), so it no longer reproduced the constants above. Run as is it reproduces them from the 15 units they were fitted on (it leaves out `long_range_artillery`, which joined the roster later as the first adopted invention). With `--roster` it fits all 16 priced units as the roster stands today: 0.312 · HP^0.415 · eDPS^1.10 · e^(0.134·range) · e^(0.187·speed), rms 0.233. That refit is not adopted: it would move every invention's price, and the calibration test (every unit within 0.55-1.7× of its fitted cost, rms under 0.3) passes with the shipped constants.
+
 Two things in the fit matter for the design:
 
 - **Costs grow superlinearly with size.** The exponents sum to 1.51. Firepower is priced steeply (1.09); hit points are cheap (0.42).
@@ -95,29 +99,31 @@ The chassis is a playtested unit, so every price is a multiple of the chassis pr
 | hp | 0.42 · ln(hp / hp_c) |
 | firepower | 1.09 · ln(eDPS / eDPS_c) |
 | range | 0.126 · (range − range_c) |
-| speed | 0.184 · (speed − speed_c) |
+| speed | 0.184 · (speed − speed_c), only when faster than the chassis |
 | sight | 0.04 · (sight − sight_c) (set) |
 | fuel | 0.10 · ln(fuel / fuel_c) (set) |
 
-1. **Curve.** Sum the terms, counting each negative term (a downgrade) at **half credit**: cutting something refunds only half of what adding it costs. `curve = e^sum`.
-2. **Lanchester floor.** Under the square law an army's strength is N² · hp · dps, so a design that doesn't out-fight its chassis per unit of cost needs `price ≥ sqrt(r_hp · r_eDPS · e^(2·0.126·Δrange) · e^(2·0.184·Δspeed))`. The price is never below that floor.
-3. **Novelty premium.** `price = max(curve, floor) · (1 + 0.10 · novelty)`, where `novelty = |ln r_hp| + |ln r_eDPS| + |Δrange|/5 + |ln r_speed| + |Δsight|/10 + |ln r_fuel| + 0.5 if the weapon is swapped`.
-4. **Materials.** The chassis bill is scaled to the price. A borrowed weapon brings the donor's exotic materials with it (a laser needs lenses, a beam needs plasma), counted inside the price, not on top. Amounts are rounded **up** to multiples of 5.
-5. **Build time** is the chassis time × max(0.8, price^0.6), rounded **up** to half a second. A cheap variant can't build much faster, which caps spam by factory throughput.
-6. **Safety net.** The validator recomputes cost-efficiency on the rounded bill and rejects anything over 1.02× the chassis. By construction this never fires; it's there to catch future pricing changes.
+1. **Curve.** Sum the terms, counting each negative term (a downgrade) at **half credit**: cutting something refunds only half of what adding it costs. `curve = e^sum`. The exception is speed: **slowing a unit earns no credit at all**, in the curve or the floor. A slower variant with the same combat stats isn't a saving (halving a stealth bomber's speed used to price it at 3,300 se against the bomber's 3,625).
+2. **Lanchester floor.** Under the square law an army's strength is N² · hp · dps, so a design that doesn't out-fight its chassis per unit of cost needs `price ≥ sqrt(r_hp · r_eDPS · e^(2·0.126·Δrange) · e^(2·0.184·Δspeed))` (Δspeed counted only when positive). The price is never below that floor.
+3. **Weapon-donor floor.** A borrowed weapon is held to the unit it came from as well: the same floor measured against the donor's hp, dps, range and speed, scaled by the donor's price: `price ≥ (se_donor / se_chassis) · sqrt(…)`. Without it a cheap chassis could carry a dear unit's weapon at the chassis's prices: a rifleman with the rocket soldier's rocket at half damage cost 85 steel (a rocket soldier is 125 se), and nine of them beat six rocket soldiers of the same total cost.
+4. **Novelty premium.** `price = max(curve, floor, donor floor) · (1 + 0.10 · novelty)`, where `novelty = |ln r_hp| + |ln r_eDPS| + |Δrange|/5 + |ln r_speed| + |Δsight|/10 + |ln r_fuel| + 0.5 if the weapon is swapped`.
+5. **Materials.** The chassis bill is scaled to the price. A borrowed weapon brings **every** material of its unit's bill that the chassis's bill lacks (a laser needs lenses, a beam needs plasma, a rocket needs copper), counted inside the price, not on top. Amounts are rounded **up** to multiples of 5.
+6. **Build time** is the chassis time × max(0.8, price^0.6), rounded **up** to half a second. A cheap variant can't build much faster, which caps spam by factory throughput.
+7. **Safety net.** The validator recomputes cost-efficiency on the rounded bill and rejects anything over 1.02× the chassis, or over 1.02× the unit its weapon came from. By construction this never fires; it's there to catch future pricing changes.
 
 ### 2.4 Hard limits (reject, with numbers)
 
 | rule | limit | why |
 |---|---|---|
 | envelope | hp, damage, cooldown and damage per second within 0.5–2× the chassis or donor weapon; hp ≥ 50; cooldown ≥ 0.4s | an invention is a variant, not a new unit; keeps the pricing near its fitted data |
+| **hp tier** | hp ≤ 1.5× the toughest armed unit the team can build now (standard units, or the chassis itself) | hit points are cheap on the fitted curve (exponent 0.42), so the 2× envelope alone let a heavy tank reach 1,900 hp for 1,145 se with no plasma: a mammoth's hull a tier early. Once a mammoth tank is buildable the cap rises with it |
 | range | within ±2 tiles of the donor weapon, at most 12, at least 0.8 | no infinite artillery (the standard artillery is 11) |
 | speed | 0.5–1.5× the chassis; caps of 2.2 (infantry), 4.5 (vehicles), 5 (aircraft) | |
 | **power-to-weight** | speed ratio × mass ratio ≤ 1.10, where mass = 0.6 × hp ratio + 0.4 × (dps × range) ratio | heavier is slower: the chassis keeps its engine. A light tank can gain at most 17% HP without slowing down |
 | **reach vs punch** | range ratio × dps ratio (against the donor weapon) ≤ 1.6 | longer reach costs punch (lighter rounds), and the reverse |
-| sight | sight ≥ range for direct fire (artillery is exempt and relies on spotters); sight ≤ 12 | you can't hit what you can't see. Defaults to range + 1, as in `Defs.Add` |
+| sight | 3 ≤ sight ≤ 12; sight ≥ range for direct fire (artillery is exempt and relies on spotters) | you can't hit what you can't see. Defaults to range + 1, as in `Defs.Add`. Artillery used to have no lower bound (`"sight": -5` was valid) |
 | fuel | 0.5–1.5× the chassis; aircraft ≥ 60s; infantry have no fuel | an aircraft has to get out and back to a pad |
-| mounts | weapons go on the same class of chassis or a heavier one: infantry weapons on anything; vehicle weapons on vehicles; bombs and gunship rockets on aircraft only; structure weapons on nothing | |
+| mounts | weapons go on the same class of chassis or a heavier one: infantry weapons on anything; vehicle weapons on vehicles; bombs and gunship rockets on aircraft only; structure weapons on nothing. **The commando's C4 only goes on infantry** | C4 is a demolition charge (a ground weapon that can't hurt infantry): someone plants it by hand. Averaged over the fixed target mix its 1.0× against structures is invisible and its range of 1 earns a "downgrade" discount, so a gunship carrying it cost no more than a gunship and razed four turrets about as fast as a stealth bomber at a third of the price |
 | tech tier | the team must be able to build the chassis **and** the donor unit right now (producer and `Requires`) | a laser needs an optics lab, a gunship base needs an airfield |
 | research lab | research needs a completed electronics_plant; it pauses without one and runs at half speed on low power | |
 | novelty | 0.05–2.0 | a copy isn't an invention; too much at once is too big a leap |
@@ -168,6 +174,13 @@ Every row below is a headless test. The "rejected with" column quotes the actual
 | 22 | building another team's invention | ownership | `t0:lancer is Blueberry's invention; only they can build it` |
 | 23 | steel → 2 steel, steel → plasma, steel → iron_ore, a recipe from nothing, a circuit fab drawing no power, a 10× fab | recipe conservation | `element Fe: outputs hold 2 but inputs only 1` · `element U: … only 0` · `it's mined, not manufactured` · `needs inputs` · `no free energy` · `throughput 50 se/s exceeds 8` |
 | 24 | **search**: 6,000 random designs across all 15 chassis (25% with weapon swaps) | all of the above | 571 pass; the most efficient is **0.94×** its chassis, the median **0.57×** |
+| 25 | C4 on a gunship, mammoth or any other vehicle or aircraft | mounts (charges are infantry-only) | `a gunship (aircraft) can't carry the c4 of a commando (a demolition charge): someone has to plant it by hand, so it only goes on infantry` |
+| 26 | a rifleman with a rocket soldier's rocket at half damage, sold at 85 steel | weapon-donor floor, all donor materials | allowed, but 60 steel + 30 copper (105 se): no longer more cost-efficient than the rocket soldier. Equal-cost armies: rocket soldiers win |
+| 27 | a flak track variant | weapon copy | allowed, and it still hits Reapers (`HitsHighAir` is copied with the rest of the weapon; a test compares every field of every standard weapon) |
+| 28 | halving a bomber's speed to make it cheaper | no speed credit | allowed, but costs 3,981 se at speed 1.9 (bomber 3,625) |
+| 29 | `"dry_run":"true"` (a string) | boolean check | `dry_run must be true or false (a JSON boolean, not a string or number)`; nothing is researched or paid |
+| 30 | a heavy tank at 1,900 hp with no plasma tier | hp tier cap | `hp 1900 is above 1425: 1.5x the 950 hp of the heavy_tank, the toughest armed unit you can build now` |
+| 31 | artillery with `"sight": -5` | sight floor | `sight -5 is below the minimum of 3 tiles` |
 
 ### Balance
 
@@ -177,7 +190,7 @@ Every row below is a headless test. The "rejected with" column quotes the actual
 - The Bulwark is a slow tank that soaks damage (0.88× efficiency).
 - An artillery piece at the 12-tile cap is a valid design (350 steel, 120 circuits).
 
-The median of 0.5× looks harsh until you compare the standard roster on the same metric. Relative to the light tank: rifleman 5.75, rocket_soldier 1.68, scout_buggy 1.32, heavy_tank 0.57, apc 0.63, mammoth 0.22, artillery 0.14, gunship 0.10, stealth_bomber 0.04. The game already charges heavily for concentration, reach, flight and specialisation, and inventions sit inside that band. That's also why efficiency is compared with the chassis, never across units.
+The median of 0.5× looks harsh until you compare the standard roster on the same metric. Relative to the light tank: rifleman 5.75, rocket_soldier 1.68, scout_buggy 1.32, heavy_tank 0.57, apc 0.63, mammoth 0.22, artillery 0.14, gunship 0.10, stealth_bomber 0.04. The game already charges heavily for concentration, reach, flight and specialisation, and inventions sit inside that band. That's also why efficiency is compared with the chassis (and, for a borrowed weapon, with the unit the weapon came from), never across the whole roster.
 
 **Tuning knobs**, measured with the same 6,000-design search:
 
@@ -191,7 +204,7 @@ Start strict and loosen once telemetry shows how agents use inventions. Players 
 
 **Known weaknesses**, none of them exploits:
 
-- The mass model uses dps × range, so short-range heavy hitters (bombs, C4) count as light. Today the novelty cap blocks the worst cases: C4 on any vehicle comes out at 2.0–2.75 novelty. Phase 2 should give each weapon its own mass.
+- The mass model uses dps × range, so short-range heavy hitters (bombs, C4) count as light. C4 is now infantry-only, which closes the hole that mattered (a gunship or mammoth with C4 priced at or below the chassis, razing structures at several times its dps); bombs only go on aircraft, which already pay bomber prices. Phase 2 should still give each weapon its own mass.
 - eDPS uses a fixed target mix, so a specialist is worth more against the right army than the metric says. That's intended (counters), and it's bounded because the Vs* multipliers can't be edited, only borrowed with a weapon.
 - `dry_run` is free, so an agent can binary-search the validator's edges. That's fine: the edge is designed to be fair, and finding it is what engineers do. If load becomes a problem, rate-limit at the API.
 - `World.Stalled()` doesn't count inventions when it asks "can this team still train something". This only matters when the only affordable unit is an invention.

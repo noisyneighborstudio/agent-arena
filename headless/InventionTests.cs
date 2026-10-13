@@ -196,6 +196,166 @@ namespace Pez.Headless
 
             var rules = StateView.Rules();
             Check(StateView.RulesVersion >= 9 && rules.Contains("inventions") && Json.Write(rules["commands"]).Contains("propose_tech"), "get_rules documents propose_tech and its limits (rules_version 9)");
+
+            InventionPricing();
+        }
+
+        /// <summary>Lanchester fighting value per cost squared (hp x effective dps, range and speed at twice their cost elasticity): what the price floors in Tech hold a design to, against its chassis and against the unit its weapon came from.</summary>
+        static double ValuePerCost2(EntityDef d) =>
+            d.MaxHp * Tech.EffectiveDps(d.Weapon) * Math.Exp(2 * Tech.RangeK * d.Weapon.Range) * Math.Exp(2 * Tech.SpeedK * d.Speed) / Math.Pow(Tech.Se(d.Cost), 2);
+
+        /// <summary>nA of keyA (team 0) against nB of keyB (team 1), standing in range of each other so nobody walks into a free volley; survivors after 90 s.</summary>
+        static (int a, int b) StandingFight(World w, string keyA, int nA, string keyB, int nB)
+        {
+            var hqA = w.Owned(0).First(e => e.IsStructure);
+            var hqB = w.Owned(1).First(e => e.IsStructure);
+            var us = Enumerable.Range(0, nA).Select(i => At(w.SpawnUnit(0, keyA, hqA), new Vec2(37f, 33f + i * 0.9f))).ToList();
+            var them = Enumerable.Range(0, nB).Select(i => At(w.SpawnUnit(1, keyB, hqB), new Vec2(42f, 33f + i * 0.9f))).ToList();
+            foreach (var e in us.Concat(them)) w.SetOrder(e, Order.Idle, e.Pos);
+            w.UpdateVisibility();
+            Run(w, 90);
+            return (us.Count(e => !e.Dead), them.Count(e => !e.Dead));
+        }
+
+        /// <summary>The invention pricing fixes from the economy audit (issue #50): what each one closes, and what stays allowed.</summary>
+        static void InventionPricing()
+        {
+            Console.WriteLine("-- invented tech: pricing fixes");
+            var w = TechWorld();
+            var hw = TechWorld(highTech: true);
+
+            // 1. C4 is a demolition charge: it stays with infantry. Averaged over the pricing mix, its 1.0x against structures is invisible.
+            var carriers = Defs.All.Values.Where(d => Tech.IsChassis(d) && d.Armor != Armor.Infantry).ToList();
+            Check(carriers.Count > 8 && carriers.All(c => Rejected(Quote(hw, 0, "name", "Razer", "base", c.Key, "weapon_from", "commando"), "can't carry the c4")),
+                  $"no vehicle or aircraft ({carriers.Count} chassis) can carry the commando's C4: {Errs(Quote(hw, 0, "name", "Razer", "base", "mammoth_tank", "weapon_from", "commando"))}");
+            var gunshipC4 = Quote(hw, 0, "name", "Razer", "base", "gunship", "weapon_from", "commando", "damage", 450, "cooldown", 5, "range", 1);
+            Check(Rejected(gunshipC4, "demolition charge"), $"a gunship with a tuned C4 (priced below the gunship itself before) is rejected: {Errs(gunshipC4)}");
+            var rng1 = new Random(50);
+            var c4 = Defs.Get("commando").Weapon;
+            int carried = 0, tried1 = 0;
+            foreach (var c in carriers)
+                for (int i = 0; i < 150; i++)
+                {
+                    tried1++;
+                    float U(float lo, float hi) => lo + (float)rng1.NextDouble() * (hi - lo);
+                    if (Quote(hw, 0, "name", "Probe", "base", c.Key, "weapon_from", "commando", "hp", c.MaxHp * U(0.5f, 1.5f), "damage", c4.Damage * U(0.5f, 1f),
+                              "cooldown", c4.Cooldown * U(0.6f, 2f), "range", c4.Range + U(0, 2), "speed", c.Speed * U(0.5f, 1f)).Ok) carried++;
+                }
+            Check(carried == 0, $"and no tuning of C4 on any of them gets through ({carried}/{tried1} valid)");
+            var demo = Quote(hw, 0, "name", "Demo", "base", "commando", "hp", 200);
+            Check(demo.Ok, $"but the commando itself can still be varied: {Errs(demo)}; costs {demo.Def?.CostText}");
+
+            // 2. A borrowed weapon is held to the unit it came from too, and brings all of that unit's materials.
+            var rocketSoldier = Defs.Get("rocket_soldier");
+            var budget = Quote(hw, 0, "name", "Budget Rocket", "base", "rifleman", "weapon_from", "rocket_soldier", "damage", 30);
+            Check(budget.Ok && budget.Def.Cost.TryGetValue("copper", out var copper) && copper >= rocketSoldier.Cost["copper"] && ValuePerCost2(budget.Def) <= ValuePerCost2(rocketSoldier) * 1.02 && budget.DonorEfficiency <= 1.0f,
+                  $"a rifleman with a rocket soldier's rocket pays the rocket soldier's copper and is no bargain: {budget.Def?.CostText} ({budget.CostSe:0} se vs the rocket soldier's {Tech.Se(rocketSoldier.Cost):0}), " +
+                  $"value per cost^2 {ValuePerCost2(budget.Def):0.0000} vs {ValuePerCost2(rocketSoldier):0.0000}: {Errs(budget)}");
+            var fightWorld = TechWorld();
+            var rs = Commands.Execute(fightWorld, 0, Cmd("type", "propose_tech", "name", "Budget Rocket", "base", "rifleman", "weapon_from", "rocket_soldier", "damage", 30));
+            fightWorld.Inventions["t0:budget_rocket"].Progress = 1e6f;
+            int nBudget = (int)Math.Round(7 * Tech.Se(rocketSoldier.Cost) / budget.CostSe);
+            var (budgetLeft, rocketsLeft) = StandingFight(fightWorld, "t0:budget_rocket", nBudget, "rocket_soldier", 7);
+            Check(Ok(rs) && nBudget * budget.CostSe <= 7 * Tech.Se(rocketSoldier.Cost) * 1.05 && budgetLeft == 0 && rocketsLeft > 0,
+                  $"equal-cost armies: {nBudget} Budget Rockets ({nBudget * budget.CostSe:0} se) lose to 7 rocket soldiers ({7 * Tech.Se(rocketSoldier.Cost):0} se), which keep {rocketsLeft}");
+
+            // Whatever is tuned, no valid design is more cost-efficient than its chassis or than the unit its weapon came from.
+            var chassis = Defs.All.Values.Where(Tech.IsChassis).ToList();
+            var rng2 = new Random(5050);
+            int valid = 0, tried2 = 0, swaps = 0; double worstChassis = 0, worstDonor = 0; string worstWhat = "";
+            bool keptMaterials = true;
+            foreach (var c in chassis)
+                for (int i = 0; i < 500; i++)
+                {
+                    tried2++;
+                    float U(float lo, float hi) => lo + (float)rng2.NextDouble() * (hi - lo);
+                    var donor = rng2.NextDouble() < 0.5 ? chassis[rng2.Next(chassis.Count)] : c;
+                    var args = new List<object> { "name", "Probe", "base", c.Key, "hp", c.MaxHp * U(0.4f, 2.2f), "damage", donor.Weapon.Damage * U(0.4f, 2.2f),
+                        "cooldown", donor.Weapon.Cooldown * U(0.4f, 2.2f), "range", donor.Weapon.Range + U(-2.5f, 2.5f), "speed", c.Speed * U(0.4f, 1.6f) };
+                    if (donor != c) { args.Add("weapon_from"); args.Add(donor.Key); }
+                    var q = Quote(hw, 0, args.ToArray());
+                    if (!q.Ok) continue;
+                    valid++;
+                    double vs = ValuePerCost2(q.Def) / ValuePerCost2(c), vd = ValuePerCost2(q.Def) / ValuePerCost2(donor);
+                    if (donor != c) { swaps++; keptMaterials &= donor.Cost.Keys.All(k => q.Def.Cost.ContainsKey(k)); }
+                    if (Math.Max(vs, vd) > Math.Max(worstChassis, worstDonor)) worstWhat = $"{c.Key}{(donor != c ? "+" + donor.Key : "")} {Tech.Spec(q.Def)}";
+                    worstChassis = Math.Max(worstChassis, vs); worstDonor = Math.Max(worstDonor, vd);
+                }
+            Check(valid > 200 && swaps > 20 && worstChassis <= 1.02 && worstDonor <= 1.02,
+                  $"random search: {valid}/{tried2} designs pass ({swaps} with a borrowed weapon); the most cost-efficient is {worstChassis:0.00}x its chassis and {worstDonor:0.00}x its weapon's donor (cap 1.02): {worstWhat}");
+            Check(keptMaterials, "every design with a borrowed weapon pays for all the materials of the unit it came from, copper and steel included");
+
+            // 3. Flak keeps its reach: a tuned weapon copies every field of the donor's, HitsHighAir included.
+            var flaker = Quote(w, 0, "name", "Flaker", "base", "flak_track", "hp", 500);
+            var reaper = Defs.Get("reaper_drone");
+            Check(flaker.Ok && Defs.Get("flak_track").Weapon.CanHit(reaper) && flaker.Def.Weapon.CanHit(reaper), $"a flak track variant can still hit a Reaper drone: {Errs(flaker)}");
+            var weaponFields = typeof(WeaponDef).GetFields(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public);
+            var lossy = Defs.All.Values.Where(d => d.Weapon != null).Select(d => d.Weapon).Distinct()
+                .SelectMany(bw => weaponFields.Where(f => !Equals(f.GetValue(bw), f.GetValue(Tech.MakeWeapon(bw, bw.Damage, bw.Range, bw.Cooldown)))).Select(f => $"{bw.Name}.{f.Name}")).ToList();
+            Check(lossy.Count == 0, "a tuned copy of any standard weapon keeps every other field of it" + (lossy.Count == 0 ? "" : $": lost {string.Join(", ", lossy)}"));
+
+            // 4. Slowing a unit down is not a discount.
+            var slow = chassis.Select(c => (c, q: Quote(hw, 0, "name", "Slow", "base", c.Key, "speed", c.Speed * 0.6f))).Where(x => x.q.Ok).ToList();
+            Check(slow.Count > 10 && slow.All(x => x.q.CostSe >= x.q.ChassisSe),
+                  $"a speed-only nerf is never cheaper than its chassis ({slow.Count} chassis; " + string.Join(", ", new[] { "stealth_bomber", "gunship", "light_tank" }.Select(k => slow.First(x => x.c.Key == k)).Select(x => $"{x.c.Key} {x.q.CostSe:0} vs {x.q.ChassisSe:0} se")) + ")");
+            Check(Quote(hw, 0, "name", "Bulwark", "base", "heavy_tank", "hp", 1300, "speed", 1.3f).Ok, "a tougher, slower heavy tank is still a valid design");
+
+            // 5. dry_run is a boolean: anything else is an error, never a purchase.
+            var pw = TechWorld();
+            float steel = pw.Teams[0].Stock["steel"], circuits = pw.Teams[0].Stock["circuits"];
+            foreach (var bad in new object[] { "true", "false", 1, "yes" })
+            {
+                var r = Commands.Execute(pw, 0, Cmd("type", "propose_tech", "name", "Lancer", "base", "light_tank", "weapon_from", "rocket_soldier", "hp", 360, "dry_run", bad));
+                Check(!Ok(r) && ((string)r["error"]).Contains("dry_run must be true or false") && pw.Inventions.Count == 0 && pw.Teams[0].Stock["steel"] == steel && pw.Teams[0].Stock["circuits"] == circuits,
+                      $"dry_run {(bad is string ? "\"" + bad + "\"" : bad)} researches nothing and costs nothing: {r["error"] ?? r["result"]}");
+            }
+            var quoted = Commands.Execute(pw, 0, Cmd("type", "propose_tech", "name", "Lancer", "base", "light_tank", "weapon_from", "rocket_soldier", "hp", 360, "dry_run", true));
+            Check(Ok(quoted) && pw.Inventions.Count == 0 && pw.Teams[0].Stock["steel"] == steel, "dry_run true is still a free quote");
+            var paid = Commands.Execute(pw, 0, Cmd("type", "propose_tech", "name", "Lancer", "base", "light_tank", "weapon_from", "rocket_soldier", "hp", 360, "dry_run", false));
+            Check(Ok(paid) && pw.Inventions.Count == 1 && pw.Teams[0].Stock["steel"] < steel, "and dry_run false (a real boolean) researches it");
+
+            // 6. No mammoth-class hull a tier early.
+            var tanky = Quote(w, 0, "name", "Tanky", "base", "heavy_tank", "hp", 1900, "speed", 1.0f);
+            Check(Rejected(tanky, "hp 1900 is above 1425"), $"without a unit as tough as a mammoth to build, a heavy tank can't reach 1,900 hp: {Errs(tanky)}");
+            var tanky2 = Quote(w, 0, "name", "Tanky", "base", "heavy_tank", "hp", 1400, "speed", 1.1f);
+            Check(tanky2.Ok, $"but 1,400 hp (under 1.5x the heavy tank) is fine: {Errs(tanky2)}");
+            var tanky3 = Quote(hw, 0, "name", "Tanky", "base", "heavy_tank", "hp", 1900, "speed", 1.0f);
+            Check(tanky3.Ok, $"and once the mammoth tank is buildable the cap moves up with it: {Errs(tanky3)}; costs {tanky3.CostSe:0} se");
+
+            // 7. Sight has a floor, artillery included.
+            foreach (var s in new[] { -5f, 0f, 2.5f })
+                Check(Rejected(Quote(w, 0, "name", "Blind", "base", "artillery", "sight", s), "below the minimum of 3"), $"artillery with sight {s} is rejected");
+            Check(Quote(w, 0, "name", "Blind", "base", "artillery", "sight", 4).Ok, "artillery with sight 4 (it still relies on spotters) is valid");
+
+            // 8. A saved invention keeps the bill it was paid for: cancelling a unit queued before the reload refunds exactly that, even if its chassis has since gained a material.
+            var g = new Game(new GameConfig { Seed = 5, MapSize = 96, Controllers = new[] { "llm", "llm" } });
+            var gw = g.World;
+            foreach (var k in TechBuildings) gw.SpawnStructure(0, k, gw.FindPlacement(0, k).Value, 1f);
+            foreach (var m in new[] { "steel", "copper", "circuits" }) gw.Teams[0].Add(m, 5000);
+            var p1 = Commands.Execute(gw, 0, Cmd("type", "propose_tech", "name", "Lancer", "base", "light_tank", "weapon_from", "rocket_soldier", "hp", 360));
+            gw.Inventions["t0:lancer"].Progress = 1e6f;
+            var p2 = Commands.Execute(gw, 0, Cmd("type", "propose_tech", "name", "Flaker", "base", "flak_track", "hp", 500));
+            gw.Inventions["t0:flaker"].Progress = 1e6f;
+            float Held(World x, string item) => x.Teams[0].Stock.TryGetValue(item, out var v) ? v : 0f;
+            var stockBefore = Defs.Items.ToDictionary(i => i, i => Held(gw, i));
+            var queued = Commands.Execute(gw, 0, Cmd("type", "train", "unit", "t0:lancer", "count", 2));
+            var lancerBill = new Dictionary<string, int>(gw.Def("t0:lancer").Cost);
+            Check(Ok(p1) && Ok(p2) && Ok(queued) && Defs.Items.All(i => stockBefore[i] - Held(gw, i) == 2 * (lancerBill.TryGetValue(i, out var n) ? n : 0)),
+                  $"set up two researched inventions and two queued Lancers paid at {gw.Def("t0:lancer").CostText} each ({queued["result"] ?? queued["error"]})");
+            var json = Snap(g);
+            var lightTank = Defs.Get("light_tank");
+            Game back;
+            lightTank.Cost["plasma"] = 20; // a later build gives the light tank a plasma part
+            try { back = Resume(json); }
+            finally { lightTank.Cost.Remove("plasma"); }
+            var b = back.World;
+            Check(b.Def("t0:lancer").Cost.OrderBy(kv => kv.Key).SequenceEqual(lancerBill.OrderBy(kv => kv.Key)),
+                  $"the resumed invention has exactly the bill it was researched with ({b.Def("t0:lancer").CostText})");
+            var heldBefore = Defs.Items.ToDictionary(i => i, i => Held(b, i));
+            var cancel = Commands.Execute(b, 0, Cmd("type", "cancel", "unit", "t0:lancer"));
+            Check(Ok(cancel) && Defs.Items.All(i => Held(b, i) - heldBefore[i] == (lancerBill.TryGetValue(i, out var refund) ? refund : 0)),
+                  $"cancelling a Lancer queued before the reload refunds what was paid, no more ({cancel["result"] ?? cancel["error"]})");
+            Check(b.Def("t0:flaker").Weapon.HitsHighAir, "and a saved flak invention still reaches high-altitude aircraft after a resume");
         }
     }
 }
