@@ -29,10 +29,12 @@ namespace Pez.Sim
         /// RegrowEdge in the corners), RegrowByOre (iron and copper regrow faster than crystal and uranium: crystal's fields
         /// ring the middle, where regrowth is fastest, and it used to take over) and the square root of the map's ore
         /// richness (a scarce map regrows less, but not in proportion: its stalemates need the long tail most).
-        /// Measured on a mined-bare 96-tile map (mean of four seeds), over the first 20 minutes:
-        ///   richness 1:   6.6 ore/s (iron 2.6, copper 1.3, crystal 2.0, uranium 0.7), 41% of it in the middle;
-        ///                 6.3 in minutes 20-30, when the middle's crystal and uranium have refilled and iron and copper keep coming;
-        ///   richness 0.3: 3.2 ore/s (iron 1.3, copper 0.65, crystal 1.0, uranium 0.3), 40% of it in the middle.
+        /// Measured (headless --econ-report, mean of seeds 1-4) on a mined-bare 96-tile map, over the first 20 minutes:
+        ///   richness 1:   7.7 ore/s (iron 3.2, copper 1.3, crystal 2.3, uranium 0.8), 37% of it in the middle;
+        ///                 7.4 in minutes 20-30, when the middle's crystal and uranium have refilled and iron and copper keep coming;
+        ///   richness 0.3: 3.8 ore/s (iron 1.6, copper 0.7, crystal 1.2, uranium 0.3), 36% of it in the middle.
+        /// An 80-tile map earns 7.9 and 4.0 (iron 3.5 and 1.8, 34% in the middle), a 128-tile one 8.8 and 4.4 (41%): the neutral
+        /// fields of the bigger maps (Map.SeedExtraFields) regrow too, and 96 tiles without them earned 6.6 and 3.2.
         /// (Before RegrowByOre: 6.9 and 2.9 ore/s, of which iron 1.6 and copper 0.6 at richness 1, 68% in the middle.)
         /// A deep mine pumps 4/s, so deep mining stays the mid-game economy and regrowth is the long tail that keeps a
         /// base's iron and copper trickling and makes the middle worth fighting for.

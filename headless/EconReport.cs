@@ -511,9 +511,9 @@ namespace Pez.Headless
 
         // ------------------------------------------------------------------ catch-up kit
 
-        sealed class Kit { public double Minute; public Dictionary<string, double> Stock = new Dictionary<string, double>(); public int Plants, Refineries, Trucks; public double Value; }
+        internal sealed class Kit { public double Minute; public Dictionary<string, double> Stock = new Dictionary<string, double>(); public int Plants, Refineries, Trucks; public double Value; }
 
-        static List<Kit> MeasureKits(IEnumerable<double> minutes)
+        internal static List<Kit> MeasureKits(IEnumerable<double> minutes)
         {
             var kits = new List<Kit>();
             foreach (double minute in minutes)

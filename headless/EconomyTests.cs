@@ -2850,6 +2850,17 @@ namespace Pez.Headless
             }
             Check(balanced, $"the harness's income by source accounts for each team's stock and spending at minute 5 {worst}");
 
+            // What the rules text says about the catch-up kit and about regrowth, as numbers.
+            var kits = EconReport.MeasureKits(new[] { 0.5, 2.9, 10.0, 30.0, 60.0 });
+            Check(kits[0].Plants == 0 && kits[1].Plants == 0 && kits[1].Refineries == 0 && kits[2].Plants == 1 && kits[2].Refineries == 1
+                  && kits[2].Stock["steel"] == 600 && kits[2].Stock["copper"] == 300 && kits[2].Stock["circuits"] == 80 && kits[2].Stock["iron_ore"] == 700
+                  && kits[3].Stock["steel"] == 1800 && kits[4].Stock["steel"] == 1800 && kits[4].Stock["iron_ore"] == 1100,
+                  $"the catch-up kit is 60 steel, 30 copper, 8 circuits and 20 iron ore a minute of arena age, up to 30 minutes, with a power plant and refinery from minute 3 (at 10 min: {kits[2].Stock["steel"]:0} steel; at 60 min: {kits[4].Stock["steel"]:0})");
+            double Regrown(float richness, int seed) => EconReport.RegrowBare(80, richness, seed, 20).Total[20] / 1200.0;
+            double full = (Regrown(1f, 1) + Regrown(1f, 2)) / 2, scarce = (Regrown(0.3f, 1) + Regrown(0.3f, 2)) / 2;
+            Check(full > 7 && full < 9 && scarce > full * 0.45 && scarce < full * 0.6,
+                  $"a mined-bare 80-tile map earns back about 8 ore/s at full richness and about half that on a scarce one, as the rules text says ({full:0.0} and {scarce:0.0})");
+
             // The seat win split's test, and the flag parser.
             Check(Math.Abs(EconReport.BinomialP(18, 23) - 0.0106) < 0.0005 && EconReport.BinomialP(5, 10) > 0.999 && Math.Abs(EconReport.BinomialP(0, 10) - 2 * Math.Pow(0.5, 10)) < 1e-9 && EconReport.BinomialP(0, 0) == 1,
                   $"the exact binomial test gives 18 of 23 decisive games to one seat p = {EconReport.BinomialP(18, 23):0.0000}");

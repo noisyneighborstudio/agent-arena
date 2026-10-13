@@ -496,9 +496,11 @@ namespace Pez.Sim
         }
 
         /// <summary>
-        /// Late joiners get a head start that scales with the arena's age: refined materials, and once the arena is
-        /// a few minutes old, a finished power plant and mining refinery (with its free truck). Enough to reach
-        /// barracks, factory and defenses inside the protection window.
+        /// Late joiners get a head start that scales with the arena's age: for each minute (up to 30) 60 steel, 30 copper,
+        /// 8 circuits and 20 iron ore, and once the arena is 3 minutes old, a finished power plant and mining refinery (with its
+        /// free truck). About a fifth to a third of what a founding scripted team has had come in by then (measured with
+        /// headless --econ-report), and enough for a house AI to stand the same barracks, factory, turret and refineries as a
+        /// founder inside the 5 minutes of protection.
         /// </summary>
         void GiveCatchUp(Team team)
         {
