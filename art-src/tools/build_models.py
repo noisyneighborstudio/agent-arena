@@ -45,6 +45,7 @@ MATS = {
  'cinnamon': mat('M_Ore_Cinnamon', '#8A3A24', 0, .7),
  'copper':   mat('M_Ore_Copper', '#C8742F', .3, .5),
  'mint':     mat('M_Ore_Mint', '#6FC2A6', 0, .6),
+ 'crystal':  mat('M_Ore_Crystal', '#8FE4FF', 0, .25),     # crystal stock (not lit: glow means state)
 }
 
 class Asset:
@@ -558,13 +559,101 @@ def S_enrichment_plant():
     a.box('steel', 1.0, .08, .08, y=1.0, z=-.42); a.box('steel', 1.0, .08, .08, y=1.0, z=.42)
     return a
 
+def crystal(a, m, x, y, z, r, h, lean=0, turn=0, node=None):
+    """A hexagonal crystal standing on (x, y, z): a six-sided prism with a pointed tip, leaning `lean` deg toward `turn`."""
+    ang = np.linspace(0, 2 * math.pi, 6, endpoint=False)
+    ring = np.c_[r * np.cos(ang), np.zeros(6), r * np.sin(ang)]
+    pts = np.vstack([ring, ring + [0, h * .7, 0], [[0, h, 0]]])
+    c = trimesh.convex.convex_hull(pts)
+    c.apply_transform(ry(turn) @ rz(lean)); c.apply_translation((x, y, z)); a.add(node, m, c)
+
 def S_composite_foundry():
     a = Asset('composite_foundry', 'structures', 2); pad(a, 2)
-    a.box('smoke', 1.6, .7, 1.4, y=.43, z=.1, rot=ry(8))
-    a.box('licorice', 1.0, .5, .9, x=-.2, y=.9, z=.2, rot=ry(-14) @ rz(6))
-    a.box('team', 1.62, .07, .3, y=.8, z=-.3, rot=ry(8))
-    for x in (.3, .6): a.cyl('grape', .1, .5, x=x, y=1.0, z=.5)
-    door(a, .5, .4, -.66, lights=False)
+    # Steel and crystal in, stealth composite out, in one line from back to front. The furnace house at the back takes
+    # the steel (billets waiting on the pallet) and the crystal (heaped in the open hopper on its roof) and pushes a blank
+    # out of the slot in its front wall onto the bed of a two-post press. The press clamps it under the heated platen (the
+    # ram node, its hot seam underneath) and fuses it into a black tile, which slides along the rails into the magazine
+    # in front: a Pez stem with a team cap, its open front showing the stack of tiles, which steps down a tile as each
+    # one goes in (the stack node). FoundryWorks runs a blank through for every composite the sim makes (one every 2 s,
+    # 4 s on low power) and lights the furnace's peephole while it works; the grape vents on the roof puff after each
+    # stroke. Markers: press_feed (inside the slot), press_bed (the work surface), press_out (where the next tile sits on
+    # the stack), vent_0 / vent_1 (the vents' mouths).
+    px, pz = .44, -.12                                                # the press line (feed, bed, magazine) runs along z
+    # The furnace house: cream, a team wrapper band, grape louvres on its side, the feed slot facing the press and the
+    # door the steel goes in by.
+    a.box('cream', 1.72, .64, .7, y=.4, z=.51)
+    a.box('team', 1.76, .1, .74, y=.62, z=.51)
+    for k in range(3): a.box('grape', .03, .05, .26, x=.87, y=.24 + k * .1, z=.34)
+    a.cyl('steel', .13, .04, x=.865, y=.36, z=.66, axis='x', sections=16)   # the furnace's peephole: lit while it fires
+    a.cyl('amber', .085, .03, x=.88, y=.36, z=.66, axis='x', sections=16)
+    a.box('dark', .3, .1, .03, x=px, y=.5, z=.155)                    # the feed slot
+    a.box('licorice', .38, .03, .04, x=px, y=.565, z=.155)
+    a.box('dark', .42, .36, .04, x=-.4, y=.26, z=.155)                # the door
+    a.box('licorice', .48, .05, .05, x=-.4, y=.465, z=.155)
+    for k in range(3): a.box('licorice', .4, .012, .045, x=-.4, y=.15 + k * .1, z=.155)
+    # Grape vents on the roof: short stacks with team bands and steel lips round dark throats.
+    for i, z in enumerate((.36, .66)):
+        a.cyl('grape', .085, .3, x=-.68, y=.87, z=z, sections=10)
+        a.cyl('team', .095, .06, x=-.68, y=.95, z=z, sections=10)
+        a.cyl('steel', .1, .03, x=-.68, y=1.03, z=z, sections=10)
+        a.cyl('dark', .065, .01, x=-.68, y=1.045, z=z, sections=10)
+        a.node(f'vent_{i}', a.key, (-.68, 1.06, z))
+    # The crystal hopper: an open cream funnel on the roof heaped with crystal, a team band round its rim.
+    hx, hz = -.22, .52
+    a.rev('cream', [(0, .72), (.12, .72), (.27, 1.06), (.25, 1.08), (0, 1.0)], x=hx, z=hz, sections=16)
+    a.rev('team', [(0, .95), (.235, .95), (.265, 1.03), (0, 1.03)], x=hx, z=hz, sections=16)
+    a.cyl('dark', .23, .02, x=hx, y=1.05, z=hz, sections=16)
+    for (dx, dz, r, h, l, t) in ((0, 0, .055, .24, 6, 0), (.1, .07, .045, .17, 22, 30), (-.1, .06, .045, .16, 24, 150),
+                                 (.05, -.11, .04, .15, 20, 280), (-.09, -.08, .04, .13, 26, 220)):
+        crystal(a, 'crystal', hx + dx, 1.0, hz + dz, r, h, l, t)
+    # The press: a cream plinth with the steel bed, two steel posts with the team crown across them, the hydraulic
+    # cylinder standing on it.
+    a.box('cream', .5, .32, .52, x=px, y=.24, z=pz)
+    for sx in (-1, 1): a.box('cream', .16, .26, .26, x=px + sx * .31, y=.21, z=pz)  # the posts' feet
+    a.box('steel', .4, .05, .34, x=px, y=.425, z=pz)                  # the bed: its top is the work surface (y .45)
+    a.node('press_bed', a.key, (px, .45, pz))
+    a.node('press_feed', a.key, (px, .45, .4))
+    for sx in (-1, 1): a.cyl('steel', .045, .92, x=px + sx * .31, y=.8, z=pz, sections=12)
+    a.node('stage_3', a.key)
+    a.box('team', .84, .24, .22, x=px, y=1.27, z=pz)
+    a.box('team', .5, .06, .3, x=px, y=1.14, z=pz)                    # the platen's guide shoe under the crown
+    a.cyl('cream', .14, .3, x=px, y=1.54, z=pz, sections=16)
+    a.cyl('steel', .155, .04, x=px, y=1.71, z=pz, sections=16)
+    # The ram: the platen (pivot on its underside, at rest up), the hot seam under it, collars riding the posts, the rod up
+    # through the crown into the cylinder (long enough to stay inside over the whole stroke).
+    rm = a.node('ram', 'stage_3', (px, .79, pz))
+    a.box('amber', .52, .045, .4, y=.0225, node=rm)                  # the hot seam: the platen's lower band
+    a.box('steel', .52, .085, .4, y=.0875, node=rm)
+    a.box('cream', .44, .03, .3, y=.145, node=rm)
+    for sx in (-1, 1): a.cyl('steel', .065, .14, x=sx * .31, y=.08, node=rm, sections=10)
+    a.cyl('steel', .05, .7, y=.5, node=rm, sections=8)
+    # The rails from the bed to the magazine.
+    for sx in (-1, 1): a.box('steel', .03, .03, .2, x=px + sx * .09, y=.435, z=-.46)
+    # The magazine: a cream stem open on the two faces the camera sees (corner posts, a lip at the foot), so the stack of
+    # finished tiles shows, a team cap on top. A tile comes in over the low back wall from the rails.
+    mx, mz, mw = px, -.68, .3
+    a.box('cream', mw, .36, .03, x=mx, y=.26, z=mz + .135)           # back (low: the tile comes in over it)
+    a.box('cream', .03, .42, mw, x=mx - .135, y=.29, z=mz)            # the closed side
+    for (cx, cz) in ((.13, -.13), (-.13, -.13), (.13, .13)): a.box('cream', .04, .42, .04, x=mx + cx, y=.29, z=mz + cz)
+    a.box('cream', mw, .08, .03, x=mx, y=.12, z=mz - .135)            # lips
+    a.box('cream', .03, .08, mw, x=mx + .135, y=.12, z=mz)
+    a.box('cream', mw, .02, mw, x=mx, y=.09, z=mz)                    # floor
+    a.box('team', .36, .12, .36, x=mx, y=.56, z=mz)                   # the cap
+    a.box('team', .26, .04, .06, x=mx, y=.52, z=mz + .2)              # its lip over the entry
+    a.node('stage_1', a.key)
+    st = a.node('stack', 'stage_1', (mx, 0, mz))
+    for k in range(4): a.box('licorice', .22, .04, .22, y=.23 + k * .06, node=st)
+    a.node('press_out', a.key, (mx, .45, mz))
+    # The blank FoundryWorks runs through the press: a steel tile and the same tile in composite (shown one at a time), its
+    # pivot on its underside, at rest inside the house behind the feed slot.
+    bl = a.node('blank', 'stage_1', (px, .45, .4))
+    for m in ('steel', 'licorice'): a.box(m, .22, .04, .22, y=.02, node=bl)
+    # Steel billets waiting on a kraft pallet in the front corner.
+    a.box('kraft', .5, .06, .42, x=-.42, y=.11, z=-.5)
+    for k in range(3):
+        for j in range(3):
+            if k % 2 == 0: a.box('steel', .44, .07, .1, x=-.42, y=.18 + k * .075, z=-.62 + j * .12)
+            else: a.box('steel', .1, .07, .36, x=-.54 + j * .12, y=.18 + k * .075, z=-.5)
     return a
 
 def S_fusion_reactor():

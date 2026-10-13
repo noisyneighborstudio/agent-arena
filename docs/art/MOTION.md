@@ -91,8 +91,11 @@ Units are tiles (1 tile = 1 Unity unit) and seconds. Rotation speeds are in degr
 ### `composite_foundry`
 *Makes stealth composite.*
 
-- **Mechanics:** Grape vents puff dark, non-glowing smoke every 2 s while producing. No moving nodes.
-- **Idle:** Heat shimmer over the vents.
+- **Mechanics:** Steel and crystal in at the back, composite out at the front. One press cycle for every composite the sim makes: 2 s at full power, 4 s on low power. Each cycle a steel blank (blank) slides out of the furnace house's feed slot (press_feed) onto the press bed (press_bed) in 0.32 s; the ram drops fast, slows for the last tenth of its 0.3 stroke and clamps it; its seam glows hot and steam hisses out at both sides of the platen, and under it the blank fuses to black composite. The ram lifts, the tile slides along the rails onto the stack in the magazine (press_out) and the stack (stack) steps down a tile with it, 0.06. The grape vents (vent_0, vent_1) puff pale smoke one after the other after each stroke. The furnace's amber peephole glows while it works (at about half on low power). Out of steel or crystal the press finishes its cycle and stops with the ram up and the bed empty, the peephole cools over 1.5 s and the vents give a thin wisp every 3 to 6 s. A burning foundry gives no steam or puffs.
+- **`ram`:** mode=press, stroke=0.3, down=to the blank on the bed, cycle_s=2 (4 on low power)
+- **`blank`:** mode=path, path=press_feed > press_bed > press_out, material=steel until fused, then licorice
+- **`stack`:** mode=step_down, step=0.06
+- **Idle:** Peephole dark; a thin wisp from a vent every 3 to 6 s.
 
 ### `fusion_reactor`
 *High-output power.*
