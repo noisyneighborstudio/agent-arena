@@ -9,6 +9,7 @@ namespace Pez.Sim
         public string Key;
         public float Progress;   // seconds of work done
         public long CmdId;       // the API command that queued it (observation feed), 0 = none
+        public float GrantedShare; // units: the share of its price the arena's gift paid (the unit carries it, and a refund returns it as gift)
         public int StructureId;  // structures: the foundation entity being built; units: the building chosen to train it (0 = any free one)
         public int WorkerId;     // units: the building working on it right now (0 = waiting for a free one)
     }
@@ -34,7 +35,7 @@ namespace Pez.Sim
         /// <summary>Derricks this team has captured, and the steel they've paid it.</summary>
         public int DerricksCaptured;
         public float DerrickSteel;
-        /// <summary>Ore its trucks mined off ground that was never a field: salvage (from kills, or a leaver's base).</summary>
+        /// <summary>Of OreMined, the ore its trucks delivered that was salvage (put down by kills, spills and leavers' bases, on any ground: Map.Salvage). Counted at delivery, so a load lost on the way never counts.</summary>
         public int SalvageMined;
         /// <summary>Steel paid in upkeep for defences beyond the free ones.</summary>
         public float UpkeepPaid;
@@ -61,14 +62,74 @@ namespace Pez.Sim
         /// <summary>Enemies briefly revealed by firing on this team (entity id -> game time the reveal ends).</summary>
         public readonly Dictionary<int, float> Revealed = new Dictionary<int, float>();
 
-        public int Amount(string item) => Stock.TryGetValue(item, out var v) ? (int)v : 0;
-        public void Add(string item, float n) => Stock[item] = (Stock.TryGetValue(item, out var v) ? v : 0) + n;
+        /// <summary>Plasma the team's fusion reactors have burned but the stockpile hasn't paid yet (World.SettleFusionBurn): not available to spend.</summary>
+        public float PlasmaOwed;
+        public int Amount(string item) => Stock.TryGetValue(item, out var v) ? (int)(item == "plasma" ? v - PlasmaOwed : v) : 0;
+        /// <summary>Change the stockpile. Taking something out spends the gift first (see Granted); adding is income, and is the team's own.</summary>
+        public void Add(string item, float n)
+        {
+            Stock[item] = (Stock.TryGetValue(item, out var v) ? v : 0) + n;
+            if (n < 0 && Granted.TryGetValue(item, out var g)) Granted[item] = g - MathF.Min(-n, GiftFree(item));
+        }
+        /// <summary>
+        /// The gift still free to spend. Plasma the reactors have burned but the stockpile hasn't paid yet (PlasmaOwed) is charged
+        /// to the gift first, as any spending is, so that much of it is already spoken for.
+        /// </summary>
+        float GiftFree(string item) => item == "plasma" ? MathF.Max(0f, Gift(item) - PlasmaOwed) : Gift(item);
+        /// <summary>
+        /// The stockpile pays `take` of the plasma the reactors owe (World.SettleFusionBurn): it comes off the gift first, like
+        /// the rest of the spending, so the gift left free (GiftFree) is the same before and after.
+        /// </summary>
+        public void SettleOwed(float take)
+        {
+            Stock["plasma"] = (Stock.TryGetValue("plasma", out var v) ? v : 0f) - take;
+            PlasmaOwed -= take;
+            if (Granted.TryGetValue("plasma", out var g)) Granted["plasma"] = MathF.Max(0f, g - take);
+        }
+        /// <summary>
+        /// The part of the stockpile the arena gave this team and it hasn't spent yet, per item (the starting ore, a late joiner's
+        /// catch-up materials). It isn't the team's own value, so a stockpile spill leaves it out (Own) and joining and leaving
+        /// cashes nothing out. Spending takes from it first (Add, Pay), and what a purchase took from it is remembered on the
+        /// thing bought (Entity.GrantedShare) and handed back by a refund (Refund) or on to what a converter makes (Gain).
+        /// So it never exceeds the stock. Saved with the game.
+        /// </summary>
+        public readonly Dictionary<string, float> Granted = new Dictionary<string, float>();
+        /// <summary>Stock handed to the team by the arena: in the stockpile like any other, and counted in Granted.</summary>
+        public void Give(string item, float n) { Add(item, n); Granted[item] = Gift(item) + n; }
+        public float Gift(string item) => Granted.TryGetValue(item, out var g) ? g : 0f;
+        /// <summary>What of an item the team holds above its gift: the part it mined, made or won itself, which a spill gives up.</summary>
+        public float Own(string item) => Stock.TryGetValue(item, out var v) ? MathF.Max(0f, (item == "plasma" ? v - PlasmaOwed : v) - GiftFree(item)) : 0f;
+        /// <summary>Add `n` of an item of which `giftShare` is gift: a refund of something bought with gift, or what a converter makes of it.</summary>
+        public void Gain(string item, float n, float giftShare)
+        {
+            Add(item, n);
+            if (giftShare > 0f && n > 0f) Granted[item] = Gift(item) + n * giftShare;
+        }
+        /// <summary>Give back `factor` of a cost; `giftShare` of it was paid from the gift and goes back as gift.</summary>
+        public void Refund(Dictionary<string, int> cost, float factor, float giftShare) { foreach (var kv in cost) Gain(kv.Key, kv.Value * factor, giftShare); }
+        static float Worth(string item) => World.OreMix.TryGetValue(item, out var m) ? m[0] + m[1] + m[2] + m[3] : 0f;
         public string Missing(Dictionary<string, int> cost)
         {
             var lacking = cost.Where(kv => Amount(kv.Key) < kv.Value).Select(kv => $"{kv.Key} {Amount(kv.Key)}/{kv.Value}").ToList();
             return lacking.Count == 0 ? null : "not enough " + string.Join(", ", lacking);
         }
-        public void Pay(Dictionary<string, int> cost, float factor = 1f) { foreach (var kv in cost) Add(kv.Key, -kv.Value * factor); }
+        /// <summary>
+        /// Pay `factor` of a cost, from the gift first. Returns the share of what was paid (in raw ore) that came out of the
+        /// gift: 1 if the arena's gift paid for all of it. What was bought carries that share, so it's worth that much less
+        /// as kill value, salvage or a refund (Entity.GrantedShare).
+        /// </summary>
+        public float Pay(Dictionary<string, int> cost, float factor = 1f)
+        {
+            float total = 0f, fromGift = 0f;
+            foreach (var kv in cost)
+            {
+                float amount = kv.Value * factor, w = Worth(kv.Key);
+                total += amount * w; fromGift += MathF.Min(GiftFree(kv.Key), amount) * w;
+                Add(kv.Key, -amount);
+            }
+            float share = total > 0f ? fromGift / total : 0f;
+            return share > 0.9999f ? 1f : share < 0.0001f ? 0f : share; // (all or nothing stays exact)
+        }
         public bool Defeated;
         public Vec2 StartPos;
         /// <summary>Tiles currently in sight of any of this team's entities.</summary>
@@ -345,12 +406,13 @@ namespace Pez.Sim
             }
             else Teams.Add(team);
             // Enough raw ore for a power plant; everything after that has to be mined.
-            team.Add("iron_ore", 500);
-            team.Add("copper_ore", 150);
+            // All of it is a gift: it isn't the team's own value to cash out or to be farmed for (Team.Granted, Entity.GrantedShare).
+            team.Give("iron_ore", 500);
+            team.Give("copper_ore", 150);
             var s = Int2.Of(spawn);
-            var hq = SpawnStructure(t, "command_center", new Int2(s.X - 1, s.Y - 1), 1f);
-            SpawnUnit(t, "mining_truck", hq);
-            for (int i = 0; i < 2; i++) SpawnUnit(t, "rifleman", hq);
+            var hq = SpawnStructure(t, "command_center", new Int2(s.X - 1, s.Y - 1), 1f, grantedShare: 1f);
+            SpawnUnit(t, "mining_truck", hq).GrantedShare = 1f;
+            for (int i = 0; i < 2; i++) SpawnUnit(t, "rifleman", hq).GrantedShare = 1f;
             return team;
         }
 
@@ -435,15 +497,15 @@ namespace Pez.Sim
         {
             float minutes = MathF.Min(Time / 60f, 30f);
             if (minutes < 0.5f) return;
-            team.Add("steel", 60 * minutes);
-            team.Add("copper", 30 * minutes);
-            team.Add("circuits", 8 * minutes);
-            team.Add("iron_ore", 20 * minutes);
+            team.Give("steel", 60 * minutes);
+            team.Give("copper", 30 * minutes);
+            team.Give("circuits", 8 * minutes);
+            team.Give("iron_ore", 20 * minutes);
             if (minutes < 3f) return;
             foreach (var key in new[] { "power_plant", "mining_refinery" })
             {
                 var spot = FindPlacement(team.Id, key);
-                if (spot.HasValue) { SpawnStructure(team.Id, key, spot.Value, 1f); team.Stats.Count(key); }
+                if (spot.HasValue) { SpawnStructure(team.Id, key, spot.Value, 1f, grantedShare: 1f); team.Stats.Count(key); }
             }
         }
 
@@ -473,12 +535,19 @@ namespace Pez.Sim
             EnsureDerricks(); // a bigger map gets more, around its new middle
         }
 
-        static readonly Dictionary<string, (byte ore, float mult)> SalvageOf = new Dictionary<string, (byte, float)>
+        /// <summary>
+        /// The raw ores one unit of each item is made from, as [iron, copper, crystal, uranium] (the Map.Iron... order): what a
+        /// unit of it is worth in kill value, salvage, spills and leaves. Every conversion reads this table, and a test keeps it
+        /// in step with the converters' recipes.
+        /// </summary>
+        internal static readonly Dictionary<string, float[]> OreMix = new Dictionary<string, float[]>
         {
-            { "iron_ore", (Map.Iron, 1f) }, { "steel", (Map.Iron, 1f) },
-            { "copper_ore", (Map.Copper, 1f) }, { "copper", (Map.Copper, 1f) }, { "circuits", (Map.Copper, 2f) },
-            { "crystal", (Map.Crystal, 1f) }, { "lenses", (Map.Crystal, 2f) }, { "composite", (Map.Crystal, 2f) },
-            { "uranium", (Map.Uranium, 1f) }, { "plasma", (Map.Uranium, 2f) },
+            { "iron_ore", new float[] { 1, 0, 0, 0 } }, { "steel", new float[] { 1, 0, 0, 0 } },
+            { "copper_ore", new float[] { 0, 1, 0, 0 } }, { "copper", new float[] { 0, 1, 0, 0 } },
+            { "circuits", new float[] { 1, 2, 0, 0 } },  // 2 copper + 1 steel
+            { "crystal", new float[] { 0, 0, 1, 0 } }, { "lenses", new float[] { 0, 0, 2, 0 } },
+            { "composite", new float[] { 2, 0, 1, 0 } }, // 2 steel + 1 crystal
+            { "uranium", new float[] { 0, 0, 0, 1 } }, { "plasma", new float[] { 0, 0, 0, 2 } },
         };
 
         /// <summary>
@@ -543,6 +612,7 @@ namespace Pez.Sim
                     Map.Tiles[i] = Terrain.Dirt;
                     Map.OreType[i] = (byte)k;
                     Map.Ore[i] = Math.Min(Map.MaxOrePerTile, per);
+                    Map.Salvage[i] = Map.Ore[i];
                     placed += Map.Ore[i];
                     landed?.Add((queue[ti], Map.Ore[i]));
                 }
@@ -578,51 +648,53 @@ namespace Pez.Sim
             var t = Teams[owner];
             // A team that's already out is taken apart whole, stockpile and all (Dismantle).
             if (t.Left || t.Defeated || Entities.Any(o => !o.Dead && o.Team == owner && o.Def.Key == "command_center")) return;
-            var value = new float[4];
-            foreach (var kv in t.Stock) if (SalvageOf.TryGetValue(kv.Key, out var sv) && kv.Value > 0) value[sv.ore] += kv.Value * sv.mult;
+            bool had = t.Stock.Values.Any(v => v > 0);
+            var value = TakeStockpile(t);
             var tiles = new List<Int2>();
             for (int y = 0; y < cc.Def.SizeY; y++) for (int x = 0; x < cc.Def.SizeX; x++) tiles.Add(new Int2(cc.Origin.X + x, cc.Origin.Y + y));
             float total = SpillSalvage(value, tiles);
-            t.Stock.Clear();
-            if (total <= 0) return;
             var where = StateView.Sector(cc.Center);
-            string msg = $"{t.Name}'s last command center {how} at sector {where}: its stockpile spilled out as about {(int)total} units of salvage ore. First come, first served.";
-            Emit("chat", -1, text: msg);
             var truck = Entities.FirstOrDefault(e => !e.Dead && e.Team == t.Id && e.Def.DeploysInto == "command_center");
-            Alerts.Raise(this, t.Id, "stockpile_lost", Priority.Critical, cc.Center, hit: false).Lost.Add($"your last command center {how}, so your whole stockpile ({(int)total} units) spilled out as salvage at {where}; anyone can mine it, so get your trucks there first" +
-                (truck != null ? $". Deploy your construction_truck #{truck.Id} into a new command center somewhere safe to rebuild" : ""));
+            string rebuild = truck != null ? $". Deploy your construction_truck #{truck.Id} into a new command center somewhere safe to rebuild" : "";
+            if (total <= 0)
+            {
+                // Nothing above what the arena gave it, so nothing to scavenge: the owner still hears that its stockpile is gone.
+                if (had) Alerts.Raise(this, t.Id, "stockpile_lost", Priority.Critical, cc.Center, hit: false).Lost.Add($"your last command center {how}, so your stockpile is gone (it was only what you were given at the start, so there is nothing to scavenge){rebuild}");
+                return;
+            }
+            string msg = $"{t.Name}'s last command center {how} at sector {where}: its stockpile is gone, and about {(int)total} units of it spilled out as salvage ore. First come, first served.";
+            Emit("chat", -1, text: msg);
+            Alerts.Raise(this, t.Id, "stockpile_lost", Priority.Critical, cc.Center, hit: false).Lost.Add($"your last command center {how}, so your stockpile is gone: the {(int)total} units of it above what you were given at the start spilled out as salvage at {where}; anyone can mine it, so get your trucks there first{rebuild}");
             foreach (var other in Teams.Where(o => o.Id != t.Id && !o.Left && !o.Defeated))
                 Alerts.Raise(this, other.Id, "salvage_available", Priority.High, cc.Center, hit: false).Lost.Add($"{(int)total} units of salvage ore at {where}");
         }
 
         /// <summary>
         /// A team that's out for good (left, or knocked out) is taken apart: its derricks go back to neutral, and every
-        /// building, unit and the whole stockpile turn to salvage ore on its old base (60% of a building's cost, 50% of a
-        /// unit's). Returns the ore placed and where it landed (the structures' footprints, so not always the first base).
+        /// building, unit and the whole stockpile turn to salvage ore on its old base (DismantleStructureShare of a
+        /// building's value, DismantleUnitShare of a unit's, all of the stockpile). Returns the ore placed and where it landed
+        /// (the structures' footprints, so not always the first base).
         /// </summary>
         (float total, string where, Vec2 at) Dismantle(Team t)
         {
             ReleaseDerricks(t.Id);
             t.Defeated = true; // first: a command center going with the rest isn't a "last one fell" spill (ReleaseStockpile)
-            var value = new float[4];
-            void AddCost(Dictionary<string, int> cost, float f) { foreach (var kv in cost) if (SalvageOf.TryGetValue(kv.Key, out var s)) value[s.ore] += kv.Value * s.mult * f; }
-            foreach (var kv in t.Stock) if (SalvageOf.TryGetValue(kv.Key, out var s) && kv.Value > 0) value[s.ore] += kv.Value * s.mult;
+            var value = TakeStockpile(t);
             var tiles = new List<Int2>();
             foreach (var e in Entities.Where(e => !e.Dead && e.Team == t.Id).ToList())
             {
                 if (e.IsStructure)
                 {
-                    AddCost(e.Def.Key == "command_center" ? new Dictionary<string, int> { { "iron_ore", 1500 }, { "copper_ore", 500 } } : e.Def.Cost, 0.6f * e.BuildProgress);
+                    AddWorth(value, e, DismantleStructureShare);
                     for (int y = 0; y < e.Def.SizeY; y++) for (int x = 0; x < e.Def.SizeX; x++) tiles.Add(new Int2(e.Origin.X + x, e.Origin.Y + y));
                 }
-                else if (!e.IsMine) AddCost(e.Def.Cost, 0.5f);
+                else if (!e.IsMine) AddWorth(value, e, DismantleUnitShare);
                 Emit("salvaged", e.Team, e.Id, 0, e.Center, key: e.Def.Key); // dismantled, not destroyed: no wreck
                 Remove(e);
             }
             if (tiles.Count == 0) tiles.Add(Int2.Of(t.StartPos));
             var landed = new List<(Int2 tile, int ore)>();
             float total = SpillSalvage(value, tiles, landed);
-            t.Stock.Clear();
             var (where, at) = SpillSite(landed, t.StartPos);
             return (total, where, at);
         }
@@ -669,14 +741,16 @@ namespace Pez.Sim
             return e;
         }
 
-        public Entity SpawnStructure(int team, string key, Int2 origin, float progress)
+        public Entity SpawnStructure(int team, string key, Int2 origin, float progress, float grantedShare = 0f)
         {
             var def = Def(key);
             var e = NewEntity(team, def);
+            e.GrantedShare = grantedShare;
             e.Origin = origin;
             e.BuildProgress = progress;
             e.Pos = e.PrevPos = e.Center;
             e.Hp = def.MaxHp * (progress >= 1 ? 1f : 0.1f);
+            if (def.DropOff) e.BaySide = ChooseBaySide(origin, def, NearestOreField(e.Center)); // its trucks back in from the ore's side, for good
             for (int y = 0; y < def.SizeY; y++)
                 for (int x = 0; x < def.SizeX; x++)
                     Map.Occupant[Map.Idx(origin.X + x, origin.Y + y)] = e.Id;
@@ -703,15 +777,17 @@ namespace Pez.Sim
             var def = Def(key);
             var e = NewEntity(team, def);
             var jitter = new Vec2((float)(rng.NextDouble() - 0.5) * 0.6f, (float)(rng.NextDouble() - 0.5) * 0.6f);
+            // The doorway: south, where the models' doors are, except a drop-off's, which faces its bay (its model is turned to match).
+            var door = at.IsStructure && at.Def.DropOff ? BaySides[DoorSide(at)] : BaySides[0];
             if (def.IsAir) e.Pos = e.PrevPos = at.Center + jitter;
             else
             {
-                // Exit just below the producer's footprint.
-                var exit = new Int2(at.Origin.X + at.Def.SizeX / 2, at.Origin.Y - 1);
+                // Exit just outside the producer's footprint, in the middle of its door side.
+                var exit = Int2.Of(at.Center + door * ((MathF.Abs(door.X) > 0.5f ? at.Def.SizeX : at.Def.SizeY) / 2f + 0.5f));
                 var tile = Paths.NearestPassable(exit);
                 e.Pos = e.PrevPos = tile.Center + jitter;
             }
-            e.Facing = e.TurretFacing = -MathF.PI / 2;
+            e.Facing = e.TurretFacing = door.Angle;
             e.GuardPos = e.Pos;
             e.FuelCap = DroneFuel(def);
             e.Fuel = e.FuelMax;
@@ -720,7 +796,8 @@ namespace Pez.Sim
             else if (!def.IsAir)
             {
                 // Roll a few tiles clear of the door so new units don't park in front of it (or a refinery's dock).
-                var clear = Paths.NearestPassable(Int2.Of(e.Pos + new Vec2((float)(rng.NextDouble() - 0.5) * 4f, -3f))).Center;
+                var across = new Vec2(-door.Y, door.X);
+                var clear = Paths.NearestPassable(Int2.Of(e.Pos + across * ((float)(rng.NextDouble() - 0.5) * 4f) + door * 3f)).Center;
                 SetOrder(e, Order.Move, clear);
                 e.GuardPos = clear;
             }
@@ -731,8 +808,9 @@ namespace Pez.Sim
 
         void OnStructureComplete(Entity e)
         {
+            StartReactor(e);
             UpdatePower();
-            if (e.Def.Key == "mining_refinery") SpawnUnit(e.Team, "mining_truck", e);
+            if (e.Def.Key == "mining_refinery") SpawnUnit(e.Team, "mining_truck", e).GrantedShare = e.GrantedShare; // its free truck is as much a gift as the refinery was
         }
 
         /// <summary>Turn a deployable unit (Outpost Truck) into its structure where it stands.</summary>
@@ -782,7 +860,7 @@ namespace Pez.Sim
                 }
             }
             Remove(u);
-            var s = SpawnStructure(u.Team, key, origin, 1f);
+            var s = SpawnStructure(u.Team, key, origin, 1f, u.GrantedShare); // a structure is worth what the truck that deployed into it was
             if (deposit != null) { s.DepositId = deposit.Id; deposit.MineId = s.Id; }
             Teams[u.Team].Stats.Count(key);
             Emit("built", u.Team, s.Id, pos: s.Center, key: key);
@@ -821,6 +899,7 @@ namespace Pez.Sim
                 if (e.Team >= 0) Teams[e.Team].StructureQueue.RemoveAll(p => p.StructureId == e.Id);
                 UpdatePower();
                 if (e.Team >= 0 && e.Def.Key == "command_center") ReleaseStockpile(e, e.Team, how);
+                if (e.Def.Key == "derrick") DerrickDestroyed(e); // however it goes, the site comes back neutral
             }
         }
 
@@ -911,7 +990,7 @@ namespace Pez.Sim
             if (BlocksLane(team, ox, oy, def) is Entity d)
                 return $"it would block the truck lane of your {d.Def.Key} #{d.Id} (trucks back into its bay; keep the 2 tiles outside it clear)";
             if (def.DropOff && !Bay(new Int2(ox, oy), def).laneOk)
-                return $"a {def.Key} needs a clear 2-tile truck lane on one side (south preferred) for trucks to back into";
+                return $"a {def.Key} needs a clear 2-tile truck lane on one side (the side facing your ore is preferred) for trucks to back into";
             if (!requireNear) return null;
             // Must be near an existing friendly structure: territory grows outward from your bases.
             const int reach = 6;
@@ -936,13 +1015,7 @@ namespace Pez.Sim
             var anchor = near ?? Int2.Of(Teams[team].StartPos).Center;
             var centre = new Vec2(Map.W / 2f, Map.H / 2f);
             var field = def.DropOff && near == null ? NearestOreField(anchor) : new List<Vec2>();
-            float ToField(Vec2 p) { float d = float.MaxValue; foreach (var f in field) d = MathF.Min(d, Vec2.Dist(p, f)); return d; }
-            // Which way is "right" for a base facing the map centre (a base on the centre faces east).
-            var facing = (centre - anchor).Normalized;
-            if (facing.LengthSq < 0.5f) facing = new Vec2(1, 0);
-            var right = new Vec2(facing.Y, -facing.X);
-            const float tie = 1e-4f; // closer than this is a tie (no two different spots are this close, and rounding is far smaller)
-            int Cmp(float a, float b) => a < b - tie ? -1 : a > b + tie ? 1 : 0;
+            var right = RightOf(anchor);
             Int2? best = null; float bestScore = float.MaxValue, bestCentre = 0, bestRight = 0;
             for (int r = 2; r <= 14; r++)
             {
@@ -955,26 +1028,44 @@ namespace Pez.Sim
                         if (reach > r || (r > 2 && reach <= r - 1)) continue;
                         if (CanPlace(team, key, x, y, padding: 1, requireNear: requireNear) != null) continue;
                         // Turrets lean toward the map centre; everything else stays compact. Trucks drive to the head of a drop-off's lane
-                        // and back, so each tile between that and the ore counts twice.
+                        // (which opens toward the ore) and back, so each tile between that and the ore counts twice.
                         float score = Vec2.Dist(c, anchor) + (key == "gun_turret" ? Vec2.Dist(c, centre) * 0.6f : 0);
-                        if (field.Count > 0) score += 2f * ToField(Bay(new Int2(x, y), def).head);
-                        int cmp = Cmp(score, bestScore);
+                        if (field.Count > 0) { var at = new Int2(x, y); score += 2f * DistToField(field, Bay(at, def, ChooseBaySide(at, def, field)).head); }
+                        int cmp = TieCmp(score, bestScore);
                         float toCentre = 0, toRight = 0;
                         if (cmp <= 0)
                         {
                             toCentre = Vec2.Dist(c, centre);
                             var d = c - anchor;
                             toRight = d.X * right.X + d.Y * right.Y;
-                            if (cmp == 0) cmp = Cmp(toCentre, bestCentre);
-                            if (cmp == 0) cmp = Cmp(bestRight, toRight); // the further right wins
+                            if (cmp == 0) cmp = TieCmp(toCentre, bestCentre);
+                            if (cmp == 0) cmp = TieCmp(bestRight, toRight); // the further right wins
                         }
                         if (cmp < 0) { bestScore = score; bestCentre = toCentre; bestRight = toRight; best = new Int2(x, y); }
                     }
                 // A drop-off's score is at least its distance from the base, so once the best is under the next ring's distance
                 // nothing further out can beat it; before that, a spot beside the ore a few rings out may still be far better.
-                if (best.HasValue && (field.Count > 0 ? bestScore + tie <= r : r > 4)) break;
+                if (best.HasValue && (field.Count > 0 ? bestScore + Tie <= r : r > 4)) break;
             }
             return best;
+        }
+
+        const float Tie = 1e-4f; // closer than this is a tie (no two different spots are this close, and rounding is far smaller)
+        static int TieCmp(float a, float b) => a < b - Tie ? -1 : a > b + Tie ? 1 : 0;
+
+        static float DistToField(List<Vec2> field, Vec2 p)
+        {
+            float d = float.MaxValue;
+            foreach (var f in field) d = MathF.Min(d, Vec2.Dist(p, f));
+            return d;
+        }
+
+        /// <summary>Which way is "right" for something at a point facing the map centre (one on the centre faces east): the same turn for every seat.</summary>
+        Vec2 RightOf(Vec2 from)
+        {
+            var facing = (new Vec2(Map.W / 2f, Map.H / 2f) - from).Normalized;
+            if (facing.LengthSq < 0.5f) facing = new Vec2(1, 0);
+            return new Vec2(facing.Y, -facing.X);
         }
 
         /// <summary>
@@ -1109,7 +1200,8 @@ namespace Pez.Sim
             {
                 if (e.Dead || !e.IsStructure || !e.IsComplete || e.Team < 0) continue;
                 var t = Teams[e.Team];
-                if (e.Def.Key == "fusion_reactor" && !e.Working) continue; // out of plasma
+                if (e.Offline) continue; // an offline defence (upkeep unpaid) draws no power
+                if (e.Def.Key == "fusion_reactor") { t.PowerProduced += ReactorPower(e, e.Output); continue; } // as much as its plasma pays for
                 if (e.Def.Power > 0) t.PowerProduced += e.Def.Power; else t.PowerUsed -= e.Def.Power;
             }
             // Say when a team tips into low power (and out of it): otherwise half-speed production goes unnoticed.
@@ -1121,7 +1213,7 @@ namespace Pez.Sim
                 if (t.LowPower)
                 {
                     Alerts.Raise(this, t.Id, "low_power", Priority.Medium, at, hit: false)
-                          .Lost.Add($"power {t.PowerProduced} produced, {t.PowerUsed} used: building, training and refining run at half speed until you build a power_plant or sell something that draws power");
+                          .Lost.Add($"power {t.PowerProduced} produced, {t.PowerUsed} used: building, training and refining run at half speed until you build a power_plant or sell something that draws power" + ReactorShortNote(t));
                     Emit("low_power", t.Id, 0, 0, at, text: $"low power ({t.PowerProduced} produced, {t.PowerUsed} used): everything runs at half speed until you add a power_plant");
                 }
                 else Emit("power_restored", t.Id, 0, 0, at, text: $"power restored ({t.PowerProduced} produced, {t.PowerUsed} used): full speed again");
@@ -1141,14 +1233,7 @@ namespace Pez.Sim
                 if (e.Dead || !e.IsStructure || !e.IsComplete || e.Team < 0) continue; // neutral derricks pay nobody
                 var team = Teams[e.Team];
                 if (e.Def.Key == "derrick") { DerrickTick(e, team); continue; }
-                if (e.Def.Key == "fusion_reactor")
-                {
-                    float burn = 0.1f * Dt;
-                    bool fueled = (team.Stock.TryGetValue("plasma", out var pl) ? pl : 0) >= burn;
-                    if (fueled) team.Add("plasma", -burn);
-                    if (fueled != e.Working) { e.Working = fueled; powerChanged = true; }
-                    continue;
-                }
+                if (e.Def.Key == "fusion_reactor") { if (FusionTick(e, team)) powerChanged = true; continue; }
                 if (e.Def.Key == "deep_mine") { DeepMineTick(e, team); continue; }
                 if (e.Def.Recipes.Length == 0) continue;
                 float speed = team.LowPower ? 0.5f : 1f;
@@ -1166,12 +1251,14 @@ namespace Pez.Sim
                     }
                     if (frac <= 0.001f) continue;
                     frac = MathF.Min(1f, frac);
-                    foreach (var kv in r.Inputs) team.Add(kv.Key, -kv.Value * cycles * frac);
-                    foreach (var kv in r.Outputs) team.Add(kv.Key, kv.Value * cycles * frac);
+                    // The gift stays a gift when it's refined: what the inputs took from it, the outputs are made of.
+                    float giftShare = team.Pay(r.Inputs, cycles * frac);
+                    foreach (var kv in r.Outputs) team.Gain(kv.Key, kv.Value * cycles * frac, giftShare);
                     any = true;
                 }
                 e.Working = any;
             }
+            if (Tick % TickRate == 0) SettleFusionBurn();
             if (powerChanged) UpdatePower();
 
             // Per-second net rates, from a stock snapshot each second, averaged over about 15 s: a truck unloading 150 ore
@@ -1239,6 +1326,7 @@ namespace Pez.Sim
                         {
                             q.RemoveAt(i--);
                             var u = SpawnUnit(team.Id, item.Key, producer);
+                            u.GrantedShare = item.GrantedShare; // as much of it as the gift paid for is worth nothing as a kill
                             team.Stats.UnitsBuilt++;
                             team.Stats.Count(item.Key);
                             if (u.Def.OwnerTeam >= 0 && Inventions.TryGetValue(item.Key, out var inv)) inv.Built++;
@@ -1620,6 +1708,7 @@ namespace Pez.Sim
                  text: $"{Teams[e.Team].Name}'s engineer captured {(old >= 0 ? $"{Teams[old].Name}'s" : "a neutral")} {t.Def.Key} #{t.Id} at {(int)t.Center.X},{(int)t.Center.Y}");
             if (old >= 0) Alerts.Raise(this, old, "structure_lost", Priority.Critical, t.Center, attacker: e).Lost.Add($"{t.Def.Key} #{t.Id} (captured by an engineer)");
             if (t.Def.Key == "derrick") DerrickCaptured(t, old);
+            StartReactor(t);
             if (old >= 0 && t.Def.Key == "command_center") ReleaseStockpile(t, old, $"was captured by {Teams[e.Team].Name}");
             Remove(e); // the engineer moves in for good
             UpdatePower();
@@ -1876,7 +1965,6 @@ namespace Pez.Sim
                 if (enemyKill) Teams[team].Stats.KillValue += (int)value;
                 Remove(t); // a team's last command center spills its stockpile as it goes (ReleaseStockpile)
                 if (salvage != null) DropSalvage(t, salvage, team);
-                if (t.Def.Key == "derrick") DerrickDestroyed(t);
             }
         }
 
@@ -1952,9 +2040,11 @@ namespace Pez.Sim
                     e.WorkTimer = 0;
                     int i = Map.Idx(tile.X, tile.Y);
                     int take = Math.Min(Math.Min(4, Map.Ore[i]), cap - e.Cargo);
+                    // Salvage lying on the tile (even a field's) goes first, and is counted when it's delivered (TipOre), not now.
+                    int salvage = Math.Min(take, Map.SalvageOn(i));
+                    Map.Salvage[i] = Map.SalvageOn(i) - salvage;
                     Map.Ore[i] -= take;
-                    if (Map.OreBase[i] == 0) Teams[e.Team].Stats.SalvageMined += take;
-                    if (take > 0) { e.Cargo += take; e.CargoType = Map.OreType[i]; }
+                    if (take > 0) { e.Cargo += take; e.CargoSalvage += salvage; e.CargoType = Map.OreType[i]; }
                     e.TurretFacing += 0.3f; // spin the cutter for the view
                 }
                 return;
@@ -2065,13 +2155,18 @@ namespace Pez.Sim
             if (e.WorkTimer < 0.1f) return;
             e.WorkTimer = 0;
             int give = Math.Min(10, e.Cargo);
+            // The salvage in the load is delivered in proportion, and only now is it counted: a truck lost on the way never delivered it.
+            int salvage = give >= e.Cargo ? e.CargoSalvage : Math.Min(e.CargoSalvage, e.CargoSalvage * give / e.Cargo);
             e.Cargo -= give;
+            e.CargoSalvage -= salvage;
             if (e.CargoType >= 0) Teams[e.Team].Add(Defs.Ores[e.CargoType], give);
             Teams[e.Team].Stats.OreMined += give;
+            Teams[e.Team].Stats.SalvageMined += salvage;
         }
 
         void FinishDelivery(Entity e)
         {
+            e.CargoSalvage = 0;
             e.CargoType = -1;
             e.Order = Order.Harvest;
             e.Path = null;
@@ -2103,32 +2198,80 @@ namespace Pez.Sim
         bool BayTaken(Entity dropOff, Entity e) =>
             Entities.Any(o => o != e && !o.Dead && o.IsHarvester && o.DockAt == dropOff.Id && o.Dock >= DockStep.Align);
 
-        // A bay's sides in order of preference: south (where the doors are), then east, west, north.
-        static readonly Vec2[] BaySides = { new Vec2(0, -1), new Vec2(1, 0), new Vec2(-1, 0), new Vec2(0, 1) };
+        // A bay's four sides, by Entity.BaySide: south (where the models' doors are, and what old saves have), east, west, north.
+        public static readonly Vec2[] BaySides = { new Vec2(0, -1), new Vec2(1, 0), new Vec2(-1, 0), new Vec2(0, 1) };
 
         /// <summary>
         /// A drop-off's truck bay: the point trucks back onto (just outside the footprint), the head of its lane
-        /// (BayLength further out), and the facing a docked truck has (out of the bay). South unless terrain blocks
-        /// that lane, then the first clear side. laneOk is false when no side has a clear lane (trucks unload beside it).
+        /// (BayLength further out), and the facing a docked truck has (out of the bay). On the drop-off's own side
+        /// (Entity.BaySide, facing its ore) unless that lane is blocked, then the first clear side in the order south,
+        /// east, west, north. laneOk is false when no side has a clear lane (trucks unload beside it, on its own side).
         /// </summary>
-        public (Vec2 bay, Vec2 head, float facing, bool laneOk) Bay(Entity s) => Bay(s.Origin, s.Def);
+        public (Vec2 bay, Vec2 head, float facing, bool laneOk) Bay(Entity s) => Bay(s.Origin, s.Def, s.BaySide);
 
-        public (Vec2 bay, Vec2 head, float facing, bool laneOk) Bay(Int2 origin, EntityDef def)
+        public (Vec2 bay, Vec2 head, float facing, bool laneOk) Bay(Int2 origin, EntityDef def, int side = 0)
         {
-            (Vec2, Vec2, float, bool) Side(Vec2 n)
-            {
-                var c = new Vec2(origin.X + def.SizeX / 2f, origin.Y + def.SizeY / 2f);
-                var bay = c + new Vec2(n.X * (def.SizeX / 2f + 0.5f), n.Y * (def.SizeY / 2f + 0.5f));
-                return (bay, bay + n * BayLength, n.Angle, true);
-            }
-            foreach (var n in BaySides)
-            {
-                var (bay, head, f, _) = Side(n);
-                if (LaneTiles(bay, head).All(t => Map.InBounds(t.X, t.Y) && Map.Passable(t.X, t.Y))) return (bay, head, f, true);
-            }
-            var (b0, h0, f0, _) = Side(BaySides[0]);
-            return (b0, h0, f0, false);
+            var (open, clear) = OpenBaySide(origin, def, side);
+            var (bay, head, f) = BayOn(origin, def, BaySides[open]);
+            return (bay, head, f, clear);
         }
+
+        /// <summary>The side a bay really opens on: its own unless that lane is blocked, then the first clear one (clear is false if none is, and then it is its own).</summary>
+        (int side, bool clear) OpenBaySide(Int2 origin, EntityDef def, int side)
+        {
+            side = Math.Clamp(side, 0, BaySides.Length - 1);
+            for (int k = 0; k < BaySides.Length; k++)
+            {
+                int i = k == 0 ? side : (k - 1 < side ? k - 1 : k); // its own side, then the rest in order
+                var (bay, head, _) = BayOn(origin, def, BaySides[i]);
+                if (LaneClear(bay, head)) return (i, true);
+            }
+            return (side, false);
+        }
+
+        /// <summary>The side (an index into BaySides) a drop-off's door faces: where its bay opens now.</summary>
+        int DoorSide(Entity s) => OpenBaySide(s.Origin, s.Def, s.BaySide).side;
+
+        /// <summary>Choose every drop-off's bay side again, from the map's ore as it is now (for tests that rewrite the ore after the world is built).</summary>
+        internal void ChooseBays()
+        {
+            foreach (var e in Entities)
+                if (!e.Dead && e.IsStructure && e.Def.DropOff) e.BaySide = ChooseBaySide(e.Origin, e.Def, NearestOreField(e.Center));
+        }
+
+        static (Vec2 bay, Vec2 head, float facing) BayOn(Int2 origin, EntityDef def, Vec2 n)
+        {
+            var c = new Vec2(origin.X + def.SizeX / 2f, origin.Y + def.SizeY / 2f);
+            var bay = c + new Vec2(n.X * (def.SizeX / 2f + 0.5f), n.Y * (def.SizeY / 2f + 0.5f));
+            return (bay, bay + n * BayLength, n.Angle);
+        }
+
+        bool LaneClear(Vec2 bay, Vec2 head) => LaneTiles(bay, head).All(t => Map.InBounds(t.X, t.Y) && Map.Passable(t.X, t.Y));
+
+        /// <summary>
+        /// The side a new drop-off's bay opens on: of the sides with a clear lane, the one whose lane head is nearest the ore
+        /// field (ties go to the right-hand side as the building faces the map centre, so mirrored bases choose mirrored sides).
+        /// South when there is no field, or no side is clear (as it always was).
+        /// </summary>
+        int ChooseBaySide(Int2 origin, EntityDef def, List<Vec2> field)
+        {
+            if (field.Count == 0) return 0;
+            var right = RightOf(new Vec2(origin.X + def.SizeX / 2f, origin.Y + def.SizeY / 2f));
+            int best = -1; float bestDist = 0, bestRight = 0;
+            for (int i = 0; i < BaySides.Length; i++)
+            {
+                var (bay, head, _) = BayOn(origin, def, BaySides[i]);
+                if (!LaneClear(bay, head)) continue;
+                float dist = DistToField(field, head), toRight = BaySides[i].X * right.X + BaySides[i].Y * right.Y;
+                int cmp = best < 0 ? -1 : TieCmp(dist, bestDist);
+                if (cmp == 0) cmp = TieCmp(bestRight, toRight);
+                if (cmp < 0) { best = i; bestDist = dist; bestRight = toRight; }
+            }
+            return Math.Max(0, best);
+        }
+
+        /// <summary>Which way a structure's door faces, in the sim's radians: its bay for a drop-off, else south, where the models' doors are.</summary>
+        public float DoorFacing(Entity s) => s.IsStructure && s.Def.DropOff ? Bay(s).facing : -MathF.PI / 2f;
 
         /// <summary>The tiles a truck's body sweeps backing from the head of a lane into its bay.</summary>
         static IEnumerable<Int2> LaneTiles(Vec2 bay, Vec2 head)
@@ -2383,7 +2526,7 @@ namespace Pez.Sim
             SetOrder(e, Order.Idle, e.Pos);
         }
 
-        /// <summary>Ore left at which a deep mine warns it's running low: two minutes of pumping.</summary>
+        /// <summary>Ore left at which a deep mine warns it's running low: five minutes of pumping.</summary>
         public const float DeepMineWarnAmount = EntityDef.DeepMineRate * 300f; // 5 minutes: time to survey, build a rig and drive it
 
         /// <summary>Seconds of pumping left in a deposit at this team's current rate (low power halves it).</summary>
@@ -2465,7 +2608,7 @@ namespace Pez.Sim
                         {
                             int i = Map.Idx(x, y);
                             if (Map.OreBase[i] <= 0 || Map.OreBaseType[i] > 1 || !seen.Add(i)) continue;
-                            left[Map.OreBaseType[i]] += Map.Ore[i]; was[Map.OreBaseType[i]] += Map.OreBase[i];
+                            left[Map.OreBaseType[i]] += Map.FieldOre(i); was[Map.OreBaseType[i]] += Map.OreBase[i];
                         }
                 }
                 // At half: the second half goes much faster than the first (more trucks by then), so a quarter left is too late.

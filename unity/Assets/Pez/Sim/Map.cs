@@ -32,6 +32,12 @@ namespace Pez.Sim
         /// </summary>
         public readonly int[] OreBase;
         public readonly byte[] OreBaseType;
+        /// <summary>
+        /// How much of each tile's Ore is salvage (put down by a kill, a spill or a dismantled base) rather than the field's own.
+        /// Trucks take the salvage part first and it counts as mined only when delivered (World.TipOre), and regrowth fills a
+        /// field up to its original amount whatever salvage lies on it. Read it through SalvageOn: it can't exceed the ore.
+        /// </summary>
+        public readonly int[] Salvage;
         public readonly List<Vec2> Spawns = new List<Vec2>();
         public readonly List<DeepDeposit> Deep = new List<DeepDeposit>();
         /// <summary>Scales every surface ore field (1 = normal; below 1 = a scarce map where deep mining matters early).</summary>
@@ -50,7 +56,13 @@ namespace Pez.Sim
             Occupant = new int[w * h];
             OreBase = new int[w * h];
             OreBaseType = new byte[w * h];
+            Salvage = new int[w * h];
         }
+
+        /// <summary>The salvage on tile i (never more than the ore there: ore set or cleared directly leaves the layer behind).</summary>
+        public int SalvageOn(int i) => Math.Min(Salvage[i], Ore[i]);
+        /// <summary>The field's own ore on tile i: what's there besides salvage.</summary>
+        public int FieldOre(int i) => Ore[i] - SalvageOn(i);
 
         public bool InBounds(int x, int y) => x >= 0 && y >= 0 && x < W && y < H;
         public int Idx(int x, int y) => y * W + x;
@@ -145,7 +157,7 @@ namespace Pez.Sim
         static (int r, int min, int max) FieldOf(byte ore) => ore == Iron || ore == Copper ? (2, 200, 340) : ore == Crystal ? (2, 90, 170) : (1, 70, 130);
 
         /// <summary>The ore of a random neutral field, weighted as the deep deposits are: 35% iron, 30% copper, 20% crystal, 15% uranium.</summary>
-        static byte FieldOre(Random rng) { int roll = rng.Next(100); return roll < 35 ? Iron : roll < 65 ? Copper : roll < 85 ? Crystal : Uranium; }
+        static byte NeutralOre(Random rng) { int roll = rng.Next(100); return roll < 35 ? Iron : roll < 65 ? Copper : roll < 85 ? Crystal : Uranium; }
 
         /// <summary>
         /// Whether a field of this radius fits at c: inside the map, open ground (no rock, water or other ore, live or regrowing)
@@ -167,11 +179,11 @@ namespace Pez.Sim
             return true;
         }
 
-        /// <summary>How far every tile is from the nearest surface ore (live or regrowing) or base site, in tiles (a two-pass chamfer): large in the map's far gaps.</summary>
+        /// <summary>How far every tile is from the nearest surface field (mined or not; salvage piles aren't fields) or base site, in tiles (a two-pass chamfer): large in the map's far gaps.</summary>
         float[] OreGaps()
         {
             var d = new float[W * H];
-            for (int i = 0; i < d.Length; i++) d[i] = Ore[i] > 0 || OreBase[i] > 0 ? 0f : 9999f;
+            for (int i = 0; i < d.Length; i++) d[i] = OreBase[i] > 0 ? 0f : 9999f;
             foreach (var s in Spawns) d[Idx((int)s.X, (int)s.Y)] = 0f;
             for (int y = 0; y < H; y++)
                 for (int x = 0; x < W; x++)
@@ -224,7 +236,7 @@ namespace Pez.Sim
             int sets = Math.Min(ExtraSetsMax, (int)MathF.Round(1.5f * (area - 1f))); // none up to 80x80, the most from about 128x128
             for (int n = 0; n < sets; n++)
             {
-                byte ore = FieldOre(rng); // the ore is settled first, so the big iron fields aren't squeezed out by the small ones fitting more easily
+                byte ore = NeutralOre(rng); // the ore is settled first, so the big iron fields aren't squeezed out by the small ones fitting more easily
                 var (r, min, max) = FieldOf(ore);
                 var spots = BestFieldSpots(() => Images(DeepTile(new Vec2(rng.Next(W), rng.Next(H)))), r, 18f, 400, 12);
                 if (spots == null) continue;
@@ -487,7 +499,7 @@ namespace Pez.Sim
                 {
                     int a = Idx(x, y), b = m.Idx(x, y);
                     m.Tiles[b] = Tiles[a]; m.Ore[b] = Ore[a]; m.OreType[b] = OreType[a]; m.Occupant[b] = Occupant[a];
-                    m.OreBase[b] = OreBase[a]; m.OreBaseType[b] = OreBaseType[a];
+                    m.OreBase[b] = OreBase[a]; m.OreBaseType[b] = OreBaseType[a]; m.Salvage[b] = Salvage[a];
                 }
             m.Spawns.AddRange(Spawns);
             m.OreScale = OreScale; // newcomers' fields are as scarce as everyone else's
@@ -541,7 +553,7 @@ namespace Pez.Sim
             int extra = Math.Min(ExtraFieldsPerJoin, (int)(area * ExtraFieldsPerJoin));
             for (int i = 0; i < extra; i++)
             {
-                byte ore = FieldOre(rng);
+                byte ore = NeutralOre(rng);
                 var (r, min, max) = FieldOf(ore);
                 var spot = m.BestFieldSpots(() =>
                 {

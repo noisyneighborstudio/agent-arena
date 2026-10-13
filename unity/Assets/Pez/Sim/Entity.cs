@@ -21,6 +21,12 @@ namespace Pez.Sim
         public float TurretFacing;    // radians, weapon
         public float Hp;
         public bool Dead;
+        /// <summary>
+        /// The share of what this cost that the arena's gift paid (0..1; Team.Pay): 1 for the starting base and units and a late
+        /// joiner's catch-up buildings, which weren't paid for at all. It is worth that much less as kill value, salvage and a
+        /// dismantled base (World.AddWorth), whoever holds it later, and a refund of it is that much gift again. Saved with the game.
+        /// </summary>
+        public float GrantedShare;
 
         // Structures
         public Int2 Origin;
@@ -73,6 +79,7 @@ namespace Pez.Sim
 
         // Mining trucks
         public int Cargo;
+        public int CargoSalvage;     // of Cargo, how much is salvage picked up off the ground (it counts as mined when it's delivered, not before)
         public int CargoType = -1;   // index into Defs.Ores while carrying
         public int HarvestType = -1; // preferred ore type, -1 = nearest of any
         public Int2? HarvestTile;
@@ -80,6 +87,11 @@ namespace Pez.Sim
         public bool Burning;         // a building on fire (below World.BurnBelow): it burns down unless repaired
         public DockStep Dock;        // where it is in backing into a drop-off's bay
         public int DockAt;           // the drop-off structure it's delivering to
+        /// <summary>
+        /// A drop-off's truck bay side (an index into World.BaySides: 0 south, 1 east, 2 west, 3 north): the side facing its nearest
+        /// ore, chosen when it was placed, deployed or spawned and kept, so lanes don't move under the trucks. Old saves have 0.
+        /// </summary>
+        public int BaySide;
 
         // Deep mines: the deposit underneath
         public int DepositId;
@@ -98,7 +110,9 @@ namespace Pez.Sim
 
         // Converters / reactors: currently producing
         public bool Working;
-        /// <summary>A defence whose upkeep its team can't pay: it stands, but doesn't fire until the steel is there (World.Upkeep).</summary>
+        /// <summary>Fusion reactors: the share of its power it makes, 0 to 1 (the share of its plasma burn the team could pay last tick).</summary>
+        public float Output;
+        /// <summary>A defence whose upkeep its team can't pay: it stands and draws no power, but doesn't fire until the steel is there (World.Upkeep).</summary>
         public bool Offline;
 
         // Transports and passengers

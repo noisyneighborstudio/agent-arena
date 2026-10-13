@@ -11,6 +11,7 @@ namespace Pez.Sim
     {
         public int Team;
         public string Name, Player;
+        /// <summary>OreMined is what the economy points count: ore from fields and deep mines, not salvage picked up.</summary>
         public int Territory, OreMined, KillValue;
         public float TerritoryPoints, EconomyPoints, KillPoints;
         public int Score;
@@ -140,7 +141,7 @@ namespace Pez.Sim
                             if (!claimed[i]) { claimed[i] = true; tiles++; }
                         }
                 }
-                list.Add(new MatchScore { Team = t.Id, Name = t.Name, Player = t.PlayerName ?? t.Controller, Territory = tiles, OreMined = t.Stats.OreMined, KillValue = t.Stats.KillValue });
+                list.Add(new MatchScore { Team = t.Id, Name = t.Name, Player = t.PlayerName ?? t.Controller, Territory = tiles, OreMined = Math.Max(0, t.Stats.OreMined - t.Stats.SalvageMined), KillValue = t.Stats.KillValue });
             }
             float tt = list.Sum(s => (float)s.Territory), te = list.Sum(s => (float)s.OreMined), tk = list.Sum(s => (float)s.KillValue);
             foreach (var s in list)
@@ -155,7 +156,7 @@ namespace Pez.Sim
             return scoreCache;
         }
 
-        public const string HowScored = "each team's share of what all players still in hold between them, 100 points each: territory (tiles within 6 of your finished command centers, outposts, derricks, deep mines and refineries by an ore field; 2 around any other structure), economy (ore mined all game) and kills (the ore value of everything you destroyed: a derrick is about 600); the most points wins";
+        public const string HowScored = "each team's share of what all players still in hold between them, 100 points each: territory (tiles within 6 of your finished command centers, outposts, derricks, deep mines and refineries by an ore field; 2 around any other structure), economy (ore mined from fields and deep mines all game; salvage you pick up doesn't count) and kills (the ore value of everything you destroyed: a derrick is about 600); the most points wins";
 
         public string ScoreLine() => string.Join(", ", Scores().Select(s => $"{s.Name} {s.Score}"));
 
