@@ -507,20 +507,31 @@ namespace Pez.View
 
         static readonly Color32 SteamCol = new Color32(236, 228, 210, 175); // cream plastic, translucent
 
-        /// <summary>A wisp of steam off a power plant tower: cream, cool (no glow), rising and spreading for about 2 s.</summary>
+        /// <summary>A wisp of steam off a power plant tower: cream, cool (no glow), rising, spreading and blowing downwind for about 4 s.</summary>
         public static void Steam(Vector3 pos, float size) =>
-            Emit(S.Dust, pos + Random.insideUnitSphere * 0.05f, new Vector3(Random.Range(-0.1f, 0.1f), Random.Range(1.3f, 1.8f), Random.Range(-0.1f, 0.1f)),
-                size * Random.Range(0.85f, 1.15f), Random.Range(1.7f, 2.3f), SteamCol);
+            Emit(S.Dust, pos + Random.insideUnitSphere * 0.05f, new Vector3(Random.Range(-0.1f, 0.1f), Random.Range(0.8f, 1.1f), Random.Range(-0.1f, 0.1f)),
+                size * Random.Range(0.85f, 1.15f), Random.Range(3.2f, 4.4f), SteamCol);
 
         static readonly Color32 StackGrey = new Color32(184, 176, 164, 255); // pale warm grey: industry, never a fire's smoke
 
-        /// <summary>A puff from a refinery smokestack: lit, buoyant smoke leaving the mouth and leaning downwind. `k` 1 is a
-        /// working stack's full puff, 0 a banked stack's thin wisp.</summary>
+        /// <summary>A puff from a smokestack: lit, buoyant smoke leaving the mouth, bending over downwind and lingering as a
+        /// trail that spreads and thins for 6 to 8 s. `k` 1 is a working stack's full puff, 0 a banked stack's thin wisp.</summary>
         public static void StackSmoke(Vector3 pos, float k) =>
             Emit(S.Smoke, pos + new Vector3(Random.Range(-0.03f, 0.03f), 0.03f, Random.Range(-0.03f, 0.03f)),
-                new Vector3(Random.Range(-0.05f, 0.05f), Random.Range(0.9f, 1.25f), Random.Range(-0.05f, 0.05f)),
-                Random.Range(0.3f, 0.42f) * Mathf.Lerp(0.6f, 1f, k), Random.Range(3.2f, 4.2f),
-                Vary(StackGrey, 0.06f, (byte)(Mathf.Lerp(0.3f, 0.7f, k) * 255f)));
+                new Vector3(Random.Range(-0.05f, 0.05f), Random.Range(0.55f, 0.8f), Random.Range(-0.05f, 0.05f)),
+                Random.Range(0.32f, 0.44f) * Mathf.Lerp(0.6f, 1f, k), Random.Range(6f, 8f),
+                Vary(StackGrey, 0.06f, (byte)(Mathf.Lerp(0.45f, 0.8f, k) * 255f)));
+
+        /// <summary>A breath of dust lifted off the ground and blown along it downwind, faint and slow to fade: the
+        /// prevailing wind made visible over open ground (WorldView keeps a few around the camera).</summary>
+        public static void BlowingDust(Vector3 ground) =>
+            Emit(S.Dust, ground + Up * Random.Range(0.05f, 0.3f), FxSystems.Wind * Random.Range(1.1f, 1.6f) + Up * Random.Range(0f, 0.12f),
+                Random.Range(0.6f, 1.2f), Random.Range(3f, 5f), Vary(Color32.Lerp(DustBiscuit, DustPale, Random.value), 0.05f, (byte)Random.Range(22, 46)));
+
+        /// <summary>Dust thrown up behind a moving vehicle's tracks or wheels, carried off downwind. `size` scales with the hull.</summary>
+        public static void TrackDust(Vector3 ground, Vector3 back, float size) =>
+            Emit(S.Dust, ground + Up * 0.06f + Flat(0.08f), back * Random.Range(0.2f, 0.5f) + FxSystems.Wind * 0.6f + Up * Random.Range(0.1f, 0.3f),
+                Random.Range(0.22f, 0.36f) * size, Random.Range(1.2f, 1.9f), Vary(Color32.Lerp(DustBiscuit, DustPale, 0.4f), 0.06f, 90));
 
         // ---------------------------------------------------------------- lines
 

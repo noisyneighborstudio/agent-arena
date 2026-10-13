@@ -24,6 +24,7 @@ namespace Pez.View
             public float LandK;          // aircraft: 0 flying, 1 parked on its pad (eases between)
             // Hull feel (MOTION.md): nose-up under acceleration, dip when braking, kick back on firing.
             public float HullSpeed, HullPitch, HullPitchVel;
+            public float TrackDustT;     // ground vehicle: until its next puff of dust off the tracks
             // Drones tilt like quadcopters: the smoothed velocity, and the tilt (a world-space lean vector) on a spring.
             public Vector3 DroneVel, DroneTilt, DroneTiltVel;
             public Vector3? EaseFrom; public Vector3 EaseOff; // a resync moved the entity: where it was drawn, and the offset from where it now is (bleeds off)
@@ -319,6 +320,8 @@ namespace Pez.View
         {
             alpha = Mathf.Clamp01(alpha);
             var w = World;
+            FxSystems.SetPrevailing(w.GameId);
+            BlowDust();
             if (w.MapVersion != mapVersion) RebuildTerrain();
             var seen = new HashSet<int>();
             foreach (var e in w.Entities)
@@ -943,7 +946,7 @@ namespace Pez.View
                 if (v.EaseOff != Vector3.zero) { v.EaseOff *= Mathf.Exp(-Time.deltaTime * 14f); if (v.EaseOff.sqrMagnitude < 1e-4f) v.EaseOff = Vector3.zero; rig.Root.position += v.EaseOff; }
                 var targetRot = Quaternion.Euler(0, Yaw(e.Facing), 0);
                 rig.Root.rotation = Quaternion.Slerp(rig.Root.rotation, targetRot, Time.deltaTime * 14f);
-                if (!e.IsAir && e.Def.Armor != Armor.Infantry) HullFeel(v);
+                if (!e.IsAir && e.Def.Armor != Armor.Infantry) { HullFeel(v); TrackDust(v); }
                 if (Models.IsArtillery(e.Def.Key) && rig.HasModel) Artillery(v);
                 if (rig.HasModel)
                 {
@@ -1183,6 +1186,46 @@ namespace Pez.View
         /// the sim stops the vehicle (it's about to reach its firing range or its move point), so stopping and the first
         /// shot's kick no longer cancel. The heavy squats a little as it pulls away.
         /// </summary>
+        /// <summary>
+        /// The prevailing wind over open ground: faint breaths of dust lifted and blown along it, about 8 a second at
+        /// random points across the screen (so the same density at any zoom), drifting downwind for a few seconds.
+        /// </summary>
+        void BlowDust()
+        {
+            var cam = Camera.main;
+            if (cam == null || Time.deltaTime <= 0f) return;
+            blowDue += Time.deltaTime * 8f;
+            var flat = new Plane(Vector3.up, Vector3.zero);
+            for (; blowDue >= 1f; blowDue -= 1f)
+            {
+                var ray = cam.ViewportPointToRay(new Vector3(Random.Range(-0.1f, 1.1f), Random.Range(-0.1f, 1.1f), 0f));
+                if (!flat.Raycast(ray, out float d)) continue;
+                var p = ray.GetPoint(d);
+                if (p.x < 0f || p.z < 0f || p.x > World.Map.W || p.z > World.Map.H) continue; // off the map: no ground to lift
+                Fx.BlowingDust(p);
+            }
+        }
+        float blowDue;
+
+        /// <summary>
+        /// A ground vehicle on the move throws dust off its tracks or wheels, from alternate sides of its tail, more often
+        /// the faster it goes, and the wind carries it off. Only where each camera can see the vehicle (Fx.Audience).
+        /// </summary>
+        void TrackDust(EV v)
+        {
+            var e = v.E;
+            if (e.IsStructure || e.IsMine || v.HullSpeed < 0.35f) { v.TrackDustT = 0f; return; }
+            if ((v.TrackDustT -= Time.deltaTime) > 0f) return;
+            v.TrackDustT = Mathf.Lerp(0.3f, 0.1f, Mathf.Clamp01(v.HullSpeed / 3f));
+            var root = v.Rig.Root;
+            float r = e.Def.Radius, side = (Time.frameCount & 1) == 0 ? 1f : -1f;
+            var at = root.position - root.forward * r * 0.8f + root.right * r * 0.5f * side;
+            at.y = 0f;
+            Fx.Audience = AudienceFor(e);
+            Fx.TrackDust(at, -root.forward, Mathf.Clamp(r * 2f, 0.7f, 2f));
+            Fx.Audience = null;
+        }
+
         void HullFeel(EV v)
         {
             float dt = Mathf.Min(Time.deltaTime, 0.03f); // the spring below is explicit: it diverges at ~0.2 s frames and goes NaN (for good) within a minute of them (seen in the 1 fps dev build)
