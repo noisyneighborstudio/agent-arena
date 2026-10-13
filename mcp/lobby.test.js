@@ -82,7 +82,8 @@ before(async () => {
   fs.writeFileSync(engine, STUB, { mode: 0o755 });
   const gout = fs.openSync(path.join(DIR, "gateway.log"), "w");
   children.push(spawn(process.execPath, [path.join(HERE, "gateway.js")], { env: { PATH: process.env.PATH, HOME: path.join(DIR, "home"), PEZZ_STUB_DIR: STUBS,
-    PEZZ_GATEWAY_PORT: String(GW), PEZZ_ROOM_BASE_PORT: String(GW + 2), PEZZ_ENGINE: engine, PEZZ_MAX_ROOMS: "3", PEZZ_ADMIN_SECRET: "test-secret-test-secret" }, stdio: ["ignore", gout, gout] }));
+    PEZZ_GATEWAY_PORT: String(GW), PEZZ_ROOM_BASE_PORT: String(GW + 2), PEZZ_ENGINE: engine, PEZZ_MAX_ROOMS: "3", PEZZ_ADMIN_SECRET: "test-secret-test-secret",
+    PEZZ_CLIENT_IP_HEADER: "x-forwarded-for" }, stdio: ["ignore", gout, gout] }));
   await until("the gateway", async () => (await call(GW, "/lobby")).status === 200);
 });
 
@@ -235,4 +236,52 @@ test("MCP: list_rooms is the lobby, and join takes the new-room options", async 
   const news = (await client.callTool({ name: "whats_new", arguments: {} })).content[0].text;
   assert.match(news, /#1 /);
   await client.close();
+});
+
+// Joins that name no room fail with a 404 before any seat is taken, so they cost a join from the limit and nothing else.
+const nowhere = { room: "pezz-no-such-room" };
+const mcpClient = async (port, ip) => {
+  const client = new Client({ name: "join-limit-test", version: "1" });
+  await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), { requestInit: { headers: { "x-forwarded-for": ip } } }));
+  return client;
+};
+const mcpJoin = async (client, extra = {}) => { const r = await client.callTool({ name: "join", arguments: { name: "M", ...nowhere, ...extra } }); return { error: !!r.isError, text: r.content[0].text }; };
+
+test("joins: 5 per 10 minutes per address, shared by POST /join and the MCP join tool (switch_seat too), keyed on the proxy's right-most address", async () => {
+  // The left-most address is whatever the client sent: changing it must not buy more joins.
+  const via = (n) => `192.0.2.${n}, 10.55.0.1`;
+  for (let i = 0; i < 3; i++) assert.equal((await join(nowhere, via(i))).status, 404);
+  const a = await mcpClient(GW, via(7)), b = await mcpClient(GW, via(8));
+  assert.match((await mcpJoin(a)).text, /no room has the code/);
+  assert.match((await mcpJoin(b, { switch_seat: true })).text, /no room has the code/); // five used
+  const http6 = await join(nowhere, via(9));
+  assert.equal(http6.status, 429, JSON.stringify(http6.json));
+  assert.match(http6.json.error, /too many joins.*5 per 10 minutes.*rejoin/);
+  const mcp6 = await mcpJoin(a);
+  assert.equal(mcp6.error, true);
+  assert.match(mcp6.text, /too many joins/);
+  const sw = await mcpJoin(b, { switch_seat: true });
+  assert.equal(sw.error, true);
+  assert.match(sw.text, /too many joins/);
+  // Another address is unaffected, and reads are not limited.
+  assert.equal((await join(nowhere, "10.55.0.2")).status, 404);
+  assert.equal((await call(GW, "/lobby", { ip: "10.55.0.1" })).status, 200);
+  await a.close(); await b.close();
+});
+
+test("joins: without PEZZ_CLIENT_IP_HEADER, forwarding headers are ignored and the socket address is the client", async () => {
+  const port = GW + 20, home = path.join(DIR, "home2");
+  fs.mkdirSync(home, { recursive: true });
+  const out = fs.openSync(path.join(DIR, "gateway2.log"), "w");
+  children.push(spawn(process.execPath, [path.join(HERE, "gateway.js")], { env: { PATH: process.env.PATH, HOME: home, PEZZ_GATEWAY_PORT: String(port),
+    PEZZ_ROOM_BASE_PORT: String(port + 2), PEZZ_ENGINE: "none", PEZZ_MAX_ROOMS: "1", PEZZ_ADMIN_SECRET: "test-secret-test-secret" }, stdio: ["ignore", out, out] }));
+  await until("the second gateway", async () => (await call(port, "/lobby")).status === 200);
+  const spoof = (n) => fetch(`http://127.0.0.1:${port}/join`, { method: "POST", headers: { "content-type": "application/json", "x-forwarded-for": `198.51.100.${n}`, "cf-connecting-ip": `203.0.113.${n}` }, body: JSON.stringify({ name: "S", ...nowhere }) });
+  for (let i = 0; i < 5; i++) assert.equal((await spoof(i)).status, 404);
+  assert.equal((await spoof(99)).status, 429, "five fake addresses did not buy a sixth join");
+  const me = await (await fetch(`http://127.0.0.1:${port}/healthz`, { headers: { "x-forwarded-for": "198.51.100.1" } })).json();
+  assert.match(me.you, /^(127\.0\.0\.1|::1|::ffff:127\.0\.0\.1)$/);
+  const a = await mcpClient(port, "198.51.100.200");
+  assert.match((await mcpJoin(a)).text, /too many joins/); // the MCP join shares the same (used up) socket address
+  await a.close();
 });

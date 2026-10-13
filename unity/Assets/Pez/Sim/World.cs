@@ -9,7 +9,8 @@ namespace Pez.Sim
         public string Key;
         public float Progress;   // seconds of work done
         public long CmdId;       // the API command that queued it (observation feed), 0 = none
-        public int StructureId;  // structures: the foundation entity being built; units: the building chosen to train it (0 = the first)
+        public int StructureId;  // structures: the foundation entity being built; units: the building chosen to train it (0 = any free one)
+        public int WorkerId;     // units: the building working on it right now (0 = waiting for a free one)
     }
 
     /// <summary>A surveyor's flag on a deep deposit: the team's mining zone, with the same id as the deposit.</summary>
@@ -94,6 +95,13 @@ namespace Pez.Sim
             { Producer.Factory, new List<ProdItem>() },
             { Producer.Airfield, new List<ProdItem>() },
         };
+        /// <summary>The units of one kind in production right now: those a building is working on (several at once with several buildings), in queue order.</summary>
+        public List<ProdItem> Working(Producer kind)
+        {
+            var now = new List<ProdItem>();
+            foreach (var p in UnitQueues[kind]) if (p.WorkerId != 0) now.Add(p);
+            return now;
+        }
         /// <summary>Enemy structures this team has seen: id -> (key, origin, team).</summary>
         // Sorted by id so every reader (the scripted AI, rally points) sees the same order in a game and in its resumed copy.
         public readonly SortedDictionary<int, (string key, Int2 origin, int team)> KnownEnemyStructures = new SortedDictionary<int, (string, Int2, int)>();
@@ -1125,28 +1133,65 @@ namespace Pez.Sim
                     }
                 }
 
+                // Units: each completed building of a kind works one item of the team's queue for that kind, all at once.
                 foreach (var kv in team.UnitQueues)
                 {
                     var q = kv.Value;
                     if (q.Count == 0) continue;
-                    var item = q[0];
-                    // A unit trained at a chosen building comes out there while it stands; otherwise the first one.
-                    var chosen = item.StructureId != 0 ? Get(item.StructureId) : null;
-                    var producer = chosen != null && chosen.Team == team.Id && chosen.IsComplete && chosen.Def.Produces == kv.Key ? chosen : FirstProducer(team.Id, kv.Key);
-                    if (producer == null) continue;
-                    var def = Def(item.Key);
-                    item.Progress += Dt * rate;
-                    if (item.Progress >= def.BuildTime)
+                    AssignWorkers(team.Id, kv.Key, q);
+                    for (int i = 0; i < q.Count; i++)
                     {
-                        q.RemoveAt(0);
-                        var u = SpawnUnit(team.Id, item.Key, producer);
-                        team.Stats.UnitsBuilt++;
-                        team.Stats.Count(item.Key);
-                        if (u.Def.OwnerTeam >= 0 && Inventions.TryGetValue(item.Key, out var inv)) inv.Built++;
-                        u.CmdId = item.CmdId; // the observation feed credits its train command, then clears it
-                        Emit("trained", team.Id, u.Id, pos: u.Pos, key: u.Def.Key);
+                        var item = q[i];
+                        var producer = item.WorkerId != 0 ? Get(item.WorkerId) : null;
+                        if (producer == null) continue; // waiting for a free building
+                        var def = Def(item.Key);
+                        item.Progress += Dt * rate;
+                        if (item.Progress >= def.BuildTime)
+                        {
+                            q.RemoveAt(i--);
+                            var u = SpawnUnit(team.Id, item.Key, producer);
+                            team.Stats.UnitsBuilt++;
+                            team.Stats.Count(item.Key);
+                            if (u.Def.OwnerTeam >= 0 && Inventions.TryGetValue(item.Key, out var inv)) inv.Built++;
+                            u.CmdId = item.CmdId; // the observation feed credits its train command, then clears it
+                            Emit("trained", team.Id, u.Id, pos: u.Pos, key: u.Def.Key);
+                        }
                     }
                 }
+            }
+        }
+
+        /// <summary>
+        /// Gives each completed building of a kind (barracks, factory...) one item of the team's queue for it. Items already at
+        /// work stay with their building. Of the rest, an item queued for a chosen building (StructureId) takes it as soon as
+        /// it is free and otherwise waits for it while it stands, so it never holds up an idle building; then the other items
+        /// take whatever is left, in queue order. An item with no building to go to waits and keeps the progress it has.
+        /// </summary>
+        void AssignWorkers(int team, Producer kind, List<ProdItem> q)
+        {
+            var all = new List<Entity>();
+            foreach (var e in Entities)
+                if (!e.Dead && e.Team == team && e.IsStructure && e.IsComplete && e.Def.Produces == kind) all.Add(e);
+            var free = new List<Entity>(all);
+            foreach (var p in q)
+            {
+                int at = p.WorkerId != 0 ? free.FindIndex(e => e.Id == p.WorkerId) : -1;
+                if (at >= 0) free.RemoveAt(at);
+                else p.WorkerId = 0; // its building is gone
+            }
+            if (free.Count == 0) return;
+            foreach (var p in q)
+            {
+                if (p.WorkerId != 0 || p.StructureId == 0) continue;
+                int at = free.FindIndex(e => e.Id == p.StructureId);
+                if (at >= 0) { p.WorkerId = p.StructureId; free.RemoveAt(at); }
+            }
+            foreach (var p in q)
+            {
+                if (free.Count == 0) break;
+                if (p.WorkerId != 0 || (p.StructureId != 0 && all.Exists(e => e.Id == p.StructureId))) continue; // at work, or waiting for its own building
+                p.WorkerId = free[0].Id;
+                free.RemoveAt(0);
             }
         }
 

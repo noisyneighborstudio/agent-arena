@@ -26,6 +26,7 @@ namespace Pez.Headless
             ObserveFog();
             ObserveDismantled();
             ObserveProduction();
+            ObserveParallelProduction();
             ObserveBlockedAndStuck();
             ObserveCursorsAndGaps();
             ObserveHttp();
@@ -200,6 +201,59 @@ namespace Pez.Headless
             var bad = Tracked(w, 0, Cmd("type", "train", "unit", "mammoth_tank", "count", 1));
             var rej = Events(w, 0, c0).LastOrDefault(e => (string)e["kind"] == "command_rejected");
             Check(!Ok(bad) && rej != null && rej["now"] is bool nb && nb && Json.Write(rej).Contains("error"), "a rejected command is logged at once with its error");
+        }
+
+        /// <summary>Several buildings work at once, so the feed follows every unit being trained, not just the head of the queue.</summary>
+        static void ObserveParallelProduction()
+        {
+            // Two barracks, three riflemen: the first two start together, the third as soon as a barracks is free.
+            {
+                var w = new World(2, 7);
+                for (int i = 0; i < 3; i++) w.SpawnStructure(0, "power_plant", w.FindPlacement(0, "power_plant").Value, 1f);
+                var b1 = w.SpawnStructure(0, "barracks", w.FindPlacement(0, "barracks").Value, 1f);
+                var b2 = w.SpawnStructure(0, "barracks", w.FindPlacement(0, "barracks").Value, 1f);
+                w.Teams[0].Add("steel", 1000);
+                Run(w, 1.05f);
+                long c0 = w.Observe.Log(0).Head;
+                var r = Tracked(w, 0, Cmd("type", "train", "unit", "rifleman", "count", 3));
+                Run(w, 2.5f);
+                var started = Events(w, 0, c0).Where(e => (string)e["kind"] == "training_started").ToList();
+                var at = started.Select(e => (int)(double)e["building"]).ToList();
+                Check(Ok(r) && started.Count == 2 && at.Distinct().Count() == 2 && at.Contains(b1.Id) && at.Contains(b2.Id) && started.All(e => (string)e["producer"] == "barracks" && e.ContainsKey("cmd")),
+                      $"two barracks working at once give two training_started, one for each building ({string.Join(", ", started.Select(e => $"#{e["building"]}"))})");
+                Run(w, 3);
+                started = Events(w, 0, c0).Where(e => (string)e["kind"] == "training_started").ToList();
+                var third = started.Skip(2).ToList();
+                Check(started.Count == 3 && third.Count == 1 && at.Contains((int)(double)third[0]["building"]), $"the third is announced when a barracks frees up, with the building it went to ({started.Count} started)");
+                Run(w, 6);
+                var ev = Events(w, 0, c0);
+                Check(ev.Count(e => (string)e["kind"] == "unit_trained") == 3 && ev.Count(e => (string)e["kind"] == "queue_empty" && (string)e["producer"] == "barracks") == 1 && !ev.Any(e => (string)e["kind"] == "queue_blocked"),
+                      "all three are trained, the queue empties once, and it is never reported stuck");
+            }
+
+            // Two factories, two mammoth tanks (24 s each): both get progress milestones, not just the head.
+            {
+                var w = new World(2, 7);
+                for (int i = 0; i < 4; i++) w.SpawnStructure(0, "power_plant", w.FindPlacement(0, "power_plant").Value, 1f);
+                var f1 = w.SpawnStructure(0, "factory", w.FindPlacement(0, "factory").Value, 1f);
+                var f2 = w.SpawnStructure(0, "factory", w.FindPlacement(0, "factory").Value, 1f);
+                w.SpawnStructure(0, "enrichment_plant", w.FindPlacement(0, "enrichment_plant").Value, 1f);
+                foreach (var item in new[] { "steel", "circuits", "plasma" }) w.Teams[0].Add(item, 5000);
+                Run(w, 1.05f);
+                long c0 = w.Observe.Log(0).Head;
+                var r = Tracked(w, 0, Cmd("type", "train", "unit", "mammoth_tank", "count", 2));
+                Run(w, 7.5f);
+                var ev = Events(w, 0, c0);
+                var items = ev.Where(e => (string)e["kind"] == "production_progress").SelectMany(e => ((List<object>)e["items"]).Cast<Dictionary<string, object>>()).ToList();
+                Check(Ok(r) && items.Count == 2 && items.All(i => (string)i["key"] == "mammoth_tank" && (double)i["pct"] == 25), $"each mammoth tank in production reports its 25% ({items.Count} reports)");
+                var hb = ev.Where(e => (string)e["kind"] == "heartbeat" && ((List<object>)e["training"]).Count == 2).ToList();
+                Check(hb.Count > 0 && ((List<object>)hb[0]["training"]).Cast<Dictionary<string, object>>().Select(x => x["building"]).Distinct().Count() == 2,
+                      $"the heartbeat lists each unit being trained, with its building ({hb.Count} heartbeats with both)");
+                var frame = D(ApiServer.ViewFrame(w, 0));
+                var rows = ((List<object>)((Dictionary<string, object>)frame["you"])["production"]).Cast<Dictionary<string, object>>().ToList();
+                Check(rows.Count == 2 && rows.Select(x => x["building"]).Distinct().Count() == 2 && rows.All(x => (double)x["pct"] >= 25 && (double)x["pct"] <= 35) && (double)rows[0]["count"] == 2 && (double)rows[1]["count"] == 1,
+                      $"the viewer's production list has a row for each ({string.Join("; ", rows.Select(x => Json.Write(x)))})");
+            }
         }
 
         static void ObserveBlockedAndStuck()

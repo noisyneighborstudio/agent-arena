@@ -20,6 +20,7 @@ namespace Pez.Headless
         {
             SalvageFromKills();
             OreRegrowth();
+            ParallelProduction();
             ConstructionTruck();
             MatchClock();
             Derricks();
@@ -331,6 +332,142 @@ namespace Pez.Headless
             ((Dictionary<string, object>)root2["world"]).Remove("sudden_death_at");
             var early2 = Resume(Json.Write(root2));
             Check(early2.World.SuddenDeathAt == 4 * 3600, "a young game from before the clock gets the usual hour N");
+        }
+
+        /// <summary>A fresh world with `buildings` of one producer (and power to run them, or a load that puts it in low power), `unit` kept queued 10+ deep for `seconds`: how many came out.</summary>
+        static int TrainedWith(string producer, int buildings, string unit, float seconds, bool power, out bool lowPower)
+        {
+            var w = new World(2, 7, 96);
+            var t = w.Teams[0];
+            for (int i = 0; i < 3; i++) w.SpawnStructure(0, power ? "power_plant" : "electronics_plant", w.FindPlacement(0, power ? "power_plant" : "electronics_plant").Value, 1f);
+            // The team's own command center is the first; a second one goes on open ground.
+            for (int i = producer == "command_center" ? 1 : 0; i < buildings; i++)
+                w.SpawnStructure(0, producer, producer == "command_center" ? Int2.Of(OpenGround(w)) : w.FindPlacement(0, producer).Value, 1f);
+            w.Step();
+            var queue = t.UnitQueues[Defs.Get(unit).BuiltBy];
+            for (int s = 0; s < seconds; s++)
+            {
+                foreach (var item in new[] { "steel", "copper", "circuits", "plasma", "iron_ore" }) t.Stock[item] = 1e6f;
+                if (queue.Count < 10) Commands.Execute(w, 0, Cmd("type", "train", "unit", unit, "count", 10));
+                Run(w, 1);
+            }
+            lowPower = t.LowPower;
+            return t.Stats.Built.TryGetValue(unit, out var n) ? n : 0;
+        }
+
+        /// <summary>Every completed barracks, factory, airfield and command center works its own unit of the shared queue.</summary>
+        static void ParallelProduction()
+        {
+            foreach (var (producer, unit) in new[] { ("barracks", "rifleman"), ("factory", "light_tank"), ("airfield", "transport_chopper"), ("command_center", "mining_truck") })
+            {
+                int one = TrainedWith(producer, 1, unit, 60, true, out _);
+                int two = TrainedWith(producer, 2, unit, 60, true, out _);
+                int lowTwo = TrainedWith(producer, 2, unit, 60, false, out var low);
+                Check(one >= 4 && Math.Abs(two - 2 * one) <= 1, $"two {producer} buildings train {unit} twice as fast as one ({two} against {one} in a minute)");
+                Check(low && Math.Abs(lowTwo - one) <= 1, $"low power halves each of two {producer} buildings ({lowTwo} {unit} in a minute, the same as one at full power: {one})");
+            }
+            {
+                int three = TrainedWith("barracks", 3, "rifleman", 60, true, out _), one = TrainedWith("barracks", 1, "rifleman", 60, true, out _);
+                Check(Math.Abs(three - 3 * one) <= 1, $"and 3 barracks are three times as fast ({three} against {one})");
+            }
+
+            // A queued item with a structure_id is built at that building only, and waits for it while the other one sits idle.
+            {
+                var w = new World(2, 7, 80);
+                var t = w.Teams[0];
+                for (int i = 0; i < 3; i++) w.SpawnStructure(0, "power_plant", w.FindPlacement(0, "power_plant").Value, 1f);
+                var b1 = w.SpawnStructure(0, "barracks", w.FindPlacement(0, "barracks").Value, 1f);
+                var b2 = w.SpawnStructure(0, "barracks", new Int2(40, 40), 1f);
+                t.Add("steel", 5000);
+                var q = t.UnitQueues[Producer.Barracks];
+                var r = Commands.Execute(w, 0, Cmd("type", "train", "unit", "rifleman", "count", 3, "structure_id", b2.Id));
+                bool strayed = false;
+                for (int i = 0; i < 12.5f * World.TickRate; i++) { w.Step(); strayed |= q.Any(p => p.WorkerId == b1.Id); }
+                var trained = w.Events.Where(e => e.Type == "trained").ToList();
+                Check(Ok(r) && !strayed && trained.Count == 3 && trained.All(e => Vec2.Dist(e.Pos, b2.Center) < Vec2.Dist(e.Pos, b1.Center)),
+                      $"units asked for barracks #{b2.Id} come out of it one at a time while #{b1.Id} sits idle ({trained.Count} in 12.5 s; {Said(r)})");
+                Check(Said(r).Contains("2 barracks buildings") && Said(r).Contains("one at a time"), $"the train reply says how many buildings share the queue: {Said(r)}");
+
+                // Mixed with unpinned units the other barracks works through those meanwhile: six units take 12 s, not 24.
+                w = new World(2, 7, 80);
+                t = w.Teams[0];
+                for (int i = 0; i < 3; i++) w.SpawnStructure(0, "power_plant", w.FindPlacement(0, "power_plant").Value, 1f);
+                b1 = w.SpawnStructure(0, "barracks", w.FindPlacement(0, "barracks").Value, 1f);
+                b2 = w.SpawnStructure(0, "barracks", new Int2(40, 40), 1f);
+                t.Add("steel", 5000);
+                q = t.UnitQueues[Producer.Barracks];
+                Commands.Execute(w, 0, Cmd("type", "train", "unit", "rifleman", "count", 3));
+                Commands.Execute(w, 0, Cmd("type", "train", "unit", "rifleman", "count", 3, "structure_id", b2.Id));
+                strayed = false;
+                for (int i = 0; i < 12.5f * World.TickRate; i++) { w.Step(); strayed |= q.Any(p => p.StructureId == b2.Id && p.WorkerId == b1.Id); }
+                trained = w.Events.Where(e => e.Type == "trained").ToList();
+                int at1 = trained.Count(e => Vec2.Dist(e.Pos, b1.Center) < Vec2.Dist(e.Pos, b2.Center));
+                Check(!strayed && trained.Count == 6 && at1 == 3, $"unpinned units fill the other building: 3 out of each barracks in 12 s ({trained.Count} trained, {at1} at #{b1.Id}, never a pinned one there: {!strayed})");
+            }
+
+            // Cancel still refunds what was paid, working or waiting, and a freed building goes to the next unit waiting.
+            {
+                var w = new World(2, 7, 80);
+                var t = w.Teams[0];
+                for (int i = 0; i < 3; i++) w.SpawnStructure(0, "power_plant", w.FindPlacement(0, "power_plant").Value, 1f);
+                var b1 = w.SpawnStructure(0, "barracks", w.FindPlacement(0, "barracks").Value, 1f);
+                var b2 = w.SpawnStructure(0, "barracks", new Int2(40, 40), 1f);
+                t.Stock["steel"] = 1000; t.Stock["copper"] = 1000;
+                var q = t.UnitQueues[Producer.Barracks];
+                Commands.Execute(w, 0, Cmd("type", "train", "unit", "rifleman", "count", 1));
+                Commands.Execute(w, 0, Cmd("type", "train", "unit", "rocket_soldier", "count", 1));
+                Commands.Execute(w, 0, Cmd("type", "train", "unit", "rifleman", "count", 1));
+                Run(w, 1);
+                Check(q.Count == 3 && q[0].WorkerId != 0 && q[1].WorkerId != 0 && q[0].WorkerId != q[1].WorkerId && q[2].WorkerId == 0 && q[1].Progress > 0 && q[2].Progress == 0,
+                      $"two units are in progress at once and the third waits ({string.Join(", ", q.Select(p => $"{p.Key} {p.Progress:0.0}s at #{p.WorkerId}"))})");
+                int busy = q[1].WorkerId;
+                var gone = Commands.Execute(w, 0, Cmd("type", "cancel", "unit", "rocket_soldier"));
+                Run(w, 0.1f);
+                Check(Ok(gone) && t.Amount("steel") == 1000 - 40 - 80 - 40 + 80 && t.Amount("copper") == 1000 && q.Count == 2 && q[1].WorkerId == busy,
+                      $"cancelling a unit that was being built refunds its full price and its building goes to the one waiting (steel {t.Amount("steel")}, copper {t.Amount("copper")}; {Said(gone)})");
+                Commands.Execute(w, 0, Cmd("type", "cancel", "unit", "rifleman"));
+                Commands.Execute(w, 0, Cmd("type", "cancel", "unit", "rifleman"));
+                Check(q.Count == 0 && t.Amount("steel") == 1000 && t.Amount("copper") == 1000, $"cancelling the rest refunds everything paid (steel {t.Amount("steel")}, copper {t.Amount("copper")})");
+            }
+
+            // State shows which building is working on what; a building lost mid-unit hands its unit on with the progress it had.
+            {
+                var w = new World(2, 7, 80);
+                var t = w.Teams[0];
+                for (int i = 0; i < 3; i++) w.SpawnStructure(0, "power_plant", w.FindPlacement(0, "power_plant").Value, 1f);
+                var b1 = w.SpawnStructure(0, "barracks", w.FindPlacement(0, "barracks").Value, 1f);
+                var b2 = w.SpawnStructure(0, "barracks", new Int2(40, 40), 1f);
+                t.Add("steel", 5000);
+                var r = Commands.Execute(w, 0, Cmd("type", "train", "unit", "rifleman", "count", 3));
+                Run(w, 2);
+                var prod = (JObj)StateView.TeamState(w, 0)["production"];
+                var barracks = (List<string>)prod["barracks"];
+                Check(barracks.Count == 3 && barracks.Count(l => l.Contains("50% at barracks #")) == 2 && barracks.Any(l => l.Contains($"at barracks #{b1.Id}")) && barracks.Any(l => l.Contains($"at barracks #{b2.Id}")) &&
+                      barracks[2].Contains("waiting for a free barracks"), $"state lists each unit with the building working on it: {string.Join(" | ", barracks)}");
+                var json = D(StateData.Team(w, 0));
+                var items = ((Dictionary<string, object>)json["production"])["barracks"] as List<object>;
+                var working = items.Cast<Dictionary<string, object>>().Select(i => i["working_at"]).ToList();
+                Check(working.Count == 3 && working[0] is double && working[1] is double && (double)working[0] != (double)working[1] && working[2] == null, "and so does the JSON state (working_at)");
+
+                var viaB1 = t.UnitQueues[Producer.Barracks].First(p => p.WorkerId == b1.Id);
+                w.Remove(b1);
+                Run(w, 0.1f);
+                float kept = viaB1.Progress;
+                Check(viaB1.WorkerId == b2.Id || viaB1.WorkerId == 0, "a destroyed barracks lets go of its unit");
+                Run(w, 12);
+                int built = t.Stats.Built.TryGetValue("rifleman", out var nb) ? nb : 0;
+                Check(kept > 1.5f && built == 3 && t.UnitQueues[Producer.Barracks].Count == 0,
+                      $"the survivor finishes all three, the unit from the lost barracks keeping its {kept:0.0}s of progress ({built} trained in 14 s)");
+            }
+
+            // The reply names the lone building too.
+            {
+                var w = new World(2, 7, 80);
+                w.SpawnStructure(0, "barracks", w.FindPlacement(0, "barracks").Value, 1f);
+                w.Teams[0].Add("steel", 500);
+                var r = Commands.Execute(w, 0, Cmd("type", "train", "unit", "rifleman", "count", 2));
+                Check(Ok(r) && Said(r).Contains("your only barracks") && Said(r).Contains("second barracks"), $"with one building the reply says so: {Said(r)}");
+            }
         }
 
         static void ConstructionTruck()
