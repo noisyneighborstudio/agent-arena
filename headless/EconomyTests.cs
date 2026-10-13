@@ -22,6 +22,7 @@ namespace Pez.Headless
             OreRegrowth();
             ParallelProduction();
             ConstructionTruck();
+            SymmetricPlacement();
             MatchClock();
             Derricks();
             AttackUntilCapturable();
@@ -245,6 +246,136 @@ namespace Pez.Headless
         }
 
         static Dictionary<string, object> D(JObj o) => (Dictionary<string, object>)Json.Parse(Json.Write(o));
+
+        /// <summary>
+        /// A flat 80x80 map with each base's iron and copper laid out alike: seat 1's half is seat 0's turned half a circle about
+        /// the middle of the two bases (tile x,y becomes 80-x,80-y), so any difference between the seats is the rules' doing.
+        /// </summary>
+        static World MirroredBases()
+        {
+            var w = new World(2, 1, 80);
+            var m = w.Map;
+            Array.Clear(m.Tiles, 0, m.Tiles.Length); Array.Clear(m.Ore, 0, m.Ore.Length); Array.Clear(m.OreBase, 0, m.OreBase.Length);
+            m.Deep.Clear();
+            void Field(int cx, int cy, float r, byte type)
+            {
+                for (int y = cy - 5; y <= cy + 5; y++)
+                    for (int x = cx - 5; x <= cx + 5; x++)
+                    {
+                        if (MathF.Sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy)) > r) continue;
+                        foreach (var (tx, ty) in new[] { (x, y), (80 - x, 80 - y) })
+                        {
+                            int i = m.Idx(tx, ty);
+                            m.Ore[i] = m.OreBase[i] = 300; m.OreType[i] = m.OreBaseType[i] = type;
+                        }
+                    }
+            }
+            Field(15, 15, 3.4f, Map.Iron);
+            Field(7, 17, 2.4f, Map.Copper);
+            return w;
+        }
+
+        /// <summary>How far a point is from the iron field next to a team's base.</summary>
+        static float ToHomeIron(World w, int team, Vec2 p)
+        {
+            var s = w.Teams[team].StartPos;
+            float best = float.MaxValue;
+            for (int y = 0; y < w.Map.H; y++)
+                for (int x = 0; x < w.Map.W; x++)
+                {
+                    int i = w.Map.Idx(x, y);
+                    var c = new Vec2(x + 0.5f, y + 0.5f);
+                    if (w.Map.OreBase[i] > 0 && w.Map.OreBaseType[i] == Map.Iron && Vec2.Dist(c, s) < 14) best = MathF.Min(best, Vec2.Dist(c, p));
+                }
+            return best;
+        }
+
+        /// <summary>Where the trucks go: the head of a drop-off's lane (they line up there before backing in), else the building itself.</summary>
+        static Vec2 TruckSpot(World w, Entity e) => e.Def.DropOff ? w.Bay(e).head : e.Center;
+
+        static void SymmetricPlacement()
+        {
+            var w = MirroredBases();
+            var keys = new[] { "power_plant", "mining_refinery", "barracks", "factory" };
+            var hq = new[] { 0, 1 }.Select(t => w.Owned(t).First(e => e.Def.Key == "command_center")).ToArray();
+            var placed = new Dictionary<string, Entity>[2] { new Dictionary<string, Entity>(), new Dictionary<string, Entity>() };
+            foreach (var key in keys)
+                for (int t = 0; t < 2; t++)
+                {
+                    var spot = w.FindPlacement(t, key);
+                    if (spot.HasValue) placed[t][key] = w.SpawnStructure(t, key, spot.Value, 1f);
+                }
+            Check(keys.All(k => placed[0].ContainsKey(k) && placed[1].ContainsKey(k)), "both seats find a spot for a power plant, refinery, barracks and factory");
+            if (!keys.All(k => placed[0].ContainsKey(k) && placed[1].ContainsKey(k))) return;
+            var line = new List<string>();
+            foreach (var key in keys)
+            {
+                var a = placed[0][key]; var b = placed[1][key];
+                float hqA = Vec2.Dist(a.Center, hq[0].Center), hqB = Vec2.Dist(b.Center, hq[1].Center);
+                float oreA = ToHomeIron(w, 0, TruckSpot(w, a)), oreB = ToHomeIron(w, 1, TruckSpot(w, b));
+                var turned = new Vec2(81 - a.Center.X, 81 - a.Center.Y); // seat 0's spot turned about the middle of the two bases
+                bool mirrored = Vec2.Dist(turned, b.Center) < 0.01f;
+                line.Add($"{key} {a.Origin}/{b.Origin}");
+                // A refinery is placed for its trucks' trips, the rest for staying compact. (A truck lane opens south unless something
+                // is in the way, so the seats' lanes can't mirror, and nor can what the lanes keep clear.)
+                bool fair = mirrored || (key == "mining_refinery" ? MathF.Abs(oreA - oreB) <= 1f : MathF.Abs(hqA - hqB) <= 1f);
+                Check(fair, $"on a mirrored map both seats' {key} are mirror images" + (key == "mining_refinery" ? $", or as far from their ore ({oreA:0.0} and {oreB:0.0}) within a tile" : $", or as far from their command center ({hqA:0.0} and {hqB:0.0}) within a tile"));
+            }
+            Console.WriteLine($"      seat 0 / seat 1 origins: {string.Join(", ", line)}");
+            Check(Vec2.Dist(new Vec2(81 - placed[0]["power_plant"].Center.X, 81 - placed[0]["power_plant"].Center.Y), placed[1]["power_plant"].Center) < 0.01f,
+                  "the first power plants are exact mirror images");
+            Check(new[] { 0, 1 }.All(t => ToHomeIron(w, t, w.Bay(placed[t]["mining_refinery"]).head) <= 1f),
+                  $"each refinery's lane opens right at the iron field, for trucks' short trips ({ToHomeIron(w, 0, w.Bay(placed[0]["mining_refinery"]).head):0.0} and {ToHomeIron(w, 1, w.Bay(placed[1]["mining_refinery"]).head):0.0} tiles)");
+
+            // Deterministic (a resumed game and the replay depend on it): asking again, or in an identical world, gives the same spot.
+            var w1 = MirroredBases(); var w2 = MirroredBases();
+            var every = new[] { "power_plant", "mining_refinery", "barracks", "factory", "electronics_plant", "gun_turret" };
+            Check(new[] { 0, 1 }.All(t => every.All(k => Equals(w1.FindPlacement(t, k), w2.FindPlacement(t, k)) && Equals(w1.FindPlacement(t, k), w1.FindPlacement(t, k)))),
+                  "the same world always gives the same spots");
+
+            // A commander who leaves out x and y gets the same placement as the scripted AI.
+            var w3 = MirroredBases();
+            var heads = new float[2];
+            for (int t = 0; t < 2; t++)
+            {
+                w3.SpawnStructure(t, "power_plant", w3.FindPlacement(t, "power_plant").Value, 1f);
+                w3.Teams[t].Add("iron_ore", 500); w3.Teams[t].Add("copper_ore", 200);
+                var r = Commands.Execute(w3, t, Cmd("type", "build", "structure", "mining_refinery"));
+                var made = Ok(r) ? w3.Get(Convert.ToInt32(r["id"])) : null;
+                heads[t] = made != null ? ToHomeIron(w3, t, w3.Bay(made).head) : 99f;
+            }
+            Check(heads[0] <= 1f && heads[1] <= 1f, $"a build command with no x,y puts the refinery's lane at the iron too ({heads[0]:0.0} and {heads[1]:0.0} tiles)");
+
+            // The scripted AI's build order up to its second refinery. A spot beside the ore can lie a few rings beyond the first
+            // ring with any legal spot (seat 0's lane opened 6 tiles from the iron, when one at the iron was legal 10 tiles out), so
+            // a drop-off's search runs on until nothing further out can score better.
+            var w4 = MirroredBases();
+            var second = new float[2];
+            for (int t = 0; t < 2; t++)
+                foreach (var key in new[] { "power_plant", "mining_refinery", "barracks", "factory", "power_plant", "electronics_plant", "gun_turret", "mining_refinery" })
+                {
+                    var spot = w4.FindPlacement(t, key);
+                    if (!spot.HasValue) { second[t] = 99f; break; }
+                    var built = w4.SpawnStructure(t, key, spot.Value, 1f);
+                    if (key == "mining_refinery") second[t] = ToHomeIron(w4, t, w4.Bay(built).head);
+                }
+            Check(second[0] <= 4f && second[1] <= 4f, $"after the build order up to its second refinery, each seat's second lane still opens close to the iron ({second[0]:0.0} and {second[1]:0.0} tiles)");
+
+            // Real maps are not mirrored, but every seat's first refinery still opens close to its iron (it was 12.5 tiles for seat 0 on every map).
+            var far = new List<string>();
+            foreach (var (seed, size) in new[] { (1, 80), (2, 80), (3, 80), (4, 96), (5, 128), (6, 112) })
+            {
+                var g = new World(2, seed, size);
+                for (int t = 0; t < 2; t++)
+                {
+                    g.SpawnStructure(t, "power_plant", g.FindPlacement(t, "power_plant").Value, 1f);
+                    var spot = g.FindPlacement(t, "mining_refinery");
+                    float d = spot.HasValue ? ToHomeIron(g, t, g.Bay(g.SpawnStructure(t, "mining_refinery", spot.Value, 1f)).head) : 99f;
+                    if (d > 2f) far.Add($"seed {seed} size {size} seat {t}: {d:0.0}");
+                }
+            }
+            Check(far.Count == 0, "on generated maps each seat's first refinery opens within 2 tiles of its iron" + (far.Count > 0 ? $" (not: {string.Join("; ", far)})" : ""));
+        }
 
         static void MatchClock()
         {
