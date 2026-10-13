@@ -196,7 +196,7 @@ namespace Pez.Sim
             if (e.Def.Key == "fusion_reactor" && e.Team >= 0) FusionTick(e, Teams[e.Team]);
         }
 
-        /// <summary>For the low-power alert: when a fusion reactor is making less than its full power for want of plasma, say so and what to do.</summary>
+        /// <summary>For the low-power alert (the owner's only: events can reach other players' copies): when a fusion reactor is making less than its full power for want of plasma, say so and what to do.</summary>
         string ReactorShortNote(Team t)
         {
             var r = Entities.FirstOrDefault(e => !e.Dead && e.Team == t.Id && e.Def.Key == "fusion_reactor" && e.IsComplete && e.Output < 0.995f);

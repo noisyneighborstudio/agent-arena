@@ -798,7 +798,7 @@ namespace Pez.Api
             {
                 foreach (var e in events.OfType<JObj>()) if ((e["type"] as string) == "orders" && (team < 0 || Num(e["team"] ?? -1) != team)) e.Remove("text"); // World.SetOrders logs the text as an event
                 if (team >= 0)
-                    world["events"] = events.OfType<JObj>().Where(e => PublicEvent(e["type"] as string) || Num(e["team"] ?? -1) == team || Sees(w, team, e["pos"])).Cast<object>().ToList();
+                    world["events"] = events.OfType<JObj>().Where(e => PublicEvent(e["type"] as string) || Num(e["team"] ?? -1) == team || (!OwnerEvent(e["type"] as string) && Sees(w, team, e["pos"]))).Cast<object>().ToList();
             }
             if (team < 0) return snap;
             var t0 = w.Teams[team];
@@ -851,6 +851,15 @@ namespace Pez.Api
         static double Num(object o) => o is double d ? d : o is float f ? f : o is int i ? i : o is long l ? l : o is IConvertible c ? c.ToDouble(System.Globalization.CultureInfo.InvariantCulture) : 0;
 
         /// <summary>Events everyone hears about (the scoreboard and chat), wherever they happen.</summary>
+        /// <summary>
+        /// Events that only tell their own team about its economy or its units' state (power totals, upkeep, research, deep ore,
+        /// fuel): a rival's never reaches a player's copy, even when the spot it names is in sight. These are the types
+        /// StateView.EventList shows only to the team they belong to.
+        /// </summary>
+        static bool OwnerEvent(string type) => type is "low_power" or "power_restored" or "defences_offline" or "defences_online" or "research_started" or "researched"
+            or "unstalled" or "surveyed" or "survey_failed" or "drilled" or "drill_failed" or "depleted" or "low_fuel" or "stranded" or "refuelled" or "retreating"
+            or "out_of_range" or "capture_stopped" or "derrick_skipped";
+
         static bool PublicEvent(string type) => type == "chat" || type == "defeated" || type == "game_over" || type == "joined" || type == "left" || type == "resigned" || type == "match";
 
         static bool Sees(World w, int team, object pos)

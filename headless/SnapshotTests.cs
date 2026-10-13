@@ -226,6 +226,7 @@ namespace Pez.Headless
             BusyGame();
             FoggedSnapshots();
             FoggedFusion();
+            FoggedOwnerEvents();
             OlderSnapshotsLoad(json);
             TokensSurviveRestart();
         }
@@ -311,6 +312,46 @@ namespace Pez.Headless
             copy.World.Mirror = true;
             Step(copy, 5);
             Check(copy.World.Errors == 0, $"the copy runs on with a rival's reactor in it ({copy.World.LastError})");
+        }
+
+        /// <summary>
+        /// A rival's economy events (power totals, the starved reactor, upkeep, research) say what only its owner should know:
+        /// they stay out of a player's copy even when the spot they name is in the player's sight.
+        /// </summary>
+        static void FoggedOwnerEvents()
+        {
+            var g = new Game(new GameConfig { Seed = 3, MapSize = 64, Controllers = new[] { "llm", "llm" } });
+            var w = g.World;
+            foreach (var t in w.Teams) t.ProtectedUntil = 0;
+            // Each team has a reactor with no plasma, six turrets (90 power drawn against the command center's 20) and no steel for their upkeep.
+            foreach (int id in new[] { 0, 1 })
+            {
+                w.SpawnStructure(id, "fusion_reactor", w.FindPlacement(id, "fusion_reactor").Value, 1f);
+                for (int i = 0; i < 6; i++) w.SpawnStructure(id, "gun_turret", w.FindPlacement(id, "gun_turret").Value, 1f);
+                w.Teams[id].Stock["steel"] = 0;
+            }
+            w.Emit("research_started", 1, pos: w.Teams[1].StartPos, key: "t1:secret", text: "research started on Secret (t1:secret), 90s");
+            for (int i = 0; i < 3 * World.TickRate; i++) w.Step();
+            var owner = new[] { "low_power", "defences_offline", "research_started" };
+            bool Had(string ty, int tm) => w.Events.Any(e => e.Type == ty && e.Team == tm);
+            Check(Had("low_power", 1) && Had("defences_offline", 1) && Had("research_started", 1) && Had("low_power", 0) && Had("defences_offline", 0),
+                  "set up: both teams have had a low-power and a defences-offline event, and the rival a research event");
+            Array.Fill(w.Teams[0].Visible, true); // the whole map in the player's sight, the rival's base and the spots its events name
+            string json = Json.Write(ApiServer.ViewSnapshot(g, 0));
+            var evs = Snapshot.Parse(json).Obj("world").Arr("events").OfType<Dictionary<string, object>>().ToList();
+            int Team(Dictionary<string, object> e) => e.TryGetValue("team", out var tv) ? Convert.ToInt32(tv) : -1;
+            Check(!evs.Any(e => Team(e) == 1 && owner.Contains((string)e["type"])) && !json.Contains("Secret (t1:secret)") && !evs.Any(e => e.TryGetValue("text", out var xt) && xt is string xs && xs.Contains("fusion_reactor")),
+                  $"a rival's low_power, defences_offline and research events don't reach the player's copy, though the spots they name are in sight ({evs.Count(e => Team(e) == 1)} rival events kept)");
+            Check(evs.Any(e => Team(e) == 0 && (string)e["type"] == "low_power") && evs.Any(e => Team(e) == 0 && (string)e["type"] == "defences_offline"),
+                  "the player's own are in it");
+            Check(!evs.Any(e => Team(e) == 1 && ((string)e["type"] == "low_power" || e.TryGetValue("text", out var tx) && tx is string txs && txs.Contains("produced,"))),
+                  "and no rival power totals");
+            var spec = Snapshot.Parse(Json.Write(ApiServer.ViewSnapshot(g))).Obj("world").Arr("events").OfType<Dictionary<string, object>>().ToList();
+            Check(owner.All(ty => spec.Any(e => Team(e) == 1 && (string)e["type"] == ty)), "a spectator's copy still has them all");
+            // An event of the rival's that is just what happened in sight still gets through.
+            var sight = w.Emit("built", 1, 99, pos: w.Teams[1].StartPos, key: "gun_turret");
+            var evs2 = Snapshot.Parse(Json.Write(ApiServer.ViewSnapshot(g, 0))).Obj("world").Arr("events").OfType<Dictionary<string, object>>().ToList();
+            Check(evs2.Any(e => Convert.ToInt32(e["seq"]) == sight.Seq), "while what happened in the player's sight (a building finished) still reaches it");
         }
 
         static void BusyGame()
