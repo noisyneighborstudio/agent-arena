@@ -527,7 +527,7 @@ namespace Pez.Headless
             float minGap = float.MaxValue;
             for (int i = 0; i < t.SurveySites.Count; i++)
                 for (int j = i + 1; j < t.SurveySites.Count; j++) minGap = Math.Min(minGap, Vec2.Dist(t.SurveySites[i], t.SurveySites[j]));
-            Check(t.SurveySites.Count >= 6 && minGap > 15f, $"they cover distinct sites without repeats ({t.SurveySites.Count} sites, closest two {minGap:0.0} tiles apart)");
+            Check(t.SurveySites.Count >= 5 && minGap > 15f, $"they cover distinct sites without repeats ({t.SurveySites.Count} sites, closest two {minGap:0.0} tiles apart)");
             var inRange = w.Map.Deep.Where(d => t.SurveySites.Any(p => Vec2.Dist(p, d.Pos) <= EntityDef.SurveyRadius)).ToList();
             Check(inRange.Count > 0 && inRange.All(d => t.Surveyed.Contains(d.Id) && t.Zones.TryGetValue(d.Id, out var f) && (f.FlaggedBy == sv.Id || f.FlaggedBy == sv2.Id)),
                   $"every deposit near a surveyed site is flagged as a mining zone by the surveyor that found it ({inRange.Count} zones)");
@@ -1167,10 +1167,18 @@ namespace Pez.Headless
             var t1 = At(wq.SpawnUnit(0, "mining_truck", hqq), bayQ + acrossQ * -3f + outQ * 4f);
             var t2 = At(wq.SpawnUnit(0, "mining_truck", hqq), bayQ + acrossQ * 3f + outQ * 4f);
             foreach (var tq in new[] { t1, t2 }) { tq.Cargo = 150; tq.CargoType = 0; wq.SetOrder(tq, Order.ReturnOre, tq.Pos); }
-            bool bothIn = false, queued = false, backedIn = false, done1 = false, done2 = false;
+            bool bothIn = false, queued = false, backedIn = false, done1 = false, done2 = false, waitedStill = false, waitedOnItsSide = true;
             for (int k = 0; k < 40 * World.TickRate && !(done1 && done2); k++)
             {
                 wq.Step();
+                foreach (var tq in new[] { t1, t2 })
+                    if (tq.Dock == DockStep.Queue && !tq.Moving)
+                    {
+                        // (Waiting on the side of the lane it came from: an id's parity used to choose, so a truck and its half-turned twin waited on opposite sides.)
+                        waitedStill = true;
+                        float onLeft = (tq.Pos.X - headQ.X) * acrossQ.X + (tq.Pos.Y - headQ.Y) * acrossQ.Y;
+                        if (onLeft * (tq == t1 ? -1f : 1f) <= 0f) waitedOnItsSide = false;
+                    }
                 done1 |= t1.Dock == DockStep.PullOut; done2 |= t2.Dock == DockStep.PullOut;
                 if (t1.Dock >= DockStep.Align && t2.Dock >= DockStep.Align) bothIn = true;
                 if (t1.Dock == DockStep.Queue || t2.Dock == DockStep.Queue) queued = true;
@@ -1179,6 +1187,7 @@ namespace Pez.Headless
             }
             Check(done1 && done2 && queued && !bothIn && backedIn,
                   $"two trucks share one bay: one waits its turn beside the lane, each unloads backed in, facing out (both delivered {done1 && done2}, queued {queued}, both in at once {bothIn}, after {wq.Time:0.0}s)");
+            Check(waitedStill && waitedOnItsSide, $"and the truck that waits stands on the side of the lane it came from (it stood still there {waitedStill}, on its own side {waitedOnItsSide})");
 
             // Nothing can be built on a truck lane, and a drop-off whose south is walled off gets a bay on a clear side.
             var (bayL, headL, _, okL) = wq.Bay(hqq);

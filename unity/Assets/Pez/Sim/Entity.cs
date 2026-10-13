@@ -88,8 +88,9 @@ namespace Pez.Sim
         public DockStep Dock;        // where it is in backing into a drop-off's bay
         public int DockAt;           // the drop-off structure it's delivering to
         /// <summary>
-        /// A drop-off's truck bay side (an index into World.BaySides: 0 south, 1 east, 2 west, 3 north): the side facing its nearest
-        /// ore, chosen when it was placed, deployed or spawned and kept, so lanes don't move under the trucks. Old saves have 0.
+        /// A door side (an index into World.BaySides: 0 south, 1 east, 2 west, 3 north), chosen when the building was placed, deployed or
+        /// spawned and kept: a drop-off's truck bay faces its nearest ore (so lanes don't move under the trucks), a barracks' or factory's
+        /// door faces the middle of the map. Old saves have 0, south.
         /// </summary>
         public int BaySide;
 

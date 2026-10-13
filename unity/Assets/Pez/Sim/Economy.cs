@@ -246,22 +246,41 @@ namespace Pez.Sim
                 float a = 3 * MathF.PI / 4 + (k < want ? k : k - want + 0.5f) * 2 * MathF.PI / want;
                 var site = centre + new Vec2(MathF.Cos(a), MathF.Sin(a)) * radius;
                 if (have.Any(h => Vec2.Dist(h, site) < 8f)) continue;
-                var spot = DerrickSpot(Int2.Of(site));
+                var spot = DerrickSpot(site);
                 if (!spot.HasValue) continue;
                 var d = PlaceDerrick(spot.Value);
                 have.Add(d.Center);
             }
         }
 
-        Int2? DerrickSpot(Int2 near)
+        /// <summary>
+        /// The open 2x2 nearest a site, a ring at a time. Its middle is meant to be the site's nearest whole point (a 2x2's middle is a
+        /// corner), so the sites of a map turned half a circle are the same turn of each other. Of equally near spots, the one nearer the
+        /// middle of the map, then the one on the right as the site faces it; not the first the scan meets (the lowest y, then x), which
+        /// drew every derrick toward the south-west corner whenever its exact site was blocked.
+        /// </summary>
+        Int2? DerrickSpot(Vec2 site)
         {
+            var mid = new Vec2(MathF.Floor(site.X + 0.5f), MathF.Floor(site.Y + 0.5f));
+            var near = new Int2((int)mid.X - 1, (int)mid.Y - 1);
+            var centre = new Vec2(Map.W / 2f, Map.H / 2f);
+            var right = RightOf(mid);
             for (int r = 0; r <= 10; r++)
+            {
+                Int2? best = null; float bestD = 0, bestC = 0, bestR = 0;
                 for (int y = near.Y - r; y <= near.Y + r; y++)
                     for (int x = near.X - r; x <= near.X + r; x++)
                     {
-                        if (Math.Max(Math.Abs(x - near.X), Math.Abs(y - near.Y)) != r) continue;
-                        if (DerrickFits(new Int2(x, y))) return new Int2(x, y);
+                        if (Math.Max(Math.Abs(x - near.X), Math.Abs(y - near.Y)) != r || !DerrickFits(new Int2(x, y))) continue;
+                        var c = new Vec2(x + 1, y + 1);
+                        float d = Vec2.Dist(c, mid), toCentre = Vec2.Dist(c, centre), toRight = (c.X - mid.X) * right.X + (c.Y - mid.Y) * right.Y;
+                        int cmp = best == null ? -1 : TieCmp(d, bestD);
+                        if (cmp == 0) cmp = TieCmp(toCentre, bestC);
+                        if (cmp == 0) cmp = TieCmp(bestR, toRight);
+                        if (cmp < 0) { best = new Int2(x, y); bestD = d; bestC = toCentre; bestR = toRight; }
                     }
+                if (best.HasValue) return best;
+            }
             return null;
         }
 
@@ -608,7 +627,10 @@ namespace Pez.Sim
             int size = Math.Clamp(initialSize, MinSize, MaxSize);
             if (size <= W && size <= H)
             {
-                var g = Generate(size, size, seed, oreScale, extraFields: false); // as it was made: the neutral fields came later
+                // As it was made: the neutral fields came later, and the base sites sat on tile corners (9 tiles in) until they moved to
+                // tile centres, so a map whose sites are on corners is rebuilt with the generator it was made with.
+                bool corners = Spawns.Count > 0 && Spawns[0].X == MathF.Floor(Spawns[0].X) && Spawns[0].Y == MathF.Floor(Spawns[0].Y);
+                var g = Generate(size, size, seed, oreScale, extraFields: false, inset: corners ? LegacySiteInset : SiteInset);
                 int same = 0, total = size * size;
                 for (int y = 0; y < size; y++)
                     for (int x = 0; x < size; x++)

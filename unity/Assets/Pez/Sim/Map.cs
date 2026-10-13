@@ -74,27 +74,32 @@ namespace Pez.Sim
         public const byte Iron = 0, Copper = 1, Crystal = 2, Uranium = 3;
 
         /// <param name="extraFields">Add the neutral surface fields a bigger map gets (false rebuilds a map from before them: see RebuildBase).</param>
-        public static Map Generate(int w, int h, int seed, float oreScale = 1f, bool extraFields = true)
+        /// <param name="inset">How far in from the edges the base sites sit: SiteInset, or LegacySiteInset to rebuild a map made when they sat on tile corners (see RebuildBase).</param>
+        public static Map Generate(int w, int h, int seed, float oreScale = 1f, bool extraFields = true, float inset = SiteInset)
         {
             for (int attempt = 0; attempt < 20; attempt++)
             {
-                var m = TryGenerate(w, h, seed + attempt * 7919, oreScale, extraFields);
+                var m = TryGenerate(w, h, seed + attempt * 7919, oreScale, extraFields, inset);
                 if (m.SpawnsConnected()) return m;
             }
-            return TryGenerate(w, h, seed, oreScale, extraFields);
+            return TryGenerate(w, h, seed, oreScale, extraFields, inset);
         }
+
+        /// <summary>Base sites sit on tile centres, 9 tiles in from the edges: a command center is 3x3 round its site's tile, so then each base is exactly the half-turned copy of the next (Images).</summary>
+        public const float SiteInset = 9.5f;
+        /// <summary>Where they sat before: on the tile corner (9 and w - 9), which left the far bases a tile too far out. Maps saved then are rebuilt with this.</summary>
+        public const float LegacySiteInset = 9f;
 
         public const int MinSize = 48, MaxSize = 320;
         /// <summary>Menu presets. Any size between MinSize and MaxSize works through the API and command line.</summary>
         public static readonly (string name, int size)[] Presets = { ("Small", 56), ("Medium", 80), ("Large", 112), ("Huge", 160), ("Vast", 240) };
 
-        static Map TryGenerate(int w, int h, int seed, float oreScale = 1f, bool extraFields = true)
+        static Map TryGenerate(int w, int h, int seed, float oreScale = 1f, bool extraFields = true, float inset = SiteInset)
         {
             // Scatter counts were tuned on an 80x80 map; scale them with area so bigger maps aren't empty.
             float area = w * h / 6400f;
             var rng = new Random(seed);
             var m = new Map(w, h) { OreScale = oreScale };
-            int inset = 9;
             m.Spawns.Add(new Vec2(inset, inset));
             m.Spawns.Add(new Vec2(w - inset, h - inset));
             m.Spawns.Add(new Vec2(w - inset, inset));
@@ -665,11 +670,18 @@ namespace Pez.Sim
             return true;
         }
 
-        /// <summary>Nearest tile with ore, searching outward from a point.</summary>
-        public Int2? NearestOre(Vec2 from, float maxDist, Func<Int2, bool> filter = null, int type = -1)
+        /// <summary>
+        /// Nearest tile with ore, searching outward from a point. Tiles equally near (a truck standing on a mined-out tile has four at
+        /// one tile's distance) go to the one nearer `prefer` (its drop-off), then to the one on the right as `prefer` faces the middle
+        /// of the map, not to whichever the scan meets first (the lowest y, then x), which led one corner's trucks toward their base
+        /// along the field and the opposite corner's away from it.
+        /// </summary>
+        public Int2? NearestOre(Vec2 from, float maxDist, Func<Int2, bool> filter = null, int type = -1, Vec2? prefer = null)
         {
             Int2? best = null;
-            float bestD = maxDist * maxDist;
+            float maxSq = maxDist * maxDist, bestD = maxSq, bestPref = 0f, bestRight = 0f;
+            var face = prefer.HasValue ? (new Vec2(W / 2f, H / 2f) - prefer.Value).Normalized : new Vec2(0, 0);
+            var right = new Vec2(face.Y, -face.X);
             int r = (int)MathF.Ceiling(maxDist);
             int fx = (int)from.X, fy = (int)from.Y;
             for (int y = Math.Max(0, fy - r); y <= Math.Min(H - 1, fy + r); y++)
@@ -678,7 +690,12 @@ namespace Pez.Sim
                     if (Ore[Idx(x, y)] <= 0 || (type >= 0 && OreType[Idx(x, y)] != type)) continue;
                     var t = new Int2(x, y);
                     float d = Vec2.DistSq(t.Center, from);
-                    if (d < bestD && (filter == null || filter(t))) { bestD = d; best = t; }
+                    if (d >= maxSq || d > bestD + 1e-4f) continue;
+                    float pref = prefer.HasValue ? Vec2.DistSq(t.Center, prefer.Value) : 0f;
+                    float toRight = (t.Center.X - from.X) * right.X + (t.Center.Y - from.Y) * right.Y;
+                    bool nearer = best == null || d < bestD - 1e-4f;
+                    bool tied = !nearer && (pref < bestPref - 1e-4f || (pref <= bestPref + 1e-4f && toRight > bestRight + 1e-4f));
+                    if ((nearer || tied) && (filter == null || filter(t))) { bestD = d; bestPref = pref; bestRight = toRight; best = t; }
                 }
             return best;
         }
