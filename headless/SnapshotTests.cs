@@ -56,7 +56,7 @@ namespace Pez.Headless
             [typeof(Entity)] = "Id Team Def Pos PrevPos Facing TurretFacing Hp Dead Origin BuildProgress Rally Order OrderPos GuardPos TargetId UntilCapturable EngageDerricks Path PathIdx Cooldown " +
                 "SpeedCap Group ProgressPos ProgressAt GhostUntil ProgressDist Waypoints WaypointLoop RetreatBelow Retreating RetreatSpent GivingWay OwnBlockedSince RepathTimer Moving LastAttackerId LastHitTime " +
                 "LastCallForHelp LastAttackerTeam Responding HomePos Cargo CargoType HarvestType HarvestTile WorkTimer Burning Dock DockAt DepositId Working Offline CarrierId Passengers Fuel Landed Stranded " +
-                "Granted FuelCap AtDepot FuelWarned NoAutoRefuelUntil ResumeOrder ResumePos ResumeGuard ResumeTarget ResumeWaypoints ResumeSpeedCap MineQueue LastFiredAt " +
+                "GrantedShare CargoSalvage FuelCap AtDepot FuelWarned NoAutoRefuelUntil ResumeOrder ResumePos ResumeGuard ResumeTarget ResumeWaypoints ResumeSpeedCap MineQueue LastFiredAt " +
                 "Prospecting ProspectCenter ProspectRadius SkipSites SurveyFailure SurveyFailedAt ZoneId | CmdId", // CmdId: the observation feed's command tracking, which restarts (as a new stream) with the process
             [typeof(Team)] = "Id Name Controller PlayerName StandingOrders OrdersVersion Stock Rates PowerProduced PowerUsed Detected Revealed Defeated StartPos " +
                 "Visible Explored Left Resigned StalledSince House Seat ProtectedUntil StructureQueue UnitQueues KnownEnemyStructures Surveyed SurveySites Zones " +
@@ -65,7 +65,7 @@ namespace Pez.Headless
                 "EventCounts Alerts Tick GameOver Winner Errors LastError nextId nextSeq seatCounter rng rateSnapshot airWarned StallGrace ArenaChampion contested Inventions GameId Regrown SuddenDeathAt DerrickRespawns " +
                 "| barredBases ErrorLog loggedErrors cells cellsW cellsH nearTarget nearHelp nearMine nearSep nearSpot nearCrush nearVis Showcase OreVersion oreDirty beingMined regrowNow scoreCache scoreCacheTick NextMatchIn derricksChecked groupSpan Mirror MirrorScores Feed Touched", // Feed: the observation feed starts a new stream on resume (readers get a gap and a snapshot); Showcase: the kitchen sink room is never saved (rebuilt from code); Mirror: set by the browser client on its copy
             [typeof(Invention)] = "Key Name Chassis WeaponFrom Summary Team Def ResearchCost ResearchTime Progress Novelty PriceFactor ProposedAt ResearchedAt Built Lost Kills",
-            [typeof(Map)] = "W H Tiles Ore OreType Occupant Spawns Deep OreScale nextDepositId OreBase OreBaseType | writable fieldsChanged fieldTiles fieldRoots BaseMissing",
+            [typeof(Map)] = "W H Tiles Ore OreType Occupant Spawns Deep OreScale nextDepositId OreBase OreBaseType Salvage | writable fieldsChanged fieldTiles fieldRoots BaseMissing SalvageMissing",
             [typeof(SimpleAI)] = "team Passive nextThink waveSize outpostTargets nextProspect prospectRadius knownSurface",
             [typeof(Game)] = "World Config Speed Paused ais accumulator nextHouseCheck ResumedFrom LastSaved restartIn Waiting waitedBefore waitedSeen waitingSince | RenderFps Restarted Now",
             [typeof(AlertLog)] = "All open nextSeq",
@@ -73,7 +73,7 @@ namespace Pez.Headless
             [typeof(GameEvent)] = "Seq Tick Type Team A B Pos Pos2 Key Text | SeenBy",
             [typeof(Projectile)] = "Id Team SourceId TargetId Pos PrevPos TargetPos Weapon",
             [typeof(DeepDeposit)] = "Id Pos Type Amount Initial MineId",
-            [typeof(ProdItem)] = "Key Progress StructureId WorkerId | CmdId",
+            [typeof(ProdItem)] = "Key Progress StructureId WorkerId GrantedShare | CmdId",
             [typeof(ZoneFlag)] = "ZoneId FlaggedBy FlaggedAt",
             [typeof(TeamStats)] = "UnitsBuilt StructuresBuilt UnitsLost StructuresLost Kills OreMined Built KillValue KillsValued SalvageLeft DeepMined DerricksCaptured DerrickSteel SalvageMined UpkeepPaid",
             [typeof(GameConfig)] = "Seed MapSize Speed Controllers Orders Open MaxPlayers MaxMapSize OreScale HouseAIs HouseResignAbove MatchHours MinPlayers | KitchenSink",
@@ -132,9 +132,11 @@ namespace Pez.Headless
             var layer = w.SpawnUnit(2, "minelayer", factory);
             var r2 = Commands.Execute(w, 2, Cmd("type", "lay_mines", "units", new[] { layer.Id }, "x", hq.Center.X - 6, "y", hq.Center.Y + 8, "count", 3));
             var truck = w.SpawnUnit(2, "mining_truck", hq);
-            truck.Cargo = 70; truck.CargoType = 1;
+            truck.Cargo = 70; truck.CargoType = 1; truck.CargoSalvage = 30; // part of its load is salvage, not yet delivered
             var r3 = Commands.Execute(w, 2, Cmd("type", "build", "structure", "power_plant"));
             var r4 = Commands.Execute(w, 2, Cmd("type", "train", "unit", "rifleman", "count", 3));
+            t2.UnitQueues[Producer.Barracks][1].GrantedShare = 0.25f; // paid a quarter from the arena's gift
+            int salvageTile = Enumerable.Range(0, w.Map.Ore.Length).First(i => w.Map.Ore[i] > 40); w.Map.Salvage[salvageTile] = 40; // some of that tile's ore is salvage
             var dep = w.Map.Deep.First(d => d.MineId == 0);
             t2.Surveyed.Add(dep.Id); t2.SurveySites.Add(dep.Pos);
             var mine = w.SpawnStructure(2, "deep_mine", Int2.Of(dep.Pos), 1f);
@@ -177,8 +179,10 @@ namespace Pez.Headless
             var tb = b.Teams[2];
             Check(tb.Amount("steel") == t2.Amount("steel") && tb.StandingOrders == t2.StandingOrders && tb.OrdersVersion == t2.OrdersVersion && tb.Seat == t2.Seat,
                   "stockpile, standing orders and seat survive");
-            Check(t2.Granted.Count > 0 && tb.Granted.Count == t2.Granted.Count && t2.Granted.All(kv => tb.Granted.TryGetValue(kv.Key, out var gv) && gv == kv.Value) && hq.Granted && b.Get(hq.Id)?.Granted == true && !tank.Granted && b.Get(tank.Id)?.Granted == false,
+            Check(t2.Granted.Count > 0 && tb.Granted.Count == t2.Granted.Count && t2.Granted.All(kv => tb.Granted.TryGetValue(kv.Key, out var gv) && gv == kv.Value) && hq.GrantedShare == 1f && b.Get(hq.Id)?.GrantedShare == 1f && tank.GrantedShare == 0f && b.Get(tank.Id)?.GrantedShare == 0f,
                   "what a team was given (its granted stock and its gifted base) survives, and what it built or trained itself isn't flagged");
+            Check(tb.UnitQueues[Producer.Barracks][1].GrantedShare == 0.25f && b.Get(truck.Id)?.CargoSalvage == 30 && b.Map.Salvage[salvageTile] == 40,
+                  "the share of a queued unit the gift paid, the salvage in a truck's load and the salvage on the ground survive");
             Check(tb.Explored.Count(x => x) == t2.Explored.Count(x => x) && tb.Explored.Length == t2.Explored.Length && tb.Visible.SequenceEqual(t2.Visible), "explored and visible tiles survive");
             var tank2 = b.Get(tank.Id);
             Check(tank2 != null && tank2.Waypoints.Count == tank.Waypoints.Count && tank2.WaypointLoop && tank2.RetreatBelow == tank.RetreatBelow && tank2.Order == tank.Order &&
@@ -248,7 +252,7 @@ namespace Pez.Headless
             Commands.Execute(w, 1, Cmd("type", "move", "units", new[] { seen.Id }, "x", hq1.Center.X, "y", hq1.Center.Y));
             w.SetOrders(1, "Secret: rush their refinery at minute five.");
             w.Teams[1].Stock["steel"] = 4321;
-            seen.Granted = mine.Granted = true; // flagged as gifts, to see whose flag the copy carries
+            seen.GrantedShare = mine.GrantedShare = 1f; // flagged as gifts, to see whose flag the copy carries
             Step(g, 0.5f);
             Check(w.IsVisibleTo(0, seen) && !w.IsVisibleTo(0, hidden), "set up: one enemy in sight, one hidden at its base");
             var json = Json.Write(ApiServer.ViewSnapshot(g, 0));
@@ -269,7 +273,7 @@ namespace Pez.Headless
                   (jt[0] as Dictionary<string, object>).ContainsKey("granted") && cw.Teams[0].Granted.Count == w.Teams[0].Granted.Count && cw.Teams[0].Gift("iron_ore") == w.Teams[0].Gift("iron_ore"),
                   "a rival's granted amounts stay out of the copy, the player's own are in it");
             var seenJson = jents.First(e => (int)(double)e["id"] == seen.Id); var mineJson = jents.First(e => (int)(double)e["id"] == mine.Id);
-            Check(!seenJson.ContainsKey("granted") && !cw.Get(seen.Id).Granted && mineJson.ContainsKey("granted") && cw.Get(mine.Id).Granted,
+            Check(!seenJson.ContainsKey("granted_share") && cw.Get(seen.Id).GrantedShare == 0f && mineJson.ContainsKey("granted_share") && cw.Get(mine.Id).GrantedShare == 1f,
                   "and a visible rival's granted flag is stripped while the player's own entity keeps its flag");
             Check(cw.Teams[1].Name == w.Teams[1].Name && cw.Teams[1].Stats.Kills == w.Teams[1].Stats.Kills, "rivals keep their public face: name and kills");
             Check(cw.Teams[1].StartPos.X == ApiServer.HiddenStart && cw.Teams[1].StartPos.Y == ApiServer.HiddenStart && cw.Teams[0].StartPos.X == w.Teams[0].StartPos.X && cw.Teams[0].StartPos.Y == w.Teams[0].StartPos.Y,

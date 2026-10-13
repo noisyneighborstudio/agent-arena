@@ -9,6 +9,7 @@ namespace Pez.Sim
         public string Key;
         public float Progress;   // seconds of work done
         public long CmdId;       // the API command that queued it (observation feed), 0 = none
+        public float GrantedShare; // units: the share of its price the arena's gift paid (the unit carries it, and a refund returns it as gift)
         public int StructureId;  // structures: the foundation entity being built; units: the building chosen to train it (0 = any free one)
         public int WorkerId;     // units: the building working on it right now (0 = waiting for a free one)
     }
@@ -34,7 +35,7 @@ namespace Pez.Sim
         /// <summary>Derricks this team has captured, and the steel they've paid it.</summary>
         public int DerricksCaptured;
         public float DerrickSteel;
-        /// <summary>Ore its trucks mined off ground that was never a field: salvage (from kills, or a leaver's base).</summary>
+        /// <summary>Of OreMined, the ore its trucks delivered that was salvage (put down by kills, spills and leavers' bases, on any ground: Map.Salvage). Counted at delivery, so a load lost on the way never counts.</summary>
         public int SalvageMined;
         /// <summary>Steel paid in upkeep for defences beyond the free ones.</summary>
         public float UpkeepPaid;
@@ -62,24 +63,56 @@ namespace Pez.Sim
         public readonly Dictionary<int, float> Revealed = new Dictionary<int, float>();
 
         public int Amount(string item) => Stock.TryGetValue(item, out var v) ? (int)v : 0;
-        public void Add(string item, float n) => Stock[item] = (Stock.TryGetValue(item, out var v) ? v : 0) + n;
+        /// <summary>Change the stockpile. Taking something out spends the gift first (see Granted); adding is income, and is the team's own.</summary>
+        public void Add(string item, float n)
+        {
+            Stock[item] = (Stock.TryGetValue(item, out var v) ? v : 0) + n;
+            if (n < 0 && Granted.TryGetValue(item, out var g)) Granted[item] = MathF.Max(0f, g + n);
+        }
         /// <summary>
-        /// What the arena gave this team, per item (the starting ore, a late joiner's catch-up materials). It isn't the team's
-        /// own value, so a stockpile spill leaves it out (Own) and joining and leaving cashes nothing out. Converters pass the
-        /// granted share of what they use on to what they make (World.CarryGrant). Saved with the game.
+        /// The part of the stockpile the arena gave this team and it hasn't spent yet, per item (the starting ore, a late joiner's
+        /// catch-up materials). It isn't the team's own value, so a stockpile spill leaves it out (Own) and joining and leaving
+        /// cashes nothing out. Spending takes from it first (Add, Pay), and what a purchase took from it is remembered on the
+        /// thing bought (Entity.GrantedShare) and handed back by a refund (Refund) or on to what a converter makes (Gain).
+        /// So it never exceeds the stock. Saved with the game.
         /// </summary>
         public readonly Dictionary<string, float> Granted = new Dictionary<string, float>();
         /// <summary>Stock handed to the team by the arena: in the stockpile like any other, and counted in Granted.</summary>
         public void Give(string item, float n) { Add(item, n); Granted[item] = Gift(item) + n; }
         public float Gift(string item) => Granted.TryGetValue(item, out var g) ? g : 0f;
-        /// <summary>What of an item the team holds above its grant: the part it mined, made or won itself, which a spill gives up.</summary>
+        /// <summary>What of an item the team holds above its gift: the part it mined, made or won itself, which a spill gives up.</summary>
         public float Own(string item) => Stock.TryGetValue(item, out var v) ? MathF.Max(0f, v - Gift(item)) : 0f;
+        /// <summary>Add `n` of an item of which `giftShare` is gift: a refund of something bought with gift, or what a converter makes of it.</summary>
+        public void Gain(string item, float n, float giftShare)
+        {
+            Add(item, n);
+            if (giftShare > 0f && n > 0f) Granted[item] = Gift(item) + n * giftShare;
+        }
+        /// <summary>Give back `factor` of a cost; `giftShare` of it was paid from the gift and goes back as gift.</summary>
+        public void Refund(Dictionary<string, int> cost, float factor, float giftShare) { foreach (var kv in cost) Gain(kv.Key, kv.Value * factor, giftShare); }
+        static float Worth(string item) => World.OreMix.TryGetValue(item, out var m) ? m[0] + m[1] + m[2] + m[3] : 0f;
         public string Missing(Dictionary<string, int> cost)
         {
             var lacking = cost.Where(kv => Amount(kv.Key) < kv.Value).Select(kv => $"{kv.Key} {Amount(kv.Key)}/{kv.Value}").ToList();
             return lacking.Count == 0 ? null : "not enough " + string.Join(", ", lacking);
         }
-        public void Pay(Dictionary<string, int> cost, float factor = 1f) { foreach (var kv in cost) Add(kv.Key, -kv.Value * factor); }
+        /// <summary>
+        /// Pay `factor` of a cost, from the gift first. Returns the share of what was paid (in raw ore) that came out of the
+        /// gift: 1 if the arena's gift paid for all of it. What was bought carries that share, so it's worth that much less
+        /// as kill value, salvage or a refund (Entity.GrantedShare).
+        /// </summary>
+        public float Pay(Dictionary<string, int> cost, float factor = 1f)
+        {
+            float total = 0f, fromGift = 0f;
+            foreach (var kv in cost)
+            {
+                float amount = kv.Value * factor, w = Worth(kv.Key);
+                total += amount * w; fromGift += MathF.Min(Gift(kv.Key), amount) * w;
+                Add(kv.Key, -amount);
+            }
+            float share = total > 0f ? fromGift / total : 0f;
+            return share > 0.9999f ? 1f : share < 0.0001f ? 0f : share; // (all or nothing stays exact)
+        }
         public bool Defeated;
         public Vec2 StartPos;
         /// <summary>Tiles currently in sight of any of this team's entities.</summary>
@@ -356,13 +389,13 @@ namespace Pez.Sim
             }
             else Teams.Add(team);
             // Enough raw ore for a power plant; everything after that has to be mined.
-            // All of it is a gift: it isn't the team's own value to cash out or to be farmed for (Team.Granted, Entity.Granted).
+            // All of it is a gift: it isn't the team's own value to cash out or to be farmed for (Team.Granted, Entity.GrantedShare).
             team.Give("iron_ore", 500);
             team.Give("copper_ore", 150);
             var s = Int2.Of(spawn);
-            var hq = SpawnStructure(t, "command_center", new Int2(s.X - 1, s.Y - 1), 1f, granted: true);
-            SpawnUnit(t, "mining_truck", hq).Granted = true;
-            for (int i = 0; i < 2; i++) SpawnUnit(t, "rifleman", hq).Granted = true;
+            var hq = SpawnStructure(t, "command_center", new Int2(s.X - 1, s.Y - 1), 1f, grantedShare: 1f);
+            SpawnUnit(t, "mining_truck", hq).GrantedShare = 1f;
+            for (int i = 0; i < 2; i++) SpawnUnit(t, "rifleman", hq).GrantedShare = 1f;
             return team;
         }
 
@@ -455,7 +488,7 @@ namespace Pez.Sim
             foreach (var key in new[] { "power_plant", "mining_refinery" })
             {
                 var spot = FindPlacement(team.Id, key);
-                if (spot.HasValue) { SpawnStructure(team.Id, key, spot.Value, 1f, granted: true); team.Stats.Count(key); }
+                if (spot.HasValue) { SpawnStructure(team.Id, key, spot.Value, 1f, grantedShare: 1f); team.Stats.Count(key); }
             }
         }
 
@@ -562,6 +595,7 @@ namespace Pez.Sim
                     Map.Tiles[i] = Terrain.Dirt;
                     Map.OreType[i] = (byte)k;
                     Map.Ore[i] = Math.Min(Map.MaxOrePerTile, per);
+                    Map.Salvage[i] = Map.Ore[i];
                     placed += Map.Ore[i];
                     landed?.Add((queue[ti], Map.Ore[i]));
                 }
@@ -690,11 +724,11 @@ namespace Pez.Sim
             return e;
         }
 
-        public Entity SpawnStructure(int team, string key, Int2 origin, float progress, bool granted = false)
+        public Entity SpawnStructure(int team, string key, Int2 origin, float progress, float grantedShare = 0f)
         {
             var def = Def(key);
             var e = NewEntity(team, def);
-            e.Granted = granted;
+            e.GrantedShare = grantedShare;
             e.Origin = origin;
             e.BuildProgress = progress;
             e.Pos = e.PrevPos = e.Center;
@@ -754,7 +788,7 @@ namespace Pez.Sim
         void OnStructureComplete(Entity e)
         {
             UpdatePower();
-            if (e.Def.Key == "mining_refinery") SpawnUnit(e.Team, "mining_truck", e).Granted = e.Granted; // a gifted refinery's truck is a gift too
+            if (e.Def.Key == "mining_refinery") SpawnUnit(e.Team, "mining_truck", e).GrantedShare = e.GrantedShare; // its free truck is as much a gift as the refinery was
         }
 
         /// <summary>Turn a deployable unit (Outpost Truck) into its structure where it stands.</summary>
@@ -804,7 +838,7 @@ namespace Pez.Sim
                 }
             }
             Remove(u);
-            var s = SpawnStructure(u.Team, key, origin, 1f);
+            var s = SpawnStructure(u.Team, key, origin, 1f, u.GrantedShare); // a structure is worth what the truck that deployed into it was
             if (deposit != null) { s.DepositId = deposit.Id; deposit.MineId = s.Id; }
             Teams[u.Team].Stats.Count(key);
             Emit("built", u.Team, s.Id, pos: s.Center, key: key);
@@ -1189,9 +1223,9 @@ namespace Pez.Sim
                     }
                     if (frac <= 0.001f) continue;
                     frac = MathF.Min(1f, frac);
-                    foreach (var kv in r.Inputs) team.Add(kv.Key, -kv.Value * cycles * frac);
-                    foreach (var kv in r.Outputs) team.Add(kv.Key, kv.Value * cycles * frac);
-                    CarryGrant(team, r, cycles * frac);
+                    // The gift stays a gift when it's refined: what the inputs took from it, the outputs are made of.
+                    float giftShare = team.Pay(r.Inputs, cycles * frac);
+                    foreach (var kv in r.Outputs) team.Gain(kv.Key, kv.Value * cycles * frac, giftShare);
                     any = true;
                 }
                 e.Working = any;
@@ -1263,6 +1297,7 @@ namespace Pez.Sim
                         {
                             q.RemoveAt(i--);
                             var u = SpawnUnit(team.Id, item.Key, producer);
+                            u.GrantedShare = item.GrantedShare; // as much of it as the gift paid for is worth nothing as a kill
                             team.Stats.UnitsBuilt++;
                             team.Stats.Count(item.Key);
                             if (u.Def.OwnerTeam >= 0 && Inventions.TryGetValue(item.Key, out var inv)) inv.Built++;
@@ -1975,9 +2010,11 @@ namespace Pez.Sim
                     e.WorkTimer = 0;
                     int i = Map.Idx(tile.X, tile.Y);
                     int take = Math.Min(Math.Min(4, Map.Ore[i]), cap - e.Cargo);
+                    // Salvage lying on the tile (even a field's) goes first, and is counted when it's delivered (TipOre), not now.
+                    int salvage = Math.Min(take, Map.SalvageOn(i));
+                    Map.Salvage[i] = Map.SalvageOn(i) - salvage;
                     Map.Ore[i] -= take;
-                    if (Map.OreBase[i] == 0) Teams[e.Team].Stats.SalvageMined += take;
-                    if (take > 0) { e.Cargo += take; e.CargoType = Map.OreType[i]; }
+                    if (take > 0) { e.Cargo += take; e.CargoSalvage += salvage; e.CargoType = Map.OreType[i]; }
                     e.TurretFacing += 0.3f; // spin the cutter for the view
                 }
                 return;
@@ -2088,13 +2125,18 @@ namespace Pez.Sim
             if (e.WorkTimer < 0.1f) return;
             e.WorkTimer = 0;
             int give = Math.Min(10, e.Cargo);
+            // The salvage in the load is delivered in proportion, and only now is it counted: a truck lost on the way never delivered it.
+            int salvage = give >= e.Cargo ? e.CargoSalvage : Math.Min(e.CargoSalvage, e.CargoSalvage * give / e.Cargo);
             e.Cargo -= give;
+            e.CargoSalvage -= salvage;
             if (e.CargoType >= 0) Teams[e.Team].Add(Defs.Ores[e.CargoType], give);
             Teams[e.Team].Stats.OreMined += give;
+            Teams[e.Team].Stats.SalvageMined += salvage;
         }
 
         void FinishDelivery(Entity e)
         {
+            e.CargoSalvage = 0;
             e.CargoType = -1;
             e.Order = Order.Harvest;
             e.Path = null;
@@ -2488,7 +2530,7 @@ namespace Pez.Sim
                         {
                             int i = Map.Idx(x, y);
                             if (Map.OreBase[i] <= 0 || Map.OreBaseType[i] > 1 || !seen.Add(i)) continue;
-                            left[Map.OreBaseType[i]] += Map.Ore[i]; was[Map.OreBaseType[i]] += Map.OreBase[i];
+                            left[Map.OreBaseType[i]] += Map.FieldOre(i); was[Map.OreBaseType[i]] += Map.OreBase[i];
                         }
                 }
                 // At half: the second half goes much faster than the first (more trucks by then), so a quarter left is too late.

@@ -133,9 +133,9 @@ namespace Pez.Sim
                     return Err($"cannot place {key} at ({origin.X},{origin.Y}): {why}" + (alt.HasValue ? $". Nearest valid spot: ({alt.Value.X},{alt.Value.Y})" : ""));
                 }
             }
-            t.Pay(def.Cost);
+            float gift = t.Pay(def.Cost); // paid from the arena's gift first: the building carries that share
             bool wasSaving = t.Bought(key);
-            var s = w.SpawnStructure(team, key, origin, 0f);
+            var s = w.SpawnStructure(team, key, origin, 0f, gift);
             t.StructureQueue.Add(new ProdItem { Key = key, StructureId = s.Id });
             w.Emit("placed", team, s.Id, pos: s.Center, key: key);
             int ahead = t.StructureQueue.Count - 1;
@@ -175,8 +175,8 @@ namespace Pez.Sim
             for (int i = 0; i < count; i++)
             {
                 if (t.Missing(def.Cost) != null) break;
-                t.Pay(def.Cost);
-                t.UnitQueues[def.BuiltBy].Add(new ProdItem { Key = key, StructureId = at?.Id ?? 0 });
+                float gift = t.Pay(def.Cost); // from the arena's gift first: the unit carries that share
+                t.UnitQueues[def.BuiltBy].Add(new ProdItem { Key = key, StructureId = at?.Id ?? 0, GrantedShare = gift });
                 queued++;
             }
             string saved = queued > 0 && t.Bought(key) ? $" (that was what you were saving for: converters are back to normal)" : "";
@@ -442,8 +442,7 @@ namespace Pez.Sim
             // it should have at this point of the build is left (it starts at 10% and gains the rest as it goes up).
             float factor = s.IsComplete ? 0.5f * (s.Hp / s.Def.MaxHp)
                 : (1f - 0.5f * s.BuildProgress) * MathF.Min(1f, s.Hp / (s.Def.MaxHp * (0.1f + 0.9f * s.BuildProgress)));
-            if (s.Granted) factor = 0f; // a gift from the arena isn't something you paid for: no refund to cash out
-            w.Teams[team].Pay(s.Def.Cost, -factor);
+            w.Teams[team].Refund(s.Def.Cost, factor, s.GrantedShare); // what the arena's gift paid for comes back as gift, not as your own stock
             string refund = string.Join(", ", s.Def.Cost.Select(kv => $"{(int)(kv.Value * factor)} {kv.Key}"));
             w.Emit("sold", team, s.Id, pos: s.Center, key: s.Def.Key);
             w.Emit("destroyed", team, s.Id, 0, s.Center, key: s.Def.Key);
@@ -453,9 +452,9 @@ namespace Pez.Sim
             // Aircraft that just lost their last place to land: say so now, not when they crash.
             var grounded = w.Owned(team).Where(u => u.IsAir && u.Def.UsesFuel && !w.Owned(team).Any(p => World.IsFuelPoint(u, p))).ToList();
             if (grounded.Count > 0) locked += $". Warning: {string.Join(", ", grounded.Take(6).Select(u => $"{u.Def.Key} #{u.Id}"))} now {(grounded.Count == 1 ? "has" : "have")} nowhere to refuel and will crash when the fuel runs out: build an airfield (or a factory, for drones)";
-            if (refund.Length > 0 && !s.Granted) return Ok($"sold {s.Def.Key} for {refund}{locked}");
+            if (refund.Length > 0) return Ok($"sold {s.Def.Key} for {refund}{locked}");
             string power = s.Def.Power < 0 ? $"; {-s.Def.Power} power freed" : s.Def.Power > 0 ? $"; its {s.Def.Power} power output is gone" : "";
-            return Ok($"removed {s.Def.Key} #{s.Id}: " + (s.Granted && refund.Length > 0 ? "it was a gift from the arena, not something you paid for, so there's no refund" : "it cost nothing, so there's no refund") + $"{power}{locked}");
+            return Ok($"removed {s.Def.Key} #{s.Id}: it cost nothing, so there's no refund{power}{locked}");
         }
 
         /// <summary>Save up for one unit or structure: converters leave its cost alone until you buy it (test player Reed
@@ -782,8 +781,9 @@ namespace Pez.Sim
             var q = w.Teams[team].UnitQueues[def.BuiltBy];
             int idx = q.FindLastIndex(p => p.Key == key);
             if (idx < 0) return Err($"no {key} in queue");
+            var cancelled = q[idx];
             q.RemoveAt(idx);
-            w.Teams[team].Pay(def.Cost, -1f);
+            w.Teams[team].Refund(def.Cost, 1f, cancelled.GrantedShare); // what the gift paid goes back as gift
             return Ok($"cancelled one {key}, refunded {def.CostText}");
         }
     }

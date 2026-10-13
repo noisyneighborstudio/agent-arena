@@ -60,14 +60,15 @@ namespace Pez.Sim
             float scale = RegrowRate * MathF.Sqrt(Map.OreScale) * RegrowEvery * Dt;
             foreach (int i in tiles)
             {
-                int target = Map.OreBase[i], ore = Map.Ore[i];
-                if (ore >= target || Map.Occupant[i] != 0 || beingMined.Contains(i) || !Map.TerrainPassable(i % Map.W, i / Map.W)) continue;
+                // The field's own ore grows back toward its original amount whatever salvage lies on it (salvage isn't field ore).
+                int target = Map.OreBase[i], ore = Map.Ore[i], field = Map.FieldOre(i);
+                if (field >= target || ore >= Map.MaxOrePerTile || Map.Occupant[i] != 0 || beingMined.Contains(i) || !Map.TerrainPassable(i % Map.W, i / Map.W)) continue;
                 if (ore > 0 && Map.OreType[i] != Map.OreBaseType[i]) continue; // salvage of another ore lies on it
-                if (ore == 0 && !roots[i] && !Map.FieldNeighbourHasOre(i)) continue;
+                if (field == 0 && !roots[i] && !Map.FieldNeighbourHasOre(i)) continue;
                 float amount = scale * Map.RegrowWeight(i);
                 uint h = (uint)i * 2654435761u ^ (uint)Tick * 40503u;
                 int add = (int)(amount + ((h >> 8) & 0xFFFF) / 65536f);
-                if (add > 0) regrowNow.Add((i, Math.Min(add, target - ore)));
+                if (add > 0) regrowNow.Add((i, Math.Min(Math.Min(add, target - field), Map.MaxOrePerTile - ore)));
             }
             foreach (var (i, add) in regrowNow)
             {
@@ -349,12 +350,12 @@ namespace Pez.Sim
         /// <summary>
         /// Add `share` of what an entity is worth as ore: the one place a unit or structure is priced, for kill value, kill
         /// salvage and a dismantled base alike. A structure counts at its full price however far it got: its owner paid all of
-        /// it when placing it. Something the arena gave its team (Entity.Granted) is worth nothing: not paid for, so there's no
-        /// kill value and no salvage in it, whoever holds it by then.
+        /// it when placing it. What the arena's gift paid for (Entity.GrantedShare: all of it, for the starting base and units) isn't
+        /// worth anything: not the team's own value, so there's no kill value and no salvage in that share, whoever holds it by then.
         /// </summary>
         void AddWorth(float[] into, Entity e, float share)
         {
-            if (!e.Granted) AddValue(into, ValueOf(e.Def), share);
+            if (e.GrantedShare < 1f) AddValue(into, ValueOf(e.Def), share * (1f - e.GrantedShare));
         }
 
         /// <summary>
@@ -368,26 +369,6 @@ namespace Pez.Sim
             t.Stock.Clear();
             t.Granted.Clear();
             return value;
-        }
-
-        /// <summary>
-        /// A converter just used `used` of each input of a recipe and made `made` of each output. The gift stays a gift when it's
-        /// converted: the share of the inputs (in raw ore) that came out of the granted stock makes the same share of the
-        /// outputs granted, so refining the starting ore into steel doesn't turn it into the team's own.
-        /// </summary>
-        void CarryGrant(Team t, Recipe r, float cycles)
-        {
-            float usedOre = 0, grantedOre = 0;
-            foreach (var kv in r.Inputs)
-            {
-                float used = kv.Value * cycles, left = t.Stock.TryGetValue(kv.Key, out var v) ? v : 0f;
-                float fromGift = MathF.Min(used, MathF.Max(0f, t.Gift(kv.Key) - left)); // the part that cut into the granted stock
-                float ore = OreMix.TryGetValue(kv.Key, out var mix) ? mix[0] + mix[1] + mix[2] + mix[3] : 0f;
-                usedOre += used * ore; grantedOre += fromGift * ore;
-                if (fromGift > 0) t.Granted[kv.Key] = t.Gift(kv.Key) - fromGift;
-            }
-            if (grantedOre <= 0) return;
-            foreach (var kv in r.Outputs) t.Granted[kv.Key] = t.Gift(kv.Key) + kv.Value * cycles * (grantedOre / usedOre);
         }
 
         /// <summary>
@@ -479,6 +460,7 @@ namespace Pez.Sim
                     Map.OreType[i] = (byte)k;
                     if (Map.Ore[i] == 0) oreDirty = true;
                     Map.Ore[i] += put;
+                    Map.Salvage[i] = Map.SalvageOn(i) + put; // all of it is salvage
                     left -= put; placed += put;
                 }
             }
@@ -505,6 +487,18 @@ namespace Pez.Sim
 
         /// <summary>Loaded from a snapshot older than regrowth: Game.Restore rebuilds OreBase from the game's seed.</summary>
         public bool BaseMissing;
+
+        /// <summary>Loaded from a snapshot older than the salvage layer: DeriveSalvage reads it off the map instead.</summary>
+        public bool SalvageMissing;
+        /// <summary>
+        /// For a game saved before the salvage layer: ore on ground that was never a field was all salvage (and field tiles' ore
+        /// was the field's own, as the old count had it).
+        /// </summary>
+        public void DeriveSalvage()
+        {
+            for (int i = 0; i < Ore.Length; i++) Salvage[i] = OreBase[i] == 0 ? Ore[i] : 0;
+            SalvageMissing = false;
+        }
 
         /// <summary>
         /// For a game saved before regrowth: the fields' original amounts, rebuilt. The map as first generated (same seed,
@@ -624,7 +618,7 @@ namespace Pez.Sim
                     int nx = x + dx, ny = y + dy;
                     if (!InBounds(nx, ny)) continue;
                     int j = Idx(nx, ny);
-                    if (OreBase[j] > 0 && OreBaseType[j] == type && Ore[j] > 0 && OreType[j] == type) return true;
+                    if (OreBase[j] > 0 && OreBaseType[j] == type && FieldOre(j) > 0 && OreType[j] == type) return true;
                 }
             return false;
         }
