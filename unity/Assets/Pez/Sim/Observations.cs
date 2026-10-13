@@ -576,6 +576,14 @@ namespace Pez.Sim
                         break;
                     case "boarded": case "unloaded": case "mine_laid": case "derrick_skipped": case "salvaged":
                         if (mine) Add("orders", ev.Type, Sev.Info, "own", new JObj().Set("unit", ev.A).Set("key", ev.Key).Set("pos", P(ev.Pos)), ev.Text, cmd: CmdOf(ev.A));
+                        else if (ev.Type == "salvaged" && SeenBy(ev))
+                        {
+                            // Another team's thing dismantled in plain sight (it left, or was knocked out): gone for sure, so no
+                            // contact or remembered structure lingers for it. Nobody killed it, so it isn't an enemy_destroyed.
+                            seenDead.Add(ev.A);
+                            confirmedDead.Add(ev.A);
+                            if (confirmedDead.Count > 5000) confirmedDead.Clear();
+                        }
                         break;
                     case "captured":
                         if (mine) Add("economy", "captured", Sev.Notice, "own", new JObj().Set("id", ev.A).Set("key", ev.Key).Set("pos", P(ev.Pos)), ev.Text ?? $"captured {ev.Key} #{ev.A}");
