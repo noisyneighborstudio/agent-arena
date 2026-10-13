@@ -704,14 +704,8 @@ namespace Pez.Headless
             }
             Field(15, 15, 3.4f, Map.Iron);
             Field(7, 17, 2.4f, Map.Copper);
-            // Each command center picked its bay side from the ore the map had before: put it up again where it stood.
-            for (int t = 0; t < 2; t++)
-            {
-                var hq = w.Owned(t).First(e => e.Def.Key == "command_center");
-                var at = hq.Origin;
-                w.Remove(hq);
-                w.SpawnStructure(t, "command_center", at, 1f);
-            }
+            m.FieldsChanged(); // the map's field index was built from the ore it had before
+            w.ChooseBays(); // each command center picked its bay side from the ore the map had before
             return w;
         }
 

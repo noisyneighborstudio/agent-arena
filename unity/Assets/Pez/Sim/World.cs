@@ -2155,6 +2155,13 @@ namespace Pez.Sim
         /// <summary>The side (an index into BaySides) a drop-off's door faces: where its bay opens now.</summary>
         int DoorSide(Entity s) => OpenBaySide(s.Origin, s.Def, s.BaySide).side;
 
+        /// <summary>Choose every drop-off's bay side again, from the map's ore as it is now (for tests that rewrite the ore after the world is built).</summary>
+        internal void ChooseBays()
+        {
+            foreach (var e in Entities)
+                if (!e.Dead && e.IsStructure && e.Def.DropOff) e.BaySide = ChooseBaySide(e.Origin, e.Def, NearestOreField(e.Center));
+        }
+
         static (Vec2 bay, Vec2 head, float facing) BayOn(Int2 origin, EntityDef def, Vec2 n)
         {
             var c = new Vec2(origin.X + def.SizeX / 2f, origin.Y + def.SizeY / 2f);
