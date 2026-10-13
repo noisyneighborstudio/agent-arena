@@ -1673,7 +1673,7 @@ namespace Pez.Headless
         }
 
         /// <summary>
-        /// The house AI answers an armed enemy near its structures with its army, but not an unarmed truck, surveyor or outpost truck: in
+        /// The house AI answers an armed enemy, an engineer or a mine layer near its structures with its army, but not a truck, surveyor or outpost truck: in
         /// passive games both armies used to chase each other's trucks to the contested ore, park there and shoot every truck sent to mine it
         /// (#87: 10 of one seat's 16 trucks and its outpost). The attacking AI still goes for anything near its base.
         /// </summary>
@@ -1696,14 +1696,16 @@ namespace Pez.Headless
                 return tanks.Any(u => u.Order == Order.AttackMove);
             }
             var sent = new Dictionary<string, bool>();
-            foreach (var key in new[] { "mining_truck", "outpost_truck", "geological_surveyor", "rifleman" })
+            foreach (var key in new[] { "mining_truck", "outpost_truck", "geological_surveyor", "drill_rig", "medic", "repair_truck", "rifleman", "engineer", "minelayer" })
             {
                 var (w, tanks) = Scene(key);
                 sent[key] = Sent(w, tanks, new SimpleAI(0, passive: true));
             }
             Check(!sent["mining_truck"] && !sent["outpost_truck"] && !sent["geological_surveyor"],
                   $"the house AI doesn't send its army after an unarmed enemy mining truck ({(sent["mining_truck"] ? "sent" : "held")}), outpost truck ({(sent["outpost_truck"] ? "sent" : "held")}) or surveyor ({(sent["geological_surveyor"] ? "sent" : "held")}) near its base");
-            Check(sent["rifleman"], "but it does answer an armed enemy there");
+            Check(!sent["drill_rig"] && !sent["medic"] && !sent["repair_truck"], "nor a drill rig, medic or repair truck");
+            Check(sent["rifleman"] && sent["engineer"] && sent["minelayer"],
+                  $"but it does answer an armed enemy ({(sent["rifleman"] ? "sent" : "held")}), an engineer ({(sent["engineer"] ? "sent" : "held")}) or a mine layer ({(sent["minelayer"] ? "sent" : "held")}) there");
             var (wr, tanksR) = Scene("mining_truck");
             Check(Sent(wr, tanksR, new SimpleAI(0)), "the attacking AI still goes for an enemy truck near its base");
 

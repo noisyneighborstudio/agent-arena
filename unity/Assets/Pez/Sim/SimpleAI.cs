@@ -667,10 +667,12 @@ namespace Pez.Sim
             var army = mine.Where(e => !e.IsStructure && e.IsArmed).ToList();
             // (Its base, not a derrick out in the contested middle: armies passing a derrick would otherwise keep the whole
             // army home on defence and the AI would never attack.)
-            // (The house AI holds its ground: an unarmed truck, surveyor or outpost truck by an outpost is no attack, and only the units within
-            // HouseDefenceReach of a threat answer it. Sending the whole army across the map after either left both armies parked in the
-            // contested middle, shooting every truck sent to mine there: #87.)
-            var threat = w.Entities.FirstOrDefault(e => !e.Dead && e.Team != team && e.Team >= 0 && !e.IsStructure && !(Passive && !e.IsArmed) && w.IsVisibleTo(team, e) &&
+            // (The house AI holds its ground: a unit that can do a base no harm (a mining or outpost truck, surveyor, drill rig, medic or repair
+            // truck) by an outpost is no attack, while anything armed, an engineer (captures structures below 50%) or a mine layer is one. Only the
+            // units within HouseDefenceReach of a threat answer it. Sending the whole army across the map after trucks left both armies parked in
+            // the contested middle, shooting every truck sent to mine there: #87.)
+            bool Harmless(Entity e) => Passive && !e.IsArmed && !e.Def.Engineer && !e.Def.LaysMines;
+            var threat = w.Entities.FirstOrDefault(e => !e.Dead && e.Team != team && e.Team >= 0 && !e.IsStructure && !Harmless(e) && w.IsVisibleTo(team, e) &&
                                                         structures.Any(s => s.Def.Key != "derrick" && Vec2.Dist(e.Pos, s.Center) < 10));
             if (threat != null)
             {
