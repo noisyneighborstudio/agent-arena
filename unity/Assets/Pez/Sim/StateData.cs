@@ -129,9 +129,10 @@ namespace Pez.Sim
             var prod = new JObj();
             prod.Set("structures", t.StructureQueue.Select(p => { var s = w.Get(p.StructureId); return (object)new JObj().Set("type", p.Key).Set("id", p.StructureId).Set("progress_pct", StateView.Pct(s?.BuildProgress ?? 0)); }).ToList());
             foreach (var kv in t.UnitQueues)
-                prod.Set(Defs.ProducerKey(kv.Key), kv.Value.Select((p, i) => (object)new JObj().Set("type", p.Key)
-                    .Set("progress_pct", i == 0 ? StateView.Pct(p.Progress / w.Def(p.Key).BuildTime) : 0)
-                    .Set("at", p.StructureId != 0 ? (object)p.StructureId : null)).ToList());
+                prod.Set(Defs.ProducerKey(kv.Key), kv.Value.Select(p => (object)new JObj().Set("type", p.Key)
+                    .Set("progress_pct", StateView.Pct(p.Progress / w.Def(p.Key).BuildTime))
+                    .Set("at", p.StructureId != 0 ? (object)p.StructureId : null)
+                    .Set("working_at", w.Get(p.WorkerId) != null ? (object)p.WorkerId : null)).ToList());
             o.Set("production", prod);
             o.Set("build_options", BuildOptions(w, team));
             o.Set("inventions", Tech.OwnJson(w, team));

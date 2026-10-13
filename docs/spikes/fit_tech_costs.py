@@ -4,8 +4,14 @@ Parses unity/Assets/Pez/Sim/Defs.cs, prices every armed mobile unit's cost in st
     log(cost_se) = log a + alpha*log(hp) + beta*log(edps) + g_range*range + g_speed*speed (+ flags)
 by least squares. The C# validator (Invention.cs) hard-codes the rounded result; Tests.cs prints the residuals
 against the live defs so drift shows up there. Run: python3 docs/spikes/fit_tech_costs.py
+
+Units the validator doesn't price (Tech.IsChassis: no structures, no unarmed units, no high-altitude Reaper) are skipped here
+too. By default the fit is the 15 units the shipped constants were fitted on, so it reproduces them (a 0.326, hp 0.42, dps 1.09,
+range 0.126, speed 0.184, rms 0.24): that leaves out long_range_artillery, which joined the roster later as the first adopted
+agent invention. With --roster the fit takes every priced unit as the roster stands (0.312 / 0.415 / 1.10 / 0.134 / 0.187,
+rms 0.233). That refit is not adopted: it would reprice every invention, and the calibration test passes with the shipped constants.
 """
-import math, re, pathlib
+import math, re, pathlib, sys
 import numpy as np
 
 SRC = pathlib.Path(__file__).resolve().parents[2] / "unity/Assets/Pez/Sim/Defs.cs"
@@ -44,7 +50,10 @@ def edps(w):
 rows = []
 for m in re.finditer(r'Add\(new EntityDef \{ Key = "(\w+)"(.*?)\}\);', text, re.S):
     key, body = m.group(1), m.group(2)
-    if "IsStructure = true" in body or "Weapon =" not in body:
+    # High-altitude units (the Reaper) aren't priced by the validator (Tech.IsChassis), so they're not fitted either.
+    if "IsStructure = true" in body or "Weapon =" not in body or "HighAltitude = true" in body:
+        continue
+    if key == "long_range_artillery" and "--roster" not in sys.argv:
         continue
     cost = dict((k, int(v)) for k, v in re.findall(r'"(\w+)", (\d+)', re.search(r"Cost = C\((.*?)\)", body).group(1)))
     w = weapons[re.search(r"Weapon = (\w+)", body).group(1)]
