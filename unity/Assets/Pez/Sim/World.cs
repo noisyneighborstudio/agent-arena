@@ -1592,7 +1592,7 @@ namespace Pez.Sim
             var dir = t.Center - e.Pos;
             float want = dir.Angle;
             e.TurretFacing = RotateToward(e.TurretFacing, want, 6f * Dt);
-            if (!e.IsStructure && !e.Moving && e.Def.Armor == Armor.Infantry) e.Facing = want;
+            if (!e.IsStructure && !e.Moving && e.Def.Armor == Armor.Infantry && Time >= e.DodgeUntil) e.Facing = want; // dodging: running, not aiming
             if (e.Cooldown > 0) return;
             if (MathF.Abs(AngleDiff(e.TurretFacing, want)) > 0.35f) return;
             var w = e.Def.Weapon;
@@ -2615,7 +2615,14 @@ namespace Pez.Sim
                 e.Facing = RotateToward(e.Facing, want, 5f * Dt);
                 if (MathF.Abs(AngleDiff(e.Facing, want)) > 0.6f) { e.Moving = true; return; }
             }
-            else e.Facing = want;
+            else
+            {
+                // A soldier getting out of a vehicle's way finishes doing so, and never walks deeper into one's path: it
+                // waits at the edge for the vehicle to pass (walking in to be dodged out again, it flipped round every tick).
+                if (Time < e.DodgeUntil) { e.Moving = true; return; }
+                if (!e.IsAir && Threats(e) > 0f && Threat(e.Pos + d / len * MathF.Min(len, e.Def.Speed * Dt)) > Threat(e.Pos) + 1e-4f) { e.Moving = true; return; }
+                e.Facing = want;
+            }
             if (!e.IsArmed || e.Cooldown <= 0 || e.Order != Order.Attack) e.TurretFacing = RotateToward(e.TurretFacing, e.Facing, 4f * Dt);
             float speed = e.SpeedCap > 0 ? MathF.Min(e.Def.Speed, e.SpeedCap) : e.Def.Speed;
             if (e.Group != 0 && groupSpan.TryGetValue(e.Group, out var span))
@@ -2728,50 +2735,97 @@ namespace Pez.Sim
         }
 
         /// <summary>
-        /// Infantry get out of a vehicle's way, friend's or foe's: anyone in its path sprints sideways, the short way out, at
+        /// Infantry get out of a vehicle's way, friend's or foe's: anyone in its path sprints out of it, the short way, at
         /// 1.4x their pace, once they see it coming (about 0.45 s before it reaches them, 0.25 s if they're shooting). That's
         /// all a body can do: one near the middle of a tank's path, boxed in (rock, buildings, a crowd) or too slow is run over.
+        /// Every vehicle bearing down counts at once: a soldier takes the step (of eight directions) that leaves it least in
+        /// anyone's path, and only one that's better than standing, so between two tanks it never steps out of one's path
+        /// into the other's and back (it used to, every tick, spinning on the spot).
         /// </summary>
         void DodgeVehicles()
         {
             foreach (var s in Entities)
             {
                 if (s.Dead || s.Def.Armor != Armor.Infantry || s.IsCarried || s.IsAir || s.IsStructure || s.Stranded) continue;
-                Near(s.Pos, 3.2f, nearCrush);
-                foreach (var v in nearCrush)
+                float deepest = Threats(s, out var primary);
+                if (deepest <= 0f) continue;
+                float step = s.Def.Speed * 1.4f * Dt, here = Threat(s.Pos), best = here - 1e-4f;
+                Vec2 bestDir = default;
+                float a0 = primary.Angle;
+                for (int k = 0; k < 8; k++)
                 {
-                    if (v.Dead || !Crusher(v) || v.IsCarried) continue;
-                    // Driving, or held up waiting for its own to clear. Not one parked, or turning on the spot.
-                    if (!Rolling(v) && !(v.Team == s.Team && v.Moving && v.OwnBlockedSince > 0f)) continue;
-                    var heading = new Vec2(MathF.Cos(v.Facing), MathF.Sin(v.Facing));
-                    var rel = s.Pos - v.Pos;
-                    float ahead = rel.X * heading.X + rel.Y * heading.Y, lateral = rel.X * heading.Y - rel.Y * heading.X;
-                    float clear = v.Def.Radius + s.Def.Radius + 0.25f;
-                    // Its own side's soldiers clear its path in good time (a driver they know is coming). An enemy's get moving
-                    // about 0.45 s before it reaches them (0.25 s if they're busy shooting).
-                    float react = Time - s.LastFiredAt < 1f ? 0.25f : 0.45f;
-                    float reach = s.Team == v.Team ? v.Def.Radius + 1.5f : MathF.Max(0.3f, Vec2.Dist(v.Pos, v.PrevPos) / Dt * react);
-                    if (ahead < -0.2f || ahead > reach || MathF.Abs(lateral) >= clear) continue;
-                    float sign = MathF.Abs(lateral) > 0.02f ? MathF.Sign(lateral) : ((s.Id & 1) == 0 ? 1f : -1f);
-                    var away = new Vec2(heading.Y, -heading.X) * sign; // perpendicular, on the side it's already on
-                    float step = s.Def.Speed * 1.4f * Dt;
-                    if (TryStep(s, away * step)) s.Facing = away.Angle;
-                    else if (TryStep(s, away * -step)) s.Facing = (away * -1f).Angle;
-                    else continue; // boxed in
-                    break;
+                    float a = a0 + k * (MathF.PI / 4f);
+                    var dir = new Vec2(MathF.Cos(a), MathF.Sin(a));
+                    var to = s.Pos + dir * step;
+                    var t = Int2.Of(to);
+                    if (!Map.Passable(t.X, t.Y)) continue;
+                    float score = Threat(to) + 0.002f * k; // ties: straight out first
+                    if (score < best) { best = score; bestDir = dir; }
                 }
+                if (best >= here - 1e-4f) continue; // boxed in, or no way out that isn't into another's path
+                s.Pos += bestDir * step;
+                s.Facing = bestDir.Angle;
+                s.DodgeUntil = Time + 0.25f;
             }
         }
 
-        /// <summary>Move e by delta if it lands on open ground and not inside a structure; whether it moved.</summary>
-        bool TryStep(Entity e, Vec2 delta)
+        /// <summary>
+        /// Gathers the vehicles bearing down on soldier s (nearThreat: driving, or held up waiting for their own to clear;
+        /// not parked or turning on the spot), and returns how deep it is in the deepest one's path, with the way straight
+        /// out of it (on the side it's already on).
+        /// </summary>
+        float Threats(Entity s, out Vec2 primary)
         {
-            var next = e.Pos + delta;
-            var t = Int2.Of(next);
-            if (!Map.Passable(t.X, t.Y)) return false;
-            e.Pos = next;
-            return true;
+            primary = default;
+            nearThreat.Clear();
+            Near(s.Pos, 3.2f, nearCrush);
+            float deepest = 0f;
+            foreach (var v in nearCrush)
+            {
+                if (v.Dead || !Crusher(v) || v.IsCarried) continue;
+                if (!Rolling(v) && !(v.Team == s.Team && v.Moving && v.OwnBlockedSince > 0f)) continue;
+                var heading = new Vec2(MathF.Cos(v.Facing), MathF.Sin(v.Facing));
+                float clear = v.Def.Radius + s.Def.Radius + 0.25f;
+                // Its own side's soldiers clear its path in good time (a driver they know is coming). An enemy's get moving
+                // about 0.45 s before it reaches them (0.25 s if they're busy shooting).
+                float react = Time - s.LastFiredAt < 1f ? 0.25f : 0.45f;
+                float reach = s.Team == v.Team ? v.Def.Radius + 1.5f : MathF.Max(0.3f, Vec2.Dist(v.Pos, v.PrevPos) / Dt * react);
+                nearThreat.Add((v.Pos, heading, clear, reach, v.Def.Radius + s.Def.Radius));
+                float depth = InPath(nearThreat[nearThreat.Count - 1], s.Pos);
+                if (depth > deepest)
+                {
+                    deepest = depth;
+                    var rel = s.Pos - v.Pos;
+                    float lateral = rel.X * heading.Y - rel.Y * heading.X;
+                    float sign = MathF.Abs(lateral) > 0.02f ? MathF.Sign(lateral) : ((s.Id & 1) == 0 ? 1f : -1f);
+                    primary = new Vec2(heading.Y, -heading.X) * sign;
+                }
+            }
+            return deepest;
         }
+
+        /// <summary>Gathers the vehicles bearing down on s (nearThreat); how many.</summary>
+        int Threats(Entity s) { Threats(s, out _); return nearThreat.Count; }
+
+        /// <summary>How deep p is in one vehicle's path (0 = clear of it); being under its hull counts double.</summary>
+        static float InPath((Vec2 pos, Vec2 heading, float clear, float reach, float touch) v, Vec2 p)
+        {
+            var rel = p - v.pos;
+            float ahead = rel.X * v.heading.X + rel.Y * v.heading.Y, lateral = MathF.Abs(rel.X * v.heading.Y - rel.Y * v.heading.X);
+            float depth = ahead >= -0.2f && ahead <= v.reach && lateral < v.clear ? v.clear - lateral : 0f;
+            float d = rel.Length;
+            return d < v.touch ? depth + 2f * (v.touch - d) : depth;
+        }
+
+        /// <summary>How deep p is in the paths of the vehicles bearing down on the soldier now (nearThreat).</summary>
+        float Threat(Vec2 p)
+        {
+            float sum = 0f;
+            foreach (var v in nearThreat) sum += InPath(v, p);
+            return sum;
+        }
+
+        readonly List<(Vec2 pos, Vec2 heading, float clear, float reach, float touch)> nearThreat = new List<(Vec2, Vec2, float, float, float)>();
 
         /// <summary>
         /// Infantry a vehicle drives over (moving at 30% of its speed or more, towards them) are crushed: an enemy's anywhere

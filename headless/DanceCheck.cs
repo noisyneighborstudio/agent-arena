@@ -81,7 +81,7 @@ namespace Pez.Headless
                 game.Advance(World.Dt);
                 if (trace.Count > 0 && i % (Environment.GetEnvironmentVariable("PEZ_TRACE_EVERY") is string ev0 ? int.Parse(ev0) : 4) == 0 && i < 20 * World.TickRate)
                     foreach (var id in trace) { var t = w.Get(id); if (t == null) continue;
-                        Console.WriteLine($"{w.Time:0.00} #{id} pos {t.Pos.X:0.00},{t.Pos.Y:0.00} f {t.Facing:0.00} {t.OrderName} to {t.OrderPos.X:0.0},{t.OrderPos.Y:0.0} wps {t.Waypoints.Count} loop {t.WaypointLoop} path {(t.Path == null ? "-" : $"{t.PathIdx}/{t.Path.Count} next {t.Path[Math.Min(t.PathIdx, t.Path.Count - 1)].X:0.0},{t.Path[Math.Min(t.PathIdx, t.Path.Count - 1)].Y:0.0}")} ghost {w.Time < t.GhostUntil} grp {t.Group} mv {t.Moving} cap {t.SpeedCap} fuel {t.FuelFraction:P0}"); }
+                        Console.WriteLine($"{w.Time:0.00} #{id} pos {t.Pos.X:0.00},{t.Pos.Y:0.00} f {t.Facing:0.00} {t.OrderName} to {t.OrderPos.X:0.0},{t.OrderPos.Y:0.0} wps {t.Waypoints.Count} loop {t.WaypointLoop} path {(t.Path == null ? "-" : $"{t.PathIdx}/{t.Path.Count} next {t.Path[Math.Min(t.PathIdx, t.Path.Count - 1)].X:0.0},{t.Path[Math.Min(t.PathIdx, t.Path.Count - 1)].Y:0.0}")} ghost {w.Time < t.GhostUntil} tgt {t.TargetId} cd {t.Cooldown:0.0} fired {w.Time - t.LastFiredAt:0.0} grp {t.Group} mv {t.Moving} cap {t.SpeedCap} fuel {t.FuelFraction:P0}"); }
                 foreach (var e in w.Entities)
                 {
                     if (e.Dead || e.IsStructure || e.IsMine || e.IsCarried) continue;

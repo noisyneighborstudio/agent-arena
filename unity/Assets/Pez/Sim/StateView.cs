@@ -568,8 +568,11 @@ namespace Pez.Sim
         ///     get ids (cmd), the units they affected, and tracked outcomes; optional command-controller leases (/api/controller).
         /// 37: a unit ordered to stop stops counting as moving, and soldiers only dodge a vehicle that is rolling or waiting on
         ///     them (one beside a parked truck stepped aside and back forever); the scripted AI doesn't send waves at derricks.
+        /// 38: a soldier dodges every vehicle bearing down at once (between two it no longer steps from one's path into the
+        ///     other's and back), finishes a dodge before walking or aiming again, and waits rather than walk into a moving
+        ///     vehicle's path.
         /// </summary>
-        public const int RulesVersion = 37;
+        public const int RulesVersion = 38;
 
         public static JObj Rules()
         {

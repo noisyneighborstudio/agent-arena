@@ -57,6 +57,7 @@ namespace Pez.Headless
             NoDancing();
             RunOver();
             NoSpinBesideParkedTruck();
+            NoSpinBetweenTanks();
             ViewCopyReplaysOrders();
             GroupMove();
             ResignWhenStalled();
@@ -339,6 +340,29 @@ namespace Pez.Headless
                 was = walker.Facing;
             }
             Check(walker.Order == Order.Idle && flips <= 2 && truck.Pos.Equals(at), $"a soldier walks to a spot beside a parked truck and stops ({walker.OrderName} at {walker.Pos} for {spot}, {flips} snap turns)");
+        }
+
+        static void NoSpinBetweenTanks()
+        {
+            // Two of its own tanks drive past a soldier at right angles. It gets out of both their ways in one go, without
+            // stepping out of one's path into the other's and back every tick (spinning on the spot, as it used to).
+            var w = new World(2, 7, 80);
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var at = hq.Center + new Vec2(12, 12);
+            var soldier = At(w.SpawnUnit(0, "rocket_soldier", hq), at);
+            var a = At(w.SpawnUnit(0, "heavy_tank", hq), at + new Vec2(-2.2f, 0.3f));
+            var b = At(w.SpawnUnit(0, "light_tank", hq), at + new Vec2(0.3f, -2.2f));
+            w.SetOrder(a, Order.Move, at + new Vec2(8, 0.3f)); a.Facing = 0;
+            w.SetOrder(b, Order.Move, at + new Vec2(0.3f, 8)); b.Facing = MathF.PI / 2;
+            int flips = 0; float was = soldier.Facing;
+            for (int i = 0; i < 5 * World.TickRate; i++)
+            {
+                w.Step();
+                float df = MathF.Abs(soldier.Facing - was); if (df > MathF.PI) df = 2 * MathF.PI - df;
+                if (df > 0.8f) flips++;
+                was = soldier.Facing;
+            }
+            Check(!soldier.Dead && flips <= 3 && !w.Events.Any(e => e.Type == "crushed"), $"a soldier between two tanks driving past gets out of both ways without spinning ({flips} snap turns, at {soldier.Pos})");
         }
 
         static void ViewCopyReplaysOrders()
