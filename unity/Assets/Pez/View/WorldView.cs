@@ -49,6 +49,7 @@ namespace Pez.View
             public PowerWorks Plant;     // power plant: the springs under load and the flywheel
             public CircuitWorks Fab;     // electronics plant: the circuit-candy line, its dispenser and its state lamps
             public FoundryWorks Foundry; // composite foundry: the press, its blanks and the magazine, the vents and the furnace
+            public SamWorks Sam;         // SAM site: the rack's elevation, the search radar, the rounds in their tubes
             public bool GlowHidden;
             public Sheen Sheen;          // newcomer protection: the sheen over its parts (null when its team isn't protected)
             public Renderer[] Halos;     // power plant: the light rising out of its open stacks      // the neutral "last seen" glow is applied (a stream render of fogged enemy state)
@@ -859,6 +860,7 @@ namespace Pez.View
                 if (e.Def.Key == "mining_refinery" && e.IsComplete && e.Team >= 0) Refinery(v);
                 if (e.Def.Key == "electronics_plant" && e.Team >= 0) { Fx.Audience = AudienceFor(e); (v.Fab ??= CircuitWorks.For(rig.Model, e.Id, ref v.Glows)).Tick(World.Teams[e.Team], e.IsComplete, e.Working, SeesState(e, PovTeam), v.FireK < 0.15f, Time.deltaTime); Fx.Audience = null; }
                 if (e.Def.Key == "composite_foundry" && e.IsComplete && e.Team >= 0) (v.Foundry ??= FoundryWorks.For(rig.Model, e.Id)).Tick(e.Working, World.Teams[e.Team].LowPower, v.FireK >= 0.15f, AudienceFor(e), Time.deltaTime);
+                if (e.Def.Key == "sam_site" && e.IsComplete && e.Team >= 0) { Fx.Audience = AudienceFor(e); (v.Sam ??= SamWorks.For(v)).Tick(this, v, Time.deltaTime); Fx.Audience = null; }
                 if (World.Decaying(e) && Time.time >= v.DustNext)
                 {
                     // The match's decay stage: grit crumbles off the roof every few seconds.
@@ -1311,6 +1313,7 @@ namespace Pez.View
                         shellShadows[p.Id] = sh;
                     }
                     trail.startWidth = 0.08f; trail.endWidth = 0f;
+                    if (p.Weapon.Name == "sam") { trail.sharedMaterial = Mats.Unlit(new Color(0.95f, 0.92f, 0.86f, 0.75f), true); trail.time = 0.8f; trail.startWidth = 0.07f; trail.endWidth = 0.03f; } // a SAM round's cream smoke trail
                     trail.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
                     projectiles[p.Id] = t;
                     projectileStart[p.Id] = (from, p.PrevPos, Mathf.Max(0.1f, Vec2.Dist(p.PrevPos, p.TargetPos)));

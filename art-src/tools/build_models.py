@@ -711,16 +711,47 @@ def S_gun_turret():
 
 def S_sam_site():
     a = Asset('sam_site', 'structures', 1)
-    a.box('cream', .9, .22, .9, y=.11)
-    tu = a.node('turret', a.key, (0, .22, 0))
-    a.cyl('steel', .1, .25, y=.12, node=tu)
-    a.box('team', .5, .14, .3, y=.3, node=tu)
-    br = a.node('barrel', tu, (0, .42, 0), rot=rx(-25))
-    for x in (-.11, .11):
-        for y in (-.06, .06):
-            a.cyl('dark', .05, .55, x=x, y=y, z=.05, axis='z', node=br)
-            a.cyl('amber', .03, .01, x=x, y=y, z=.33, axis='z', node=br)
-    a.box('team', .4, .04, .5, y=.12, z=.05, node=br)
+    # A twin-pod missile launcher on a jacked turntable. The base stays under 0.27 so nothing on it is in the pods' way:
+    # four outrigger jacks splayed to the corners, a cream drum with a team band and a steel slewing ring.
+    for sx in (-1, 1):
+        for sz in (-1, 1):
+            fx, fz = sx * .37, sz * .37
+            a.strut('steel', (sx * .22, .1, sz * .22), (fx, .05, fz), .024, sections=6)
+            a.cyl('cream', .07, .05, x=fx, y=.025, z=fz, sections=12)             # the jack's foot
+    a.rev('cream', [(0, 0), (.37, 0), (.37, .05), (.33, .07), (.31, .22), (.27, .245), (0, .245)], sections=24)
+    a.cyl('team', .332, .05, y=.135, sections=24)                               # wrapper band
+    a.cyl('steel', .22, .03, y=.255, sections=24)                               # slewing ring
+    # The turret (yawed by PezMotion from the sim's aim): a turntable deck, the team head between the pods with the
+    # tracker's dark visor, and the search radar on a mast behind it (radar, turned by SamWorks).
+    tu = a.node('turret', a.key, (0, .27, 0))
+    a.cyl('cream', .15, .05, y=.025, node=tu, sections=20)
+    a.box('team', .22, .27, .27, y=.185, z=.01, node=tu)                        # the head
+    a.box('dark', .16, .065, .02, y=.24, z=.15, node=tu)                        # the tracker's visor
+    a.box('amber', .045, .03, .02, y=.14, z=-.13, node=tu)                      # armed lamp (dims on low power / offline)
+    a.cyl('steel', .02, .17, y=.39, z=-.075, node=tu, sections=8)               # radar mast
+    rd = a.node('radar', tu, (0, .47, -.075))
+    a.cyl('steel', .03, .03, node=rd, sections=10)
+    dd = a.node('radar_dish', rd, (0, .02, 0), rot=rx(70))                     # facing forward, tipped up 20 deg
+    a.rev('foil', [(0, 0), (.11, .038), (.11, .054), (0, .022)], node=dd, sections=20)
+    a.cyl('steel', .013, .075, y=.055, node=dd, sections=8)                     # the feed horn
+    a.sphere('steel', .022, y=.1, node=dd, sub=1)
+    # The barrel node is the elevation axle (pitched by SamWorks, nose up 25 deg at rest): a steel axle through the head
+    # and a pod on each end. Each pod is a cream candy-brick canister of two tubes, a foil wrapper band at its back, a
+    # team cap round its mouths, and a round in each tube (missile_0..3, pivots at the mouths, team noses out). A fired
+    # tube shows its dark mouth until SamWorks slides a new round up into it.
+    br = a.node('barrel', tu, (0, .32, 0), rot=rx(-25))
+    a.cyl('steel', .032, .54, axis='x', node=br, sections=10)
+    k = 0
+    for x in (-.235, .235):
+        a.box('cream', .15, .28, .56, x=x, z=.04, node=br)
+        a.box('foil', .16, .29, .11, x=x, z=-.185, node=br)
+        a.box('team', .16, .29, .065, x=x, z=.29, node=br)                      # team cap round the mouths
+        a.cyl('steel', .055, .03, x=x - math.copysign(.085, x), axis='x', node=br, sections=10)   # trunnion boss
+        for y in (.07, -.07):
+            a.cyl('dark', .053, .012, x=x, y=y, z=.324, axis='z', node=br, sections=12)  # the tube's mouth
+            m = a.node(f'missile_{k}', br, (x, y, .32)); k += 1
+            a.cyl('cream', .042, .07, z=0, axis='z', node=m, sections=10)          # the round's body (the rest is inside)
+            a.cone('team', .042, .095, z=.035, axis='z', node=m, sections=10)
     return a
 
 def S_laser_tower():

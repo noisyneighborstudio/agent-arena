@@ -582,7 +582,17 @@ namespace Pez.Sim
             Lane("gunship", "light_tank", a0, 18, 4.4f, "Gunship rockets");
             Lane("stealth_bomber", "outpost", a0, 22.5f, 0f, "Stealth bomber (bombs)");
             Lane("gun_turret", "light_tank", a0, 26, 5f, "Gun turret");
-            Lane("sam_site", "gunship", a0, 29, 6f, "SAM site");
+            // The SAM site tracks a gunship flying to and fro across its front, from 5.7 tiles out to 2.5 (the rack climbs
+            // from about 23 to 44 degrees as it closes), and launches at it.
+            {
+                var sam = Bldg(Blue, "sam_site", a0, 29);
+                var gs = Unit(Red, "gunship", a0 + 5.6f, 28f, AlongLeft, pin: false);
+                var near = P(a0 + 2f, 30.5f); var far = P(a0 + 5.6f, 28f);
+                void Fly() { w.SetOrder(gs, Order.Move, near); gs.Waypoints.Clear(); gs.Waypoints.Add(far); gs.WaypointLoop = true; }
+                Fly();
+                holds.Add(() => { if (sam.Dead || gs.Dead) return; if (gs.Order != Order.Move) Fly(); w.FireFor(sam, gs); });
+                Item("SAM site", "SAM site tracking a gunship that flies to and fro, launching at it", a0 + 3f, 29);
+            }
             Lane("laser_tower", "heavy_tank", a0, 32, 6f, "Laser tower");
             Lane("reaper_drone", "light_tank", a0 + 14, 2, 5.5f, "Reaper hellfire (flies high)");
         }

@@ -204,9 +204,17 @@ STRUCTURES = [
    dict(spinner=dict(axis='Y', idle_rpm=12, active_rpm=12, spinup_s=.5)), "The amber beacon blinks every 1 s."),
  S('gun_turret', 'Ground defence cannon.', "The turret yaws at 120°/s and fires when within 5° of the target. Recoil is 0.1 over 0.05 s with a 0.3 s return. The turret has 360° of rotation.",
    dict(**TURRET(120), **BARREL(.1, .05, .3)), "Slow ±45° scan every 5 s."),
- S('sam_site', 'Anti-air missile launcher.', "The turret yaws at 200°/s. The barrel (missile rack) pitches between −10° and −70° to lead air targets. "
-   "It fires 4 missiles 0.15 s apart, and the rack kicks back 0.04 per launch. Reload is 3 s: the rack dips to −5° and comes back up.",
-   dict(**TURRET(200), **BARREL(.04, .03, .15, pitch=-25)), "Rack rests at −25° and tracks the sky in a slow sweep."),
+ S('sam_site', 'Anti-air missile launcher.', "A twin-pod launcher on a jacked turntable. The turret yaws at 200°/s to the sim's aim. The rack (barrel: the elevation axle "
+   "with a two-tube pod on each end) rests 25° nose-up; while the site is engaging it raises to the air target it faces, 10° to 70° (eased, up to 140°/s), "
+   "holds that 3 s after the last launch, then settles back. The search radar (radar) turns at 20 rpm (10 on low power); on contact it carries on round to "
+   "face forward and locks there. Each launch (one per sim shot, every 1.6 s) empties the next loaded tube, the pods taking turns, top tubes first: "
+   "its round (missile_N, pivot at the mouth, team nose out) drops out of sight, the shot and its flash leave from that mouth with a cream smoke trail, "
+   "smoke blows out of the pod's back, a dust ring runs out on the ground and the rack bucks 3° (nose up from a top tube, down from a bottom one). No recoil. "
+   "2.4 s later a new round slides up into the tube over 0.45 s. Offline (upkeep unpaid) the rack lowers to 4° and the radar stops.",
+   dict(**TURRET(200), barrel=dict(recoil=0, pitch_deg=-25, pitch_range='10–70° nose-up toward the target', kick_deg=3.2),
+        radar=dict(axis='Y', rpm=20, low_power_rpm=10, lock='faces forward while tracking'),
+        missile=dict(count=4, hidden_z=-.16, reload_s=2.4, slide_s=.45)),
+   "The rack rests at 25° nose-up and the radar sweeps round at 20 rpm; the turret glances aside now and then."),
  S('laser_tower', 'Beam defence.', "The turret (collar) yaws at 180°/s. Charge is 0.3 s, during which the pylon coils light from bottom to top. "
    "The beam lasts 0.6 s and the prism tip spins 360° during it. Cooldown is 1.0 s. No recoil.",
    dict(**TURRET(180), **BARREL(0)), "Coils breathe on a 2.5 s sine; the prism turns at 6 rpm."),

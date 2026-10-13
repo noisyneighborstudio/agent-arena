@@ -129,10 +129,12 @@ Units are tiles (1 tile = 1 Unity unit) and seconds. Rotation speeds are in degr
 ### `sam_site`
 *Anti-air missile launcher.*
 
-- **Mechanics:** The turret yaws at 200°/s. The barrel (missile rack) pitches between −10° and −70° to lead air targets. It fires 4 missiles 0.15 s apart, and the rack kicks back 0.04 per launch. Reload is 3 s: the rack dips to −5° and comes back up.
+- **Mechanics:** A twin-pod launcher on a jacked turntable. The turret yaws at 200°/s to the sim's aim. The rack (barrel: the elevation axle with a two-tube pod on each end) rests 25° nose-up; while the site is engaging it raises to the air target it faces, 10° to 70° (eased, up to 140°/s), holds that 3 s after the last launch, then settles back. The search radar (radar) turns at 20 rpm (10 on low power); on contact it carries on round to face forward and locks there. Each launch (one per sim shot, every 1.6 s) empties the next loaded tube, the pods taking turns, top tubes first: its round (missile_N, pivot at the mouth, team nose out) drops out of sight, the shot and its flash leave from that mouth with a cream smoke trail, smoke blows out of the pod's back, a dust ring runs out on the ground and the rack bucks 3° (nose up from a top tube, down from a bottom one). No recoil. 2.4 s later a new round slides up into the tube over 0.45 s. Offline (upkeep unpaid) the rack lowers to 4° and the radar stops.
 - **`turret`:** yaw_speed_deg=200, yaw_limit_deg=360, idle_scan=True
-- **`barrel`:** recoil=0.04, recoil_out_s=0.03, return_s=0.15, pitch_deg=-25
-- **Idle:** Rack rests at −25° and tracks the sky in a slow sweep.
+- **`barrel`:** recoil=0, pitch_deg=-25, pitch_range=10–70° nose-up toward the target, kick_deg=3.2
+- **`radar`:** axis=Y, rpm=20, low_power_rpm=10, lock=faces forward while tracking
+- **`missile`:** count=4, hidden_z=-0.16, reload_s=2.4, slide_s=0.45
+- **Idle:** The rack rests at 25° nose-up and the radar sweeps round at 20 rpm; the turret glances aside now and then.
 
 ### `laser_tower`
 *Beam defence.*
