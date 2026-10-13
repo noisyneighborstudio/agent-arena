@@ -1139,10 +1139,12 @@ namespace Pez.Headless
             var w = new World(2, 7, 80);
             var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
             var refinery = w.SpawnStructure(0, "mining_refinery", w.FindPlacement(0, "mining_refinery").Value, 1f);
-            var dock = w.DockPoint(refinery);
-            for (int i = 0; i < 6; i++) { var tk = At(w.SpawnUnit(0, "heavy_tank", hq), dock + new Vec2((i % 3 - 1) * 0.9f, -(i / 3) * 0.9f)); w.SetOrder(tk, Order.Idle, tk.Pos); }
+            var (dock, dockHead, _, _) = w.Bay(refinery);
+            var outward = (dockHead - dock).Normalized; // the bay opens toward the ore, not always south
+            var across = new Vec2(-outward.Y, outward.X);
+            for (int i = 0; i < 6; i++) { var tk = At(w.SpawnUnit(0, "heavy_tank", hq), dock + across * ((i % 3 - 1) * 0.9f) + outward * ((i / 3) * 0.9f)); w.SetOrder(tk, Order.Idle, tk.Pos); }
             foreach (var o in w.Owned(0).Where(e => e.IsHarvester).ToList()) w.Remove(o);
-            var truck = At(w.SpawnUnit(0, "mining_truck", refinery), dock + new Vec2(7, -1));
+            var truck = At(w.SpawnUnit(0, "mining_truck", refinery), dock + across * 7f + outward);
             truck.Cargo = 150; truck.CargoType = 0; w.SetOrder(truck, Order.ReturnOre, truck.Pos);
             // Make the refinery the only drop-off so it has to dock there.
             int mined0 = w.Teams[0].Stats.OreMined;
@@ -1159,9 +1161,11 @@ namespace Pez.Headless
             var wq = new World(2, 7, 80);
             var hqq = wq.Owned(0).First(e => e.Def.Key == "command_center");
             foreach (var o in wq.Owned(0).Where(e => e.IsHarvester).ToList()) wq.Remove(o);
-            var bayQ = wq.DockPoint(hqq);
-            var t1 = At(wq.SpawnUnit(0, "mining_truck", hqq), bayQ + new Vec2(-3, -4));
-            var t2 = At(wq.SpawnUnit(0, "mining_truck", hqq), bayQ + new Vec2(3, -4));
+            var (bayQ, headQ, facingQ, _) = wq.Bay(hqq);
+            var outQ = (headQ - bayQ).Normalized;
+            var acrossQ = new Vec2(-outQ.Y, outQ.X);
+            var t1 = At(wq.SpawnUnit(0, "mining_truck", hqq), bayQ + acrossQ * -3f + outQ * 4f);
+            var t2 = At(wq.SpawnUnit(0, "mining_truck", hqq), bayQ + acrossQ * 3f + outQ * 4f);
             foreach (var tq in new[] { t1, t2 }) { tq.Cargo = 150; tq.CargoType = 0; wq.SetOrder(tq, Order.ReturnOre, tq.Pos); }
             bool bothIn = false, queued = false, backedIn = false, done1 = false, done2 = false;
             for (int k = 0; k < 40 * World.TickRate && !(done1 && done2); k++)
@@ -1171,7 +1175,7 @@ namespace Pez.Headless
                 if (t1.Dock >= DockStep.Align && t2.Dock >= DockStep.Align) bothIn = true;
                 if (t1.Dock == DockStep.Queue || t2.Dock == DockStep.Queue) queued = true;
                 foreach (var tq in new[] { t1, t2 })
-                    if (tq.Dock == DockStep.Unload && Vec2.Dist(tq.Pos, bayQ) < 0.05f && MathF.Abs(tq.Facing + MathF.PI / 2) < 0.05f) backedIn = true;
+                    if (tq.Dock == DockStep.Unload && Vec2.Dist(tq.Pos, bayQ) < 0.05f && MathF.Cos(tq.Facing - facingQ) > 0.998f) backedIn = true;
             }
             Check(done1 && done2 && queued && !bothIn && backedIn,
                   $"two trucks share one bay: one waits its turn beside the lane, each unloads backed in, facing out (both delivered {done1 && done2}, queued {queued}, both in at once {bothIn}, after {wq.Time:0.0}s)");
@@ -1183,6 +1187,7 @@ namespace Pez.Headless
             Check(okL && why != null && why.Contains("truck lane"), $"building on a drop-off's truck lane is refused: {why}");
             var wr = new World(2, 7, 80);
             var hqr = wr.Owned(0).First(e => e.Def.Key == "command_center");
+            hqr.BaySide = 0; // a south bay (the bay otherwise opens toward the ore)
             for (int x = hqr.Origin.X - 2; x < hqr.Origin.X + hqr.Def.SizeX + 2; x++)
                 for (int y = hqr.Origin.Y - 3; y < hqr.Origin.Y; y++)
                     if (wr.Map.InBounds(x, y) && wr.Map.Occupant[wr.Map.Idx(x, y)] == 0) wr.Map.Tiles[wr.Map.Idx(x, y)] = Terrain.Rock;
@@ -1253,7 +1258,7 @@ namespace Pez.Headless
             long before = OreOnMap(w);
             var sold = Commands.Execute(w, 1, Cmd("type", "sell", "structure_id", hq.Id, "confirm", true));
             long gained = OreOnMap(w) - before;
-            Check(Ok(sold) && hq.Dead && Said(sold).Contains("stockpile spilled"), $"the sale says so: {Said(sold)}");
+            Check(Ok(sold) && hq.Dead && Said(sold).Contains("stockpile is gone") && Said(sold).Contains("spilled out as salvage"), $"the sale says so: {Said(sold)}");
             Check(w.Teams[1].Stock.Count == 0 && gained >= 6400 && gained <= 6500, $"selling the last command center spills the stockpile as salvage ({gained} ore on the map, {w.Teams[1].Stock.Count} items left)");
             Check(w.Events.Any(e => e.Type == "chat" && e.Text.Contains("last command center was sold") && e.Text.Contains("spilled")), "the arena chat says it was sold, not that it fell");
             var lostAlert = w.Alerts.Active(w, 1).FirstOrDefault(a => a.Kind == "stockpile_lost");
@@ -1811,6 +1816,7 @@ namespace Pez.Headless
 
             // Leaving turns the base into salvage ore that anyone can mine.
             var hqTiles = Enumerable.Range(0, 9).Select(k => new Int2(hq2.Origin.X + k % 3, hq2.Origin.Y + k / 3)).ToList();
+            t2.Add("steel", 2000); // mined, not given: the starting base and stock are gifts and leave no salvage
             var msg = w.Leave(t2.Id);
             Check(w.Teams[t2.Id].Left && !w.Owned(t2.Id).Any(), $"leaving removes the player's forces: {msg}");
             Check(hqTiles.All(p => w.Map.Ore[w.Map.Idx(p.X, p.Y)] > 0), "their old HQ footprint is now salvage ore");

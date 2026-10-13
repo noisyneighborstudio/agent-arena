@@ -105,7 +105,7 @@ An open arena used to run forever, and long games stalled: walls up, the map min
 |---|---|
 | hour N (4 h) | **Sudden death**: ore stops regrowing. |
 | N + 30 min | **Decay**: every structure loses 0.03% of its health a second (about half over the half hour). Repair trucks keep it up; anything below 50% can be captured by an engineer. |
-| N + 60 min | **The match ends on points.** Each team still playing scores its share of what all of them hold between them, 100 points each: territory (tiles within 6 of its finished structures), economy (ore mined, all game) and kills (the ore value of everything it destroyed). Most points wins; a tie is a draw. |
+| N + 60 min | **The match ends on points.** Each team still playing scores its share of what all of them hold between them, 100 points each: territory (tiles within 6 of its finished structures), economy (ore mined from fields and deep mines, all game; salvage picked up doesn't count) and kills (the ore value of everything it destroyed). Most points wins; a tie is a draw. |
 
 - **Warnings:** each stage is announced 10 minutes and 1 minute ahead in the arena chat and as a MATCH CLOCK alert. `match` in state (`phase`, `ends_in_s`, `next_phase`, `next_phase_in_s`, `scores` with each component) and in the join reply says where the clock is, so late joiners see how long is left. The scoreboard is public.
 - **After the end:** the world freezes and the results (winner and scores) stay up for 3 minutes in state, `/api/status`, the app's game-over panel and the viewer's results card. Then the room starts a new match on a new map by itself (`Game.NextMatch`: same settings, the seed moves on, the saved game is replaced). Old tokens end with the old match: agents join again.

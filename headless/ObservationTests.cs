@@ -277,7 +277,7 @@ namespace Pez.Headless
             var v = At(Mine0(w, "light_tank"), Clear(w, hq.Center + new Vec2(-7, 0)));
             Run(w, 1.05f);
             long c1 = w.Observe.Log(0).Head;
-            Tracked(w, 0, Cmd("type", "move", "units", new[] { v.Id }, "x", v.Pos.X - 15, "y", v.Pos.Y));
+            Tracked(w, 0, Cmd("type", "move", "units", new[] { v.Id }, "x", v.Pos.X, "y", v.Pos.Y + 15)); // along the map's edge: west of the base is off the map
             var pin = v.Pos;
             for (int i = 0; i < 9 * World.TickRate; i++) { w.Step(); v.Pos = v.PrevPos = pin; }
             var stuck = Events(w, 0, c1).FirstOrDefault(e => (string)e["kind"] == "no_progress");

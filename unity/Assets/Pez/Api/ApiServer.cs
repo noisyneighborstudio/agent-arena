@@ -785,9 +785,9 @@ namespace Pez.Api
                     if (id == team) continue;
                     t.Remove("standing_orders"); // a commander's orders are the team's plan
                     if (team < 0) continue;
-                    foreach (var k in new[] { "stock", "rates", "power_produced", "power_used", "visible", "explored", "detected", "revealed",
+                    foreach (var k in new[] { "stock", "granted", "rates", "power_produced", "power_used", "visible", "explored", "detected", "revealed",
                                               "structure_queue", "unit_queues", "known_enemy_structures", "surveyed", "survey_sites", "reserve",
-                                              "save_for", "save_for_cost", "zones", "stalled_since", "surface_warned_at", "home_ore_warned", "last_active_at", "orders_version" })
+                                              "save_for", "save_for_cost", "zones", "stalled_since", "surface_warned_at", "home_ore_warned", "last_active_at", "orders_version", "plasma_owed" })
                         t.Remove(k);
                     if (t["stats"] is JObj st) t["stats"] = new JObj().Set("kills", st["kills"] ?? 0);
                     // Where a rival's base is, is for scouting: their start goes far off the map (not 0,0, a real corner, where
@@ -798,7 +798,7 @@ namespace Pez.Api
             {
                 foreach (var e in events.OfType<JObj>()) if ((e["type"] as string) == "orders" && (team < 0 || Num(e["team"] ?? -1) != team)) e.Remove("text"); // World.SetOrders logs the text as an event
                 if (team >= 0)
-                    world["events"] = events.OfType<JObj>().Where(e => PublicEvent(e["type"] as string) || Num(e["team"] ?? -1) == team || Sees(w, team, e["pos"])).Cast<object>().ToList();
+                    world["events"] = events.OfType<JObj>().Where(e => PublicEvent(e["type"] as string) || Num(e["team"] ?? -1) == team || (!OwnerEvent(e["type"] as string) && Sees(w, team, e["pos"]))).Cast<object>().ToList();
             }
             if (team < 0) return snap;
             var t0 = w.Teams[team];
@@ -824,7 +824,7 @@ namespace Pez.Api
                     }
                     else eo.Remove("order_pos");
                     foreach (var k in new[] { "rally", "waypoints", "waypoint_loop", "resume_order", "resume_pos", "resume_guard", "resume_target", "resume_waypoints",
-                                              "mine_queue", "home_pos", "harvest_tile", "prospect_center", "prospect_radius", "skip_sites", "passengers", "retreat_below", "fuel", "fuel_cap", "until_capturable", "engage_derricks" })
+                                              "mine_queue", "home_pos", "harvest_tile", "prospect_center", "prospect_radius", "skip_sites", "passengers", "retreat_below", "fuel", "fuel_cap", "until_capturable", "engage_derricks", "output", "granted_share", "cargo_salvage" })
                         eo.Remove(k);
                     eo["guard_pos"] = eo["pos"];
                     keep.Add(eo);
@@ -851,6 +851,15 @@ namespace Pez.Api
         static double Num(object o) => o is double d ? d : o is float f ? f : o is int i ? i : o is long l ? l : o is IConvertible c ? c.ToDouble(System.Globalization.CultureInfo.InvariantCulture) : 0;
 
         /// <summary>Events everyone hears about (the scoreboard and chat), wherever they happen.</summary>
+        /// <summary>
+        /// Events that only tell their own team about its economy or its units' state (power totals, upkeep, research, deep ore,
+        /// fuel): a rival's never reaches a player's copy, even when the spot it names is in sight. These are the types
+        /// StateView.EventList shows only to the team they belong to.
+        /// </summary>
+        static bool OwnerEvent(string type) => type is "low_power" or "power_restored" or "defences_offline" or "defences_online" or "research_started" or "researched"
+            or "unstalled" or "surveyed" or "survey_failed" or "drilled" or "drill_failed" or "depleted" or "low_fuel" or "stranded" or "refuelled" or "retreating"
+            or "out_of_range" or "capture_stopped" or "derrick_skipped";
+
         static bool PublicEvent(string type) => type == "chat" || type == "defeated" || type == "game_over" || type == "joined" || type == "left" || type == "resigned" || type == "match";
 
         static bool Sees(World w, int team, object pos)
@@ -893,9 +902,10 @@ namespace Pez.Api
                 bool known = team < 0 || w.IsVisibleTo(team, e) || (e.IsStructure && w.Teams[team].KnownEnemyStructures.ContainsKey(e.Id));
                 if (!known) continue;
                 var c = e.Center;
-                // An invention is drawn as its base unit (ModelKey); its player-chosen name rides along at index 10.
+                // An invention is drawn as its base unit (ModelKey); its player-chosen name rides along at index 10. A structure's
+                // facing (index 6) is where its door faces: its bay for a drop-off, else south, where the models' doors are.
                 var row = new List<object> { e.Id, e.Def.OwnerTeam >= 0 ? e.Def.ModelKey : e.Def.Key, e.Team, Math.Round(c.X, 2), Math.Round(c.Y, 2), (int)(100 * e.Hp / e.Def.MaxHp),
-                    Math.Round(e.Facing, 2), e.IsStructure ? StateView.Pct(e.BuildProgress) : -1, e.IsStructure ? e.Def.SizeX : 0,
+                    Math.Round(e.IsStructure ? w.DoorFacing(e) : e.Facing, 2), e.IsStructure ? StateView.Pct(e.BuildProgress) : -1, e.IsStructure ? e.Def.SizeX : 0,
                     // fuel %: your own units only (spectators see all); -1 = not shown
                     e.Def.UsesFuel && (team < 0 || e.Team == team) ? StateView.Pct(e.FuelFraction) : -1 };
                 if (e.Def.OwnerTeam >= 0) row.Add(e.Def.Name);

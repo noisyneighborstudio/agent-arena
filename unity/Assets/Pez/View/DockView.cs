@@ -38,7 +38,7 @@ namespace Pez.View
 
         /// <param name="halfX">Half the footprint across X.</param>
         /// <param name="halfY">Half the footprint across Y (the sim's Y is world Z).</param>
-        /// <param name="facing">The sim's bay facing (World.Bay: south unless terrain blocks that lane).</param>
+        /// <param name="facing">The bay's facing in the model's own frame (WorldView turns a drop-off's model so its door faces the bay: always south, -Z).</param>
         public static DockView For(Rig rig, float halfX, float halfY, float facing, Vec2 bayPoint)
         {
             var m = rig.Model;
