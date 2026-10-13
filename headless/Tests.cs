@@ -527,6 +527,7 @@ namespace Pez.Headless
             // A house AI, a placeholder agent seat from the config (nobody plays it), and two agents who join a minute in.
             var game = new Game(new GameConfig { Seed = 5, MapSize = 64, Open = true, Controllers = new[] { "ai", "llm" }, HouseAIs = 1 });
             var w = game.World;
+            w.Teams[1].ProtectedUntil = 1e9f; // (kept out of harm's way: this is about its idle clock, and the house AI's units meeting its truck would end the seat before 20 minutes)
             Step(game, 60);
             var idler = w.AddTeam("llm", "Napper", out _);
             var busy = w.AddTeam("llm", "Keen", out _);

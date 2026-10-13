@@ -399,6 +399,7 @@ namespace Pez.Sim
             .Set("next_prospect", SnapIO.X(nextProspect)).Set("prospect_radius", prospectRadius)
             .Set("want_copper", wantCopper).Put("want_crystal", wantCrystal).Put("want_uranium", wantUranium).Put("went_deep", wentDeep)
             .Set("ore_rate", SnapIO.X(oreRate)).Set("rated_at", SnapIO.X(ratedAt)).Set("rated_mined", ratedMined)
+            .Set("copper_starved_since", SnapIO.X(copperStarvedSince))
             .Set("stuck_since", stuckSince.OrderBy(kv => kv.Key).Select(kv => (object)new List<object> { kv.Key, SnapIO.X(kv.Value) }).ToList())
             .Set("outpost_targets", outpostTargets.Select(kv => (object)new List<object> { kv.Key, SnapIO.X(kv.Value.X), SnapIO.X(kv.Value.Y) }).ToList());
 
@@ -411,6 +412,7 @@ namespace Pez.Sim
             d.Load("next_prospect", ref ai.nextProspect); d.Load("prospect_radius", ref ai.prospectRadius);
             d.Load("want_copper", ref ai.wantCopper); d.Load("want_crystal", ref ai.wantCrystal); d.Load("want_uranium", ref ai.wantUranium); d.Load("went_deep", ref ai.wentDeep);
             d.Load("ore_rate", ref ai.oreRate); d.Load("rated_at", ref ai.ratedAt); d.Load("rated_mined", ref ai.ratedMined);
+            d.Load("copper_starved_since", ref ai.copperStarvedSince);
             foreach (var x in d.Arr("stuck_since"))
                 if (x is List<object> s && s.Count >= 2) ai.stuckSince[SnapIO.ToI(s[0])] = SnapIO.ToF(s[1]);
             foreach (var x in d.Arr("outpost_targets"))
