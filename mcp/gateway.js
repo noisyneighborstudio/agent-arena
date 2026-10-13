@@ -1162,7 +1162,7 @@ A typical opening is power plant → more trucks → mining refinery → barrack
 
 Things that trip new players up:
 - **Placement:** new buildings go within 6 tiles of one of yours. A failed \`build\` names the nearest valid spot.
-- **Units come out of buildings:** infantry from a finished barracks, vehicles from a finished factory.
+- **Units come out of buildings:** infantry from a finished barracks, vehicles from a finished factory. Each finished barracks, factory or airfield trains one unit at a time from your queue, so two barracks train twice as fast as one (\`train\` with \`structure_id\` picks the building and waits for it).
 - **Outposts are deployed, not built:** train an \`outpost_truck\` at a factory, drive it out, and \`deploy\` it. A \`construction_truck\` deploys into a new command center, and a \`drill_rig\` into a deep mine on a surveyed zone.
 - **Surface ore near your base runs out in 5–10 minutes.** Then there are only two ways on: survey underground (a \`geological_surveyor\` flags deep deposits, a \`drill_rig\` mines one), or explore the map for more surface fields (\`ore_fields\` lists only what you've explored) and put an outpost beside one. Start before it runs out.
 - **To bank for something expensive while converters eat your stock,** use \`{"type":"save_for","unit":"drill_rig"}\`.
