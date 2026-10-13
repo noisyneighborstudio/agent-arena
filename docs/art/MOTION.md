@@ -112,11 +112,11 @@ Units are tiles (1 tile = 1 Unity unit) and seconds. Rotation speeds are in degr
 - **Idle:** Tower beacon blinks every 1.5 s.
 
 ### `radar_dome`
-*Reveals the minimap.*
+*Sees 16 tiles, finds stealth units in that range and warns of enemy aircraft out to 28.*
 
-- **Mechanics:** The spinner (dish) yaws at 12 rpm. When it detects a new enemy, it snaps to that direction at 180°/s, holds for 1 s, then resumes rotating. When power is low, the dish stops and the beacon goes out.
-- **`spinner`:** axis=Y, idle_rpm=12, active_rpm=12, spinup_s=0.5
-- **Idle:** The amber beacon blinks every 1 s.
+- **Mechanics:** The search antenna on top of the dome (the spinner; its beam looks toward the feed marker on the horn) is driven by RadarWorks, not by its rpm: while the base has power it sweeps clockwise at 12 rpm. When a new contact comes into this dome's range (an enemy aircraft on radar within 28 tiles, or a stealth unit it has found within 16) it breaks off and swings onto it (up to 180°/s, eased), follows it for 1 s, then spins back up into the sweep over 0.5 s. On low power (the sim switches the air search off; the dome still finds stealth) it coasts to a stop, and every 2.5 to 4.5 s the motor catches and throws it 20–30° round before it stalls again. Still while building.
+- **`spinner`:** axis=Y, idle_rpm=0, active_rpm=0, mode=sweep, sweep_rpm=12, slew_deg_s=180, hold_s=1
+- **Idle:** The amber beacon on the antenna blinks once a second while it sweeps, double-flashes while the dome holds contacts, and is dark on low power.
 
 ### `gun_turret`
 *Ground defence cannon.*

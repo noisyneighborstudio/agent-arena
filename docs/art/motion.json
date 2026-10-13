@@ -278,17 +278,20 @@
  {
   "key": "radar_dome",
   "kind": "structure",
-  "role": "Reveals the minimap.",
-  "mechanics": "The spinner (dish) yaws at 12 rpm. When it detects a new enemy, it snaps to that direction at 180\u00b0/s, holds for 1 s, then resumes rotating. When power is low, the dish stops and the beacon goes out.",
+  "role": "Sees 16 tiles, finds stealth units in that range and warns of enemy aircraft out to 28.",
+  "mechanics": "The search antenna on top of the dome (the spinner; its beam looks toward the feed marker on the horn) is driven by RadarWorks, not by its rpm: while the base has power it sweeps clockwise at 12 rpm. When a new contact comes into this dome's range (an enemy aircraft on radar within 28 tiles, or a stealth unit it has found within 16) it breaks off and swings onto it (up to 180\u00b0/s, eased), follows it for 1 s, then spins back up into the sweep over 0.5 s. On low power (the sim switches the air search off; the dome still finds stealth) it coasts to a stop, and every 2.5 to 4.5 s the motor catches and throws it 20\u201330\u00b0 round before it stalls again. Still while building.",
   "nodes": {
    "spinner": {
     "axis": "Y",
-    "idle_rpm": 12,
-    "active_rpm": 12,
-    "spinup_s": 0.5
+    "idle_rpm": 0,
+    "active_rpm": 0,
+    "mode": "sweep",
+    "sweep_rpm": 12,
+    "slew_deg_s": 180,
+    "hold_s": 1
    }
   },
-  "idle": "The amber beacon blinks every 1 s.",
+  "idle": "The amber beacon on the antenna blinks once a second while it sweeps, double-flashes while the dome holds contacts, and is dark on low power.",
   "produces": [],
   "emerge": "Rises out of its pad in stages; nothing appears instantly. stage_0 (pad) lifts from y=-0.15 to 0 during build progress 0\u201310%. stage_1, stage_2 and stage_3 each start at local y = -(stage height) and rise to 0 with ease-out cubic over progress 10\u201345%, 45\u201375% and 75\u201395%. The opaque terrain and pad hide whatever is still below ground. stage_3 ends with a 4% Y-scale overshoot that settles in 0.15 s (spring-loaded). Functional nodes (turret, spinner, door, lift) come last, at 95\u2013100%: a turret rises 0.3 out of its housing, then a spinner spins up from 0 rpm.",
   "remove": "Destroyed: shake \u00b10.03 for 0.4 s, then poof: a soft cream cloud bursts out of the building while it swells 8% for 0.06 s and pops to nothing in 0.14 s. A rubble decal fades in under it. Sold: dust at the footprint corners, then the same poof. Nothing sinks into the ground."

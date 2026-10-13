@@ -109,6 +109,25 @@ class Asset:
             f += [[c0, (j + 1) % sides, j], [c1, (n - 1) * sides + j, (n - 1) * sides + (j + 1) % sides]]
         mesh = trimesh.Trimesh(v, np.array(f)); mesh.fix_normals()
         self.add(node, m, mesh)
+    def sheet(self, m, P, t, node=None):
+        """A curved plate of thickness t from a grid of points P (nu, nv, 3) on its mid-surface (a reflector, a cowl)."""
+        nu, nv, _ = P.shape
+        du = np.gradient(P, axis=0); dv = np.gradient(P, axis=1)
+        n = np.cross(du, dv); n /= np.linalg.norm(n, axis=2)[:, :, None]
+        v = np.vstack([(P + n * t / 2).reshape(-1, 3), (P - n * t / 2).reshape(-1, 3)])
+        off, idx = nu * nv, lambda i, j: i * nv + j
+        f = []
+        for i in range(nu - 1):
+            for j in range(nv - 1):
+                a, b, c, d = idx(i, j), idx(i + 1, j), idx(i + 1, j + 1), idx(i, j + 1)
+                f += [[a, b, c], [a, c, d], [off + a, off + c, off + b], [off + a, off + d, off + c]]
+        ring = [idx(i, 0) for i in range(nu)] + [idx(nu - 1, j) for j in range(1, nv)] + \
+               [idx(i, nv - 1) for i in range(nu - 2, -1, -1)] + [idx(0, j) for j in range(nv - 2, 0, -1)]
+        for k in range(len(ring)):                                              # the rim
+            a, b = ring[k], ring[(k + 1) % len(ring)]
+            f += [[a, off + a, off + b], [a, off + b, b]]
+        mesh = trimesh.Trimesh(v, np.array(f), process=False); mesh.fix_normals()
+        self.add(node, m, mesh)
     def octa(self, m, r, h, x=0, y=0, z=0, node=None):
         v = np.array([[r,0,0],[-r,0,0],[0,0,r],[0,0,-r],[0,h,0],[0,-h,0]], float)
         f = [[4,0,2],[4,2,1],[4,1,3],[4,3,0],[5,2,0],[5,1,2],[5,3,1],[5,0,3]]
@@ -687,14 +706,79 @@ def S_airfield():
 
 def S_radar_dome():
     a = Asset('radar_dome', 'structures', 2); pad(a, 2)
-    a.box('cream', 1.2, .4, 1.2, x=-.2, y=.28, z=.2)
-    a.sphere('cream', .5, x=-.2, y=.8, z=.2, sub=3)
-    a.cyl('team', .52, .08, x=-.2, y=.62, z=.2)
-    a.cyl('steel', .06, .7, x=.55, y=.43, z=-.5)
-    sp = a.node('spinner', a.key, (.55, .8, -.5))
-    a.cone('steel', .32, .15, z=.05, axis='z', node=sp)
-    a.cyl('dark', .02, .3, z=.15, axis='z', node=sp)
-    a.sphere('amber', .06, x=-.2, y=1.33, z=.2)
+    # A cream radome (the short-range set that sees stealth) on an equipment drum with a team wrapper band, a team cap on
+    # its crown, and on a smoke-plastic stem out of the cap the long-range search antenna (the spinner): a curved foil
+    # reflector with a team top rail, its feed horn on a boom, and the amber beacon on top. RadarWorks sweeps it while
+    # the base has power, swings it onto each new contact, and lets it stall and lurch on low power (the sim switches
+    # the air search off then; the dome still sees stealth).
+    cx, cz = -.1, .12
+    a.cyl('steel', .66, .06, x=cx, y=.11, z=cz, sections=24)                 # footing ring
+    a.cyl('cream', .62, .34, x=cx, y=.25, z=cz, sections=28)                 # equipment drum
+    a.cyl('team', .635, .1, x=cx, y=.36, z=cz, sections=28)                  # wrapper band
+    for k in range(5):                                                       # vent slots round the back of the drum
+        ang = math.radians(100 + k * 28)
+        a.box('dark', .03, .1, .1, x=cx + .615 * math.cos(ang), y=.22, z=cz + .615 * math.sin(ang), rot=ry(-math.degrees(ang)))
+    yc, R = .76, .56                                                         # the dome: a sphere sunk in the drum
+    a.sphere('cream', R, x=cx, y=yc, z=cz, sub=3)
+    a.torus('steel', .46, .02, x=cx, y=.43, z=cz)                            # its base ring on the drum deck
+    ca, Rc = math.radians(28), R * 1.03                                      # the team cap on its crown, with a lip
+    yb = yc + Rc * math.cos(ca) - .02
+    cap = [(0, yb), (Rc * math.sin(ca), yb)] + [(Rc * math.sin(t), yc + Rc * math.cos(t)) for t in np.linspace(ca, 0, 7)[1:]]
+    a.rev('team', cap, x=cx, z=cz, sections=28)
+    top = yc + Rc
+    a.cyl('smoke', .085, .2, x=cx, y=top + .06, z=cz, sections=14)          # the stem
+    a.cyl('steel', .13, .04, x=cx, y=top + .02, z=cz, sections=16)          # bearing ring
+    # The search antenna, pivot on the stem's axis. Its beam looks along +z (the feed marker sits on the horn).
+    sp = a.node('spinner', a.key, (cx, top + .16, cz))
+    a.cyl('steel', .12, .04, y=.02, node=sp, sections=16)                    # turntable
+    a.box('team', .28, .13, .24, y=.105, node=sp)                            # rotator housing
+    W, H, sag, tilt = 1.16, .34, .12, math.radians(14)
+    us, vs = np.linspace(-W / 2, W / 2, 25), np.linspace(0, H, 7)
+    U, V = np.meshgrid(us, vs, indexing='ij')
+    zc = -.1 + sag * (U / (W / 2)) ** 2                                      # parabolic across, concave toward +z
+    P = np.stack([U, .2 + V * math.cos(tilt), zc - V * math.sin(tilt) + .05 * (V / H - .5) ** 2], axis=2)
+    a.sheet('foil', P, .025, node=sp)
+    for u in (-.42, -.14, .14, .42):                                         # ribs on its back
+        k = np.argmin(abs(us - u))
+        a.strut('steel', P[k, 0] + (0, 0, -.02), P[k, -1] + (0, 0, -.02), .012, node=sp, sections=6)
+    a.strut('steel', (-.08, .14, -.06), P[8, 2] + (0, 0, -.02), .016, node=sp)   # struts from the housing
+    a.strut('steel', (.08, .14, -.06), P[16, 2] + (0, 0, -.02), .016, node=sp)
+    a.strut('steel', (0, .16, -.08), P[12, 1] + (0, 0, -.02), .02, node=sp)
+    tl, tr = P[0, -1], P[-1, -1]
+    a.strut('team', tl + (0, .03, 0), tr + (0, .03, 0), .03, node=sp, sections=10)   # the team top rail
+    bl, br = P[0, 0], P[-1, 0]
+    a.strut('steel', bl + (0, -.01, 0), br + (0, -.01, 0), .014, node=sp, sections=8)
+    mid = P[12, -1]
+    a.cyl('steel', .012, .07, x=0, y=mid[1] + .08, z=mid[2], node=sp, sections=8)
+    a.sphere('amber', .045, y=mid[1] + .13, z=mid[2], node=sp, sub=1)               # beacon
+    fz, fy = .26, .3                                                         # feed horn on its boom
+    a.strut('steel', (0, .15, .1), (0, fy - .02, fz - .02), .016, node=sp)
+    a.box('dark', .14, .1, .09, y=fy, z=fz, node=sp)
+    a.box('steel', .17, .13, .025, y=fy, z=fz - .055, node=sp)
+    a.node('feed', sp, (0, fy, fz))
+    # The equipment shelter in the front corner, a waveguide up the drum, and a ladder.
+    sx, sz = .55, -.52
+    a.box('cream', .5, .34, .4, x=sx, y=.25, z=sz)
+    a.box('team', .56, .07, .46, x=sx, y=.45, z=sz)
+    a.box('dark', .16, .24, .02, x=sx + .08, y=.2, z=sz - .205)            # door
+    a.box('licorice', .2, .03, .03, x=sx + .08, y=.335, z=sz - .21)
+    for k in range(3): a.box('dark', .02, .03, .22, x=sx + .255, y=.16 + k * .06, z=sz)   # louvres
+    a.box('steel', .18, .06, .14, x=sx - .06, y=.51, z=sz + .04)             # roof AC unit
+    a.box('steel', .06, .06, .4, x=.3, y=.38, z=-.26, rot=ry(45))            # waveguide into the drum
+    ang = math.radians(225)
+    lx, lz = cx + .64 * math.cos(ang), cz + .64 * math.sin(ang)
+    for s in (-1, 1):
+        a.strut('steel', (lx + s * .06 * math.sin(ang), .08, lz - s * .06 * math.cos(ang)),
+                (lx + s * .06 * math.sin(ang), .44, lz - s * .06 * math.cos(ang)), .01, sections=6)
+    for k in range(5):
+        y = .12 + k * .07
+        a.strut('steel', (lx + .06 * math.sin(ang), y, lz - .06 * math.cos(ang)), (lx - .06 * math.sin(ang), y, lz + .06 * math.cos(ang)), .008, sections=6)
+    # The standby generator's fuel tank on saddles in the side corner, piped to the shelter.
+    tx, tz = .55, .6
+    for s in (-1, 1): a.box('steel', .06, .1, .26, x=tx + s * .15 * .707, y=.13, z=tz + s * .15 * .707, rot=ry(-45))
+    a.cyl('cream', .11, .46, x=tx, y=.25, z=tz, axis='x', rot=ry(-45), sections=18)
+    a.cyl('team', .115, .05, x=tx, y=.25, z=tz, axis='x', rot=ry(-45), sections=18)
+    a.box('steel', .04, .04, .62, x=.68, y=.1, z=.0)
     return a
 
 def S_gun_turret():

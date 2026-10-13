@@ -199,9 +199,14 @@ STRUCTURES = [
  S('airfield', 'Builds and rearms aircraft.', "The lift node starts at y=−0.6 and rises to 0 to present each new aircraft (1.2 s). "
    "Landing aircraft descend onto the lift, which lowers 0.6 for rearming (3 s) and rises again. The runway lights chase toward −Z at 3 Hz during takeoff.",
    dict(lift=dict(down_y=-.6, rise_s=1.2, lower_s=.8)), "Tower beacon blinks every 1.5 s.", ['gunship', 'stealth_bomber']),
- S('radar_dome', 'Reveals the minimap.', "The spinner (dish) yaws at 12 rpm. When it detects a new enemy, it snaps to that direction at 180°/s, holds for 1 s, then resumes rotating. "
-   "When power is low, the dish stops and the beacon goes out.",
-   dict(spinner=dict(axis='Y', idle_rpm=12, active_rpm=12, spinup_s=.5)), "The amber beacon blinks every 1 s."),
+ S('radar_dome', 'Sees 16 tiles, finds stealth units in that range and warns of enemy aircraft out to 28.',
+   "The search antenna on top of the dome (the spinner; its beam looks toward the feed marker on the horn) is driven by RadarWorks, not by its rpm: "
+   "while the base has power it sweeps clockwise at 12 rpm. When a new contact comes into this dome's range (an enemy aircraft on radar within 28 tiles, "
+   "or a stealth unit it has found within 16) it breaks off and swings onto it (up to 180°/s, eased), follows it for 1 s, then spins back up into the sweep over 0.5 s. "
+   "On low power (the sim switches the air search off; the dome still finds stealth) it coasts to a stop, and every 2.5 to 4.5 s the motor catches and throws it "
+   "20–30° round before it stalls again. Still while building.",
+   dict(spinner=dict(axis='Y', idle_rpm=0, active_rpm=0, mode='sweep', sweep_rpm=12, slew_deg_s=180, hold_s=1)),
+   "The amber beacon on the antenna blinks once a second while it sweeps, double-flashes while the dome holds contacts, and is dark on low power."),
  S('gun_turret', 'Ground defence cannon.', "A revolver cannon under a team flip-top head. The turret has 360° of rotation and follows the sim's aim "
    "(at least 240°/s in the view, so the shot leaves along the barrel); the sim fires within 20° of the target, every 1.3 s. Shots and flashes leave "
    "from the brick muzzle at the barrel's far end. On each shot the barrel recoils 0.1 into its sleeve over 0.05 s and returns over 0.3 s, pressing "

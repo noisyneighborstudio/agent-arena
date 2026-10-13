@@ -51,6 +51,7 @@ namespace Pez.View
             public FoundryWorks Foundry; // composite foundry: the press, its blanks and the magazine, the vents and the furnace
             public SamWorks Sam;         // SAM site: the rack's elevation, the search radar, the rounds in their tubes
             public GunWorks Gun;         // gun turret: the revolver drum, the recoil spring and the spent wrappers
+            public RadarWorks Radar;     // radar dome: the search antenna's sweep and the beacon
             public bool GlowHidden;
             public Sheen Sheen;          // newcomer protection: the sheen over its parts (null when its team isn't protected)
             public Renderer[] Halos;     // power plant: the light rising out of its open stacks      // the neutral "last seen" glow is applied (a stream render of fogged enemy state)
@@ -863,6 +864,7 @@ namespace Pez.View
                 if (e.Def.Key == "composite_foundry" && e.IsComplete && e.Team >= 0) (v.Foundry ??= FoundryWorks.For(rig.Model, e.Id)).Tick(e.Working, World.Teams[e.Team].LowPower, v.FireK >= 0.15f, AudienceFor(e), Time.deltaTime);
                 if (e.Def.Key == "sam_site" && e.IsComplete && e.Team >= 0) { Fx.Audience = AudienceFor(e); (v.Sam ??= SamWorks.For(v)).Tick(this, v, Time.deltaTime); Fx.Audience = null; }
                 if (e.Def.Key == "gun_turret" && e.IsComplete && rig.HasModel) (v.Gun ??= GunWorks.For(v.Rig.Model)).Tick(v.LastFire, AudienceFor(e), Time.deltaTime);
+                if (e.Def.Key == "radar_dome" && e.Team >= 0) v.Blink = (v.Radar ??= RadarWorks.For(v.Rig.Model, e.Id)).Tick(World, e, SeesState(e, PovTeam), Time.deltaTime);
                 if (World.Decaying(e) && Time.time >= v.DustNext)
                 {
                     // The match's decay stage: grit crumbles off the roof every few seconds.

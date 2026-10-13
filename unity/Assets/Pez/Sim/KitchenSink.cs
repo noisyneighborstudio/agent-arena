@@ -735,6 +735,11 @@ namespace Pez.Sim
             });
             Item("Landing and refuelling", "the gunship flies a beat, lands on the airfield, refuels (fuel bar fills), lifts off; every 26 s", 31, 11, 9);
 
+            // A Cherry radar dome watching Blueberry's sky: each aircraft that comes into its 28 tiles (the circuit's far
+            // legs cross the edge, the gunship lifts off its pad) is a new contact it swings onto.
+            Bldg(Red, "radar_dome", 40, 18);
+            Item("Radar contacts", "a Cherry radar dome sweeps; on each new contact (an aircraft crossing into its range, the gunship lifting off) it swings onto it, follows it 1 s and sweeps on; its beacon double-flashes while it holds contacts", 40, 18, 8);
+
             Transport("apc", "rifleman", 4, 4, "APC loading");
             Transport("transport_chopper", "rocket_soldier", 18, 4, "Transport chopper loading");
 
