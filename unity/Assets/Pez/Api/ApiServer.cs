@@ -839,6 +839,8 @@ namespace Pez.Api
                 world["rate_snapshot"] = rates.OfType<JObj>().Where(r => Num(r["team"]) == team).Cast<object>().ToList();
             if (world["air_warned"] is List<object> aw)
                 world["air_warned"] = aw.OfType<List<object>>().Where(x => x.Count > 0 && Num(x[0]) == team).Cast<object>().ToList();
+            if (world["derrick_hinted"] is List<object> dh) // which derricks a rival's units stopped beside is theirs to know
+                world["derrick_hinted"] = dh.OfType<List<object>>().Where(x => x.Count > 0 && Num(x[0]) == team).Cast<object>().ToList();
             // Deep deposits are found by surveying: a player's copy only has the ones it surveyed.
             if (world["map"] is JObj map && map["deep"] is List<object> deep)
                 map["deep"] = deep.OfType<JObj>().Where(d => t0.Surveyed.Contains((int)Num(d["id"]))).Cast<object>().ToList();

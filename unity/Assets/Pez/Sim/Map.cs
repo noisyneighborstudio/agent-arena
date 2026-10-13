@@ -73,21 +73,22 @@ namespace Pez.Sim
         public string OreName(int i) => Defs.Ores[OreType[i]];
         public const byte Iron = 0, Copper = 1, Crystal = 2, Uranium = 3;
 
-        public static Map Generate(int w, int h, int seed, float oreScale = 1f)
+        /// <param name="extraFields">Add the neutral surface fields a bigger map gets (false rebuilds a map from before them: see RebuildBase).</param>
+        public static Map Generate(int w, int h, int seed, float oreScale = 1f, bool extraFields = true)
         {
             for (int attempt = 0; attempt < 20; attempt++)
             {
-                var m = TryGenerate(w, h, seed + attempt * 7919, oreScale);
+                var m = TryGenerate(w, h, seed + attempt * 7919, oreScale, extraFields);
                 if (m.SpawnsConnected()) return m;
             }
-            return TryGenerate(w, h, seed, oreScale);
+            return TryGenerate(w, h, seed, oreScale, extraFields);
         }
 
         public const int MinSize = 48, MaxSize = 320;
         /// <summary>Menu presets. Any size between MinSize and MaxSize works through the API and command line.</summary>
         public static readonly (string name, int size)[] Presets = { ("Small", 56), ("Medium", 80), ("Large", 112), ("Huge", 160), ("Vast", 240) };
 
-        static Map TryGenerate(int w, int h, int seed, float oreScale = 1f)
+        static Map TryGenerate(int w, int h, int seed, float oreScale = 1f, bool extraFields = true)
         {
             // Scatter counts were tuned on an 80x80 map; scale them with area so bigger maps aren't empty.
             float area = w * h / 6400f;
@@ -132,8 +133,135 @@ namespace Pez.Sim
             }
             m.OreField(rng, (int)centre.X - 2, (int)centre.Y + 2, 1, 70, 130, Uranium);
             m.OreField(rng, (int)centre.X + 2, (int)centre.Y - 2, 1, 70, 130, Uranium);
+            if (extraFields) m.SeedExtraFields(rng, area);
             m.SeedStartingDeep(rng);
             return m;
+        }
+
+        // ---- Neutral surface fields. The corners, the crystal ring and the centre hold about 54k ore at richness 1 whatever the
+        // map's size. A bigger map gets a few small stepping-stone fields on top, in sets of four turned round the centre, placed
+        // to fill the gaps between the corners and toward the middle (so there is ore an outpost can reach from the last): a
+        // modest share, up to about 40% of the corner fields' ore, so the ore per base stays near an 80x80 map's. A join's strip
+        // gets one set's worth, on top of the new base's own fields.
+
+        /// <summary>The most sets of four neutral fields a new map gets (about 10k ore at richness 1 a set, so about 20k in all).</summary>
+        public const int ExtraSetsMax = 2;
+
+        /// <summary>The most neutral fields a join's strip gets, whatever its size (about 10k ore at richness 1).</summary>
+        public const int ExtraFieldsPerJoin = 4;
+
+        /// <summary>A neutral field is best about a truck's hop (30 tiles) from the nearest ore or base site: far enough to fill a gap, near enough to be reached from the last field or base.</summary>
+        const float FieldHop = 30f;
+
+        /// <summary>A neutral field's radius and amounts: a stepping stone, no bigger than a corner's copper field.</summary>
+        static (int r, int min, int max) FieldOf(byte ore) => ore == Iron || ore == Copper ? (2, 200, 340) : ore == Crystal ? (2, 90, 170) : (1, 70, 130);
+
+        /// <summary>The ore of a random neutral field, weighted as the deep deposits are: 35% iron, 30% copper, 20% crystal, 15% uranium.</summary>
+        static byte NeutralOre(Random rng) { int roll = rng.Next(100); return roll < 35 ? Iron : roll < 65 ? Copper : roll < 85 ? Crystal : Uranium; }
+
+        /// <summary>
+        /// Whether a field of this radius fits at c: inside the map, open ground (no rock, water or other ore, live or regrowing)
+        /// a tile all round, at least `away` from every base site, clear of any deep deposit's mine spot, and clear of the middle
+        /// where the derricks stand.
+        /// </summary>
+        bool FieldRoom(Vec2 c, int r, float away)
+        {
+            int cx = (int)c.X, cy = (int)c.Y, reach = r + 1;
+            if (cx - reach < 1 || cy - reach < 1 || cx + reach >= W - 1 || cy + reach >= H - 1) return false;
+            if (Spawns.Any(s => Vec2.Dist(s, c) < away) || Vec2.Dist(c, new Vec2(W / 2f, H / 2f)) < DerrickRing * MathF.Min(W, H) + 8f) return false;
+            if (Deep.Any(d => Vec2.Dist(d.Pos, c) < r + 4)) return false;
+            for (int y = cy - reach; y <= cy + reach; y++)
+                for (int x = cx - reach; x <= cx + reach; x++)
+                {
+                    int i = Idx(x, y);
+                    if (Tiles[i] > Terrain.Dirt || Ore[i] > 0 || OreBase[i] > 0 || Occupant[i] != 0) return false;
+                }
+            return true;
+        }
+
+        /// <summary>How far every tile is from the nearest surface field (mined or not; salvage piles aren't fields) or base site, in tiles (a two-pass chamfer): large in the map's far gaps.</summary>
+        float[] OreGaps()
+        {
+            var d = new float[W * H];
+            for (int i = 0; i < d.Length; i++) d[i] = OreBase[i] > 0 ? 0f : 9999f;
+            foreach (var s in Spawns) d[Idx((int)s.X, (int)s.Y)] = 0f;
+            for (int y = 0; y < H; y++)
+                for (int x = 0; x < W; x++)
+                {
+                    int i = Idx(x, y); float v = d[i];
+                    if (x > 0) v = MathF.Min(v, d[i - 1] + 1f);
+                    if (y > 0) { v = MathF.Min(v, d[i - W] + 1f); if (x > 0) v = MathF.Min(v, d[i - W - 1] + 1.414f); if (x < W - 1) v = MathF.Min(v, d[i - W + 1] + 1.414f); }
+                    d[i] = v;
+                }
+            for (int y = H - 1; y >= 0; y--)
+                for (int x = W - 1; x >= 0; x--)
+                {
+                    int i = Idx(x, y); float v = d[i];
+                    if (x < W - 1) v = MathF.Min(v, d[i + 1] + 1f);
+                    if (y < H - 1) { v = MathF.Min(v, d[i + W] + 1f); if (x < W - 1) v = MathF.Min(v, d[i + W + 1] + 1.414f); if (x > 0) v = MathF.Min(v, d[i + W - 1] + 1.414f); }
+                    d[i] = v;
+                }
+            return d;
+        }
+
+        /// <summary>
+        /// Where a field of this radius should go: of the sets of spots `pick` offers (null for none), up to `want` that fit
+        /// (FieldRoom, `away` from the base sites) within `tries`, the one that fills the biggest gap in the map's ore while still
+        /// about a hop (FieldHop) from the nearest ore or base, so the map's far gaps shrink and each field can be reached from the
+        /// last. Null if nothing fits.
+        /// </summary>
+        Vec2[] BestFieldSpots(Func<Vec2[]> pick, int r, float away, int tries, int want)
+        {
+            var gaps = OreGaps();
+            Vec2[] best = null; float bestScore = float.MinValue;
+            for (int t = 0, found = 0; t < tries && found < want; t++)
+            {
+                var spots = pick();
+                if (spots == null || !spots.All(p => FieldRoom(p, r, away))) continue;
+                found++;
+                float gap = gaps[Idx((int)spots[0].X, (int)spots[0].Y)];
+                float score = gap <= FieldHop ? gap : FieldHop - (gap - FieldHop);
+                if (score > bestScore) { bestScore = score; best = spots; }
+            }
+            return best;
+        }
+
+        /// <summary>
+        /// Neutral mixed fields in the open ground between the corners, in proportion to the map's area. Each is one ore laid at a
+        /// spot and at its three turned copies (Images), rolled alike, so every corner has the same share. The spots are chosen to
+        /// fill the biggest gaps between the corners and toward the middle (BestFieldSpots).
+        /// </summary>
+        void SeedExtraFields(Random rng, float area)
+        {
+            int sets = Math.Min(ExtraSetsMax, (int)MathF.Round(1.5f * (area - 1f))); // none up to 80x80, the most from about 128x128
+            for (int n = 0; n < sets; n++)
+            {
+                byte ore = NeutralOre(rng); // the ore is settled first, so the big iron fields aren't squeezed out by the small ones fitting more easily
+                var (r, min, max) = FieldOf(ore);
+                var spots = BestFieldSpots(() => Images(DeepTile(new Vec2(rng.Next(W), rng.Next(H)))), r, 18f, 400, 12);
+                if (spots == null) continue;
+                // One field at the first spot, then its tiles (shape and ore) turned onto the other three: exactly alike, whichever quarter they cross.
+                OreField(rng, (int)spots[0].X, (int)spots[0].Y, r, min, max, ore);
+                StampTurned((int)spots[0].X, (int)spots[0].Y, r + 1);
+            }
+        }
+
+        /// <summary>Copy the ore tiles within `reach` of (cx, cy) onto the same tiles' turned copies (Images): terrain, ore and what it grows back to.</summary>
+        void StampTurned(int cx, int cy, int reach)
+        {
+            for (int y = cy - reach; y <= cy + reach; y++)
+                for (int x = cx - reach; x <= cx + reach; x++)
+                {
+                    int i = Idx(x, y);
+                    if (Ore[i] <= 0) continue;
+                    var copies = Images(new Vec2(x + 0.5f, y + 0.5f));
+                    for (int k = 1; k < copies.Length; k++)
+                    {
+                        int j = Idx((int)copies[k].X, (int)copies[k].Y);
+                        Tiles[j] = Tiles[i]; Ore[j] = Ore[i]; OreType[j] = OreType[i]; OreBase[j] = OreBase[i]; OreBaseType[j] = OreBaseType[i];
+                    }
+                }
+            fieldsChanged = true;
         }
 
         // ---- Deep deposits. Every base site gets the same ones, so no corner is richer than another: the starting map lays
@@ -323,7 +451,7 @@ namespace Pez.Sim
         /// Scatter neutral deep deposits over the ground `where` allows (about 12 per 80x80), keeping out of every base site's kit
         /// area. This is what the strips added as the map grows get, on top of the new base's kit.
         /// </summary>
-        void SeedDeep(Random rng, Func<int, int, bool> where)
+        void SeedDeep(Random rng, Func<int, int, bool> where, bool[] reach)
         {
             int cells = 0;
             for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) if (where(x, y)) cells++;
@@ -332,9 +460,9 @@ namespace Pez.Sim
             for (int tries = 0; tries < want * 30 && want > 0; tries++)
             {
                 int x = 3 + rng.Next(W - 6), y = 3 + rng.Next(H - 6);
-                if (!where(x, y) || !Passable(x, y)) continue;
+                if (!where(x, y)) continue;
                 var p = new Vec2(x + 0.5f, y + 0.5f);
-                if (Spawns.Any(s => Vec2.Dist(s, p) < gap) || Deep.Any(d => Vec2.Dist(d.Pos, p) < 9)) continue;
+                if (!DeepSpotClear(p, reach) || Spawns.Any(s => Vec2.Dist(s, p) < gap) || Deep.Any(d => Vec2.Dist(d.Pos, p) < 9)) continue;
                 int roll = rng.Next(100), type = roll < 35 ? Iron : roll < 65 ? Copper : roll < 85 ? Crystal : Uranium;
                 float amount = DeepAmount(rng, type);
                 Deep.Add(new DeepDeposit { Id = nextDepositId++, Pos = p, Type = type, Amount = amount, Initial = amount });
@@ -394,6 +522,7 @@ namespace Pez.Sim
                 }
             m.Spawns.AddRange(Spawns);
             m.OreScale = OreScale; // newcomers' fields are as scarce as everyone else's
+            m.Deep.AddRange(Deep); m.nextDepositId = nextDepositId; // deep deposits carry over unchanged (and new fields keep clear of them)
             var rng = new Random(seed);
             int oldW = W, oldH = H;
             bool InNew(int x, int y) => x >= oldW || y >= oldH;
@@ -439,26 +568,30 @@ namespace Pez.Sim
             m.OreField(rng, (int)mid.X, (int)mid.Y, 2, 90, 170, Crystal);
             var mid2 = Vec2.Lerp(sp, centre, 0.55f) - side * 5f;
             m.OreField(rng, (int)mid2.X, (int)mid2.Y, 1, 70, 130, Uranium);
-            // Wider strips get extra neutral deposits scattered through the new ground, so it's worth expanding into.
-            int extra = (int)(area * 1.5f);
-            for (int i = 0, tries = 0; i < extra && tries < 200; tries++)
+            // The strip gets a few neutral fields in the new ground, so it's worth expanding into: one set's worth, however wide it is.
+            int extra = Math.Min(ExtraFieldsPerJoin, (int)(area * ExtraFieldsPerJoin));
+            for (int i = 0; i < extra; i++)
             {
-                bool east = rng.NextDouble() < 0.5;
-                int cx = east ? oldW + 4 + rng.Next(Math.Max(1, newW - oldW - 8)) : 6 + rng.Next(newW - 12);
-                int cy = east ? 6 + rng.Next(newH - 12) : oldH + 4 + rng.Next(Math.Max(1, newH - oldH - 8));
-                var c = new Vec2(cx, cy);
-                if (Vec2.Dist(c, sp) < 16 || bases.Any(b => Vec2.Dist(c, b) < 16)) continue;
-                int roll = rng.Next(4);
-                m.OreField(rng, cx, cy, roll < 2 ? 2 : 1, 120, 260, roll == 0 ? Iron : roll == 1 ? Copper : roll == 2 ? Crystal : Uranium);
-                i++;
+                byte ore = NeutralOre(rng);
+                var (r, min, max) = FieldOf(ore);
+                var spot = m.BestFieldSpots(() =>
+                {
+                    bool east = rng.NextDouble() < 0.5;
+                    int cx = east ? oldW + 4 + rng.Next(Math.Max(1, newW - oldW - 8)) : 6 + rng.Next(newW - 12);
+                    int cy = east ? 6 + rng.Next(newH - 12) : oldH + 4 + rng.Next(Math.Max(1, newH - oldH - 8));
+                    var c = new Vec2(cx, cy);
+                    return Vec2.Dist(c, sp) < 16 || bases.Any(b => Vec2.Dist(c, b) < 16) ? null : new[] { c };
+                }, r, 16f, 60, 8);
+                if (spot != null) m.OreField(rng, (int)spot[0].X, (int)spot[0].Y, r, min, max, ore);
             }
 
             m.Spawns.Add(sp);
-            // Deep deposits carry over unchanged. The new base gets the same kit as the first one (rolled fresh on a map that has
-            // none), and the strip's random extras go in neutral ground only, away from every base.
-            m.Deep.AddRange(Deep); m.nextDepositId = nextDepositId;
-            m.LayKit(rng, sp, centre, m.Reachable(Int2.Of(sp)), false, KitAt(Spawns[0], new Vec2(oldW / 2f, oldH / 2f)));
-            m.SeedDeep(rng, InNew);
+            // The new base gets the same kit as the first one (rolled fresh on a map that has none), and the strip's random
+            // extras go in neutral ground only, away from every base.
+            var reach = m.Reachable(Int2.Of(sp)); // as it will be once EnsureConnected below has joined the new site to the first base
+            if (bases.Count > 0) { var fromBase = m.Reachable(Int2.Of(bases[0])); for (int i = 0; i < reach.Length; i++) reach[i] |= fromBase[i]; }
+            m.LayKit(rng, sp, centre, reach, false, KitAt(Spawns[0], new Vec2(oldW / 2f, oldH / 2f)));
+            m.SeedDeep(rng, InNew, reach);
             if (bases.Count > 0) m.EnsureConnected(bases[0], sp);
             return m;
         }

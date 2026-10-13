@@ -516,6 +516,7 @@ namespace Pez.Sim
                 .Set("event_counts", EventCounts.Aggregate(new JObj(), (j, kv) => j.Set(kv.Key, kv.Value)))
                 .Set("rate_snapshot", rateSnapshot.Select(kv => (object)new JObj().Set("team", kv.Key).Set("stock", SnapIO.Floats(kv.Value))).ToList())
                 .Set("air_warned", airWarned.Select(kv => (object)new List<object> { kv.Key.team, kv.Key.id, SnapIO.X(kv.Value) }).ToList())
+                .Set("derrick_hinted", derrickHinted.Select(kv => (object)new List<object> { kv.Key.team, kv.Key.id, SnapIO.X(kv.Value) }).ToList())
                 .Set("map", Map.SaveState())
                 .Set("inventions", Inventions.Values.Select(i => (object)Snapshot.WriteInvention(i)).ToList())
                 .Set("teams", Teams.Select(t => (object)Snapshot.WriteTeam(t)).ToList())
@@ -587,6 +588,12 @@ namespace Pez.Sim
             }
             foreach (var x in d.Arr("air_warned"))
                 if (x is List<object> l && l.Count >= 3) w.airWarned[(SnapIO.ToI(l[0]), SnapIO.ToI(l[1]))] = SnapIO.ToF(l[2]);
+            foreach (var x in d.Arr("derrick_hinted"))
+                if (x is List<object> l && l.Count >= 3) w.derrickHinted[(SnapIO.ToI(l[0]), SnapIO.ToI(l[1]))] = SnapIO.ToF(l[2]);
+            // A save from before the hints were kept as state: the ones still in its events count, so the first resume doesn't repeat one.
+            if (!d.ContainsKey("derrick_hinted"))
+                foreach (var e in w.Events)
+                    if (e.Type == "derrick_skipped") w.derrickHinted[(e.Team, e.B)] = Math.Max(w.derrickHinted.TryGetValue((e.Team, e.B), out var seen) ? seen : 0f, e.Tick * World.Dt);
 
             // Counters: from the snapshot, or past everything in it (never reuse an id or a sequence number).
             w.nextId = 1 + Math.Max(w.Entities.Select(e => e.Id).DefaultIfEmpty(0).Max(), w.Projectiles.Select(p => p.Id).DefaultIfEmpty(0).Max());
