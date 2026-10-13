@@ -1537,6 +1537,13 @@ namespace Pez.Headless
             Check(w3.Alerts.All.Count == 500 && w3.Alerts.All.Contains(running) && running.LastTick == w3.Tick,
                   $"the 500-alert cap keeps an alert that is still merging, however old ({w3.Alerts.All.Count} alerts, the first one {(w3.Alerts.All.Contains(running) ? "kept" : "trimmed")})");
 
+            // The fight stops and its alert closes: it was last updated a moment ago, so a save still holds it, and the cap (which goes by
+            // when an alert was last updated, not by its number) cuts an old stranger instead. Otherwise the original would drop what the
+            // resumed game keeps, and the two would differ.
+            w3.Tick += 200; // 10 s
+            w3.Alerts.Raise(w3, 1, "stranger_late", Priority.Medium, new Vec2(30, 30));
+            Check(w3.Alerts.All.Count == 500 && w3.Alerts.All.Contains(running), $"and once that fight is over, the alert it was adding to stays while a save would hold it ({w3.Alerts.All.Count} alerts, the first one {(w3.Alerts.All.Contains(running) ? "kept" : "trimmed")})");
+
             // 600 distinct alerts arrive inside one merge window (all open, so none can be trimmed); later raises only refresh one of them
             // and the rest close. The cap is enforced again once there are closed ones to drop, not only when a new alert is created.
             var w4 = new World(2, 7);
