@@ -411,9 +411,10 @@ namespace Pez.Sim
                 bool retry = tr.Order == Order.Idle && (int)w.Time % 20 == 0;
                 if ((tr.HarvestType != type || retry) && tr.Cargo == 0 && tr.Order != Order.ReturnOre)
                 {
-                    // None of its ore within 80 tiles: it goes to the nearest field of that ore its drop-offs reach, an outpost's perhaps.
+                    // None of its ore within 80 tiles: it goes to the nearest field of that ore its drop-offs reach, an outpost's perhaps (not one by
+                    // an enemy base it knows of: a truck choosing for itself keeps HostileOreRadius from those, and a coordinate harvest would not).
                     var farField = tr.Order == Order.Idle && w.Map.NearestOre(tr.Pos, 80, null, type) == null
-                        ? fields.Where(f => f.type == type && f.ore >= 100 && Reached(f.at)).OrderBy(f => Vec2.Dist(f.at, tr.Pos)).Select(f => (Vec2?)f.at).FirstOrDefault() : null;
+                        ? fields.Where(f => f.type == type && f.ore >= 100 && Reached(f.at) && !foes.Any(h => Vec2.Dist(h, f.at) < World.HostileOreRadius)).OrderBy(f => Vec2.Dist(f.at, tr.Pos)).Select(f => (Vec2?)f.at).FirstOrDefault() : null;
                     if (farField.HasValue) Do(w, "type", "harvest", "units", new[] { tr.Id }, "ore", Defs.Ores[type], "x", farField.Value.X, "y", farField.Value.Y);
                     else Do(w, "type", "harvest", "units", new[] { tr.Id }, "ore", Defs.Ores[type]);
                 }
@@ -444,7 +445,9 @@ namespace Pez.Sim
                 else if (ot.Order == Order.Idle)
                 {
                     // (Not where it has stopped if that is by an enemy or on ground kept for a newcomer: it is not where it was heading.)
-                    if (NearFoe(ot.Pos) || OnOthersGround(ot.Pos, SiteClear)) { outpostTargets.Remove(ot.Id); SendHome(ot); continue; }
+                    var footprint = Defs.Get("outpost"); var tile = Int2.Of(ot.Pos); // (Deploy puts the 2x2 at the truck's tile, and the centre is what counts)
+                    var centre = new Vec2(tile.X - (footprint.SizeX - 1) / 2 + footprint.SizeX / 2f, tile.Y - (footprint.SizeY - 1) / 2 + footprint.SizeY / 2f);
+                    if (NearFoe(centre) || OnOthersGround(centre, SiteClear)) { outpostTargets.Remove(ot.Id); SendHome(ot); continue; }
                     var r = Do(w, "type", "deploy", "units", new[] { ot.Id });
                     if (!(r["ok"] is bool ok && ok))
                     {
@@ -465,11 +468,12 @@ namespace Pez.Sim
                 foreach (var drone in drones.Where(e => e.Order == Order.Idle))
                 {
                     Vec2? unseen = null; float nearest = float.MaxValue, range = 0.7f * w.Map.W; // (a drone's tank is 1.5 map widths: there and back)
-                    foreach (int grid in new[] { 24, 4 }) // the coarse grid first, then every 4th tile, so no patch is missed between the samples
+                    foreach (int grid in new[] { 24, 4, 1 }) // the coarse grid first, then every 4th tile, then every tile in reach: no unseen patch is missed
                     {
                         for (int y = grid / 2; y < w.Map.H; y += grid)
                             for (int x = grid / 2; x < w.Map.W; x += grid)
                             {
+                                if (System.Math.Abs(x - drone.Pos.X) > range || System.Math.Abs(y - drone.Pos.Y) > range) continue;
                                 var p = new Vec2(x, y); float d = Vec2.Dist(p, drone.Pos);
                                 if (d < nearest && d <= range && d >= 6f && !t.Explored[w.Map.Idx(x, y)] && !NearFoe(p)) { nearest = d; unseen = p; }
                             }
