@@ -871,7 +871,7 @@ namespace Pez.Sim
             e.Path = null;
             e.RepathTimer = 0;
             e.Dock = DockStep.None; e.DockAt = 0;
-            if (o == Order.Idle) e.GuardPos = e.Pos;
+            if (o == Order.Idle) { e.GuardPos = e.Pos; e.Moving = false; } // stopped where it is (an idle truck left Moving parked in soldiers' way)
             e.Responding = false; // any new order (from a commander or the response itself) replaces the old one
             e.SpeedCap = 0; e.Group = 0;
             e.Waypoints.Clear(); e.WaypointLoop = false;
@@ -2719,7 +2719,9 @@ namespace Pez.Sim
                 Near(s.Pos, 3.2f, nearCrush);
                 foreach (var v in nearCrush)
                 {
-                    if (v.Dead || !Crusher(v) || !v.Moving || v.Stranded || v.IsCarried) continue; // driving, or waiting for them to clear
+                    if (v.Dead || !Crusher(v) || v.IsCarried) continue;
+                    // Driving, or held up waiting for its own to clear. Not one parked, or turning on the spot.
+                    if (!Rolling(v) && !(v.Team == s.Team && v.Moving && v.OwnBlockedSince > 0f)) continue;
                     var heading = new Vec2(MathF.Cos(v.Facing), MathF.Sin(v.Facing));
                     var rel = s.Pos - v.Pos;
                     float ahead = rel.X * heading.X + rel.Y * heading.Y, lateral = rel.X * heading.Y - rel.Y * heading.X;

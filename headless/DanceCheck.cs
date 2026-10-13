@@ -57,6 +57,11 @@ namespace Pez.Headless
                 var ev = game.World.Events.Where(x => x.Type == "crushed").ToList();
                 Console.WriteLine($"after {min:0} min of AI vs AI: {ev.Count / 1} crushed events, kills {string.Join("/", game.World.Teams.Select(t => t.Stats.Kills))}, game over {game.World.GameOver} at {game.World.Time / 60:0.0} min; units now: {string.Join(", ", game.World.Entities.Where(x => !x.Dead && !x.IsStructure).GroupBy(x => x.Def.Key).Select(g => $"{g.Key}x{g.Count()}"))}");
                 foreach (var x in ev.Take(12)) Console.WriteLine($"  [{x.Tick * World.Dt / 60:0.0}m] {x.Text}");
+                if (Environment.GetEnvironmentVariable("PEZ_AIDBG") != null)
+                    foreach (var t in game.World.Teams)
+                    {
+                        Console.WriteLine($"  team {t.Id} start {t.StartPos} known: {string.Join("; ", t.KnownEnemyStructures.Select(kv => $"#{kv.Key} {kv.Value.key} t{kv.Value.team} at {kv.Value.origin.X},{kv.Value.origin.Y} {(game.World.Get(kv.Key) is Entity k ? $"alive hp {k.Hp:0} visible {t.Visible[game.World.Map.Idx(k.Origin.X, k.Origin.Y)]}" : "gone")}"))}");
+                    }
             }
             else
             {
@@ -68,29 +73,29 @@ namespace Pez.Headless
             for (int i = 0; i < 10 * World.TickRate; i++) game.Advance(World.Dt);
             var path = new Dictionary<int, float>(); var start = new Dictionary<int, Vec2>(); var last = new Dictionary<int, Vec2>();
             var orders = new Dictionary<int, Dictionary<string, int>>();
-            var moving = new Dictionary<int, int>(); var facingTurn = new Dictionary<int, float>(); var lastFacing = new Dictionary<int, float>();
+            var moving = new Dictionary<int, int>(); var facingTurn = new Dictionary<int, float>(); var lastFacing = new Dictionary<int, float>(); var flips = new Dictionary<int, int>();
             int ticks = (int)(seconds * World.TickRate);
             var trace = (Environment.GetEnvironmentVariable("PEZ_TRACE") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries).Select(int.Parse).ToHashSet();
             for (int i = 0; i < ticks; i++)
             {
                 game.Advance(World.Dt);
-                if (trace.Count > 0 && i % 4 == 0 && i < 20 * World.TickRate)
+                if (trace.Count > 0 && i % (Environment.GetEnvironmentVariable("PEZ_TRACE_EVERY") is string ev0 ? int.Parse(ev0) : 4) == 0 && i < 20 * World.TickRate)
                     foreach (var id in trace) { var t = w.Get(id); if (t == null) continue;
-                        Console.WriteLine($"{w.Time:0.00} #{id} pos {t.Pos.X:0.00},{t.Pos.Y:0.00} f {t.Facing:0.00} {t.OrderName} to {t.OrderPos.X:0.0},{t.OrderPos.Y:0.0} wps {t.Waypoints.Count} loop {t.WaypointLoop} path {(t.Path == null ? "-" : $"{t.PathIdx}/{t.Path.Count} next {t.Path[Math.Min(t.PathIdx, t.Path.Count - 1)].X:0.0},{t.Path[Math.Min(t.PathIdx, t.Path.Count - 1)].Y:0.0}")} ghost {w.Time < t.GhostUntil} grp {t.Group} cap {t.SpeedCap} fuel {t.FuelFraction:P0}"); }
+                        Console.WriteLine($"{w.Time:0.00} #{id} pos {t.Pos.X:0.00},{t.Pos.Y:0.00} f {t.Facing:0.00} {t.OrderName} to {t.OrderPos.X:0.0},{t.OrderPos.Y:0.0} wps {t.Waypoints.Count} loop {t.WaypointLoop} path {(t.Path == null ? "-" : $"{t.PathIdx}/{t.Path.Count} next {t.Path[Math.Min(t.PathIdx, t.Path.Count - 1)].X:0.0},{t.Path[Math.Min(t.PathIdx, t.Path.Count - 1)].Y:0.0}")} ghost {w.Time < t.GhostUntil} grp {t.Group} mv {t.Moving} cap {t.SpeedCap} fuel {t.FuelFraction:P0}"); }
                 foreach (var e in w.Entities)
                 {
                     if (e.Dead || e.IsStructure || e.IsMine || e.IsCarried) continue;
-                    if (!start.ContainsKey(e.Id)) { start[e.Id] = last[e.Id] = e.Pos; path[e.Id] = 0; orders[e.Id] = new(); moving[e.Id] = 0; lastFacing[e.Id] = e.Facing; facingTurn[e.Id] = 0; }
+                    if (!start.ContainsKey(e.Id)) { start[e.Id] = last[e.Id] = e.Pos; path[e.Id] = 0; orders[e.Id] = new(); moving[e.Id] = 0; lastFacing[e.Id] = e.Facing; facingTurn[e.Id] = 0; flips[e.Id] = 0; }
                     path[e.Id] += Vec2.Dist(e.Pos, last[e.Id]); last[e.Id] = e.Pos;
                     var o = e.OrderName + (e.Retreating ? "+retreat" : "") + (w.Time < e.GhostUntil ? "+ghost" : "");
                     orders[e.Id][o] = orders[e.Id].TryGetValue(o, out var c) ? c + 1 : 1;
                     if (e.Moving) moving[e.Id]++;
-                    float df = MathF.Abs(e.Facing - lastFacing[e.Id]); if (df > MathF.PI) df = 2 * MathF.PI - df; facingTurn[e.Id] += df; lastFacing[e.Id] = e.Facing;
+                    float df = MathF.Abs(e.Facing - lastFacing[e.Id]); if (df > MathF.PI) df = 2 * MathF.PI - df; facingTurn[e.Id] += df; lastFacing[e.Id] = e.Facing; if (df > 0.8f) flips[e.Id]++;
                 }
             }
             var rows = start.Keys.Select(id => w.Get(id)).Where(e => e != null && !e.Dead).Select(e => new
             {
-                e, path = path[e.Id], net = Vec2.Dist(start[e.Id], e.Pos), mv = moving[e.Id] / (float)ticks, turn = facingTurn[e.Id],
+                e, path = path[e.Id], net = Vec2.Dist(start[e.Id], e.Pos), mv = moving[e.Id] / (float)ticks, turn = facingTurn[e.Id], flips = flips[e.Id],
                 top = string.Join(",", orders[e.Id].OrderByDescending(kv => kv.Value).Take(3).Select(kv => $"{kv.Key}:{kv.Value * 100 / ticks}%")),
             }).ToList();
             var dancers = rows.Where(r => r.path > 4f && r.net < r.path * 0.25f).OrderByDescending(r => r.path - r.net).ToList();
@@ -101,6 +106,11 @@ namespace Pez.Headless
                 Console.WriteLine($"  {g.Count(),3} mostly {g.Key}: {string.Join(" ", g.GroupBy(r => r.e.Def.Key).Select(k => $"{k.Key}x{k.Count()}"))}");
             foreach (var r in dancers.Take(verbose ? 60 : 15))
                 Console.WriteLine($"  #{r.e.Id} t{r.e.Team} {r.e.Def.Key,-20} path {r.path,5:0.0} net {r.net,4:0.0} moving {r.mv:P0} turned {r.turn,5:0}rad  {r.top}");
+            // Spinners: snap round (over 0.8 rad in a tick) again and again, moving or not.
+            var spinners = rows.Where(r => r.flips >= seconds / 5f).OrderByDescending(r => r.flips).ToList();
+            Console.WriteLine($"{spinners.Count} spin (a facing snap of over 0.8 rad at least every 5 s)");
+            foreach (var r in spinners.Take(verbose ? 60 : 15))
+                Console.WriteLine($"  #{r.e.Id} t{r.e.Team} {r.e.Def.Key,-20} flips {r.flips,4} path {r.path,5:0.0} net {r.net,4:0.0} moving {r.mv:P0}  {r.top}");
             return 0;
         }
     }

@@ -56,6 +56,7 @@ namespace Pez.Headless
             RetreatOncePerWound();
             NoDancing();
             RunOver();
+            NoSpinBesideParkedTruck();
             GroupMove();
             ResignWhenStalled();
             IdleSeatsResign();
@@ -309,6 +310,34 @@ namespace Pez.Headless
             var st = string.Join("\n", StateView.EventsFor(w, 1, 0, 200));
             Check(st.Contains("was run over by enemy light_tank"), "the victim's side hears its soldier was run over");
             Check(w.Errors == 0 && w2.Errors == 0 && w3.Errors == 0 && w4.Errors == 0 && w5.Errors == 0, $"no sim errors ({w.LastError ?? w2.LastError ?? w3.LastError ?? w4.LastError ?? w5.LastError})");
+        }
+
+        static void NoSpinBesideParkedTruck()
+        {
+            // A truck that went idle mid-drive stops counting as moving, and a soldier never dodges a parked vehicle: one
+            // walking to a spot beside it used to step aside, walk back and spin round on the spot forever.
+            var w = new World(2, 7, 80);
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var road = hq.Center + new Vec2(10, 12);
+            var truck = At(w.SpawnUnit(0, "mining_truck", hq), road);
+            w.SetOrder(truck, Order.Move, road + new Vec2(6, 0)); truck.Facing = 0;
+            Run(w, 0.5f);
+            w.SetOrder(truck, Order.Idle, truck.Pos);
+            Check(!truck.Moving, "a unit ordered to stop isn't left moving");
+            truck.Moving = true; // as rooms saved before rules 37 have it
+            var at = truck.Pos;
+            var walker = At(w.SpawnUnit(0, "rifleman", hq), at + new Vec2(1.2f, 1.5f));
+            var spot = at + new Vec2(1.3f, 0.4f); // just ahead of the truck, inside its path
+            w.SetOrder(walker, Order.Move, spot);
+            int flips = 0; float was = walker.Facing;
+            for (int i = 0; i < 8 * World.TickRate; i++)
+            {
+                w.Step();
+                float df = MathF.Abs(walker.Facing - was); if (df > MathF.PI) df = 2 * MathF.PI - df;
+                if (df > 0.8f) flips++;
+                was = walker.Facing;
+            }
+            Check(walker.Order == Order.Idle && flips <= 2 && truck.Pos.Equals(at), $"a soldier walks to a spot beside a parked truck and stops ({walker.OrderName} at {walker.Pos} for {spot}, {flips} snap turns)");
         }
 
         static void GroupMove()

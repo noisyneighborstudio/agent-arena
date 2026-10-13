@@ -566,8 +566,10 @@ namespace Pez.Sim
         ///     leaves trimmed alerts open.
         /// 36: the observation feed (/api/observe, Observations.cs): a team's fogged view as an event log with cursors; commands
         ///     get ids (cmd), the units they affected, and tracked outcomes; optional command-controller leases (/api/controller).
+        /// 37: a unit ordered to stop stops counting as moving, and soldiers only dodge a vehicle that is rolling or waiting on
+        ///     them (one beside a parked truck stepped aside and back forever); the scripted AI doesn't send waves at derricks.
         /// </summary>
-        public const int RulesVersion = 36;
+        public const int RulesVersion = 37;
 
         public static JObj Rules()
         {

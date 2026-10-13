@@ -280,7 +280,7 @@ namespace Pez.Sim
             if (idle.Count >= waveSize)
             {
                 Vec2 goal;
-                var known = t.KnownEnemyStructures.Values.Where(k => k.team >= 0).ToList(); // not neutral derricks
+                var known = t.KnownEnemyStructures.Values.Where(k => k.team >= 0 && k.key != "derrick").ToList(); // not derricks: a wave doesn't shoot them (attack_move leaves them for capture), so it would idle there and be sent back again
                 if (known.Count > 0) { var k = known.OrderBy(x => Vec2.Dist(new Vec2(x.origin.X, x.origin.Y), t.StartPos)).First(); goal = new Vec2(k.origin.X + 1, k.origin.Y + 1); }
                 else
                 {
