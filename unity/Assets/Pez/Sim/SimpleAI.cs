@@ -34,7 +34,8 @@ namespace Pez.Sim
         const int OreBacklog = 1000; // iron ore lying unrefined past this wants another refinery
         const float IncomeWindow = 60f; // seconds the ore coming in is averaged over
         const int CopperLow = 300, CopperHigh = 600; // refined copper on hand: the trucks go for copper below the low mark and leave it above the high one
-        const int CopperSurplus = 1500; // refined copper past this is more than anything uses: its deep mines are sold
+        const int CopperSurplus = 1800; // refined copper past this is more than anything uses: its deep mines are sold (a sold mine refunds nothing, so a high mark: at 1,500 many were bought again later)
+        internal const float CopperStarveHold = 240f; // seconds the team must have lacked copper before a deep copper mine is bought for it (the trucks answer a short lack; a mine bought for one was mostly sold again for a surplus)
         /// <summary>Iron ore a second one refinery converts (its recipe's cycles a second times the iron ore a cycle takes): the ore coming in is measured against it.</summary>
         static readonly float RefineryRate = Defs.Get("mining_refinery").Recipes.Where(r => r.Inputs.ContainsKey("iron_ore")).Sum(r => r.Rate * r.Inputs["iron_ore"]);
         /// <summary>Iron ore a second one command center makes on its own (its recipe with no inputs): income that Stats.OreMined, the trucks' and mines' count, leaves out.</summary>
@@ -42,6 +43,7 @@ namespace Pez.Sim
         float oreRate; // ore a second the trucks and deep mines bring in, averaged over IncomeWindow
         float ratedAt = -1f; // when it was last worked out, and the team's Stats.OreMined then
         int ratedMined;
+        internal float copperStarvedSince = -1f; // since when the team has lacked copper with no mine on it (-1 = it hasn't)
 
         static readonly string[] BuildOrder =
         {
@@ -248,7 +250,14 @@ namespace Pez.Sim
             // A basic ore it wants, has no mine on and next to none of (or is short of as the raw ore something is waiting on) gets one
             // whatever the cap says; crystal / uranium it has a plant for and none of go ahead of the ordinary iron and copper (a deep mine
             // pumps 4 a second, far more than anything uses).
-            bool Starved(int ore) => ore < Map.Crystal && has[ore] == 0 && OreWanted(ore) && (OnHand(ore) < 100 || RawShort(Defs.Ores[ore]));
+            bool Lacking(int ore) => ore < Map.Crystal && has[ore] == 0 && OreWanted(ore) && (OnHand(ore) < 100 || RawShort(Defs.Ores[ore]));
+            // (Copper counts as starved only once the lack has lasted CopperStarveHold: a lack of a minute or two is the purchase that just
+            // spent it, answered by the trucks long before a rig bought for it has driven out. The lack ends when a mine is on the copper
+            // or the stock is back to the trucks' low mark, not the moment a few come in: what the trucks bring is spent as fast as it
+            // comes, and a stock flickering around 100 is still a lack.)
+            bool lackOver = has[Map.Copper] > 0 || OnHand(Map.Copper) >= CopperLow;
+            copperStarvedSince = Lacking(Map.Copper) ? (copperStarvedSince < 0f ? w.Time : copperStarvedSince) : lackOver ? -1f : copperStarvedSince;
+            bool Starved(int ore) => ore == Map.Copper ? has[ore] == 0 && OreWanted(ore) && copperStarvedSince >= 0f && w.Time - copperStarvedSince >= CopperStarveHold : Lacking(ore);
             bool Needy(int type) => type >= Map.Crystal && OreWanted(type) && t.Amount(Defs.Ores[type]) < 100;
             // The flagged zones worth a rig, best first (iron and copper it's short of, then the rest, nearest first), and the ones no
             // rig of its own is heading for. (Copper zones only while starved of copper: a deep mine pumps 4 ore a second until its deposit

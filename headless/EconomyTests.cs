@@ -1663,6 +1663,13 @@ namespace Pez.Headless
 
         static int Have(World w, string key) => w.Owned(0).Count(e => e.IsStructure && e.Def.Key == key);
 
+        /// <summary>The team has already lacked copper for SimpleAI.CopperStarveHold (the clock jumps, and the AI's count is set back to match): a deep copper mine is no longer held back as a dip.</summary>
+        static void AiLacked(World w, SimpleAI ai)
+        {
+            w.Tick += (int)(SimpleAI.CopperStarveHold * World.TickRate);
+            ai.copperStarvedSince = w.Time - SimpleAI.CopperStarveHold;
+        }
+
         static void AiEconomy()
         {
             Console.WriteLine("\n-- scripted AI economy");
@@ -2044,9 +2051,12 @@ namespace Pez.Headless
             SetCopper(t2, 1000);
             AiRun(w2, ai2, 5);
             Check(!mines[0].Dead && !mines[1].Dead, $"a copper mine stays while the copper in hand is short of the surplus ({t2.Amount("copper") + t2.Amount("copper_ore")})");
-            t2.Add("copper", 1000);
+            t2.Add("copper", 600);
             AiRun(w2, ai2, 5);
-            Check(mines[0].Dead && !mines[1].Dead, $"past 1,500 the copper mine is sold and the iron one is not ({t2.Amount("copper") + t2.Amount("copper_ore")} copper)");
+            Check(!mines[0].Dead && !mines[1].Dead, $"and it is kept at 1,600 (the old mark was 1,500: a mine's rig is not refunded) ({t2.Amount("copper") + t2.Amount("copper_ore")})");
+            t2.Add("copper", 400);
+            AiRun(w2, ai2, 5);
+            Check(mines[0].Dead && !mines[1].Dead, $"past 1,800 the copper mine is sold and the iron one is not ({t2.Amount("copper") + t2.Amount("copper_ore")} copper)");
             Check(w1.Errors == 0 && w2.Errors == 0, $"no sim errors ({w1.LastError}{w2.LastError})");
         }
 
@@ -2067,6 +2077,7 @@ namespace Pez.Headless
             deps[0].Amount = 0; // and it has run dry
             t.Add("iron_ore", 1000); t.Add("circuits", 300);
             t.Add("copper_ore", -t.Amount("copper_ore")); // short of copper
+            AiLacked(w, ai);
             mine.LastHitTime = w.Time; // just hit: a building under fire can't be sold for 10 s
             AiRun(w, ai, 5);
             Check(!mine.Dead, "a spent mine that was just hit can't be sold yet");
@@ -2615,7 +2626,8 @@ namespace Pez.Headless
             var (w2, ai2, t2, d2) = AiDeepBase(Map.Iron, Map.Iron, Map.Iron, Map.Iron, Map.Copper);
             for (int i = 0; i < 4; i++) AiPump(w2, d2[i]);
             t2.Add("copper_ore", -t2.Amount("copper_ore")); t2.Add("steel", 800); t2.Add("circuits", 300);
-            AiRun(w2, ai2, 1); // its first think
+            AiLacked(w2, ai2); // (it has thought, and the lack of copper is old enough)
+            AiRun(w2, ai2, 1);
             int ironNow = w2.Owned(0).Count(e => e.Def.Key == "deep_mine");
             bool paid = w2.Teams[0].UnitQueues[Producer.Factory].Any(q => q.Key == "drill_rig") || w2.Owned(0).Any(e => e.Def.Key == "drill_rig");
             Check(ironNow == 4 && paid, $"it buys the replacement rig first and keeps all four mines meanwhile ({ironNow} mines, rig bought {paid})");
@@ -2631,6 +2643,7 @@ namespace Pez.Headless
             var idle = At(w3.SpawnUnit(0, "drill_rig", w3.Owned(0).First(e => e.Def.Key == "command_center")), t3.StartPos + new Vec2(4, 4));
             w3.SetOrder(idle, Order.Idle, idle.Pos);
             t3.Add("copper", 3000); t3.Add("copper_ore", -t3.Amount("copper_ore")); t3.Add("steel", 500); t3.Add("iron_ore", 1000); t3.Add("circuits", 300);
+            AiLacked(w3, ai3);
             AiRun(w3, ai3, 5);
             Check(idle.Order == Order.Drill && idle.ZoneId == d3[4].Id, $"3000 copper but none of the copper ore a refinery is waiting on, four iron mines up: the idle rig goes to the copper zone ({idle.OrderName}, zone {idle.ZoneId})");
         }
@@ -2714,6 +2727,9 @@ namespace Pez.Headless
                 return (w, ai, t, deps);
             }
             bool GoesTo(World x, DeepDeposit d) => x.Owned(0).Any(e => (e.Def.Key == "drill_rig" && e.ZoneId == d.Id) || (e.Def.Key == "deep_mine" && e.DepositId == d.Id));
+            // Copper is only starved once the lack has lasted SimpleAI.CopperStarveHold. The runs below that expect a copper rig start with the lack
+            // already that old (see AiLacked) so they stay about the choice of zone.
+            const float Hold = SimpleAI.CopperStarveHold;
 
             // A refinery waiting on 100 copper ore, with plenty of refined copper in hand and no surface ore left: copper deposits are
             // still worth a rig (refined copper can't pay a refinery's copper ore).
@@ -2721,6 +2737,7 @@ namespace Pez.Headless
             d1[0].Type = Map.Copper; d1[1].Type = Map.Copper;
             t1.Add("copper", 3000); t1.Add("iron_ore", 1000); t1.Add("steel", 1000); t1.Add("copper_ore", -t1.Amount("copper_ore"));
             bool wentCopper = false; // (the mine is sold again once it has pumped the refinery its 100 copper ore: refined copper is past the surplus)
+            AiLacked(w1, ai1);
             AiRun(w1, ai1, 90, () => wentCopper |= GoesTo(w1, d1[0]));
             Check(wentCopper, $"with 3000 copper but no copper ore for its second refinery and no surface ore left, a rig goes to the copper zone ({w1.Owned(0).Count(e => e.Def.Key == "drill_rig")} rigs, {w1.Owned(0).Count(e => e.Def.Key == "deep_mine")} mines)");
             Check(Have(w1, "mining_refinery") >= 2 && !w1.Owned(0).Any(e => e.Def.Key == "deep_mine"),
@@ -2728,6 +2745,7 @@ namespace Pez.Headless
             var (w1b, ai1b, t1b, d1b) = Dry(1);
             d1b[0].Type = Map.Copper; d1b[1].Type = Map.Copper;
             t1b.Add("copper", 3000); t1b.Add("iron_ore", 1000); t1b.Add("steel", 1000); t1b.Add("copper_ore", -t1b.Amount("copper_ore"));
+            AiLacked(w1b, ai1b);
             AiRun(w1b, ai1b, 90);
             Check(!GoesTo(w1b, d1b[0]) && !GoesTo(w1b, d1b[1]), "but with no refinery waiting on copper ore, copper zones are not worth a rig while copper is plentiful");
 
@@ -2742,6 +2760,7 @@ namespace Pez.Headless
             var (w5, ai5, t5, d5) = Dry(1);
             d5[0].Type = Map.Copper; d5[1].Type = Map.Iron;
             t5.Add("copper", -t5.Amount("copper")); t5.Add("copper_ore", -t5.Amount("copper_ore")); t5.Add("iron_ore", 1000); t5.Add("steel", 1000);
+            AiLacked(w5, ai5);
             AiRun(w5, ai5, 90);
             Check(GoesTo(w5, d5[0]), $"but starved of copper, with none in hand, it goes to the copper zone ({w5.Owned(0).Count(e => e.Def.Key == "drill_rig")} rigs, {w5.Owned(0).Count(e => e.Def.Key == "deep_mine")} mines)");
             // Two copper zones and nothing else known, starved, with the steel for two rigs: one copper mine is all the starved rule allows (once a
@@ -2749,10 +2768,46 @@ namespace Pez.Headless
             var (w6, ai6, t6, d6) = Dry(1);
             d6[0].Type = Map.Copper; d6[1].Type = Map.Copper;
             t6.Add("copper", -t6.Amount("copper")); t6.Add("copper_ore", -t6.Amount("copper_ore")); t6.Add("iron_ore", 1000); t6.Add("steel", 2000);
+            AiLacked(w6, ai6);
             AiRun(w6, ai6, 90);
             int rigs6 = w6.Owned(0).Count(e => e.Def.Key == "drill_rig"), mines6 = w6.Owned(0).Count(e => e.Def.Key == "deep_mine"), queued6 = t6.UnitQueues[Producer.Factory].Count(q => q.Key == "drill_rig");
             Check(GoesTo(w6, d6[0]) && rigs6 + mines6 + queued6 == 1 && !w6.Owned(0).Any(e => e.Def.Key == "drill_rig" && e.Order == Order.Idle),
                   $"with two copper zones and steel for two rigs it buys one, and none is left idle ({rigs6} rigs, {mines6} mines, {queued6} queued, {t6.Amount("steel")} steel)");
+            // Out of copper for less than the hold is a dip, not starvation: no rig yet, and a dip that ends (the trucks brought some in) starts
+            // the count again, so two short dips a few minutes apart don't add up to one long one. The lack that lasts is answered.
+            var (w9, ai9, t9, d9) = Dry(1);
+            foreach (var d in w9.Map.Deep) d.Type = Map.Copper; // (so a surveyor's finds make no iron mine to confuse the count)
+            void NoCopper(Team x) { x.Add("copper", -x.Amount("copper")); x.Add("copper_ore", -x.Amount("copper_ore")); }
+            int RigsOf(World x) => x.Owned(0).Count(e => e.Def.Key == "drill_rig" || e.Def.Key == "deep_mine") + x.Teams[0].UnitQueues[Producer.Factory].Count(q => q.Key == "drill_rig"); // (rigs bought: on the way, queued, or already a mine)
+            t9.Add("iron_ore", 1000); t9.Add("steel", 2000);
+            NoCopper(t9);
+            AiRun(w9, ai9, Hold - 30);
+            Check(RigsOf(w9) == 0, $"out of copper for {Hold - 30:0} s, short of the hold, no rig is bought for it yet ({RigsOf(w9)} bought)");
+            var saved9 = Json.Write(ai9.SaveState());
+            Check(saved9.Contains("\"copper_starved_since\":") && Json.Write(SimpleAI.LoadState((Dictionary<string, object>)Json.Parse(saved9)).SaveState()) == saved9, "and how long it has lacked copper is part of the saved game");
+            t9.Add("copper", 500); AiRun(w9, ai9, 3); NoCopper(t9); // some came in: the lack is over
+            AiRun(w9, ai9, Hold - 30);
+            Check(RigsOf(w9) == 0, $"a second dip of the same length after copper came back does not add to the first ({RigsOf(w9)} bought)");
+            AiRun(w9, ai9, 90);
+            Check(RigsOf(w9) >= 1, $"but a lack that lasts past the hold gets its rig ({RigsOf(w9)} bought)");
+            // What the trucks bring is spent as it comes: a few copper in hand (150, short of the trucks' 300) is still the same lack, only copper
+            // back to 300 or more ends it.
+            var (w11, ai11, t11, d11) = Dry(1);
+            foreach (var d in w11.Map.Deep) d.Type = Map.Copper;
+            t11.Add("iron_ore", 1000); t11.Add("steel", 2000); NoCopper(t11);
+            AiRun(w11, ai11, 120);
+            t11.Add("copper", 150); AiRun(w11, ai11, 3); NoCopper(t11);
+            AiRun(w11, ai11, Hold - 120 + 30);
+            Check(RigsOf(w11) >= 1, $"copper flickering up to 150 and spent again does not restart the count: {Hold - 120 + 153:0} s into the lack there is a rig ({RigsOf(w11)} bought)");
+            // A save and load in the middle of the lack keeps the count: the loaded AI buys on the same schedule as the one that was never saved.
+            var (w10, ai10, t10, d10) = Dry(1);
+            foreach (var d in w10.Map.Deep) d.Type = Map.Copper;
+            t10.Add("iron_ore", 1000); t10.Add("steel", 2000); NoCopper(t10);
+            AiRun(w10, ai10, Hold - 30);
+            var ai10b = SimpleAI.LoadState((Dictionary<string, object>)Json.Parse(Json.Write(ai10.SaveState())));
+            AiRun(w10, ai10b, 90);
+            Check(RigsOf(w10) >= 1, $"a game saved and loaded {Hold - 30:0} s into the lack buys within 90 s more, not a whole hold later ({RigsOf(w10)} bought)");
+
             // The surface copper is gone, there is no refined copper, and the next step is a refinery the base has no room for (an iron mine is pumping,
             // so the build order is on): the 100 copper ore it costs is held back (reserved) and the refineries can't touch it, so copper ore in the
             // stockpile is not copper it can use. It is starved all the same, and the rig goes to the copper zone (the reserve once counted as copper
@@ -2765,6 +2820,7 @@ namespace Pez.Headless
             while (w7.FindPlacement(0, "mining_refinery") is Int2 spot7) w7.SpawnStructure(0, "power_plant", spot7, 1f);
             t7.Add("copper", -t7.Amount("copper")); t7.Add("copper_ore", 100 - t7.Amount("copper_ore")); t7.Add("iron_ore", 1000); t7.Add("steel", 1000);
             bool wentCopper7 = false;
+            AiLacked(w7, ai7);
             AiRun(w7, ai7, 90, () => wentCopper7 |= GoesTo(w7, d7[0]));
             Check(Have(w7, "mining_refinery") == 1 && t7.Reserved("copper_ore") >= 100 && wentCopper7,
                   $"with its refinery held back for want of room, 100 copper ore reserved for it and no copper to use, a rig goes to the copper zone ({w7.Owned(0).Count(e => e.Def.Key == "drill_rig")} rigs, {w7.Owned(0).Count(e => e.Def.Key == "deep_mine")} mines, reserve {t7.Reserved("copper_ore")} copper ore)");
@@ -2777,6 +2833,7 @@ namespace Pez.Headless
             t8.Add("copper", 150 - t8.Amount("copper")); t8.Add("copper_ore", -t8.Amount("copper_ore")); t8.Add("iron_ore", 1000); t8.Add("steel", 1000);
             t8.Reserve["copper"] = 100;
             bool wentCopper8 = false;
+            AiLacked(w8, ai8);
             AiRun(w8, ai8, 90, () => wentCopper8 |= GoesTo(w8, d8[0]));
             Check(wentCopper8 && t8.Reserved("copper") == 100, $"with 100 of its 150 refined copper reserved, a rig goes to the copper zone ({w8.Owned(0).Count(e => e.Def.Key == "drill_rig")} rigs, {w8.Owned(0).Count(e => e.Def.Key == "deep_mine")} mines, {t8.Amount("copper")} copper)");
 
