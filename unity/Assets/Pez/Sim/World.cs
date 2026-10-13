@@ -916,7 +916,9 @@ namespace Pez.Sim
                         }
                         if (cmp < 0) { bestScore = score; bestCentre = toCentre; bestRight = toRight; best = new Int2(x, y); }
                     }
-                if (best.HasValue && r > (field.Count > 0 ? 6 : 4)) break;
+                // A drop-off's score is at least its distance from the base, so once the best is under the next ring's distance
+                // nothing further out can beat it; before that, a spot beside the ore a few rings out may still be far better.
+                if (best.HasValue && (field.Count > 0 ? bestScore + tie <= r : r > 4)) break;
             }
             return best;
         }

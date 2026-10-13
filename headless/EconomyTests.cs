@@ -346,6 +346,21 @@ namespace Pez.Headless
             }
             Check(heads[0] <= 1f && heads[1] <= 1f, $"a build command with no x,y puts the refinery's lane at the iron too ({heads[0]:0.0} and {heads[1]:0.0} tiles)");
 
+            // The scripted AI's build order up to its second refinery. A spot beside the ore can lie a few rings beyond the first
+            // ring with any legal spot (seat 0's lane opened 6 tiles from the iron, when one at the iron was legal 10 tiles out), so
+            // a drop-off's search runs on until nothing further out can score better.
+            var w4 = MirroredBases();
+            var second = new float[2];
+            for (int t = 0; t < 2; t++)
+                foreach (var key in new[] { "power_plant", "mining_refinery", "barracks", "factory", "power_plant", "electronics_plant", "gun_turret", "mining_refinery" })
+                {
+                    var spot = w4.FindPlacement(t, key);
+                    if (!spot.HasValue) { second[t] = 99f; break; }
+                    var built = w4.SpawnStructure(t, key, spot.Value, 1f);
+                    if (key == "mining_refinery") second[t] = ToHomeIron(w4, t, w4.Bay(built).head);
+                }
+            Check(second[0] <= 4f && second[1] <= 4f, $"after the build order up to its second refinery, each seat's second lane still opens close to the iron ({second[0]:0.0} and {second[1]:0.0} tiles)");
+
             // Real maps are not mirrored, but every seat's first refinery still opens close to its iron (it was 12.5 tiles for seat 0 on every map).
             var far = new List<string>();
             foreach (var (seed, size) in new[] { (1, 80), (2, 80), (3, 80), (4, 96), (5, 128), (6, 112) })
