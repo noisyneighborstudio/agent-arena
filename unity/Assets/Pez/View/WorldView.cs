@@ -35,6 +35,7 @@ namespace Pez.View
             public int OreTint = -1;     // deep mine: the ore its tube is tinted to; mining truck: the ore its load shows
             public float DustNext;       // decaying structure: when its next grit falls
             public int TeamShown;        // the team colour its model wears (a captured building changes hands)
+            public float TintAt;         // ... and when it takes the new one: an engineer on screen lands his last blow first
             public int Born;             // frame the view was made (deploys pair a unit with the structure it became)
             public float BoardT;         // boarding: 0..1 while the passenger shrinks into its carrier
             public Vector3 BoardedAt;    // ... and where its carrier is drawn (unloaded, it steps back out from there)
@@ -191,7 +192,7 @@ namespace Pez.View
         /// or it's a spectator view) and each player's stream whose team sees it. Remembered-but-unseen enemy buildings
         /// show none of their current state.
         /// </summary>
-        List<int> AudienceFor(Entity e)
+        internal List<int> AudienceFor(Entity e)
         {
             audience.Clear();
             if (PovTeam < 0 || e.Team == PovTeam || World.IsVisibleTo(PovTeam, e)) audience.Add(TerrainView.MainFogLayer);
@@ -507,6 +508,12 @@ namespace Pez.View
                 into.Rig.Emerge.SetBuildProgress(0f);
                 rig.Emerge.StartCoroutine(rig.Emerge.PlayDeployInto(into.Rig.Emerge));
             }
+            else if (v.Troop is { Capturing: true } && rig.HasModel && rig.Root.gameObject.activeInHierarchy)
+            {
+                // An engineer who has just taken a building: he knocks on it and moves in (SoldierWorks.MoveIn).
+                rig.Model.transform.SetParent(transform, true);
+                rig.Emerge.StartCoroutine(v.Troop.MoveIn());
+            }
             else if (rig.HasModel && rig.Root.gameObject.activeInHierarchy && !(LeftSight(v) && v.Popping))
             {
                 rig.Model.transform.SetParent(transform, true);
@@ -516,6 +523,17 @@ namespace Pez.View
             }
             Destroy(rig.Root.gameObject);
             if (v.Sim != null) { v.Sim.Release(); v.Sim = null; }
+        }
+
+        /// <summary>The seconds until a building just captured takes its new colours: the engineer who took it, if he's on
+        /// screen, plans his act at it (SoldierWorks.Capture) and the colours go on with his last blow. 0 if he isn't.</summary>
+        float Capturer(EV b)
+        {
+            foreach (var o in Views.Values)
+                if (o.E.Dead && o.E.Def.Engineer && o.E.TargetId == b.E.Id && o.E.Team == b.E.Team && o.Troop != null && !o.Troop.Capturing &&
+                    o.Rig.HasModel && o.Rig.Root.gameObject.activeInHierarchy)
+                    return o.Troop.Capture(b.Rig.Model, Mats.Team(b.E.Team), new List<int>(AudienceFor(b.E)));
+            return 0f;
         }
 
         /// <summary>
@@ -849,9 +867,10 @@ namespace Pez.View
             var rig = v.Rig;
             if (e.IsStructure && rig.HasModel && v.TeamShown != e.Team)
             {
-                // Captured (an engineer took it; a derrick claimed or released): it wears its new owner's colours.
-                Models.TintTeam(rig.Model, e.Team);
-                v.TeamShown = e.Team;
+                // Captured (an engineer took it; a derrick claimed or released): it wears its new owner's colours, as the
+                // engineer's last blow lands if he's on screen (SoldierWorks.Capture).
+                if (v.TintAt <= 0f) v.TintAt = Time.time + Capturer(v);
+                if (Time.time >= v.TintAt) { Models.TintTeam(rig.Model, e.Team); v.TeamShown = e.Team; v.TintAt = 0f; }
             }
             if (e.IsStructure && rig.HasModel)
             {
@@ -874,9 +893,9 @@ namespace Pez.View
                 if (e.Def.Key == "barracks" && e.IsComplete && e.Team >= 0)
                 {
                     bool next = QueueHead(e, out float tp, out float tT);
-                    var unit = next ? World.Teams[e.Team].UnitQueues[e.Def.Produces][0].Key : null;
+                    var queue = next ? World.Teams[e.Team].UnitQueues[e.Def.Produces] : null;
                     Fx.Audience = AudienceFor(e);
-                    (v.Bunks ??= BarracksWorks.For(rig.Model, e.Team, e.Id)).Tick(next, tp, tT, unit, Time.deltaTime);
+                    (v.Bunks ??= BarracksWorks.For(rig.Model, e.Team, e.Id)).Tick(next, tp, tT, queue, Time.deltaTime);
                     Fx.Audience = null;
                 }
                 if (e.Def.Key == "airfield" && e.IsComplete && e.Team >= 0) (v.Field ??= AirfieldWorks.For(rig.Model, rig.Motion, e.Id)).Tick(World, e, SeesState(e, PovTeam), Time.deltaTime);
@@ -1003,7 +1022,7 @@ namespace Pez.View
                 else if (e.IsAir) rig.Body.localRotation = Quaternion.Slerp(rig.Body.localRotation, Quaternion.Euler(e.Moving ? 6f : 0, 0, Mathf.Clamp(Mathf.DeltaAngle(rig.Root.eulerAngles.y, Yaw(e.Facing)) * 0.6f, -25f, 25f)), 1f - Mathf.Exp(-Time.deltaTime * 5f)); // eased: a stop or a turn tips it over a fifth of a second, never in one frame
                 // Infantry walk: the stride follows the ground actually covered this frame, and they settle when they stop.
                 if (rig.Gait != null) rig.Gait.Tick(rig.Root, Time.deltaTime);
-                if (rig.Gait != null && rig.HasModel) (v.Troop ??= SoldierWorks.For(rig.Model, e.Id)).Tick(e, World.Time, v.LastFire, Time.deltaTime);
+                if (rig.Gait != null && rig.HasModel) (v.Troop ??= SoldierWorks.For(rig.Model, e.Id, rig.Gait, this)).Tick(e, World.Time, v.LastFire, Time.deltaTime);
             }
             if (rig.Barrel != null && !rig.HasModel)
             {
@@ -1397,6 +1416,7 @@ namespace Pez.View
                     trail.startWidth = 0.08f; trail.endWidth = 0f;
                     if (p.Weapon.Name == "sam") { trail.sharedMaterial = Mats.Unlit(new Color(0.95f, 0.92f, 0.86f, 0.75f), true); trail.time = 0.8f; trail.startWidth = 0.07f; trail.endWidth = 0.03f; } // a SAM round's cream smoke trail
                     trail.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                    if (p.Weapon.Name == "rocket") sv?.Troop?.Arm(t); // a candy trooper's rocket flies as its wrapped sweet
                     projectiles[p.Id] = t;
                     projectileStart[p.Id] = (from, p.PrevPos, Mathf.Max(0.1f, Vec2.Dist(p.PrevPos, p.TargetPos)));
                 }
@@ -1410,6 +1430,7 @@ namespace Pez.View
                 var pos = W(ground, Mathf.Lerp(start.y, endY, k) + arc);
                 float off = 1f - Mathf.SmoothStep(0f, 1f, Vec2.Dist(ground, simStart) / MuzzleBlend);
                 if (off > 0f) { pos.x += (start.x - simStart.X) * off; pos.z += (start.z - simStart.Y) * off; }
+                if ((pos - t.position).sqrMagnitude > 1e-8f) t.rotation = Quaternion.LookRotation(pos - t.position); // nose first
                 t.position = pos;
                 if (shellShadows.TryGetValue(p.Id, out var shadow))
                 {
@@ -1481,9 +1502,11 @@ namespace Pez.View
                             }
                             else if (ev.Key == "c4")
                             {
-                                // Charge planted and blown: no tracer, a big blast on the target.
+                                // Charge planted and blown: no tracer, a big blast on the target, where the commando stuck it
+                                // (SoldierWorks: the charge he planted on it while arming or during the cooldown, else where it would stick).
+                                if (Views.TryGetValue(ev.A, out var cv) && cv.Troop != null) to = cv.Troop.Detonate(ev.B, to);
                                 Fx.Explosion(to, 1.1f);
-                                Fx.Scorch(W(ev.Pos2), 1.2f);
+                                Fx.Scorch(new Vector3(to.x, 0f, to.z), 1.2f);
                             }
                             else
                             {
@@ -1504,6 +1527,7 @@ namespace Pez.View
                                 // The ground notices: a dust ring under a heavy's shot, a blast ring and lingering smoke for artillery.
                                 if (ev.Key == "heavy_cannon") Fx.GroundRing(sv.Rig.Root.position, 1.4f, 0.5f, 0);
                                 if (arty) { Fx.GroundRing(sv.Rig.Root.position, 2f, 0.6f, 6); Fx.BarrelSmoke(tip); }
+                                sv.Troop?.Fired(Views.TryGetValue(ev.B, out var tgt) ? tgt.Rig.Root.position + Vector3.up * 0.3f : W(ev.Pos2, 0.3f)); // a launcher's backblast and reload
                             }
                             Kick(ev.A, 0.08f);
                             break;
@@ -1538,6 +1562,7 @@ namespace Pez.View
                         { var sd = Defs.Get(ev.Key); Fx.Salvaged(W(ev.Pos), sd != null && sd.IsStructure ? sd.SizeX : 1f); }
                         break;
                     case "captured":
+                        if (Views.TryGetValue(ev.B, out var capturer) && capturer.Troop is { Capturing: true }) break; // he plays it on his last blow
                         Fx.Beam(W(ev.Pos, 0.2f), W(ev.Pos, 4f), Mats.Team(ev.Team), 0.25f);
                         Fx.MuzzleFlash(W(ev.Pos, 0.6f), 0.4f);
                         break;
@@ -1548,8 +1573,9 @@ namespace Pez.View
                             var from = MuzzleOf(ev.A, ev.Pos);
                             var to = W(ev.Pos2, HeightOf(ev.B, heal ? 0.3f : 0.5f));
                             // Heal beam: team-neutral cream-white. Welding beam: caramel amber.
-                            Fx.Beam(from, to, heal ? new Color(0.96f, 0.95f, 0.91f, 0.8f) : new Color(Mats.Amber.r, Mats.Amber.g, Mats.Amber.b, 0.9f), heal ? 0.05f : 0.035f);
+                            Fx.Beam(from, to, heal ? new Color(0.96f, 0.95f, 0.91f, 0.8f) : new Color(Mats.Amber.r, Mats.Amber.g, Mats.Amber.b, 0.9f), heal ? 0.05f : 0.035f, lamp: !heal); // a heal's light is Fx.Healed's
                             if (!heal) Fx.MuzzleFlash(to, 0.05f); // welding sparks
+                            else if (Views.TryGetValue(ev.B, out var patient)) { Fx.Healed(to); patient.Troop?.Tended(from); } // motes rise off it; it looks round at its medic
                             // A building being repaired is being fought: its fire turns to white steam where the beam lands.
                             if (!heal && Views.TryGetValue(ev.B, out var fought) && fought.E.IsStructure) { fought.RepairAt = Time.time; fought.RepairPoint = to; }
                             break;

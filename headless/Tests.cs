@@ -71,6 +71,7 @@ namespace Pez.Headless
             NoSpinBetweenTanks();
             MovementGate();
             DropOffsFaceSouth();
+            C4IsPlanted();
             ViewCopyReplaysOrders();
             GroupMove();
             ResignWhenStalled();
@@ -424,6 +425,50 @@ namespace Pez.Headless
                 }
             }
             Check(refineries >= 8 && side == 0, $"house-AI refineries and command centers all have a south bay ({refineries} refineries over 4 matches, {side} with a side bay)");
+        }
+
+        static void C4IsPlanted()
+        {
+            // Rules 43: a commando has to plant his charge. Standing in range of an enemy power plant, the first C4 goes off
+            // only after its arming time (1.5 s), the next on the cooldown (5 s) after that; walking off starts the arming
+            // again, and a commando that never stops gets nothing off.
+            var w = new World(2, 7, 80);
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var plant = w.SpawnStructure(1, "power_plant", w.FindPlacement(0, "power_plant").Value, 1f);
+            plant.Hp = 100000f;   // one charge would level it: let it stand for the next ones
+            var c4 = Defs.Get("commando").Weapon;
+            var by = plant.Center + new Vec2(-(plant.Def.SizeX / 2f + 0.5f), 0);
+            var cmd = At(w.SpawnUnit(0, "commando", hq), by);
+            List<float> Shots() => w.Events.Where(e => e.Type == "shot" && e.A == cmd.Id && e.Key == "c4").Select(e => e.Tick * World.Dt).ToList();
+            string Times(List<float> s, float from) => string.Join(", ", s.Select(t => $"{t - from:0.00} s"));
+            w.SetOrder(cmd, Order.Attack, plant.Center, plant.Id);
+            float start = -1f;   // the first tick he works it: in range, stopped
+            for (int i = 0; i < 1.4f * World.TickRate; i++) { w.Step(); if (start < 0f && cmd.LastFiredAt == w.Time) start = w.Time; }
+            Check(start >= 0f && start <= 2 * World.Dt && Shots().Count == 0 && cmd.Arming > 1f,
+                  $"standing by its target, a commando's first charge doesn't go off before it's armed ({Shots().Count} shots, armed {cmd.Arming:0.00} s)");
+            Run(w, 0.3f);
+            var shots = Shots();
+            Check(shots.Count == 1 && shots[0] - start >= c4.ArmTime - 0.01f && shots[0] - start <= c4.ArmTime + 0.11f,
+                  $"it goes off once the charge is armed, {c4.ArmTime} s after he started on it ({Times(shots, start)})");
+            Run(w, 5f);
+            shots = Shots();
+            Check(shots.Count == 2 && MathF.Abs(shots[1] - shots[0] - c4.Cooldown) < 0.11f, $"staying on it, the next follows on the cooldown, not another arming ({Times(shots, start)})");
+
+            // Walked off and back: the arming starts again (the cooldown has long run out by then).
+            w.SetOrder(cmd, Order.Move, by + new Vec2(-4, 0));
+            Run(w, 6f);
+            Check(Shots().Count == 2 && cmd.Order == Order.Idle, $"walked off, nothing more goes off ({Shots().Count} shots, {cmd.OrderName})");
+            w.SetOrder(cmd, Order.Attack, plant.Center, plant.Id);
+            float back = -1f;
+            for (int i = 0; i < 8 * World.TickRate && Shots().Count == 2; i++)
+            {
+                w.Step();
+                if (back < 0f && cmd.LastFiredAt == w.Time) back = w.Time;
+            }
+            shots = Shots();
+            Check(back > 0f && shots.Count == 3 && shots[2] - back >= c4.ArmTime - 0.01f && shots[2] - back <= c4.ArmTime + 0.11f,
+                  $"back in range, he plants a fresh charge: it goes off {(shots.Count == 3 ? shots[2] - back : -1f):0.00} s after he starts on it");
+            Check(w.Errors == 0, "no sim errors");
         }
 
         static void ViewCopyReplaysOrders()

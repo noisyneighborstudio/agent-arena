@@ -15,31 +15,75 @@ namespace Pez.View
     /// nodes, which <see cref="FromModel"/> drives as they are. Older art-pack infantry have no leg nodes, so it cuts the
     /// two leg boxes out of the body mesh once per source mesh (cached) and hangs them from hip pivots. Placeholders build
     /// real legs (<see cref="Models"/>).
+    ///
+    /// A trooper built with knees (build_models.candy_trooper knees=True: knee_l / knee_r under its legs; the medic and the
+    /// sniper) bends the swinging leg's knee instead of tucking it.
+    ///
+    /// Kneeling (<see cref="Kneel"/>, asked for by SoldierWorks, in the soldier's own <see cref="KneelPose"/>): one knee goes
+    /// down, the other foot is planted ahead, the hips come down onto them and the upper body leans in, and the walk and the
+    /// idle sway give way to it (a kneeling soldier holds still). With knees, the front shin stands upright on its planted
+    /// foot (the hips drop exactly as far as its thigh comes up) and the kneeling shin lies back along the ground. With
+    /// one-piece legs (the commando), the front leg reaches forward straight and the back leg tucks and swings back until its
+    /// end meets the ground as the hips drop to the front sole. Gait is the only thing that moves the hips and the legs, so
+    /// the walk and the kneel blend rather than fight.
     /// Per frame this is a handful of transform writes and no allocations.
     /// </summary>
     public class Gait
     {
-        readonly Transform body, hips, legL, legR;
+        /// <summary>How a soldier kneels: its timing, its lean, and the shape of its legs on the ground.</summary>
+        public sealed class KneelPose
+        {
+            /// <summary>Seconds to go down and to get up (eased).</summary>
+            public float Down = 0.3f, Up = 0.3f;
+            /// <summary>The upper body leans in this far (degrees); Still is how much of the idle sway it holds back.</summary>
+            public float Lean = 14f, Still = 0.7f;
+            /// <summary>Knees: the kneeling thigh's angle forward of vertical, the kneeling shin's angle back from straight
+            /// down (90 lies flat along the ground), and the knee's height off the ground (leg units).</summary>
+            public float Thigh = 15f, Shin = 95f, KneeHigh = 0.036f;
+            /// <summary>One-piece legs: the front leg's reach forward (degrees) and the back leg's tuck (its length).</summary>
+            public float Reach = 58f, Tuck = 0.8f;
+            /// <summary>The left knee goes down (the right foot ahead); by default it's the right knee.</summary>
+            public bool LeftDown;
+        }
+
+        readonly Transform body, hips, legL, legR, kneeL, kneeR;
         readonly float legLength;  // hip to sole, in the units of the legs' parent
+        readonly float kneeLength; // hip to knee (knees only)
         readonly float unit;       // body-local units per leg-parent unit (the model's own scale)
         readonly Vector3 hipsRest;
         readonly float seed;
-        float phase, speed, weight, lean, roll, lastYaw;
+        float phase, speed, weight, lean, roll, lastYaw, kneel;
         Vector3 lastPos;
         bool primed;
 
         const float MinSwing = 12f, MaxSwing = 30f;  // degrees either side of vertical
         const float FullStrideSpeed = 0.9f;          // world units/s at which the swing reaches MaxSwing
+        const float KneeBend = 50f;                  // knees: the swinging leg's knee bends this far at the top of its tuck
 
-        public Gait(Transform body, Transform hips, Transform legL, Transform legR, float legLength, float unit, int seed)
+        /// <summary>Kneel (true) or stand: set every frame by whoever knows why (SoldierWorks), in <see cref="Pose"/>.
+        /// Ignored without a pose or legs.</summary>
+        public bool Kneel;
+        /// <summary>How this soldier kneels (null: it doesn't).</summary>
+        public KneelPose Pose;
+        /// <summary>How far down it is: 0 standing to 1 kneeling (eased).</summary>
+        public float Kneeling { get; private set; }
+
+        public Gait(Transform body, Transform hips, Transform legL, Transform legR, float legLength, float unit, int seed,
+                    Transform kneeL = null, Transform kneeR = null)
         {
             this.body = body; this.hips = hips; this.legL = legL; this.legR = legR;
             this.legLength = legLength; this.unit = unit;
             hipsRest = hips != null ? hips.localPosition : Vector3.zero;
             this.seed = (seed * 0.618034f) % 1f * 6.2831853f;
+            if (kneeL != null && kneeR != null && HasLegs)
+            {
+                this.kneeL = kneeL; this.kneeR = kneeR;
+                kneeLength = -kneeL.localPosition.y;
+            }
         }
 
         public bool HasLegs => legL != null && legR != null;
+        public bool HasKnees => kneeL != null;
 
         public void Tick(Transform root, float dt)
         {
@@ -68,20 +112,59 @@ namespace Pez.View
 
             float s = Mathf.Sin(phase), c = Mathf.Cos(phase);
             float a = swing * weight * s;                   // left foot forward (deg), right foot mirrors
-            if (HasLegs)
+            float tuckL = Mathf.Max(0f, c) * weight, tuckR = Mathf.Max(0f, -c) * weight;
+
+            // Kneeling (eased): the legs fold from wherever the walk had them.
+            var pose = HasLegs ? Pose : null;
+            if (pose != null)
             {
-                // Foot forward is a negative X rotation for a leg hanging down. The leg swinging forward tucks up.
-                legL.localRotation = Quaternion.Euler(-a, 0f, 0f);
-                legR.localRotation = Quaternion.Euler(a, 0f, 0f);
-                float tuckL = Mathf.Max(0f, c) * weight, tuckR = Mathf.Max(0f, -c) * weight;
-                legL.localScale = new Vector3(1f, 1f - 0.2f * tuckL * tuckL, 1f);
-                legR.localScale = new Vector3(1f, 1f - 0.2f * tuckR * tuckR, 1f);
+                float kt = Kneel ? 1f : 0f;
+                kneel = Mathf.MoveTowards(kneel, kt, dt / Mathf.Max(0.01f, kt > kneel ? pose.Down : pose.Up));
             }
+            else kneel = 0f;
+            float kk = kneel * kneel * (3f - 2f * kneel);
+            Kneeling = kk;
+            bool leftDown = pose != null && pose.LeftDown;
 
             // Rigid legs keep the soles down if the hips drop by L(1 - cos a): lowest with both feet planted, highest
             // as the legs pass. Without legs, a plain two-bobs-per-stride bounce stands in.
             float drop = HasLegs ? legWorld * (1f - Mathf.Cos(a * Mathf.Deg2Rad))
                                  : 0.03f * weight * (0.5f - 0.5f * Mathf.Cos(2f * phase));
+            if (HasKnees)
+            {
+                // Foot forward is a negative X rotation for a leg hanging down. The leg swinging forward bends its knee.
+                // Kneeling: the kneeling thigh a little forward of vertical and its shin lying back; the hips sit as high as
+                // that knee and thigh hold them, and the front thigh comes up until its shin stands upright on its foot.
+                float th = 0f, fr = 0f, sh = 0f, down = 0f;
+                if (pose != null)
+                {
+                    float K = kneeLength, L = legLength;
+                    float hip = pose.KneeHigh + K * Mathf.Cos(pose.Thigh * Mathf.Deg2Rad);
+                    fr = Mathf.Acos(Mathf.Clamp((hip - (L - K)) / K, -1f, 1f)) * Mathf.Rad2Deg;
+                    th = pose.Thigh;
+                    sh = pose.Thigh + pose.Shin;
+                    down = (L - hip) * scale;
+                }
+                legL.localRotation = Quaternion.Euler(Mathf.Lerp(-a, leftDown ? -th : -fr, kk), 0f, 0f);
+                legR.localRotation = Quaternion.Euler(Mathf.Lerp(a, leftDown ? -fr : -th, kk), 0f, 0f);
+                kneeL.localRotation = Quaternion.Euler(Mathf.Lerp(KneeBend * tuckL * tuckL, leftDown ? sh : fr, kk), 0f, 0f);
+                kneeR.localRotation = Quaternion.Euler(Mathf.Lerp(KneeBend * tuckR * tuckR, leftDown ? fr : sh, kk), 0f, 0f);
+                drop = Mathf.Lerp(drop, down, kk);
+            }
+            else if (HasLegs)
+            {
+                // Foot forward is a negative X rotation for a leg hanging down. The leg swinging forward tucks up.
+                // Kneeling: the front leg reaches forward straight, and the back leg tucks and swings back just far enough
+                // that its end (the knee) meets the ground as the hips drop to the front sole.
+                float reach = pose != null ? pose.Reach : 0f, tuck = pose != null ? pose.Tuck : 1f;
+                float cosF = Mathf.Cos(reach * Mathf.Deg2Rad);
+                float back = Mathf.Acos(Mathf.Clamp01(cosF / tuck)) * Mathf.Rad2Deg;
+                legL.localRotation = Quaternion.Euler(Mathf.Lerp(-a, leftDown ? back : -reach, kk), 0f, 0f);
+                legR.localRotation = Quaternion.Euler(Mathf.Lerp(a, leftDown ? -reach : back, kk), 0f, 0f);
+                legL.localScale = new Vector3(1f, Mathf.Lerp(1f - 0.2f * tuckL * tuckL, leftDown ? tuck : 1f, kk), 1f);
+                legR.localScale = new Vector3(1f, Mathf.Lerp(1f - 0.2f * tuckR * tuckR, leftDown ? 1f : tuck, kk), 1f);
+                drop = Mathf.Lerp(drop, legWorld * (1f - cosF), kk);
+            }
             float lift = HasLegs ? 0f : 0.03f * weight - drop;
             body.localPosition = new Vector3(0f, HasLegs ? -drop : lift, 0f);
 
@@ -91,11 +174,11 @@ namespace Pez.View
             roll = Mathf.Lerp(roll, Mathf.Clamp(-turn * Mathf.Min(speed, 1.5f) * 0.03f, -7f, 7f), k);
 
             float t = Time.time;
-            float idle = 1f - weight;
+            float idle = (1f - weight) * (1f - (pose != null ? pose.Still * kk : 0f));   // kneeling, it holds still
             // Walking: sway over the planted foot once per stride, shoulders counter-twist. Idle: a slow weight shift.
             float sway = -c * 0.012f * weight + Mathf.Sin(t * 2.0944f + seed) * 0.008f * idle;  // 3 s idle period
             float breathe = Mathf.Sin(t * 2.6f + seed) * idle;
-            var upper = Quaternion.Euler(lean + breathe * 0.8f, -s * 6f * weight, roll + c * 3f * weight - sway * 120f * idle);
+            var upper = Quaternion.Euler(lean + breathe * 0.8f + (pose != null ? pose.Lean * kk : 0f), -s * 6f * weight, roll + c * 3f * weight - sway * 120f * idle);
             if (hips != null)
             {
                 hips.localPosition = hipsRest + new Vector3(sway, breathe * 0.002f, 0f);
@@ -132,7 +215,8 @@ namespace Pez.View
             var rigL = PezMotion.FindDeep(root, "leg_l");
             var rigR = PezMotion.FindDeep(root, "leg_r");
             if (rigHips != null && rigL != null && rigR != null && rigL.parent == root && rigR.parent == root)
-                return new Gait(body, rigHips, rigL, rigR, rigL.localPosition.y, root.localScale.y, seed);
+                return new Gait(body, rigHips, rigL, rigR, rigL.localPosition.y, root.localScale.y, seed,
+                                PezMotion.FindDeep(rigL, "knee_l"), PezMotion.FindDeep(rigR, "knee_r")); // knees, if it has them
             var kids = new List<Transform>();
             foreach (Transform c in root) kids.Add(c);
             var hips = new GameObject("hips").transform;

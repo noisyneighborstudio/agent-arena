@@ -332,6 +332,7 @@ namespace Pez.Sim
         {
             Name = bw.Name, Damage = dmg, Range = range, Cooldown = cd, ProjectileSpeed = bw.ProjectileSpeed, SplashRadius = bw.SplashRadius,
             HitsGround = bw.HitsGround, HitsAir = bw.HitsAir, VsInfantry = bw.VsInfantry, VsVehicle = bw.VsVehicle, VsStructure = bw.VsStructure, VsAir = bw.VsAir,
+            ArmTime = bw.ArmTime,
         };
 
         /// <summary>

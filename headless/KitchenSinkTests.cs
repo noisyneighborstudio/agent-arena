@@ -85,6 +85,7 @@ namespace Pez.Headless
             Check(Count("captured") >= 5 && w.Entities.Count(e => !e.Dead && e.Def.Key == "derrick" && e.Team < 0) >= 1, $"an engineer keeps capturing a neutral derrick ({Count("captured")} captures)");
             Check(Count("boarded") >= 16 && Count("unloaded") >= 4, $"transports load and unload ({Count("boarded")} boardings, {Count("unloaded")} unloads)");
             Check(landed && Count("refuelled") >= 5, $"an aircraft lands and refuels ({Count("refuelled")} times)");
+            Check(Count("heal") >= 100, $"the field medic keeps healing its rifleman ({Count("heal")} heal pulses)");
             Check(Count("destroyed") >= 100, $"wrecks and explosions keep coming ({Count("destroyed")} destroyed events)");
             var firing = w.Entities.Count(e => !e.Dead && e.Team == KitchenSink.Blue && e.IsArmed && w.Time - e.LastFiredAt < 10f);
             Check(firing >= 17, $"every weapon in the combat range is firing ({firing} shooters fired in the last 10 s)");

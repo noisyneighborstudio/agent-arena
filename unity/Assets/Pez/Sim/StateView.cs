@@ -587,8 +587,11 @@ namespace Pez.Sim
         ///     stop collects most (it hopped tile to tile on thin ore); vehicles drive where they face (no crabwise slide as
         ///     they turn); a unit as close as it can get to a point another stands on has arrived; a path through something
         ///     built since is planned again; the dance guard only counts time a unit spends moving.
+        /// 43: C4 has to be planted: a commando must stand still in range of the same target for 1.5 s before his first
+        ///     charge goes off (walking off or switching target starts it again; then one every 5 s as before). A medic
+        ///     turns to face the soldier it's healing.
         /// </summary>
-        public const int RulesVersion = 42;
+        public const int RulesVersion = 43;
 
         public static JObj Rules()
         {
@@ -602,7 +605,7 @@ namespace Pez.Sim
                 "Assign trucks to the ore you need with harvest + ore. Crystal and uranium sit in the contested middle.",
                 "Deliveries take time: a mining truck lines up 2 tiles out from a drop-off's bay (command_center, mining_refinery or outpost; the bay is on the south side unless terrain or a building blocks it: a drop-off placed for you, without x,y, goes where its south lane is clear, and with your own x,y it is on the first clear side), turns, backs in and unloads, one truck per bay at a time; the others wait beside the lane (my_units shows each truck's dock status). A full cycle in the bay is about 5 s, so a big truck fleet needs more drop-offs. Nothing can be built on a truck lane.",
                 "Expand: build an outpost_truck at the factory, drive it to a remote ore field and deploy it. Outposts are drop-off points and let you build defenses there.",
-                "Specialists: engineers capture enemy buildings below 50% HP; snipers delete infantry from range 9; commandos C4 buildings. APCs and transport choppers carry infantry (load/unload). Mine layers plant hidden mines. Flak tracks are mobile anti-air. Mammoth tanks are super-heavy and self-repair to 50%. Recon drones are cheap flying scouts.",
+                "Specialists: engineers capture enemy buildings below 50% HP; snipers delete infantry from range 9; commandos C4 buildings (each charge has to be planted: 1.5 s standing still beside the target before the first goes off). APCs and transport choppers carry infantry (load/unload). Mine layers plant hidden mines. Flak tracks are mobile anti-air. Mammoth tanks are super-heavy and self-repair to 50%. Recon drones are cheap flying scouts.",
                 "Repair trucks (factory) fix vehicles, aircraft and structures for steel; medics (barracks) heal infantry for free. Both auto-tend anything damaged within 6 tiles when idle, so park them behind your army.",
                 "Aircraft ignore terrain. Only rockets, lasers, SAMs, gunships (and weakly, rifles/mg) can hit them. Stealth bombers are invisible except within 3 tiles of your units or inside your radar dome range.",
                 "Regrowth: mined surface fields slowly grow back toward what they started with: from ore a field still has (spreading to its neighbouring tiles), or from its root (the richest tile) once it's mined to nothing. Fastest in the middle of the map (a mined-bare map earns back a few ore/s, most of it in the middle), barely at all in the corners. Nothing regrows under a structure or on a tile a truck is working, and it stops at sudden death (the match clock). Deep mines (4 ore/s each) remain the bigger income: regrowth is the long tail that makes holding the middle pay.",
@@ -658,6 +661,7 @@ namespace Pez.Sim
             if (d.FuelDepot) o.Set("refuels", "ground vehicles parked next to it");
             if (d.Helipad) o.Set("refuels", "aircraft that land on it");
             if (d.Weapon != null) o.Set("weapon", $"{d.Weapon.Name}: {d.Weapon.Damage} dmg, range {d.Weapon.Range}, every {d.Weapon.Cooldown}s; " +
+                (d.Weapon.ArmTime > 0 ? $"planted: stand still in range of the same target {d.Weapon.ArmTime}s before the first goes off; " : "") +
                 (d.Weapon.HitsGround ? $"x{d.Weapon.VsInfantry} vs infantry, x{d.Weapon.VsVehicle} vs vehicles, x{d.Weapon.VsStructure} vs structures" : "air only") +
                 (d.Weapon.HitsAir ? $", x{d.Weapon.VsAir} vs aircraft" : ", can't hit aircraft") +
                 (d.Weapon.Range > d.Sight ? $"; outranges its own sight ({d.Sight}): needs a spotter to fire at full range" : ""));

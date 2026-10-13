@@ -18,7 +18,7 @@ namespace Pez.View
         static FxSystems inst;
         public static FxSystems I => inst != null ? inst : inst = Create();
 
-        public ParticleSystem Flash, Fire, Smoke, Dust, Sparks, Shards, Ring, Scorch, Pool, Flame, Plume;
+        public ParticleSystem Flash, Fire, Smoke, Dust, Sparks, Shards, Ring, Scorch, Pool, Flame, Plume, Motes;
         Transform ground;
         /// <summary>
         /// The prevailing wind (world units/s, horizontal): one wind over the whole map, so every plume leans the same
@@ -205,6 +205,11 @@ namespace Pez.View
             col.bounce = 0.38f; col.dampen = 0.35f; col.lifetimeLoss = 0f; col.radiusScale = 0.3f;
             col.sendCollisionMessages = false;
 
+            // Motes: soft glowing specks that float up and wink out (a soldier being healed). Light, slowed by drag, no wind.
+            Motes = Make("motes", Mat("PezFxGlow", 3022, ("_Shape", 0), ("_Opacity", 0), ("_Boost", 2.2f)), 600, -0.12f, 1.8f, glowStreams);
+            SizeOverLife(Motes, new Keyframe(0, 0.4f), new Keyframe(0.2f, 1f), new Keyframe(1, 0f));
+            ColorOverLife(Motes, Grad(new[] { (0f, Color.white), (1f, Color.white) }, new[] { (0f, 0f), (0.15f, 1f), (0.7f, 0.8f), (1f, 0f) }));
+
             // Debris: faceted shards, simulated in StepShards (gravity, drag, bounce, friction, settle).
             Shards = Make("shards", Mat("PezFxShard", 2000), MaxShards, 0f, 0f, shardStreams, ParticleSystemRenderMode.Mesh);
             var shr = Shards.GetComponent<ParticleSystemRenderer>();
@@ -330,6 +335,7 @@ namespace Pez.View
             Emit(Pool, at, Vector3.zero, 0.1f, 0.2f, clear);
             Emit(Flame, at, Vector3.up, 0.1f, 0.2f, clear);
             Emit(Plume, at, Vector3.up, 0.1f, 0.2f, clear);
+            Emit(Motes, at, Vector3.up, 0.1f, 0.2f, clear);
             EmitShard(at + Vector3.down * 3f, Vector3.zero, 0.01f, 0.2f, clear);
         }
 

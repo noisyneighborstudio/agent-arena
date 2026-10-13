@@ -628,6 +628,8 @@ namespace Pez.Sim
                 float range = Defs.Get(sk).Weapon.Range * 0.8f;
                 Lane(sk, tk, 2, b, range, name);
             }
+            // In the gap between the columns, the medic.
+            FieldMedic(10, 14.25f);
             // The long-range gun under column one, its own spotter drone beside it (sight 7, range 12).
             Lane("long_range_artillery", "power_plant", 2, 30.5f, 10.5f, "Long-range artillery (range 12)", 13);
             Unit(Blue, "recon_drone", 7, 32.5f);
@@ -635,8 +637,8 @@ namespace Pez.Sim
             float a0 = 18;
             Lane("artillery", "power_plant", a0, 2, 9.5f, "Artillery (range 11, lobbed shells)", 13);
             Unit(Blue, "recon_drone", a0 + 5, 4); // a spotter: artillery needs someone else to see its target
-            Lane("sniper", "rifleman", a0, 6, 7.2f, "Sniper");
-            Lane("commando", "barracks", a0, 10, 2.3f, "Commando C4");
+            SniperLane(a0, 6, 7.2f);
+            CommandoLane(a0, 10, 2.3f);
             Lane("flak_track", "recon_drone", a0, 14, 6.2f, "Flak (air bursts)");
             Lane("gunship", "light_tank", a0, 18, 4.4f, "Gunship rockets");
             Lane("stealth_bomber", "outpost", a0, 22.5f, 0f, "Stealth bomber (bombs)");
@@ -669,6 +671,38 @@ namespace Pez.Sim
                 Item("Laser tower", "Laser tower tracking a heavy tank across its field of fire: the head turns with it and dips as it closes, the coils charge bottom to top before each beam, their cyan light on the pylon, pad and ground swelling with the charge and flashing with the shot", a0 + 3, 33, 8);
             }
             Lane("reaper_drone", "light_tank", a0 + 14, 2, 5.5f, "Reaper hellfire (flies high)");
+            // Rockets at aircraft: a rocket soldier aims its tube up (about 35 degrees) at a gunship hovering 3 tiles off.
+            Lane("rocket_soldier", "gunship", a0 + 10, 10, 3f, "Rockets at aircraft");
+        }
+
+        /// <summary>A Blueberry medic at its post at (a, b) and a rifleman 3.5 to its right. Every cycle the rifleman is hurt
+        /// (down to 35%); the medic, idle, goes to tend it on its own (as medics do with anyone hurt within 6 tiles), kneels
+        /// and heals it whole (about 4 s at 15 HP/s), gets up, and walks back to its post. About 14 s a loop.</summary>
+        void FieldMedic(float a, float b)
+        {
+            var post = P(a, b);
+            var medic = Unit(Blue, "medic", a, b, AlongRight, pin: false);
+            var patient = Unit(Blue, "rifleman", a + 3.5f, b, Toward);
+            int phase = 0; float since = T;
+            holds.Add(() =>
+            {
+                if (medic.Dead || patient.Dead) return;
+                switch (phase)
+                {
+                    case 0: // all well, the medic at its post; then a hit
+                        if (T - since > 2.5f) { patient.Hp = patient.Def.MaxHp * 0.35f; phase = 1; since = T; }
+                        break;
+                    case 1: // the medic goes over and tends it until it's whole
+                        if ((patient.Hp >= patient.Def.MaxHp - 0.5f && medic.Order != Order.Repair && T - since > 1f) || T - since > 20f) { phase = 2; since = T; }
+                        break;
+                    case 2: // a beat, then back to its post
+                        if (T - since < 1.5f) break;
+                        if (medic.Order == Order.Idle && Vec2.Dist(medic.Pos, post) > 0.6f) w.SetOrder(medic, Order.Move, post);
+                        else if (medic.Order == Order.Idle) { phase = 0; since = T; }
+                        break;
+                }
+            });
+            Item("Field medic", "a rifleman is hurt; the medic walks over, kneels facing it and heals it with its spray (the heal beam, motes rising off the patient, who looks round at it), stands and walks back to its post; loops", a + 1.75f, b, 7);
         }
 
         /// <summary>A Blueberry shooter at (a, b) and a Cherry target `dist` to its right, fired on forever.</summary>
@@ -686,6 +720,43 @@ namespace Pez.Sim
                     if (shooter.Order != Order.Attack || shooter.TargetId != target.Id) w.SetOrder(shooter, Order.Attack, target.Center, target.Id);
                 });
             Item(name, $"{Pretty(shooterKey)} firing at a {Pretty(targetKey)}", a + dist / 2, b, zoom);
+        }
+
+        /// <summary>The commando's lane: he walks up to a Cherry barracks `dist` to his right, kneels and plants his C4 (the
+        /// first goes off after the 1.5 s arming, the next on the 5 s cooldown); in the last 4 s of every 16 he walks back to
+        /// his post, then comes in again, so the first charge's plant shows every loop.</summary>
+        void CommandoLane(float a, float b, float dist)
+        {
+            var target = Bldg(Red, "barracks", a + dist + 1.4f, b);
+            var cmd = Unit(Blue, "commando", a, b, AlongRight, pin: false);
+            var post = P(a, b);
+            holds.Add(() =>
+            {
+                if (cmd.Dead || target.Dead) return;
+                if (T % 16f >= 12f) { if (cmd.Order != Order.Move && Vec2.Dist(cmd.Pos, post) > 0.4f) w.SetOrder(cmd, Order.Move, post); }
+                else if (cmd.Order != Order.Attack || cmd.TargetId != target.Id) w.SetOrder(cmd, Order.Attack, target.Center, target.Id);
+            });
+            Item("Commando C4", "Commando walking up to a Barracks, kneeling and planting C4 on its wall (it blinks faster until it blows: the first after the 1.5 s arming, then every 5 s); every 16 s he steps back and comes in again", a + dist / 2, b, 8);
+        }
+
+        /// <summary>The sniper's lane: it shoots at a Cherry rifleman `dist` to its right (it kneels to shoot, the rifle up,
+        /// one shot every 3 s); in the last 4 s of every 12 it gets up and walks about a tile back or forward to its other
+        /// spot, where it settles and shoots again; forever. In range (9) from both spots.</summary>
+        void SniperLane(float a, float b, float dist)
+        {
+            var target = Unit(Red, "rifleman", a + dist, b, AlongLeft);
+            var sniper = Unit(Blue, "sniper", a, b, AlongRight, pin: false);
+            var spots = new[] { P(a, b), P(a + 2f, b) };   // the other a tile closer (the far one must stay inside 95% of its range)
+            holds.Add(() =>
+            {
+                if (sniper.Dead || target.Dead) return;
+                // The last 4 s of each 12, it heads for the other spot; there (or the rest of the time) it shoots.
+                int next = 1 - (int)(T / 12f) % 2;
+                bool relocate = T % 12f >= 8f && Vec2.Dist(sniper.Pos, spots[next]) > 0.4f;
+                if (relocate) { if (sniper.Order != Order.Move) w.SetOrder(sniper, Order.Move, spots[next]); }
+                else if (sniper.Order != Order.Attack || sniper.TargetId != target.Id) w.SetOrder(sniper, Order.Attack, target.Center, target.Id);
+            });
+            Item("Sniper", "Sniper kneeling to shoot a Rifleman (the scope glints before each shot, the bolt cycles after it), then every 12 s getting up and walking to its other spot", a + dist / 2, b, 8);
         }
 
         /// <summary>The gun turret at (a, b) tracking a Cherry light tank that drives back and forth across its front, 4 to 4.7
@@ -719,13 +790,19 @@ namespace Pez.Sim
             {
                 var (key, name) = lanes[j];
                 float b = 2 + 2.8f * j;
-                var u = Unit(Blue, key, 2, b, AlongRight, pin: false);
-                if (u.IsHarvester) { u.Cargo = u.Def.HarvestCapacity; u.CargoType = Map.Iron; }
-                var from = P(2, b); var to = P(18, b);
-                void Go() { w.SetOrder(u, Order.Move, to); u.Waypoints.Add(from); u.WaypointLoop = true; }
-                Go();
-                holds.Add(() => { if (!u.Dead && u.Order != Order.Move) Go(); if (u.IsHarvester) u.Cargo = u.Def.HarvestCapacity; });
-                Item(name, "moving back and forth", 10, b, 8);
+                // The infantry lane is a rank of every soldier side by side, so their walks can be compared.
+                var keys = key == "rifleman" ? new[] { "rifleman", "rocket_soldier", "laser_trooper", "medic", "engineer", "sniper", "commando" } : new[] { key };
+                for (int i = 0; i < keys.Length; i++)
+                {
+                    float bi = b + (i - (keys.Length - 1) / 2f) * 0.42f;   // a soldier is 0.4 across
+                    var u = Unit(Blue, keys[i], 2, bi, AlongRight, pin: false);
+                    if (u.IsHarvester) { u.Cargo = u.Def.HarvestCapacity; u.CargoType = Map.Iron; }
+                    var from = P(2, bi); var to = P(18, bi);
+                    void Go() { w.SetOrder(u, Order.Move, to); u.Waypoints.Add(from); u.WaypointLoop = true; }
+                    Go();
+                    holds.Add(() => { if (!u.Dead && u.Order != Order.Move) Go(); if (u.IsHarvester) u.Cargo = u.Def.HarvestCapacity; });
+                }
+                Item(name, keys.Length > 1 ? "every soldier side by side, walking back and forth" : "moving back and forth", 10, b, 8);
             }
         }
 
@@ -819,8 +896,9 @@ namespace Pez.Sim
             Bldg(Red, "radar_dome", 40, 18);
             Item("Radar contacts", "a Cherry radar dome sweeps; on each new contact (an aircraft crossing into its range, the gunship lifting off) it swings onto it, follows it 1 s and sweeps on; its beacon double-flashes while it holds contacts", 40, 18, 8);
 
-            Transport("apc", "rifleman", 4, 4, "APC loading");
-            Transport("transport_chopper", "rocket_soldier", 18, 4, "Transport chopper loading");
+            // Mixed squads, so every soldier is seen boarding and stepping back out.
+            Transport("apc", new[] { "rifleman", "medic", "engineer", "sniper" }, 4, 4, "APC loading");
+            Transport("transport_chopper", new[] { "rocket_soldier", "laser_trooper", "commando", "rifleman" }, 18, 4, "Transport chopper loading");
 
             var stranded = Unit(Blue, "light_tank", 42, 2);
             fuelExempt.Add(stranded.Id);
@@ -828,16 +906,16 @@ namespace Pez.Sim
             Item("Stranded vehicle", "out of fuel: hazard-striped fuel bar, can't move", 42, 2);
         }
 
-        /// <summary>Infantry walk up and board a transport, ride 3 s, get out, walk back; forever.</summary>
-        void Transport(string carrierKey, string paxKey, float a, float b, string name)
+        /// <summary>A squad of infantry (one of each of `paxKeys`) walk up and board a transport, ride 3 s, get out, walk back; forever.</summary>
+        void Transport(string carrierKey, string[] paxKeys, float a, float b, string name)
         {
             var carrier = Unit(Blue, carrierKey, a, b, AlongRight);
             var pax = new List<Entity>();
             var muster = new List<Vec2>();
-            for (int i = 0; i < 4; i++)
+            for (int i = 0; i < paxKeys.Length; i++)
             {
                 muster.Add(P(a + 4 + 1.2f * i, b - 2.5f));
-                pax.Add(Unit(Blue, paxKey, a + 4 + 1.2f * i, b - 2.5f, AlongLeft, pin: false));
+                pax.Add(Unit(Blue, paxKeys[i], a + 4 + 1.2f * i, b - 2.5f, AlongLeft, pin: false));
             }
             int phase = 0; float since = 0;
             holds.Add(() =>
@@ -859,7 +937,7 @@ namespace Pez.Sim
                         break;
                 }
             });
-            Item(name, "infantry walk up and board (shrinking into it), ride, step back out of it and walk back; loops", a + 3, b - 1, 8);
+            Item(name, $"a squad ({string.Join(", ", paxKeys.Select(Pretty))}) walk up and board (shrinking into it), ride, step back out of it and walk back; loops", a + 3, b - 1, 8);
         }
 
         void Wrecks()
@@ -1033,7 +1111,7 @@ namespace Pez.Sim
                 else if (taken < 0) taken = T;
                 else if (T - taken > 10f) { site.Team = -1; site.Working = false; eng = null; }
             });
-            Item("Derrick captured", "an engineer walks up and takes the neutral derrick: it turns Cherry's; released again after 10 s; loops", 46, 5, 9);
+            Item("Derrick captured", "an engineer walks up with his hat lamp lit and his spanner raised, knocks the derrick three times and the third blow takes it (it turns Cherry's), then he walks in; released again after 10 s; loops", 46, 5, 9);
 
             // Defence upkeep: a turret whose upkeep isn't paid stands dark and still, beside one that's paid; and one of
             // Lime's on its team's low power (the Power district's Lime base draws more than its plant makes).

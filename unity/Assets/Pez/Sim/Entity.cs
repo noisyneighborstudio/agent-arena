@@ -46,6 +46,10 @@ namespace Pez.Sim
         public Vec2 ProgressPos;
         public float ProgressAt, GhostUntil, ProgressDist;
         public float LastFiredAt = -999;
+        // Planting a charge (a weapon with an ArmTime: C4): how long it has worked ArmingTarget, in range and standing still,
+        // without a break. Its first shot goes off at the weapon's ArmTime.
+        public float Arming;
+        public int ArmingTarget;
         // Queued waypoints for move / attack_move (taken in order; with WaypointLoop, forever, as a patrol).
         public readonly List<Vec2> Waypoints = new List<Vec2>();
         public bool WaypointLoop;
