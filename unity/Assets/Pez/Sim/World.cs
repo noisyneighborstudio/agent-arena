@@ -656,15 +656,17 @@ namespace Pez.Sim
             var def = Def(key);
             var e = NewEntity(team, def);
             var jitter = new Vec2((float)(rng.NextDouble() - 0.5) * 0.6f, (float)(rng.NextDouble() - 0.5) * 0.6f);
+            // The doorway: south, where the models' doors are, except a drop-off's, which faces its bay (its model is turned to match).
+            var door = at.IsStructure && at.Def.DropOff ? BaySides[DoorSide(at)] : BaySides[0];
             if (def.IsAir) e.Pos = e.PrevPos = at.Center + jitter;
             else
             {
-                // Exit just below the producer's footprint.
-                var exit = new Int2(at.Origin.X + at.Def.SizeX / 2, at.Origin.Y - 1);
+                // Exit just outside the producer's footprint, in the middle of its door side.
+                var exit = Int2.Of(at.Center + door * ((MathF.Abs(door.X) > 0.5f ? at.Def.SizeX : at.Def.SizeY) / 2f + 0.5f));
                 var tile = Paths.NearestPassable(exit);
                 e.Pos = e.PrevPos = tile.Center + jitter;
             }
-            e.Facing = e.TurretFacing = -MathF.PI / 2;
+            e.Facing = e.TurretFacing = door.Angle;
             e.GuardPos = e.Pos;
             e.FuelCap = DroneFuel(def);
             e.Fuel = e.FuelMax;
@@ -673,7 +675,8 @@ namespace Pez.Sim
             else if (!def.IsAir)
             {
                 // Roll a few tiles clear of the door so new units don't park in front of it (or a refinery's dock).
-                var clear = Paths.NearestPassable(Int2.Of(e.Pos + new Vec2((float)(rng.NextDouble() - 0.5) * 4f, -3f))).Center;
+                var across = new Vec2(-door.Y, door.X);
+                var clear = Paths.NearestPassable(Int2.Of(e.Pos + across * ((float)(rng.NextDouble() - 0.5) * 4f) + door * 3f)).Center;
                 SetOrder(e, Order.Move, clear);
                 e.GuardPos = clear;
             }
@@ -2076,16 +2079,26 @@ namespace Pez.Sim
 
         public (Vec2 bay, Vec2 head, float facing, bool laneOk) Bay(Int2 origin, EntityDef def, int side = 0)
         {
+            var (open, clear) = OpenBaySide(origin, def, side);
+            var (bay, head, f) = BayOn(origin, def, BaySides[open]);
+            return (bay, head, f, clear);
+        }
+
+        /// <summary>The side a bay really opens on: its own unless that lane is blocked, then the first clear one (clear is false if none is, and then it is its own).</summary>
+        (int side, bool clear) OpenBaySide(Int2 origin, EntityDef def, int side)
+        {
             side = Math.Clamp(side, 0, BaySides.Length - 1);
             for (int k = 0; k < BaySides.Length; k++)
             {
                 int i = k == 0 ? side : (k - 1 < side ? k - 1 : k); // its own side, then the rest in order
-                var (bay, head, f) = BayOn(origin, def, BaySides[i]);
-                if (LaneClear(bay, head)) return (bay, head, f, true);
+                var (bay, head, _) = BayOn(origin, def, BaySides[i]);
+                if (LaneClear(bay, head)) return (i, true);
             }
-            var (b0, h0, f0) = BayOn(origin, def, BaySides[side]);
-            return (b0, h0, f0, false);
+            return (side, false);
         }
+
+        /// <summary>The side (an index into BaySides) a drop-off's door faces: where its bay opens now.</summary>
+        int DoorSide(Entity s) => OpenBaySide(s.Origin, s.Def, s.BaySide).side;
 
         static (Vec2 bay, Vec2 head, float facing) BayOn(Int2 origin, EntityDef def, Vec2 n)
         {

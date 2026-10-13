@@ -1438,13 +1438,16 @@ namespace Pez.View
                             if (producer != null)
                             {
                                 if (def2.IsAir && producer.E.Def.Key == "airfield") { producer.Rig.Motion.SnapLiftDown(); producer.Rig.Motion.SetLiftUp(true); }
-                                // Start at the door (south face) and roll out to where the sim placed it.
+                                // Start at the door (south face, or a drop-off's bay side: where the sim puts new units) and roll out to where it placed it.
                                 var c = producer.E.Center;
                                 // From 0.6 inside the door (hidden in the dark bay) when the model has one.
                                 var door = producer.Rig.HasModel ? PezMotion.FindDeep(producer.Rig.Model.transform, "door") : null;
+                                float doorAt = World.DoorFacing(producer.E);
+                                var doorDir = new Vec2(Mathf.Cos(doorAt), Mathf.Sin(doorAt));
+                                float inside = (Mathf.Abs(doorDir.X) > 0.5f ? producer.E.Def.SizeX : producer.E.Def.SizeY) * 0.5f - 0.3f; // 0.3 in from the wall
                                 tv2.SpawnFrom = def2.IsAir ? W(c, 0.2f)
                                               : door != null ? new Vector3(door.position.x, 0f, door.position.z) + producer.Rig.Model.transform.forward * 0.6f
-                                              : W(new Vec2(c.X, producer.E.Origin.Y + 0.3f));
+                                              : W(c + doorDir * inside);
                                 tv2.SpawnT = 0;
                             }
                         }

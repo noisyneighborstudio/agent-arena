@@ -24,6 +24,7 @@ namespace Pez.Headless
             ConstructionTruck();
             SymmetricPlacement();
             BaysFaceTheOre();
+            UnitsLeaveByTheDoor();
             MatchClock();
             Derricks();
             AttackUntilCapturable();
@@ -348,6 +349,43 @@ namespace Pez.Headless
             Step(oldGame, 10);
             Check(oldDropOffs.Count == 4 && oldDropOffs.All(e => e.BaySide == 0) && oldGame.World.Errors == 0,
                   $"a snapshot from before bays turned loads with every bay south, and plays on ({oldDropOffs.Count} drop-offs, sides {string.Join(", ", oldDropOffs.Select(e => e.BaySide))}, {oldGame.World.Errors} errors: {oldGame.World.LastError})");
+        }
+
+        /// <summary>New ground units appear at their producer's door: a drop-off's is on its bay side (the view turns the model to match), and they head out from it.</summary>
+        static void UnitsLeaveByTheDoor()
+        {
+            // Open ground round seat 0's command center, so every side's lane is clear.
+            var w = new World(2, 7, 80);
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            for (int y = hq.Origin.Y - 8; y <= hq.Origin.Y + 11; y++)
+                for (int x = hq.Origin.X - 8; x <= hq.Origin.X + 11; x++)
+                    if (w.Map.InBounds(x, y) && w.Map.Occupant[w.Map.Idx(x, y)] == 0) { w.Map.Tiles[w.Map.Idx(x, y)] = Terrain.Grass; w.Map.Ore[w.Map.Idx(x, y)] = 0; }
+            var sides = new[] { (side: 0, name: "south", dx: 0, dy: -1), (side: 1, name: "east", dx: 1, dy: 0), (side: 2, name: "west", dx: -1, dy: 0), (side: 3, name: "north", dx: 0, dy: 1) };
+            var wrong = new List<string>();
+            foreach (var s in sides)
+            {
+                hq.BaySide = s.side;
+                var truck = w.SpawnUnit(0, "mining_truck", hq);
+                var rifle = w.SpawnUnit(0, "rifleman", hq);
+                foreach (var u in new[] { truck, rifle })
+                {
+                    var off = u.Pos - hq.Center;
+                    float along = off.X * s.dx + off.Y * s.dy, sideways = Math.Abs(off.X * s.dy) + Math.Abs(off.Y * s.dx);
+                    // Just outside the wall on that side (the footprint is 3x3: 1.5 to the wall), near the middle of it, facing out.
+                    bool placed = along > 1.5f && along < 3.2f && sideways < 1f && MathF.Cos(u.Facing - new Vec2(s.dx, s.dy).Angle) > 0.99f;
+                    if (!placed) wrong.Add($"{u.Def.Key} from the {s.name} bay at {off} facing {u.Facing:0.00}");
+                }
+                // A unit with no rally point rolls a few tiles on, away from the door (its first move, which was always south).
+                var rolled = rifle.OrderPos - rifle.Pos;
+                if (rifle.Order != Order.Move || rolled.X * s.dx + rolled.Y * s.dy < 1.5f) wrong.Add($"rifleman from the {s.name} bay rolls {rolled} ({rifle.OrderName})");
+            }
+            Check(wrong.Count == 0, "a command center's new units appear on its bay side, facing out, and roll on away from the door" + (wrong.Count > 0 ? $" (not: {string.Join("; ", wrong)})" : ""));
+
+            // A building without a bay door keeps its south one.
+            hq.BaySide = 3;
+            var rax = w.SpawnStructure(0, "barracks", w.FindPlacement(0, "barracks").Value, 1f);
+            var recruit = w.SpawnUnit(0, "rifleman", rax);
+            Check(recruit.Pos.Y < rax.Center.Y - 1f && MathF.Abs(recruit.Facing + MathF.PI / 2) < 0.01f, $"a barracks still opens south (a recruit at {recruit.Pos - rax.Center})");
         }
 
         static void SymmetricPlacement()
