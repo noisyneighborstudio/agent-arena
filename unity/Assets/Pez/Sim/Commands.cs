@@ -426,6 +426,9 @@ namespace Pez.Sim
             float sinceHit = w.Time - s.LastHitTime;
             if (sinceHit < SellHitCooldown)
                 return Err($"{s.Def.Key} #{s.Id} was hit {sinceHit:0} s ago: a building that's under fire can't be sold. Defend or repair it, and you can sell it in {MathF.Ceiling(SellHitCooldown - sinceHit):0} s if nobody hits it again");
+            // The same for a burning one: it's dying to whoever set the fire, who gets the kill and the salvage.
+            if (s.Burning)
+                return Err($"{s.Def.Key} #{s.Id} is on fire ({StateView.Pct(s.Hp / s.Def.MaxHp)}% health) and can't be sold while it burns. Repair it above {StateView.Pct(World.BurnBelow)}% health (repair truck) to put the fire out, then you can sell it");
             // Selling the last of a tech building locks out what needs it: ask first (it's easy to sell your own tech gate).
             var lost = w.Owned(team).Any(o => o != s && o.IsStructure && o.Def.Key == s.Def.Key) ? new List<string>()
                 : Defs.All.Values.Where(d => d.Buildable && d.OwnerTeam < 0 && (d.Requires.Contains(s.Def.Key) || Defs.ProducerKey(d.BuiltBy) == s.Def.Key)).Select(d => d.Key).ToList();

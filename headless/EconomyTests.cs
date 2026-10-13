@@ -73,6 +73,16 @@ namespace Pez.Headless
             Run(w, 4.5f);
             var yes = Commands.Execute(w, 1, Cmd("type", "sell", "structure_id", pp.Id, "confirm", true));
             Check(Ok(yes) && pp.Dead, $"10 s after the last hit it can be sold: {Said(yes)}");
+            // A burning building is dying to whoever set the fire: no selling it until it's repaired above the burn line.
+            var blaze = w.SpawnStructure(1, "power_plant", w.FindPlacement(1, "power_plant").Value, 1f);
+            blaze.Hp = blaze.Def.MaxHp * 0.2f;
+            Run(w, 1);
+            var nb = Commands.Execute(w, 1, Cmd("type", "sell", "structure_id", blaze.Id, "confirm", true));
+            Check(blaze.Burning && !Ok(nb) && !blaze.Dead && Said(nb).Contains("on fire") && Said(nb).Contains("30%"), $"a burning building can't be sold: {Said(nb)}");
+            blaze.Hp = blaze.Def.MaxHp * 0.5f;
+            Run(w, 1);
+            var nb2 = Commands.Execute(w, 1, Cmd("type", "sell", "structure_id", blaze.Id, "confirm", true));
+            Check(!blaze.Burning && Ok(nb2) && blaze.Dead, $"repaired above the burn line, the fire is out and it sells: {Said(nb2)}");
             // Unfinished buildings are covered too.
             var site = w.SpawnStructure(1, "factory", w.FindPlacement(1, "factory").Value, 0.3f);
             w.Hurt(site, 10, null, 0);
