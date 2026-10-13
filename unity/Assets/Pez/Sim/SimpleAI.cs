@@ -24,6 +24,10 @@ namespace Pez.Sim
         bool wantCopper = true, wantCrystal, wantUranium; // ores the trucks go for: on below a low mark, off above a higher one
         bool wentDeep; // it has had a deep mine or a rig: keeps drilling when the surface looks fine again
         const int MaxDeepMines = 4; // iron and copper mines at once (each draws 50 power); crystal and uranium have a slot of their own each
+        const int ThinOre = 3000; // ore of the kinds it wants within reach of its drop-offs: below this the home fields are thin, and it looks farther afield
+        const float EnemyBerth = 30f; // an outpost site keeps this far from every enemy structure it knows of
+        const float MaxExpansion = 170f; // and is no more than this far from its nearest drop-off
+        const int MaxOutposts = 4; // outposts at once while the ore within reach is thin (two otherwise)
 
         static readonly string[] BuildOrder =
         {
@@ -64,6 +68,31 @@ namespace Pez.Sim
             foreach (var k in BuildOrder)
                 if (EconomyStructures.Contains(k) && count(k) == 0) return k;
             return null;
+        }
+
+        /// <summary>
+        /// The surface fields in ground the team has explored, one per field (found at its root tile, as regrowth knows them): where, which
+        /// ore (an index into Defs.Ores), and the field's own ore left now (salvage on it doesn't count).
+        /// </summary>
+        static List<(Vec2 at, int type, int ore)> KnownFields(World w, Team t)
+        {
+            var m = w.Map;
+            m.FieldIndex(out var tiles, out var roots);
+            var list = new List<(Vec2, int, int)>();
+            foreach (int i in tiles)
+            {
+                if (!roots[i] || !t.Explored[i]) continue;
+                int x = i % m.W, y = i / m.W, type = m.OreBaseType[i], ore = 0;
+                for (int dy = -4; dy <= 4; dy++)
+                    for (int dx = -4; dx <= 4; dx++)
+                    {
+                        if (!m.InBounds(x + dx, y + dy)) continue;
+                        int j = m.Idx(x + dx, y + dy);
+                        if (m.OreBase[j] > 0 && m.OreBaseType[j] == type && m.OreType[j] == type) ore += m.FieldOre(j);
+                    }
+                list.Add((new Vec2(x + 0.5f, y + 0.5f), type, ore));
+            }
+            return list;
         }
 
         public SimpleAI(int team, bool passive = false) { this.team = team; Passive = passive; }
@@ -230,12 +259,55 @@ namespace Pez.Sim
             bool Queued(string k) => t.UnitQueues[Producer.Factory].Any(q => q.Key == k);
             bool wantRig = deepOn && w.MissingPrereq(team, Defs.Get("drill_rig")) == null && unsent < usable && rigsInFlight < 2;
             bool wantSurveyor = deepOn && surveyors.Count == 0 && usable < 2 && !Queued("geological_surveyor");
+
+            // ---- The expansion plan, worked out once: where the next outpost goes.
+            // Trucks work a field on their own only within a leash of a finished drop-off (World.LeashDist); past it they go where they
+            // are sent. When the ore within the leash runs thin, the next outpost goes to the nearest field, or the nearest base site
+            // nobody holds (the rules call empty corners expansion sites), beyond it; trucks then go there (see the trucks below).
+            var drops = structures.Where(s => s.IsComplete && s.Def.DropOff).Select(s => s.Center).ToList();
+            bool Reached(Vec2 p) => drops.Any(dp => Vec2.Dist(dp, p) <= World.LeashDist);
+            var foes = t.KnownEnemyStructures.Values.Where(k => k.team >= 0 && k.key != "derrick").Select(k => k.origin.Center).ToList();
+            bool NearFoe(Vec2 p) => foes.Any(f => Vec2.Dist(f, p) < EnemyBerth);
+            var fields = KnownFields(w, t);
+            bool homeThin = fields.Where(f => OreWanted(f.type) && Reached(f.at)).Sum(f => f.ore) < ThinOre;
+            Vec2? ExpansionSite()
+            {
+                Vec2? best = null; float bestScore = float.MaxValue;
+                void Consider(Vec2 at, float bonus)
+                {
+                    if (Reached(at) || NearFoe(at)) return;
+                    float score = (drops.Count == 0 ? Vec2.Dist(at, t.StartPos) : drops.Min(dp => Vec2.Dist(dp, at))) - bonus; // a known field beats a guess
+                    if (score < bestScore && score + bonus <= MaxExpansion) { bestScore = score; best = at; }
+                }
+                foreach (var f in fields) if (f.ore >= 400 && OreWanted(f.type)) Consider(f.at, 25f);
+                var middle = new Vec2(w.Map.W / 2f, w.Map.H / 2f);
+                // (Not the corner across the map: with the rival's base somewhere unseen, the farthest site is the likeliest to be it.)
+                float nearestSite = w.Map.Spawns.Where(s => Vec2.Dist(s, t.StartPos) >= 20f).Select(s => Vec2.Dist(s, t.StartPos)).DefaultIfEmpty(0f).Min();
+                foreach (var s in w.Map.Spawns)
+                {
+                    if (Vec2.Dist(s, t.StartPos) < 20f || structures.Any(b => Vec2.Dist(b.Center, s) < 20f)) continue; // (the corners with a base on them)
+                    if (!t.Explored[w.Map.Idx((int)s.X, (int)s.Y)] && Vec2.Dist(s, t.StartPos) > 1.3f * nearestSite) continue;
+                    var at = s + (middle - s).Normalized * 7f; // where a corner's iron and copper lie
+                    if (t.Explored[w.Map.Idx((int)at.X, (int)at.Y)] && !fields.Any(f => f.ore >= 200 && Vec2.Dist(f.at, at) < 14f)) continue; // seen, and nothing there
+                    Consider(at, 0f);
+                }
+                return best;
+            }
+            bool outpostOnItsWay = mine.Any(e => e.Def.Key == "outpost_truck") || Queued("outpost_truck");
+            Vec2? expandTo = w.HasComplete(team, "electronics_plant") && !outpostOnItsWay && Count("outpost") < (homeThin ? MaxOutposts : 2) ? ExpansionSite() : null;
+            bool wantOutpost = expandTo.HasValue;
             // What it saves up for, so the army and the build order don't spend it as it arrives and the converters leave it alone:
             // the first two mines' rigs, or the surveyor that finds them. With the command center gone, the construction truck that
-            // puts one back comes before any of that (1500 steel is never there if the army spends it as it comes in).
+            // puts one back comes before any of that (1500 steel is never there if the army spends it as it comes in). With the ore
+            // within reach running thin, an outpost truck goes ahead of a rig it can't pay for yet, but only when the truck can be paid
+            // for now (half the price, and the ore comes in within minutes: with the trucks idle there is no steel coming in to save the
+            // rig's 800 from), or when there is no rig or surveyor to save for. Saving for the truck while it is out of reach too, or
+            // ahead of a rig it could buy, delayed the deep mines by more ore than the outposts brought (8 to 12 games a variant, 45 minutes).
             bool needHq = Count("command_center") == 0 && !mine.Any(e => e.Def.Key == "construction_truck") && !Queued("construction_truck") &&
                           w.HasComplete(team, "factory") && w.HasComplete(team, "electronics_plant");
-            string saving = needHq ? "construction_truck" : wantRig && (pumping < 2 || retireWanted) ? "drill_rig" : wantSurveyor && pumping == 0 ? "geological_surveyor" : null;
+            string deepSaving = wantRig && (pumping < 2 || retireWanted) ? "drill_rig" : wantSurveyor && pumping == 0 ? "geological_surveyor" : null;
+            bool outpostFirst = wantOutpost && homeThin && (deepSaving == null || (t.Missing(Defs.Get(deepSaving).Cost) != null && t.Missing(Defs.Get("outpost_truck").Cost) == null));
+            string saving = needHq ? "construction_truck" : outpostFirst ? "outpost_truck" : deepSaving;
             var savingCost = saving != null ? Defs.Get(saving).Cost : null;
             if (saving != t.SaveFor) { if (saving != null) Do(w, "type", "save_for", "unit", saving); else Do(w, "type", "save_for"); }
 
@@ -293,12 +365,15 @@ namespace Pez.Sim
             // what the next purchase costs in raw ore (the next structure, the first unbuilt step if it is waiting on ore while
             // others go ahead, a refinery it wants more of, and a truck while it is short of them). Not more: a truck lost far
             // afield shouldn't swallow the whole income.
+            // (Not for an extra refinery while a building the economy stands on is missing: the factory's copper comes from the very
+            // copper ore the refinery would hold back, so holding it for an optional refinery could keep the factory from ever being paid for.)
+            bool refineryHold = moreRefineries && FirstMissingEconomy(Count) == null;
             foreach (var ore in Defs.Ores)
             {
                 int hold = 0;
                 if (next != null && Defs.Get(next).Cost.TryGetValue(ore, out var c1)) hold = c1;
                 if (head != null && Defs.Get(head).Cost.TryGetValue(ore, out var c2)) hold = System.Math.Max(hold, c2);
-                if (moreRefineries && Defs.Get("mining_refinery").Cost.TryGetValue(ore, out var c3)) hold = System.Math.Max(hold, c3);
+                if (refineryHold && Defs.Get("mining_refinery").Cost.TryGetValue(ore, out var c3)) hold = System.Math.Max(hold, c3);
                 if (ore == "iron_ore" && (trucks.Count < 3 || (needTrucks && w.HasComplete(team, "factory")))) hold = System.Math.Max(hold, Defs.Get("mining_truck").Cost[ore]);
                 if ((t.Reserve.TryGetValue(ore, out var held) ? held : 0) != hold) Do(w, "type", "reserve", "item", ore, "amount", hold);
             }
@@ -317,23 +392,27 @@ namespace Pez.Sim
                 // Trucks that ran out of ore stand idle: every 20 s they look again (fields regrow, salvage lands).
                 bool retry = tr.Order == Order.Idle && (int)w.Time % 20 == 0;
                 if ((tr.HarvestType != type || retry) && tr.Cargo == 0 && tr.Order != Order.ReturnOre)
-                    Do(w, "type", "harvest", "units", new[] { tr.Id }, "ore", Defs.Ores[type]);
+                {
+                    // None of its ore within 80 tiles: it goes to the nearest field of that ore its drop-offs reach, an outpost's perhaps.
+                    var farField = tr.Order == Order.Idle && w.Map.NearestOre(tr.Pos, 80, null, type) == null
+                        ? fields.Where(f => f.type == type && f.ore >= 100 && Reached(f.at)).OrderBy(f => Vec2.Dist(f.at, tr.Pos)).Select(f => (Vec2?)f.at).FirstOrDefault() : null;
+                    if (farField.HasValue) Do(w, "type", "harvest", "units", new[] { tr.Id }, "ore", Defs.Ores[type], "x", farField.Value.X, "y", farField.Value.Y);
+                    else Do(w, "type", "harvest", "units", new[] { tr.Id }, "ore", Defs.Ores[type]);
+                }
             }
 
-            // ---- Expansion: claim remote ore fields with outposts
-            if (w.HasComplete(team, "electronics_plant") && Count("outpost") + mine.Count(e => e.Def.Key == "outpost_truck") < 2 &&
-                !t.UnitQueues[Producer.Factory].Any(p => p.Key == "outpost_truck") && Affordable("outpost_truck"))
+            // ---- Expansion: claim remote ore fields with outposts (the plan is above: where, and whether the ore within reach is thin)
+            if (wantOutpost && (saving == "outpost_truck" ? t.Missing(savingCost) == null : Affordable("outpost_truck")))
                 Do(w, "type", "train", "unit", "outpost_truck");
             foreach (var ot in mine.Where(e => e.Def.Key == "outpost_truck"))
             {
+                // (A site that turns out to have an enemy base by it is given up: it looks again.)
+                if (outpostTargets.TryGetValue(ot.Id, out var was) && NearFoe(was)) outpostTargets.Remove(ot.Id);
                 if (!outpostTargets.TryGetValue(ot.Id, out var goal))
                 {
-                    var field = StateView.OreFields(w, t.Explored)
-                        .Where(f => !structures.Any(s => Vec2.Dist(s.Center, new Vec2(f.cx, f.cy)) < 12))
-                        .OrderBy(f => Vec2.Dist(new Vec2(f.cx, f.cy), t.StartPos)).FirstOrDefault();
-                    if (field.tiles == 0) continue;
+                    if (!(ExpansionSite() is Vec2 site)) continue;
                     // Park beside the field, not on the ore.
-                    var spot = w.FindPlacement(team, "outpost", new Vec2(field.cx, field.cy)) ?? new Int2(field.cx + 3, field.cy);
+                    var spot = w.FindPlacement(team, "outpost", site, requireNear: false) ?? Int2.Of(site);
                     goal = new Vec2(spot.X + 1, spot.Y + 1);
                     outpostTargets[ot.Id] = goal;
                     Do(w, "type", "move", "units", new[] { ot.Id }, "x", goal.X, "y", goal.Y);
@@ -348,6 +427,25 @@ namespace Pez.Sim
                         outpostTargets[ot.Id] = jitter;
                         Do(w, "type", "move", "units", new[] { ot.Id }, "x", jitter.X, "y", jitter.Y);
                     }
+                }
+            }
+
+            // With the ore within reach thin and nowhere known to go, scout: a recon drone flies to the nearest ground it hasn't seen
+            // (and back on its tank of fuel). What it sees shows up as fields, and the plan above picks the nearest.
+            if (homeThin && !wantOutpost && !outpostOnItsWay && Count("outpost") < MaxOutposts && w.HasComplete(team, "electronics_plant"))
+            {
+                var drones = mine.Where(e => e.Def.Key == "recon_drone").ToList();
+                if (drones.Count == 0 && !Queued("recon_drone") && Affordable("recon_drone")) Do(w, "type", "train", "unit", "recon_drone");
+                foreach (var drone in drones.Where(e => e.Order == Order.Idle))
+                {
+                    Vec2? unseen = null; float nearest = float.MaxValue, range = 0.7f * w.Map.W; // (a drone's tank is 1.5 map widths: there and back)
+                    for (int y = 12; y < w.Map.H; y += 24)
+                        for (int x = 12; x < w.Map.W; x += 24)
+                        {
+                            var p = new Vec2(x, y); float d = Vec2.Dist(p, drone.Pos);
+                            if (d < nearest && d <= range && d >= 6f && !t.Explored[w.Map.Idx(x, y)] && !NearFoe(p)) { nearest = d; unseen = p; }
+                        }
+                    if (unseen.HasValue) Do(w, "type", "move", "units", new[] { drone.Id }, "x", unseen.Value.X, "y", unseen.Value.Y);
                 }
             }
 

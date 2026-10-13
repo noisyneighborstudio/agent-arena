@@ -1456,7 +1456,7 @@ namespace Pez.Headless
             Console.WriteLine("\n-- scripted AI economy");
             bool regrowth = World.RegrowthDisabled;
             World.RegrowthDisabled = true; // ore the scenarios clear away stays gone
-            try { AiRefineries(); AiDeepMining(); AiDrillChoices(); AiDeepRecovery(); AiEconomyRecovery(); AiHeadquartersRecovery(); AiRigDestinations(); AiMinePlan(); AiBuildOverrides(); AiPlanEdges(); }
+            try { AiRefineries(); AiDeepMining(); AiDrillChoices(); AiDeepRecovery(); AiEconomyRecovery(); AiHeadquartersRecovery(); AiRigDestinations(); AiMinePlan(); AiBuildOverrides(); AiPlanEdges(); AiExpansion(); }
             finally { World.RegrowthDisabled = regrowth; }
         }
 
@@ -1552,6 +1552,7 @@ namespace Pez.Headless
             var t = w.Teams[0];
             AiBase(w, "power_plant", "power_plant", "power_plant", "mining_refinery", "barracks", "factory", "electronics_plant", "gun_turret");
             for (int i = 0; i < w.Map.Ore.Length; i++) w.Map.Ore[i] = 0;
+            for (int s = 1; s < w.Map.Spawns.Count; s++) t.KnownEnemyStructures[900 + s] = ("command_center", Int2.Of(w.Map.Spawns[s]), 1); // (nowhere to expand to: this is about the rig)
             var deps = w.Map.Deep.OrderBy(d => Vec2.Dist(d.Pos, t.StartPos)).Take(3).ToList();
             deps[0].Type = Map.Iron; deps[1].Type = Map.Iron; deps[2].Type = Map.Copper; // the copper one is the farthest
             var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
@@ -1804,6 +1805,72 @@ namespace Pez.Headless
             int bought = w2.Teams[0].Stats.Built.TryGetValue("drill_rig", out var nb) ? nb : 0;
             Check(bought == 1 && !w2.Owned(0).Any(e => e.Def.Key == "drill_rig" && e.Order == Order.Idle) && w2.Owned(0).Count(e => e.Def.Key == "deep_mine") == 5,
                   $"two crystal zones, one mine on crystal: it buys one rig, not two ({bought} rigs bought, {w2.Owned(0).Count(e => e.Def.Key == "deep_mine")} mines)");
+        }
+
+        /// <summary>
+        /// With the ore within reach of its drop-offs thin, the AI expands: an outpost truck to the nearest field or base site nobody holds,
+        /// its idle trucks after it, a scout when there is nowhere known to go; and it doesn't hold ore back for an optional refinery
+        /// while a building the economy stands on is missing.
+        /// </summary>
+        static void AiExpansion()
+        {
+            // The ground round its base is mined out (the fields are still there to regrow, but there is nothing in them): the AI saves up for an
+            // outpost truck, sends it to a base site nobody holds (not the enemy's corner), and its idle trucks follow once the outpost stands.
+            (World w, SimpleAI ai, Team t, Entity hq) Thin(params int[] hostileSites)
+            {
+                var (w0, ai0) = AiWorld();
+                var t0 = w0.Teams[0];
+                AiBase(w0, "power_plant", "mining_refinery", "barracks", "factory", "power_plant", "electronics_plant");
+                var hq0 = w0.Owned(0).First(e => e.Def.Key == "command_center");
+                for (int i = 0; i < w0.Map.Ore.Length; i++)
+                    if (Vec2.Dist(new Vec2(i % w0.Map.W + 0.5f, i / w0.Map.W + 0.5f), t0.StartPos) < 45f) w0.Map.Ore[i] = 0;
+                t0.Add("steel", 1500); t0.Add("copper", 500); t0.Add("circuits", 300);
+                foreach (var s in hostileSites) // enemy structures it has seen by those corners
+                    t0.KnownEnemyStructures[900 + s] = ("command_center", Int2.Of(w0.Map.Spawns[s]), 1);
+                for (int i = 0; i < 6; i++) w0.SpawnUnit(0, "mining_truck", hq0);
+                return (w0, ai0, t0, hq0);
+            }
+            var (w, ai, t, hq) = Thin(1); // (corner 1 is the enemy's, which it has seen)
+            AiRun(w, ai, 40);
+            var truck = w.Owned(0).FirstOrDefault(e => e.Def.Key == "outpost_truck");
+            Check(truck != null, $"with the ore round its base gone and an electronics plant standing, it trains an outpost truck (saving for {t.SaveFor ?? "nothing"}, {w.Owned(0).Count(e => e.Def.Key == "outpost_truck")} trucks)");
+            AiRun(w, ai, 4 * 60);
+            var post = w.Owned(0).FirstOrDefault(e => e.Def.Key == "outpost");
+            var sites = new[] { 2, 3 }.Select(s => w.Map.Spawns[s]).ToList();
+            Check(post != null && sites.Any(s => Vec2.Dist(post.Center, s) < 24f) && Vec2.Dist(post.Center, w.Map.Spawns[1]) > 40f,
+                  $"and puts an outpost beside a base site nobody holds, not the enemy's ({(post != null ? post.Center.ToString() : "none")}; free sites at {sites[0]} and {sites[1]})");
+            AiRun(w, ai, 2 * 60);
+            var trucks = w.Owned(0).Where(e => e.IsHarvester).ToList();
+            Check(post != null && trucks.Count(tr => tr.HarvestTile.HasValue && Vec2.Dist(tr.HarvestTile.Value.Center, post.Center) < 20f) >= 3 && t.Stats.OreMined > 0,
+                  $"its idle trucks go to the field by the outpost and mine it ({trucks.Count(tr => tr.HarvestTile.HasValue && post != null && Vec2.Dist(tr.HarvestTile.Value.Center, post.Center) < 20f)} of {trucks.Count}, {t.Stats.OreMined} ore mined)");
+
+            // Enemy structures seen at the nearer free corner: it goes to the other one.
+            var (w2, ai2, t2, hq2) = Thin(1, 2);
+            AiRun(w2, ai2, 5 * 60);
+            var post2 = w2.Owned(0).FirstOrDefault(e => e.Def.Key == "outpost");
+            Check(post2 != null && Vec2.Dist(post2.Center, w2.Map.Spawns[3]) < 24f, $"with enemy structures seen at one free corner it goes to the other ({(post2 != null ? post2.Center.ToString() : "no outpost")}, free site at {w2.Map.Spawns[3]})");
+
+            // Nowhere known to go (every other corner has an enemy by it) and the ground round its base thin: it sends a recon drone to look.
+            var (w3, ai3, t3, hq3) = Thin(1, 2, 3);
+            Array.Fill(t3.Explored, true); // it has seen the whole map but a patch beside its base
+            for (int y = 8; y <= 16; y++) for (int x = 32; x <= 40; x++) t3.Explored[w3.Map.Idx(x, y)] = false;
+            Entity drone = null;
+            for (int s = 0; s < 90 && (drone == null || drone.Order != Order.Move); s++) { AiRun(w3, ai3, 1); drone = w3.Owned(0).FirstOrDefault(e => e.Def.Key == "recon_drone"); }
+            Check(drone != null && !w3.Owned(0).Any(e => e.Def.Key == "outpost_truck") && drone.Order == Order.Move && Vec2.Dist(drone.OrderPos, new Vec2(36, 12)) < 3f,
+                  $"with nowhere known to expand to it trains a recon drone and sends it to the ground it hasn't seen ({(drone != null ? drone.OrderName + " to " + drone.OrderPos : "no drone")})");
+
+            // The factory is missing and iron ore piles up past 1500: an extra refinery is wanted, but holding back the 100 copper ore it
+            // costs would keep the copper (100 for the factory) from ever being refined from what little copper ore there is.
+            var (w4, ai4) = AiWorld();
+            var t4 = w4.Teams[0];
+            AiBase(w4, "power_plant", "mining_refinery", "barracks");
+            foreach (var e in w4.Owned(0).Where(e => e.IsHarvester).ToList()) w4.Remove(e);
+            t4.Add("copper_ore", 100 - t4.Amount("copper_ore")); t4.Add("copper", 20 - t4.Amount("copper")); t4.Add("steel", 600);
+            AiRun(w4, ai4, 5, () => t4.Add("iron_ore", 1800 - t4.Amount("iron_ore")));
+            int holdCu = t4.Reserve.TryGetValue("copper_ore", out var h4) ? h4 : 0;
+            Check(Have(w4, "factory") == 0 && holdCu < 100, $"with the factory missing it doesn't hold back copper ore for an optional second refinery (reserve {holdCu})");
+            AiRun(w4, ai4, 150, () => t4.Add("iron_ore", 1800 - t4.Amount("iron_ore")));
+            Check(Have(w4, "factory") == 1, $"so the 80 copper ore is refined into the copper the factory needs, and the factory goes up ({t4.Amount("copper")} copper, {Have(w4, "factory")} factories after 2.5 minutes)");
         }
 
         /// <summary>Selling a mine must never cost the AI the game, a retired mine needs its paid replacement first, and a raw-ore shortage earns a slot like an empty stockpile.</summary>
