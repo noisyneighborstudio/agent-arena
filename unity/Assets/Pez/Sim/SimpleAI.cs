@@ -51,6 +51,18 @@ namespace Pez.Sim
         bool Obtainable(World w, string item) =>
             System.Array.IndexOf(Defs.Ores, item) >= 0 || w.Owned(team).Any(s => s.IsStructure && s.IsComplete && s.Def.Recipes.Any(r => r.Outputs.ContainsKey(item)));
 
+        /// <summary>The first step of the build order not built yet (null when it has them all).</summary>
+        static string FirstUnbuilt(System.Func<string, int> count)
+        {
+            var need = new Dictionary<string, int>();
+            foreach (var k in BuildOrder)
+            {
+                need[k] = need.TryGetValue(k, out var c) ? c + 1 : 1;
+                if (count(k) < need[k]) return k;
+            }
+            return null;
+        }
+
         /// <summary>
         /// The structure to build next from the build order: the first one not built yet. If that one can't be taken (short of
         /// something, or a building it needs is gone) for SkipAfter seconds, or at once when it is short of a material nothing
@@ -59,7 +71,7 @@ namespace Pez.Sim
         /// </summary>
         string PickStep(World w, Team t, System.Func<string, int> count, out string head)
         {
-            head = null;
+            head = FirstUnbuilt(count);
             HashSet<string> short0 = null; // what the stuck steps ahead are short of
             bool skipping = false; // a step ahead has been given up on: the stuck ones after it are passed over at once
             var need = new Dictionary<string, int>();
@@ -68,7 +80,6 @@ namespace Pez.Sim
                 var k = BuildOrder[i];
                 need[k] = need.TryGetValue(k, out var c) ? c + 1 : 1;
                 if (count(k) >= need[k]) { stuckSince.Remove(i); continue; }
-                head = head ?? k;
                 var def = Defs.Get(k);
                 var lacking = def.Cost.Where(kv => t.Amount(kv.Key) < kv.Value).Select(kv => kv.Key).ToList();
                 if (lacking.Count == 0 && w.MissingPrereq(team, def) == null)
@@ -109,10 +120,17 @@ namespace Pez.Sim
             // Ores worth mining now: iron always; copper, crystal and uranium while the stock is low (the last two only with
             // something to refine them). Each switches on below a low mark and off above a higher one, so trucks don't flap.
             int copperOnHand = t.Amount("copper") + t.Amount("copper_ore"), ironOnHand = t.Amount("steel") + t.Amount("iron_ore");
+            // Trucks queueing for the bays (each bay takes one truck at a time), or iron ore piling up unrefined: another refinery.
+            bool moreRefineries = (!surfaceDry && trucks0.Count(e => e.Dock == DockStep.Queue) >= 2 || t.Amount("iron_ore") > 1500) && Count("mining_refinery") is int nr && nr >= 1 && nr < 4;
+            // Raw ore that a purchase it is waiting on (the first step of the build order, a refinery it wants more of) costs and it
+            // lacks: worth mining, by truck or deep mine, whatever refined copper or steel it has in hand.
+            var waiting = FirstUnbuilt(Count);
+            bool RawShort(string ore) => (waiting != null && Defs.Get(waiting).Cost.TryGetValue(ore, out var needed) && t.Amount(ore) < needed) ||
+                                         (moreRefineries && Defs.Get("mining_refinery").Cost.TryGetValue(ore, out var needed2) && t.Amount(ore) < needed2);
             wantCopper = copperOnHand < (wantCopper ? 1800 : 800);
             wantCrystal = (Count("optics_lab") > 0 || Count("composite_foundry") > 0) && t.Amount("crystal") < (wantCrystal ? 800 : 300);
             wantUranium = Count("enrichment_plant") > 0 && t.Amount("uranium") < (wantUranium ? 600 : 250);
-            bool OreWanted(int type) => type == Map.Iron || (type == Map.Copper ? wantCopper : type == Map.Crystal ? wantCrystal : wantUranium);
+            bool OreWanted(int type) => type == Map.Iron || (type == Map.Copper ? wantCopper || RawShort("copper_ore") : type == Map.Crystal ? wantCrystal : wantUranium);
 
             // Deep mines still pumping (a dry one draws 50 power for nothing) and the flagged deposits worth a drill rig next:
             // iron and copper it's short of first, then the rest of those, then crystal/uranium it can use (a deep mine pumps
@@ -120,10 +138,12 @@ namespace Pez.Sim
             var deepMines = mine.Where(e => e.Def.Key == "deep_mine").ToList();
             bool Pumping(Entity m) => w.Map.DepositById(m.DepositId) is DeepDeposit dd && dd.Amount > 0;
             int pumping = deepMines.Count(Pumping);
-            bool Short(int type) => type == Map.Iron ? ironOnHand < 400 : type == Map.Copper && (copperOnHand < 300 || copperOnHand * 4 < ironOnHand);
+            bool Short(int type) => type == Map.Iron ? ironOnHand < 400 || RawShort("iron_ore") : type == Map.Copper && (copperOnHand < 300 || copperOnHand * 4 < ironOnHand || RawShort("copper_ore"));
             var rigs = mine.Where(e => e.Def.Key == "drill_rig").ToList();
-            // (One mine on crystal or on uranium at a time is plenty.)
-            var drilling = deepMines.Where(Pumping).Select(m => w.Map.DepositById(m.DepositId).Type).Concat(rigs.Select(r => w.Map.DepositById(r.ZoneId)?.Type ?? -1)).ToList();
+            // (One mine on crystal or on uranium at a time is plenty: pumping, or a rig actually on its way, as World.RigsBound counts
+            // them. A rig that was stopped keeps its old zone but isn't drilling anything.)
+            bool Bound(Entity r) => r.ZoneId != 0 && (r.Order == Order.Drill || (r.Order == Order.Refuel && r.ResumeOrder == Order.Drill));
+            var drilling = deepMines.Where(Pumping).Select(m => w.Map.DepositById(m.DepositId).Type).Concat(rigs.Where(Bound).Select(r => w.Map.DepositById(r.ZoneId)?.Type ?? -1)).ToList();
             var zones = w.Map.Deep.Where(d => t.Surveyed.Contains(d.Id) && OreWanted(d.Type) && (d.Type < Map.Crystal || !drilling.Contains(d.Type)) && w.DrillBlocker(d, team) == null)
                                   .OrderBy(d => Short(d.Type) ? 0 : d.Type >= Map.Crystal ? 2 : 1).ThenBy(d => Vec2.Dist(d.Pos, t.StartPos)).ToList();
             int rigsInFlight = rigs.Count + t.UnitQueues[Producer.Factory].Count(q => q.Key == "drill_rig");
@@ -163,8 +183,6 @@ namespace Pez.Sim
             if (!economyFirst) step = PickStep(w, t, Count, out head);
             else stuckSince.Clear();
             int draw = (step != null ? System.Math.Max(0, -Defs.Get(step).Power) : 0) + 50 * rigsInFlight;
-            // Trucks queueing for the bays (each bay takes one truck at a time), or iron ore piling up unrefined: another refinery.
-            bool moreRefineries = (!surfaceDry && trucks0.Count(e => e.Dock == DockStep.Queue) >= 2 || t.Amount("iron_ore") > 1500) && Count("mining_refinery") is int nr && nr >= 1 && nr < 4;
             string next = null;
             if (t.PowerProduced - t.PowerUsed + pending - draw < 25 && structures.Count > 1)
                 // (A fusion reactor only if it can be paid for now: short of circuits, plain power plants keep the lights on.)
@@ -192,7 +210,6 @@ namespace Pez.Sim
             // what the next purchase costs in raw ore (the next structure, the first unbuilt step if it is waiting on ore while
             // others go ahead, a refinery it wants more of, and a truck while it is short of them). Not more: a truck lost far
             // afield shouldn't swallow the whole income.
-            bool copperOreShort = false; // a refinery is waiting on copper ore: trucks go for it even with copper in hand
             foreach (var ore in Defs.Ores)
             {
                 int hold = 0;
@@ -201,11 +218,10 @@ namespace Pez.Sim
                 if (moreRefineries && Defs.Get("mining_refinery").Cost.TryGetValue(ore, out var c3)) hold = System.Math.Max(hold, c3);
                 if (ore == "iron_ore" && (trucks.Count < 3 || (needTrucks && w.HasComplete(team, "factory")))) hold = System.Math.Max(hold, Defs.Get("mining_truck").Cost[ore]);
                 if ((t.Reserve.TryGetValue(ore, out var held) ? held : 0) != hold) Do(w, "type", "reserve", "item", ore, "amount", hold);
-                if (ore == "copper_ore" && hold > t.Amount(ore)) copperOreShort = true;
             }
             // Iron is the bulk resource: roughly 3 of every 5 trucks; one each on copper, then crystal/uranium as tech needs them
             // (and only while it is short of them: ore nothing is using just piles up).
-            int copperType = wantCopper || copperOreShort ? Map.Copper : Map.Iron;
+            int copperType = wantCopper || RawShort("copper_ore") ? Map.Copper : Map.Iron; // (a refinery waiting on copper ore: trucks go for it even with copper in hand)
             var plan = new List<int> { Map.Iron, Map.Iron, copperType, Map.Iron };
             if (wantCrystal) plan.Add(Map.Crystal);
             if (wantUranium) plan.Add(Map.Uranium);
@@ -337,8 +353,11 @@ namespace Pez.Sim
                 foreach (var rig in rigs.Where(e => e.Order == Order.Idle))
                 {
                     if (open.Count == 0) break;
-                    Do(w, "type", "drill", "units", new[] { rig.Id }, "zone", open[0].Id);
+                    var zone = open[0];
                     open.RemoveAt(0);
+                    var sent = Do(w, "type", "drill", "units", new[] { rig.Id }, "zone", zone.Id);
+                    // (A rig sent to crystal or uranium takes that ore's one mine: no other rig goes for it this tick.)
+                    if (sent["ok"] is bool ok && ok && zone.Type >= Map.Crystal) open.RemoveAll(d => d.Type == zone.Type);
                 }
             }
 

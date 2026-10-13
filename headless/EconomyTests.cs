@@ -1040,7 +1040,7 @@ namespace Pez.Headless
             Console.WriteLine("\n-- scripted AI economy");
             bool regrowth = World.RegrowthDisabled;
             World.RegrowthDisabled = true; // ore the scenarios clear away stays gone
-            try { AiRefineries(); AiDeepMining(); }
+            try { AiRefineries(); AiDeepMining(); AiDrillChoices(); }
             finally { World.RegrowthDisabled = regrowth; }
         }
 
@@ -1250,6 +1250,62 @@ namespace Pez.Headless
             Check(spill[Map.Iron] >= 316 && spill[Map.Iron] <= 320 && spill[Map.Copper] >= 226 && spill[Map.Copper] <= 230 && spill[Map.Crystal] >= 198 && spill[Map.Crystal] <= 200 && spill[Map.Uranium] == 20,
                   $"a stockpile spills as its raw ores: iron {spill[0]}/320, copper {spill[1]}/230, crystal {spill[2]}/200, uranium {spill[3]}/20");
             Check(wh.Errors == 0 && wu.Errors == 0 && wv.Errors == 0 && ws.Errors == 0, "no sim errors");
+        }
+
+        /// <summary>Which zones the AI's drill rigs go to: a raw-ore shortage counts, a stopped rig doesn't hold an ore, and one mine per crystal / uranium holds within a tick.</summary>
+        static void AiDrillChoices()
+        {
+            // A base with the surface mined out and two deep zones flagged; `refineries` more refineries built (the build order's
+            // refinery step is done, so nothing waits on copper ore).
+            (World w, SimpleAI ai, Team t, List<DeepDeposit> deps) Dry(int refineries)
+            {
+                var (w, ai) = AiWorld();
+                var t = w.Teams[0];
+                AiBase(w, "power_plant", "mining_refinery", "barracks", "factory", "power_plant", "electronics_plant", "gun_turret");
+                if (refineries > 0) AiBase(w, "mining_refinery", "power_plant");
+                for (int i = 0; i < w.Map.Ore.Length; i++) w.Map.Ore[i] = 0;
+                var deps = w.Map.Deep.OrderBy(d => Vec2.Dist(d.Pos, t.StartPos)).Take(2).ToList();
+                foreach (var d in deps) { t.Surveyed.Add(d.Id); t.Zones[d.Id] = new ZoneFlag { ZoneId = d.Id, FlaggedBy = 0, FlaggedAt = w.Time }; }
+                return (w, ai, t, deps);
+            }
+            bool GoesTo(World x, DeepDeposit d) => x.Owned(0).Any(e => (e.Def.Key == "drill_rig" && e.ZoneId == d.Id) || (e.Def.Key == "deep_mine" && e.DepositId == d.Id));
+
+            // A refinery waiting on 100 copper ore, with plenty of refined copper in hand and no surface ore left: copper deposits are
+            // still worth a rig (refined copper can't pay a refinery's copper ore).
+            var (w1, ai1, t1, d1) = Dry(0);
+            d1[0].Type = Map.Copper; d1[1].Type = Map.Copper;
+            t1.Add("copper", 3000); t1.Add("iron_ore", 1000); t1.Add("steel", 1000); t1.Add("copper_ore", -t1.Amount("copper_ore"));
+            AiRun(w1, ai1, 90);
+            Check(GoesTo(w1, d1[0]), $"with 3000 copper but no copper ore for its second refinery and no surface ore left, a rig goes to the copper zone ({w1.Owned(0).Count(e => e.Def.Key == "drill_rig")} rigs, {w1.Owned(0).Count(e => e.Def.Key == "deep_mine")} mines)");
+            var (w1b, ai1b, t1b, d1b) = Dry(1);
+            d1b[0].Type = Map.Copper; d1b[1].Type = Map.Copper;
+            t1b.Add("copper", 3000); t1b.Add("iron_ore", 1000); t1b.Add("steel", 1000); t1b.Add("copper_ore", -t1b.Amount("copper_ore"));
+            AiRun(w1b, ai1b, 90);
+            Check(!GoesTo(w1b, d1b[0]) && !GoesTo(w1b, d1b[1]), "but with no refinery waiting on copper ore, copper zones are not worth a rig while copper is plentiful");
+
+            // A crystal rig that was stopped keeps its old zone but isn't drilling: its ore is free again, and the rig gets a zone.
+            var (w2, ai2, t2, d2) = Dry(0);
+            AiBase(w2, "optics_lab");
+            d2[0].Type = Map.Crystal; t2.Surveyed.Remove(d2[1].Id); // the crystal zone is the only one it knows
+            t2.Add("steel", 1000); t2.Add("iron_ore", 1000);
+            var hq = w2.Owned(0).First(e => e.Def.Key == "command_center");
+            var stopped = At(w2.SpawnUnit(0, "drill_rig", hq), hq.Center + new Vec2(4, 4));
+            w2.SetOrder(stopped, Order.Idle, stopped.Pos);
+            stopped.ZoneId = d2[0].Id; // told to drill there, then stopped
+            AiRun(w2, ai2, 3);
+            Check(stopped.Order == Order.Drill && stopped.ZoneId == d2[0].Id, $"a stopped rig doesn't keep its crystal reserved against itself: it is sent to that zone ({stopped.OrderName}, zone {stopped.ZoneId})");
+
+            // Two idle rigs and two crystal zones in the same tick: one mine on crystal, so only one rig goes for it.
+            var (w3, ai3, t3, d3) = Dry(0);
+            AiBase(w3, "optics_lab");
+            d3[0].Type = Map.Crystal; d3[1].Type = Map.Crystal;
+            t3.Add("steel", 1000); t3.Add("iron_ore", 1000);
+            var hq3 = w3.Owned(0).First(e => e.Def.Key == "command_center");
+            var rigs3 = Enumerable.Range(0, 2).Select(i => At(w3.SpawnUnit(0, "drill_rig", hq3), hq3.Center + new Vec2(4 + i, 4))).ToList();
+            foreach (var r in rigs3) w3.SetOrder(r, Order.Idle, r.Pos);
+            ai3.Update(w3);
+            Check(rigs3.Count(r => r.Order == Order.Drill) == 1 && rigs3.Count(r => r.Order == Order.Idle) == 1,
+                  $"one mine on crystal at a time, even for two rigs sent in the same tick ({string.Join(", ", rigs3.Select(r => r.OrderName))})");
         }
 
         static void SalvageFromKills()
