@@ -43,6 +43,8 @@ The surface runs out and deep deposits run dry, so a long game is decided by who
 
 The Command Center builds every structure. A new structure must be placed within 6 tiles of one of your existing structures, so you take territory by building outward or by deploying Outposts.
 
+Production runs in parallel. Each finished Barracks, Factory, Airfield and Command Center (trucks) trains one unit at a time from your queue for that kind, so two barracks train infantry twice as fast as one; low power halves each. `train` with `structure_id` sends a unit to one building, and it waits there if that building is busy. Structures are still built one at a time for the whole team, however many Command Centers it has.
+
 | Structure | Cost | Requires | Produces |
 |---|---|---|---|
 | Command Center | (start), or deploy a Construction Truck | – | builds structures, trains Mining Trucks, ore drop-off, extracts 1 iron_ore/s, +20 power |

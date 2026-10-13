@@ -72,7 +72,7 @@ namespace Pez.Headless
             [typeof(GameEvent)] = "Seq Tick Type Team A B Pos Pos2 Key Text | SeenBy",
             [typeof(Projectile)] = "Id Team SourceId TargetId Pos PrevPos TargetPos Weapon",
             [typeof(DeepDeposit)] = "Id Pos Type Amount Initial MineId",
-            [typeof(ProdItem)] = "Key Progress StructureId | CmdId",
+            [typeof(ProdItem)] = "Key Progress StructureId WorkerId | CmdId",
             [typeof(ZoneFlag)] = "ZoneId FlaggedBy FlaggedAt",
             [typeof(TeamStats)] = "UnitsBuilt StructuresBuilt UnitsLost StructuresLost Kills OreMined Built KillValue KillsValued SalvageLeft DeepMined DerricksCaptured DerrickSteel SalvageMined UpkeepPaid",
             [typeof(GameConfig)] = "Seed MapSize Speed Controllers Orders Open MaxPlayers MaxMapSize OreScale HouseAIs HouseResignAbove MatchHours MinPlayers | KitchenSink",
@@ -191,7 +191,8 @@ namespace Pez.Headless
             var site = tb.StructureQueue.FirstOrDefault();
             Check(site != null && b.Get(site.StructureId) != null && !b.Get(site.StructureId).IsComplete && b.Get(site.StructureId).BuildProgress == w.Get(site.StructureId).BuildProgress,
                   $"a structure under construction keeps its progress ({site?.Key} {b.Get(site?.StructureId ?? 0)?.BuildProgress:P0})");
-            Check(tb.UnitQueues[Producer.Barracks].Count == 3 && tb.UnitQueues[Producer.Barracks][0].Progress == t2.UnitQueues[Producer.Barracks][0].Progress, "unit production queues survive");
+            Check(tb.UnitQueues[Producer.Barracks].Count == 3 && tb.UnitQueues[Producer.Barracks][0].Progress == t2.UnitQueues[Producer.Barracks][0].Progress &&
+                  tb.UnitQueues[Producer.Barracks][0].WorkerId == t2.UnitQueues[Producer.Barracks][0].WorkerId && t2.UnitQueues[Producer.Barracks][0].WorkerId != 0, "unit production queues survive, with the building working each unit");
             var dep2 = b.Map.DepositById(dep.Id);
             Check(dep2 != null && dep2.MineId == mine.Id && dep2.Amount == dep.Amount && b.Get(mine.Id)?.DepositId == dep.Id && tb.Surveyed.Contains(dep.Id), "deep mines, their deposits and survey results survive");
             var sv2 = b.Get(surveyor.Id);
