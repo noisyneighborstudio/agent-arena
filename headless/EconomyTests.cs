@@ -2887,6 +2887,39 @@ namespace Pez.Headless
             Check(profiled && sweepGames.Count == 4 && sweep.Contains("war 80x80 ore 0.26") && sweep.Contains("war 80x80 ore 0.34") && csv.Contains(",0.26,") && csv.Contains(",0.34,"),
                   $"a sweep of two richnesses with --profile on groups, prints and exports them exactly ({sweepGames.Count} games, profile flag restored: {profiled})");
 
+            // Sizes and richness the World would clamp are refused (a clamped game would be labelled with what was asked for).
+            string bigSize = EconReport.Invalid(new EconReport.Options { Sizes = new[] { 320, 400 } }), smallOre = EconReport.Invalid(new EconReport.Options { Ores = new[] { 0.05f, 0.01f } });
+            bool refused = false;
+            try { EconReport.Build(new EconReport.Options { Sizes = new[] { 400 }, Sections = new HashSet<string> { "matrix" } }, _ => { }, out _); } catch (ArgumentException) { refused = true; }
+            Check(EconReport.Invalid(new EconReport.Options()) == null && bigSize != null && bigSize.Contains("48 to 320") && bigSize.Contains("400") && smallOre != null && smallOre.Contains("0.05") && smallOre.Contains("0.01")
+                  && EconReport.Invalid(new EconReport.Options { Ores = new[] { 5f } }) != null && EconReport.Invalid(new EconReport.Options { Minutes = 0 }) != null && refused,
+                  $"--econ-sizes 400 and --econ-ores 0.01 are errors that name the allowed range ({bigSize}; {smallOre})");
+            Check(new World(2, 1, 400).Map.W == Map.MaxSize && new World(2, 1, 10).Map.W == Map.MinSize && new World(2, 1, 80, 0.01f).Map.OreScale == EconReport.MinOre && new World(2, 1, 80, 9f).Map.OreScale == EconReport.MaxOre,
+                  "and those ranges are the ones the World clamps to");
+
+            // How a game ended: a knockout, the match clock (on points, or a draw), or neither.
+            var endw = new World(2, 1, 48);
+            string endedRun = EconReport.HowEnded(endw);
+            endw.GameOver = true; endw.Winner = 0;
+            string endedKnock = EconReport.HowEnded(endw);
+            endw.Winner = -1;
+            string endedBoth = EconReport.HowEnded(endw);
+            endw.SuddenDeathAt = 1f; endw.Tick = (int)((1f + World.EndAfter + 1f) * World.TickRate); endw.Winner = 1;
+            string endedPoints = EconReport.HowEnded(endw);
+            // End to end: the match clock moved to a few minutes off, so the game ends on points with both teams standing.
+            var clock = EconReport.PlayGame(2, 80, 1f, true, 62, w => { w.Tick = 57 * 60 * World.TickRate; w.SuddenDeathAt = 1f; });
+            var knock = EconReport.PlayGame(1, 80, 1f, false, 30);
+            var tables = new System.Text.StringBuilder();
+            EconReport.MatrixSection(tables, new List<EconReport.GameRun> { clock }, new EconReport.Options { Seeds = new[] { 2 }, Sizes = new[] { 80 }, Ores = new[] { 1f }, Modes = new[] { "passive" }, Minutes = 62 });
+            string csvDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "econ-report-test-" + Guid.NewGuid().ToString("N"));
+            EconReport.WriteCsv(csvDir, new List<EconReport.GameRun> { clock, knock });
+            string gamesCsv = System.IO.File.ReadAllText(System.IO.Path.Combine(csvDir, "games.csv"));
+            System.IO.Directory.Delete(csvDir, true);
+            Check(endedRun == "unfinished" && endedKnock == "knockout" && endedBoth == "draw" && endedPoints == "points"
+                  && (clock.Ended == "points" || clock.Ended == "draw") && clock.GameOver && clock.Teams.All(t => !t.Defeated) && clock.EndMinute > 59.9 && clock.EndMinute < 60.2
+                  && knock.Ended == "knockout" && tables.ToString().Contains("| passive 80x80 ore 1.0 | 1 | 0 / 0 | - |") && gamesCsv.Contains(",ended,") && gamesCsv.Contains("," + clock.Ended + ",") && gamesCsv.Contains(",knockout,"),
+                  $"a game the match clock ends is not a knockout: {endedRun}, {endedKnock}, {endedBoth}, {endedPoints}; with the clock moved a game ends '{clock.Ended}' at {clock.EndMinute:0.0} min with both teams standing, counts 0 knockouts, and games.csv says so");
+
             // The seat win split's test, and the flag parser.
             Check(Math.Abs(EconReport.BinomialP(18, 23) - 0.0106) < 0.0005 && EconReport.BinomialP(5, 10) > 0.999 && Math.Abs(EconReport.BinomialP(0, 10) - 2 * Math.Pow(0.5, 10)) < 1e-9 && EconReport.BinomialP(0, 0) == 1,
                   $"the exact binomial test gives 18 of 23 decisive games to one seat p = {EconReport.BinomialP(18, 23):0.0000}");

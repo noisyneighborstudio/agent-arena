@@ -24,10 +24,10 @@ namespace Pez.Headless
     /// Flags (all optional):
     ///   --econ-only rates,regrow,maps,kit,matrix   sections to run (default: all)
     ///   --econ-seeds 1-12        seeds of the matrix (a range or a list: 1,2,5)
-    ///   --econ-sizes 80,128      map sizes of the matrix
-    ///   --econ-ores 1,0.3        ore richness of the matrix
+    ///   --econ-sizes 80,128      map sizes of the matrix (48 to 320: the World clamps anything else, so it is refused)
+    ///   --econ-ores 1,0.3        ore richness of the matrix (0.05 to 4, likewise)
     ///   --econ-modes war,passive scripted AI (attacks in waves) or house AI (builds and defends only)
-    ///   --econ-minutes 45        game-minutes per matrix game
+    ///   --econ-minutes 45        game-minutes per matrix game (300 or more lets the match clock end a game on points: counted apart from knockouts)
     ///   --econ-jobs 8            games played at once (each game is its own World; they share nothing but the read-only defs)
     ///   --econ-out DIR           also write report.md, games.csv and minutes.csv there
     /// A matrix game is deterministic: the same seed, size, richness and mode give the same numbers on any run, whatever --econ-jobs says.
@@ -40,6 +40,22 @@ namespace Pez.Headless
         static string F(double v, string fmt = "0.##") => v.ToString(fmt, IC);
         /// <summary>A richness as written in a group name and the CSVs: exactly (the shortest text that reads back as the same number), with at least one decimal, so 0.26 and 0.34 stay two groups.</summary>
         internal static string OreLabel(float ore) { string t = ore.ToString("R", IC); return t.Contains(".") || t.Contains("E") ? t : t + ".0"; }
+
+        /// <summary>The richness the World accepts (its constructor clamps to this; a game asked for more or less would be played at the limit and labelled as asked).</summary>
+        internal const float MinOre = 0.05f, MaxOre = 4f;
+
+        /// <summary>Why these options can't be run (a size or richness the World would clamp, a count that is not positive), or null. A clamped game would be labelled with the value asked for.</summary>
+        internal static string Invalid(Options o)
+        {
+            foreach (int size in o.Sizes)
+                if (size < Map.MinSize || size > Map.MaxSize) return $"--econ-sizes takes map sizes from {Map.MinSize} to {Map.MaxSize}, not {size}";
+            foreach (float ore in o.Ores)
+                if (!(ore >= MinOre && ore <= MaxOre)) return $"--econ-ores takes ore richness from {OreLabel(MinOre)} to {OreLabel(MaxOre)}, not {OreLabel(ore)}";
+            if (o.Seeds.Length == 0 || o.Sizes.Length == 0 || o.Ores.Length == 0 || o.Modes.Length == 0) return "--econ-seeds, --econ-sizes, --econ-ores and --econ-modes need at least one value each";
+            if (o.Minutes < 1) return $"--econ-minutes takes a number of game-minutes from 1, not {o.Minutes}";
+            if (o.Jobs < 1) return $"--econ-jobs takes 1 or more, not {o.Jobs}";
+            return null;
+        }
 
         public sealed class Options
         {
@@ -68,6 +84,8 @@ namespace Pez.Headless
             var unknown = o.Sections.Where(s => s != "rates" && s != "regrow" && s != "maps" && s != "kit" && s != "matrix").ToList();
             if (unknown.Count > 0) { Console.Error.WriteLine("--econ-only takes rates, regrow, maps, kit, matrix; not " + string.Join(", ", unknown)); return 2; }
             foreach (var m in o.Modes) if (m != "war" && m != "passive") { Console.Error.WriteLine("--econ-modes takes war and passive; not " + m); return 2; }
+            string invalid = Invalid(o);
+            if (invalid != null) { Console.Error.WriteLine(invalid); return 2; }
             var report = Build(o, Console.Error.WriteLine, out var games);
             Console.Write(report);
             if (o.OutDir != null)
@@ -94,6 +112,8 @@ namespace Pez.Headless
 
         public static string Build(Options o, Action<string> progress, out List<GameRun> games)
         {
+            string invalid = Invalid(o);
+            if (invalid != null) throw new ArgumentException(invalid);
             // --profile adds to one shared, unlocked table of timings (World.Timings): worlds played side by side would corrupt it.
             bool profile = World.Profile;
             if (profile) progress("--profile is off for --econ-report: its worlds run side by side and share one timing table.");
@@ -632,6 +652,8 @@ namespace Pez.Headless
         {
             public int Seed, Size; public float Ore; public string Mode;
             public bool GameOver; public int Winner = -1;
+            /// <summary>How it ended: "knockout" (one team left standing), "points" (the match clock ran out and one team led), "draw" (nobody won: a tie on points or both knocked out together), "unfinished" (the time limit came first).</summary>
+            public string Ended = "unfinished";
             public double EndMinute;
             public int Errors; public string LastError;
             public double SurfaceStart, DeepStart;
@@ -661,14 +683,23 @@ namespace Pez.Headless
             return results.OrderBy(g => g.Mode).ThenBy(g => g.Size).ThenByDescending(g => g.Ore).ThenBy(g => g.Seed).ToList();
         }
 
-        /// <summary>Scripted AI against scripted AI (seats 0 and 1) for up to `minutes` game-minutes, sampled every game-second and written down every game-minute.</summary>
-        public static GameRun PlayGame(int seed, int size, float ore, bool passive, int minutes)
+        /// <summary>How a world's game ended (see GameRun.Ended). Only the match clock ends a game with both teams standing, and only on points.</summary>
+        internal static string HowEnded(World w) =>
+            !w.GameOver ? "unfinished" : w.Winner < 0 ? "draw" : w.MatchOver ? "points" : "knockout";
+
+        /// <summary>
+        /// Scripted AI against scripted AI (seats 0 and 1) for up to `minutes` game-minutes, sampled every game-second and written down every game-minute.
+        /// `setup` may change the world before the first tick (the tests move the match clock).
+        /// </summary>
+        public static GameRun PlayGame(int seed, int size, float ore, bool passive, int minutes, Action<World> setup = null)
         {
+            if (size < Map.MinSize || size > Map.MaxSize || !(ore >= MinOre && ore <= MaxOre)) throw new ArgumentOutOfRangeException(nameof(size), $"map size {size} and richness {ore} are clamped by the World, not played as asked");
             var sw = System.Diagnostics.Stopwatch.StartNew();
             var g = new GameRun { Seed = seed, Size = size, Ore = ore, Mode = passive ? "passive" : "war" };
             var w = new World(2, seed, size, ore);
             w.SuddenDeathAt = 4 * 3600f; // as Game sets it (the match clock's default four hours)
             w.ErrorLog = _ => { };
+            setup?.Invoke(w);
             var ais = new List<SimpleAI>();
             for (int i = 0; i < 2; i++) { w.Teams[i].Controller = "ai"; w.Teams[i].PlayerName = "Scripted AI"; ais.Add(new SimpleAI(i, passive)); }
             var m = w.Map;
@@ -731,7 +762,7 @@ namespace Pez.Headless
                     });
                 }
             }
-            g.GameOver = w.GameOver; g.Winner = w.GameOver ? w.Winner : -1;
+            g.GameOver = w.GameOver; g.Winner = w.GameOver ? w.Winner : -1; g.Ended = HowEnded(w);
             g.EndMinute = w.Time / 60.0;
             g.Errors = w.Errors; g.LastError = w.LastError;
             g.DeepLeft = m.Deep.Sum(d => (double)d.Amount);
@@ -803,7 +834,7 @@ namespace Pez.Headless
             return new[] { surface / seconds, salvage / seconds, deep / seconds, derrick / seconds, trickle / seconds };
         }
 
-        static void MatrixSection(StringBuilder sb, List<GameRun> games, Options o)
+        internal static void MatrixSection(StringBuilder sb, List<GameRun> games, Options o)
         {
             Heading(sb, $"Scripted AI against scripted AI: {games.Count} games");
             sb.AppendLine($"Seeds {string.Join(",", o.Seeds.Take(3))}{(o.Seeds.Length > 3 ? "..." + o.Seeds.Last() : "")}, sizes {string.Join("/", o.Sizes)}, richness {string.Join("/", o.Ores.Select(OreLabel))}, modes {string.Join("/", o.Modes)}, up to {o.Minutes} game-minutes each. \"war\" is the scripted AI (attacks in waves), \"passive\" the house AI (builds and defends).");
@@ -812,15 +843,16 @@ namespace Pez.Headless
             var groups = games.GroupBy(g => g.Group).ToList();
 
             Sub(sb, "How the games ended, and the seat win split");
-            sb.AppendLine("Decisive = one team knocked out inside the time limit. Ore@3m is `Stats.OreMined` at 3:00, seat 0 / seat 1; \"ahead\" counts the games each seat had mined more by then.");
+            sb.AppendLine("A knockout is one team left standing; the seat win split and its p-value count knockouts only. A game the match clock ended (needs --econ-minutes of 300 or more) is counted apart, as a win on points or a draw, and so is one the time limit cut short. Ore@3m is `Stats.OreMined` at 3:00, seat 0 / seat 1; \"ahead\" counts the games each seat had mined more by then.");
             sb.AppendLine();
             string[] SplitRow(string label, List<GameRun> gs)
             {
-                int w0 = gs.Count(g => g.GameOver && g.Winner == 0), w1 = gs.Count(g => g.GameOver && g.Winner == 1), undecided = gs.Count - w0 - w1;
+                int w0 = gs.Count(g => g.Ended == "knockout" && g.Winner == 0), w1 = gs.Count(g => g.Ended == "knockout" && g.Winner == 1);
+                int p0 = gs.Count(g => g.Ended == "points" && g.Winner == 0), p1 = gs.Count(g => g.Ended == "points" && g.Winner == 1), draws = gs.Count(g => g.Ended == "draw"), unfinished = gs.Count(g => g.Ended == "unfinished");
                 var at3 = gs.Where(g => g.Teams.All(t => t.Rows.Any(r => r.Min == 3))).ToList();
                 double a0 = Mean(at3.Select(g => (double)g.Teams[0].Rows.First(r => r.Min == 3).Mined)), a1 = Mean(at3.Select(g => (double)g.Teams[1].Rows.First(r => r.Min == 3).Mined));
                 int ahead0 = at3.Count(g => g.Teams[0].Rows.First(r => r.Min == 3).Mined > g.Teams[1].Rows.First(r => r.Min == 3).Mined), ahead1 = at3.Count(g => g.Teams[1].Rows.First(r => r.Min == 3).Mined > g.Teams[0].Rows.First(r => r.Min == 3).Mined);
-                return new[] { label, gs.Count.ToString(), $"{w0} / {w1} / {undecided}", w0 + w1 == 0 ? "-" : F(BinomialP(w0, w0 + w1), "0.000"), F(Mean(gs.Select(g => g.EndMinute)), "0.0"), at3.Count == 0 ? "-" : $"{a0:0} / {a1:0}", at3.Count == 0 ? "-" : $"{ahead0} / {ahead1}" };
+                return new[] { label, gs.Count.ToString(), $"{w0} / {w1}", w0 + w1 == 0 ? "-" : F(BinomialP(w0, w0 + w1), "0.000"), $"{p0} / {p1} / {draws}", unfinished.ToString(), F(Mean(gs.Select(g => g.EndMinute)), "0.0"), at3.Count == 0 ? "-" : $"{a0:0} / {a1:0}", at3.Count == 0 ? "-" : $"{ahead0} / {ahead1}" };
             }
             var split = new List<string[]>();
             foreach (var gr in groups) split.Add(SplitRow(gr.Key, gr.ToList()));
@@ -828,7 +860,7 @@ namespace Pez.Headless
             if (war.Count > 0) split.Add(SplitRow("**all war games**", war));
             var passive = games.Where(g => g.Mode == "passive").ToList();
             if (passive.Count > 0) split.Add(SplitRow("**all passive games**", passive));
-            Table(sb, new[] { "group", "games", "wins seat 0 / seat 1 / undecided", "p (two-sided, even odds)", "mean minutes played", "ore@3m seat 0 / seat 1", "ahead at 3m seat 0 / seat 1" }, split);
+            Table(sb, new[] { "group", "games", "knockout wins seat 0 / seat 1", "p (two-sided, even odds)", "on points: seat 0 / seat 1 / draws", "unfinished", "mean minutes played", "ore@3m seat 0 / seat 1", "ahead at 3m seat 0 / seat 1" }, split);
 
             Sub(sb, "Income by source (ore a second per team, mean over the minutes a team was in the game)");
             sb.AppendLine("Each cell is `surface field ore by truck (salvage by truck) / deep mines / derricks (steel) / command-center trickle = total` of all five.");
@@ -937,8 +969,8 @@ namespace Pez.Headless
         internal static void WriteCsv(string dir, List<GameRun> games)
         {
             Directory.CreateDirectory(dir);
-            var g = new StringBuilder("mode,size,ore,seed,game_over,winner,end_min,errors,surface_start,deep_start,deep_left,far_ore_end,surface_end\n");
-            foreach (var x in games) g.AppendLine(string.Join(",", x.Mode, x.Size, OreLabel(x.Ore), x.Seed, x.GameOver ? 1 : 0, x.Winner, F(x.EndMinute, "0.0"), x.Errors, F(x.SurfaceStart, "0"), F(x.DeepStart, "0"), F(x.DeepLeft, "0"), F(x.FarOreEnd, "0"), F(x.SurfaceEnd, "0")));
+            var g = new StringBuilder("mode,size,ore,seed,game_over,ended,winner,end_min,errors,surface_start,deep_start,deep_left,far_ore_end,surface_end\n");
+            foreach (var x in games) g.AppendLine(string.Join(",", x.Mode, x.Size, OreLabel(x.Ore), x.Seed, x.GameOver ? 1 : 0, x.Ended, x.Winner, F(x.EndMinute, "0.0"), x.Errors, F(x.SurfaceStart, "0"), F(x.DeepStart, "0"), F(x.DeepLeft, "0"), F(x.FarOreEnd, "0"), F(x.SurfaceEnd, "0")));
             File.WriteAllText(Path.Combine(dir, "games.csv"), g.ToString());
             var items = Defs.Items.ToArray();
             var m = new StringBuilder("mode,size,ore,seed,team,min,mined,deep,salvage,derrick_steel,cc_trickle,upkeep,lowpower_s,spent,trucks,deep_mines,derricks,refineries,power_made,power_used,units,structures,kills,home_ore," + string.Join(",", items) + "\n");
