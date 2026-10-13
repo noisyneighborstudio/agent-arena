@@ -26,6 +26,7 @@ namespace Pez.Headless
             AttackUntilCapturable();
             AttackMoveDerricks();
             DefenceUpkeep();
+            FusionReactor();
         }
 
         static void DefenceUpkeep()
@@ -35,26 +36,33 @@ namespace Pez.Headless
             foreach (var u in w.Entities.Where(e => !e.IsStructure).ToList()) w.Remove(u);
             var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
             var turrets = new List<Entity>();
+            int baseUsed = t.PowerUsed;
             for (int i = 0; i < 11; i++) turrets.Add(w.SpawnStructure(0, "gun_turret", w.FindPlacement(0, "gun_turret").Value, 1f));
             t.Stock["steel"] = 1000;
             Run(w, 60.05f);
             float paid = 1000 - t.Stock["steel"];
-            Check(Math.Abs(paid - 21f) < 0.6f && turrets.All(x => !x.Offline), $"an 11-turret base pays 3 steel/min for each turret past the first 4: {paid:0.0} steel a minute");
+            Check(Math.Abs(paid - 42f) < 1.2f && turrets.All(x => !x.Offline), $"an 11-turret base pays 4% of the 150 steel price (6 steel/min) for each turret past the first 4: {paid:0.0} steel a minute");
             var st = D(StateData.Team(w, 0));
             var up = (Dictionary<string, object>)st["upkeep"];
-            Check((double)up["defences"] == 11 && (double)up["paying"] == 7 && (double)up["steel_per_min"] == 21 && ((List<object>)up["offline"]).Count == 0, "state shows the upkeep: 11 defences, 7 paying, 21 steel/min");
+            Check((double)up["defences"] == 11 && (double)up["paying"] == 7 && (double)up["steel_per_min"] == 42 && ((List<object>)up["offline"]).Count == 0, "state shows the upkeep: 11 defences, 7 paying, 42 steel/min");
+            var rulesText = Json.Write(StateView.Rules());
+            Check(Defs.Get("laser_tower").Description.Contains("4% of its steel price") && rulesText.Contains("4% of its steel price") && rulesText.Contains("a wall of 11 gun turrets costs 42 steel/min, 11 laser towers 70"),
+                  "the defence descriptions and the rules state the upkeep as a share of the steel price, with the 11-tower numbers");
 
             // Out of steel: the newest go offline (the first 4 never do), and hold fire.
-            t.Stock["steel"] = 0.16f; // enough for 3 of the 7 for one second
+            t.Stock["steel"] = 0.25f; // enough for 2 of the 7 for one second
             Run(w, 1);
             var off = turrets.Where(x => x.Offline).ToList();
-            Check(off.Count == 4 && off.All(x => x.Id > turrets[6].Id) && turrets.Take(4).All(x => !x.Offline),
+            Check(off.Count == 5 && off.All(x => x.Id > turrets[5].Id) && turrets.Take(4).All(x => !x.Offline),
                   $"short of steel, the newest defences past the free ones go offline ({off.Count} offline: #{string.Join(", #", off.Select(x => x.Id))})");
+            Check(t.PowerUsed == baseUsed + 6 * 15, $"and only the 6 still online draw power ({t.PowerUsed} used)");
             t.Stock["steel"] = 0;
             Run(w, 1);
             Check(turrets.Count(x => x.Offline) == 7 && w.Alerts.Active(w, 0).Any(a => a.Kind == "defences_offline" && a.Priority == Priority.High),
                   "with no steel at all, all 7 paid defences are offline and a DEFENCES OFFLINE alert says so");
             Check(((List<string>)StateView.TeamState(w, 0)["my_structures"]).Count(l => l.Contains("OFFLINE")) == 7, "my_structures marks them OFFLINE");
+            // Offline defences draw no power: 11 turrets draw 15 each, but with 7 offline only the 4 free ones do.
+            Check(t.PowerUsed == baseUsed + 4 * 15, $"7 offline turrets draw no power: {t.PowerUsed} used, of which the 4 free turrets draw {4 * 15} (the rest of the base {baseUsed})");
             // An enemy tank next to an offline turret and an online one: only the online one fires.
             var enemy = w.SpawnUnit(1, "heavy_tank", w.Owned(1).First(e => e.IsStructure));
             var offT = turrets.Last(); var onT = turrets[0];
@@ -67,6 +75,7 @@ namespace Pez.Headless
             t.Stock["steel"] = 500;
             Run(w, 1.05f);
             Check(turrets.All(x => !x.Offline) && w.Events.Any(e => e.Type == "defences_online"), "paid again, they come back online");
+            Check(t.PowerUsed == baseUsed + 11 * 15, $"and draw power again ({t.PowerUsed} used)");
             // A base of 4 or fewer never pays anything.
             var w2 = new World(2, 7, 96);
             var t2 = w2.Teams[0];
@@ -74,6 +83,108 @@ namespace Pez.Headless
             t2.Stock["steel"] = 0;
             Run(w2, 30);
             Check(w2.Defences(0).All(x => !x.Offline) && t2.Stats.UpkeepPaid == 0, "a base can always defend itself: the first 4 defences are free and never go offline");
+
+            // Upkeep follows the steel price: past the first 4 a gun turret costs 6 steel/min, a SAM site 8, a laser tower 10.
+            var w3 = new World(2, 7, 96);
+            var t3 = w3.Teams[0];
+            for (int i = 0; i < 4; i++) w3.SpawnStructure(0, "gun_turret", w3.FindPlacement(0, "gun_turret").Value, 1f);
+            var laser = w3.SpawnStructure(0, "laser_tower", w3.FindPlacement(0, "laser_tower").Value, 1f);
+            var sam = w3.SpawnStructure(0, "sam_site", w3.FindPlacement(0, "sam_site").Value, 1f);
+            var gun = w3.SpawnStructure(0, "gun_turret", w3.FindPlacement(0, "gun_turret").Value, 1f);
+            t3.Stock["steel"] = 1000;
+            Run(w3, 60.05f);
+            float paid3 = 1000 - t3.Stock["steel"];
+            Check(Math.Abs(paid3 - 24f) < 0.8f, $"a laser tower, a SAM site and a gun turret past the free four pay 10 + 8 + 6 steel/min: {paid3:0.0} steel a minute");
+            // They are paid oldest first: steel for the laser tower alone (10/min) keeps it online and drops the two newer ones.
+            t3.Stock["steel"] = 10f / 60f + 0.001f;
+            Run(w3, 1);
+            Check(!laser.Offline && sam.Offline && gun.Offline, $"short of steel, the older defence stays paid and the newer ones go offline (laser {(laser.Offline ? "offline" : "online")}, sam {(sam.Offline ? "offline" : "online")}, gun {(gun.Offline ? "offline" : "online")})");
+        }
+
+        /// <summary>
+        /// The fusion reactor: +500 power for the plasma it burns, scaled to the share of its burn the team can pay (so a
+        /// trickle of plasma gives a trickle of power, not none), leaving plasma held back by reserve or save_for alone.
+        /// </summary>
+        static void FusionReactor()
+        {
+            var fr = Defs.Get("fusion_reactor"); var plant = Defs.Get("power_plant");
+            // In raw ore (steel and copper 1, circuits 2 copper + 1 steel, plasma 2 uranium) it costs less per power than power plants,
+            // takes less room, and its fuel for an hour still leaves it ahead.
+            int Ore(Dictionary<string, int> c) => c.Sum(kv => kv.Value * (kv.Key switch { "circuits" => 3, "plasma" => 2, _ => 1 }));
+            float perHour = World.FusionBurn * 3600 * 2; // uranium
+            Check((float)Ore(fr.Cost) / fr.Power < (float)Ore(plant.Cost) / plant.Power && (float)fr.Power / (fr.SizeX * fr.SizeY) > (float)plant.Power / (plant.SizeX * plant.SizeY)
+                  && Ore(fr.Cost) + perHour < 5 * Ore(plant.Cost),
+                  $"a fusion reactor beats power plants per ore and per tile: {Ore(fr.Cost)} ore for +{fr.Power} ({(float)Ore(fr.Cost) / fr.Power:0.00} each) in {fr.SizeX * fr.SizeY} tiles, against {5 * Ore(plant.Cost)} for five plants in {5 * plant.SizeX * plant.SizeY}; an hour of its fuel is {perHour:0} uranium");
+
+            int baseMade = 0;
+            (World w, Team t, Entity r) Reactor()
+            {
+                var w = new World(2, 7, 96);
+                var t = w.Teams[0];
+                foreach (var u in w.Entities.Where(e => !e.IsStructure).ToList()) w.Remove(u);
+                baseMade = t.PowerProduced;
+                var r = w.SpawnStructure(0, "fusion_reactor", w.FindPlacement(0, "fusion_reactor").Value, 1f);
+                return (w, t, r);
+            }
+            string ConverterLine(World w, Entity r) => ((List<string>)StateView.TeamState(w, 0)["converters"]).First(l => l.StartsWith($"#{r.Id} "));
+
+            // Fuelled: it makes its full +500 and burns FusionBurn plasma a second.
+            var (w1, t1, r1) = Reactor();
+            t1.Stock["plasma"] = 100;
+            Run(w1, 60);
+            float burned = 100 - t1.Stock["plasma"];
+            Check(t1.PowerProduced == baseMade + 500 && r1.Working && Math.Abs(burned - World.FusionBurn * 60) < 0.05f && ConverterLine(w1, r1).EndsWith("working"),
+                  $"a fuelled reactor makes +500 and burns {World.FusionBurn} plasma/s ({burned / 60:0.000}/s measured; power {t1.PowerProduced - baseMade})");
+
+            // Half the plasma it needs arriving: half the power, not none, and nothing stockpiled.
+            var (w2, t2, r2) = Reactor();
+            t2.Stock["plasma"] = 0;
+            for (int i = 0; i < 20 * World.TickRate; i++) { t2.Add("plasma", 0.5f * World.FusionBurn * World.Dt); w2.Step(); }
+            Check(Math.Abs(t2.PowerProduced - baseMade - 250) <= 2 && r2.Working && t2.Stock["plasma"] < 0.01f && ConverterLine(w2, r2).Contains("SHORT OF PLASMA") && ConverterLine(w2, r2).Contains("50%"),
+                  $"with half the plasma it needs it makes half the power ({t2.PowerProduced - baseMade} of 500): {ConverterLine(w2, r2)}");
+            // And a tenth of what it needs: a tenth of the power.
+            for (int i = 0; i < 20 * World.TickRate; i++) { t2.Add("plasma", 0.1f * World.FusionBurn * World.Dt); w2.Step(); }
+            Check(Math.Abs(t2.PowerProduced - baseMade - 50) <= 2, $"and a tenth of it, a tenth of the power ({t2.PowerProduced - baseMade} of 500)");
+
+            // No plasma at all: no power from it, and it says so.
+            var (w3, t3, r3) = Reactor();
+            t3.Stock["plasma"] = 0;
+            Run(w3, 5);
+            Check(t3.PowerProduced == baseMade && !r3.Working && ConverterLine(w3, r3).Contains("IDLE (no plasma"), $"with no plasma it makes nothing ({t3.PowerProduced - baseMade}): {ConverterLine(w3, r3)}");
+            // Short of power because of it, the low-power alert says why and what to do.
+            for (int i = 0; i < 2; i++) w3.SpawnStructure(0, "gun_turret", w3.FindPlacement(0, "gun_turret").Value, 1f);
+            Run(w3, 1);
+            Check(t3.LowPower && w3.Alerts.All.Any(a => a.Team == 0 && a.Kind == "low_power" && a.Lost.Any(l => l.Contains($"fusion_reactor #{r3.Id} is short of plasma and makes only 0% of its 500 power"))),
+                  "and the low-power alert names the starved reactor");
+
+            // Reserve and save_for hold plasma back from it, as from converters.
+            var (w4, t4, r4) = Reactor();
+            t4.Stock["plasma"] = 50;
+            t4.Reserve["plasma"] = 50;
+            Run(w4, 10);
+            Check(t4.Stock["plasma"] == 50 && t4.PowerProduced == baseMade && !r4.Working, $"plasma held back by 'reserve' is not burned ({t4.Stock["plasma"]:0.###} left, power {t4.PowerProduced - baseMade})");
+            t4.Reserve["plasma"] = 40;
+            Run(w4, 10);
+            Check(t4.Stock["plasma"] < 50 && t4.Stock["plasma"] >= 40 && t4.PowerProduced == baseMade + 500, $"it burns what's above the reserve ({t4.Stock["plasma"]:0.###} of 50, reserve 40)");
+            t4.Reserve.Clear();
+            t4.Stock["plasma"] = 40;
+            t4.SaveFor = "laser_tank";
+            t4.SaveForCost["plasma"] = 40;
+            Run(w4, 10);
+            Check(t4.Stock["plasma"] == 40 && t4.PowerProduced == baseMade, $"plasma saved for a purchase ('save_for') is not burned either ({t4.Stock["plasma"]:0.###} left)");
+
+            // Saved and resumed, a half-fed reactor keeps its output.
+            var game = new Game(new GameConfig { Seed = 5, MapSize = 64, Controllers = new[] { "llm", "llm" } });
+            var gw = game.World;
+            foreach (var u in gw.Entities.Where(e => !e.IsStructure).ToList()) gw.Remove(u);
+            var gr = gw.SpawnStructure(0, "fusion_reactor", gw.FindPlacement(0, "fusion_reactor").Value, 1f);
+            for (int i = 0; i < 5 * World.TickRate; i++) { gw.Teams[0].Add("plasma", 0.5f * World.FusionBurn * World.Dt); gw.Step(); }
+            var json = Snap(game);
+            var back = Resume(json);
+            var br = back.World.Get(gr.Id);
+            var again = Snap(back);
+            Check(gr.Output > 0.4f && gr.Output < 0.6f && br != null && Math.Abs(br.Output - gr.Output) < 1e-4f && br.Working && back.World.Teams[0].PowerProduced == gw.Teams[0].PowerProduced && again == json,
+                  $"a half-fed reactor survives a save and resume ({gr.Output:0.00} -> {br?.Output:0.00}, power {back.World.Teams[0].PowerProduced} of {gw.Teams[0].PowerProduced}; identical {again == json}: {FirstDiff(json, again)})");
         }
 
         /// <summary>attack "until":"capturable": units hold fire at 50% so a commander with slow replies can still land the capture.</summary>
@@ -411,8 +522,8 @@ namespace Pez.Headless
                   $"the house AI that loses its HQ builds a construction truck and deploys a new one ({wg.Owned(0).Count(e => e.Def.Key == "command_center")} command centers, {built} trucks built)");
         }
 
-        /// <summary>Mine a fresh map bare, let it regrow: how much comes back in 10 and 20 minutes, and where.</summary>
-        static (int total, int middle, int edges, int fieldOre) RegrowBare(int size, float oreScale, float minutes, int seed = 7)
+        /// <summary>Mine a fresh map bare, let it regrow: how much comes back in 10 and 20 minutes, where, and of which ore (iron, copper, crystal, uranium).</summary>
+        static (int total, int middle, int edges, int fieldOre, int[] byOre) RegrowBare(int size, float oreScale, float minutes, int seed = 7)
         {
             var w = new World(2, seed, size, oreScale);
             foreach (var e in w.Entities.Where(e => e.IsHarvester).ToList()) w.Remove(e);
@@ -420,13 +531,15 @@ namespace Pez.Headless
             Array.Clear(w.Map.Ore, 0, w.Map.Ore.Length);
             Run(w, minutes * 60);
             int mid = 0, edge = 0;
+            var byOre = new int[4];
             float half = 0.5f * MathF.Sqrt(2) * size;
             for (int i = 0; i < w.Map.Ore.Length; i++)
             {
                 float dx = i % size + 0.5f - size / 2f, dy = i / size + 0.5f - size / 2f;
                 if (MathF.Sqrt(dx * dx + dy * dy) < half * 0.4f) mid += w.Map.Ore[i]; else edge += w.Map.Ore[i];
+                if (w.Map.OreBase[i] > 0) byOre[w.Map.OreBaseType[i]] += w.Map.Ore[i];
             }
-            return (w.Map.Ore.Sum(), mid, edge, field);
+            return (w.Map.Ore.Sum(), mid, edge, field, byOre);
         }
 
         static void OreRegrowth()
@@ -434,9 +547,12 @@ namespace Pez.Headless
             foreach (var (size, scale) in new[] { (96, 1f), (96, 0.3f), (208, 0.3f) })
             {
                 var r = RegrowBare(size, scale, 20);
-                Console.WriteLine($"      regrowth {size}x{size} ore x{scale}, 20 min after mined bare: {r.total} of {r.fieldOre} ({r.total / 1200f:0.0} ore/s), middle {r.middle}, edges {r.edges}");
-                Check(r.total / 1200f > 1.5f && r.total / 1200f < 10f && r.middle > r.edges * 1.4f,
-                      $"a mined-bare {size}x{size} map (ore x{scale}) earns back meaningful income in 20 minutes ({r.total / 1200f:0.0} ore/s, a deep mine pumps 4), mostly in the middle ({r.middle} vs {r.edges} at the edges)");
+                Console.WriteLine($"      regrowth {size}x{size} ore x{scale}, 20 min after mined bare: {r.total} of {r.fieldOre} ({r.total / 1200f:0.0} ore/s), middle {r.middle}, edges {r.edges}; iron {r.byOre[0] / 1200f:0.0}, copper {r.byOre[1] / 1200f:0.0}, crystal {r.byOre[2] / 1200f:0.0}, uranium {r.byOre[3] / 1200f:0.0} ore/s");
+                Check(r.total / 1200f > 1.5f && r.total / 1200f < 10f,
+                      $"a mined-bare {size}x{size} map (ore x{scale}) earns back meaningful income in 20 minutes ({r.total / 1200f:0.0} ore/s, a deep mine pumps 4)");
+                int basic = r.byOre[0] + r.byOre[1];
+                Check(basic > r.total * 0.4f && r.byOre[2] < r.total * 0.5f,
+                      $"and iron and copper are a real share of it, not crystal ({basic / 1200f:0.0} ore/s iron + copper, {r.byOre[2] / 1200f:0.0} crystal)");
             }
 
             // Never past the original amount, from a field's root when it's mined to nothing, never under a structure or
@@ -452,10 +568,10 @@ namespace Pez.Headless
             int far = crystal.Where(i => !roots[i]).OrderByDescending(i => Vec2.Dist(new Vec2(i % m.W, i / m.W), new Vec2(root % m.W, root / m.W))).First();
             Run(w, 2.1f);
             bool rootsOnly = tiles.Where(i => m.Ore[i] > 0).All(i => roots[i]);
-            for (int k = 0; k < 120 && m.Ore[root] == 0; k++) w.Step();
+            for (int k = 0; k < 20 * 300 && m.Ore[root] == 0; k++) w.Step(); // crystal regrows at half the base rate: a minute or so
             Check(rootsOnly && m.Ore[root] > 0 && m.Ore[far] == 0,
                   $"a field mined to nothing starts growing back from its root (the tile that held the most), not everywhere at once (first pass: only roots {rootsOnly}; root {m.Ore[root]}, far tile {m.Ore[far]})");
-            Run(w, 60);
+            Run(w, 300);
             Check(m.Ore[far] > 0, "and spreads from there into the rest of the field");
             // A building on a mined tile, and a truck parked on another: neither regrows.
             var mid = new Vec2(m.W / 2f, m.H / 2f);

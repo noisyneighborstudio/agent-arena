@@ -192,7 +192,7 @@ namespace Pez.Sim
              .Put("cargo", e.Cargo).Put("cargo_type", e.CargoType, -1).Put("harvest_type", e.HarvestType, -1);
             if (e.HarvestTile.HasValue) o.Set("harvest_tile", new List<object> { e.HarvestTile.Value.X, e.HarvestTile.Value.Y });
             o.PutEnum("dock", e.Dock, DockStep.None).Put("dock_at", e.DockAt).Put("burning", e.Burning);
-            o.Put("work_timer", e.WorkTimer).Put("deposit", e.DepositId).Put("working", e.Working).Put("carrier", e.CarrierId).Put("offline", e.Offline);
+            o.Put("work_timer", e.WorkTimer).Put("deposit", e.DepositId).Put("working", e.Working).Put("output", e.Output).Put("carrier", e.CarrierId).Put("offline", e.Offline);
             if (e.Passengers.Count > 0) o.Set("passengers", e.Passengers.Cast<object>().ToList());
             o.Put("fuel", e.Fuel).Put("fuel_cap", e.FuelCap).Put("landed", e.Landed).Put("stranded", e.Stranded).Put("at_depot", e.AtDepot).Put("fuel_warned", e.FuelWarned)
              .Put("no_auto_refuel_until", e.NoAutoRefuelUntil).PutEnum("resume_order", e.ResumeOrder, Order.Idle)
@@ -233,6 +233,9 @@ namespace Pez.Sim
             if (d.Has("harvest_tile", out var ht) && ht is List<object> hl && hl.Count >= 2) e.HarvestTile = new Int2(SnapIO.ToI(hl[0]), SnapIO.ToI(hl[1]));
             d.LoadEnum("dock", ref e.Dock); d.Load("dock_at", ref e.DockAt); d.Load("burning", ref e.Burning);
             d.Load("work_timer", ref e.WorkTimer); d.Load("deposit", ref e.DepositId); d.Load("working", ref e.Working); d.Load("carrier", ref e.CarrierId); d.Load("offline", ref e.Offline);
+            // A reactor saved before partial output made all of its power or none.
+            if (def.Key == "fusion_reactor") e.Output = e.Working ? 1f : 0f;
+            d.Load("output", ref e.Output);
             foreach (var x in d.Arr("passengers")) if (x is double pid) e.Passengers.Add((int)pid);
             // A snapshot from before fuel existed: start full rather than stranded.
             e.Fuel = def.Fuel; d.Load("fuel", ref e.Fuel); d.Load("fuel_cap", ref e.FuelCap);
