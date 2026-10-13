@@ -575,8 +575,12 @@ namespace Pez.Sim
         ///     reversing over and over) for 3 s; infantry and aircraft turn at a rate instead of snapping round; aircraft
         ///     land in their own slots on a pad (4 on an airfield) and hold nearby when it's full, a thirsty one has a full,
         ///     idle one lift off for it, and landed aircraft aren't shoved; an aircraft gliding in on empty still reaches its slot.
+        /// 40: movement phase 2: trucks queue single file for a bay, in order, and only the front one pulls up (Enter); a
+        ///     truck sticks with its drop-off unless another is clearly better; firing and harvesting have bands (stop at
+        ///     0.9x range, keep firing to 1x; re-centre on ore only 0.8 off); an idle unit at its leash holds; a soldier
+        ///     that dodges keeps its new spot; a group's slots face its way, sit on open ground and go by where units stand.
         /// </summary>
-        public const int RulesVersion = 39;
+        public const int RulesVersion = 40;
 
         public static JObj Rules()
         {

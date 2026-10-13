@@ -119,3 +119,16 @@ Each phase is its own rules version and is gated by the movement check as it gro
 3. **One writer.** The Intent / Resolve / Facing split, folding separation, give-way and dodging into Resolve.
 
 After phase 3 the guard should never fire in play; its counter staying at zero is the measure.
+
+## Status
+
+- **Phase 1 (rules 39):** done. The guard, turn rates for infantry and aircraft, airfield pad slots with holding and
+  pinning, the gate (`headless --gate`, also part of `--test`), settles in `/api/status` and on the ops dashboard.
+- **Phase 2 (rules 40):** mostly done. Single-file truck queues with an Enter step (only the front truck claims the
+  bay), sticky drop-offs, fire and harvest bands, the idle leash hold, dodgers keeping their spot, formation slots by
+  position on open ground. Left: sticky target choice, the group pace band, spread rally, retreat and spawn points.
+- **Phase 3:** not started.
+
+Gate budgets after phase 2 (settles in the run): airfield rush 0, 48-unit march 3, economy 0, 8 minutes AI vs AI 8,
+Room 2 outpost jam 8, Room 2 after rules 38 1, Room 2 spinning soldiers 2. Before phase 1's fixes the same runs
+settled 55 to 86 in the live fixtures.

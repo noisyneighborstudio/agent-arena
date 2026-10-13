@@ -19,16 +19,16 @@ namespace Pez.Headless
         static void MovementGate()
         {
             GateAirfieldRush();
-            GateCrowd(budget: 6);
+            GateCrowd(budget: 3);
             GateEconomy();
-            GateAiGame(minutes: 8, budget: 70);
+            GateAiGame(minutes: 8, budget: 8);
             foreach (var (file, seconds, budget) in new[]
             {
-                // Budgets: just above what phase 1 leaves (truck queues at drop-offs, the firing-line edge, soldiers by their
-                // tanks). Phase 2 (owned goals, bands) takes each to 0.
-                ("room2-refuel-and-outpost-jam.json", 60f, 60),
-                ("room2-after-rules38.json", 60f, 8),
-                ("room2-spinning-soldiers.json", 60f, 15),
+                // Budgets: just above what's left after phase 2's queues, bands and slots (a few trucks at the outpost, a
+                // unit or two wedged in a crowd). Phase 3 (one writer per tick) takes each to 0.
+                ("room2-refuel-and-outpost-jam.json", 60f, 8),
+                ("room2-after-rules38.json", 60f, 1),
+                ("room2-spinning-soldiers.json", 60f, 2),
             })
                 GateFixture(file, seconds, budget);
         }
@@ -63,8 +63,8 @@ namespace Pez.Headless
             Check(w.SettleCounts.Count == 0, $"no aircraft had to be settled at the airfield ({Settles(w)})");
         }
 
-        /// <summary>A mixed army of 48 sent to one point arrives and stands. Budget: soldiers whose formation slot the crowd
-        /// keeps them from (phase 1 settles them there, as arrived; phase 2's owned slots take it to 0).</summary>
+        /// <summary>A mixed army of 48 sent to one point arrives and stands. Budget: a unit or two the crowd still wedges short
+        /// of its slot (settled there, as arrived; phase 3 takes it to 0).</summary>
         static void GateCrowd(int budget)
         {
             var game = new Game(new GameConfig { Seed = 3, MapSize = 80, Controllers = new[] { "llm", "llm" } });

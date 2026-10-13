@@ -1299,9 +1299,17 @@ namespace Pez.Sim
                 return;
             }
             float d = t.DistFrom(e.Pos);
-            if (d <= e.Def.Weapon.Range) { e.Moving = false; FireAt(e, t); }
+            if (d <= FireBand(e)) { e.Moving = false; e.Path = null; FireAt(e, t); }
             else if (Vec2.Dist(e.Pos, e.GuardPos) < 6f) Chase(e, t); // path around obstacles, not straight into them
+            else e.Moving = false; // at the end of its leash: holds there (it used to stay "moving" on the spot)
         }
+
+        /// <summary>
+        /// How close a unit gets before it stops to fire, with a band: one closing in stops at 0.9x its range, one already
+        /// stopped keeps firing out to its full range. With a single threshold, a shove or a step of the target across it
+        /// flipped the unit between chasing and firing every tick (the attack-move firing line).
+        /// </summary>
+        static float FireBand(Entity e) => e.Def.Weapon.Range * (e.Moving ? 0.9f : 1f);
 
         /// <summary>Done with an order. Units that left their post to answer an attack head back to it.</summary>
         void FinishOrder(Entity e)
@@ -1351,7 +1359,7 @@ namespace Pez.Sim
                 Chase(e, t);
                 return;
             }
-            if (d <= e.Def.Weapon.Range * 0.95f)
+            if (d <= FireBand(e))
             {
                 e.Moving = false;
                 e.Path = null;
@@ -1776,7 +1784,9 @@ namespace Pez.Sim
                     WarnIfFarAfield(e, e.HarvestTile.Value);
                 }
                 var tile = e.HarvestTile.Value;
-                if (Vec2.Dist(e.Pos, tile.Center) > 0.45f) { FollowPath(e, tile.Center, 0.4f); return; }
+                // A band: it drives onto the tile until within 0.4, and once mining only re-centres if pushed 0.8 off (trucks
+                // on neighbouring tiles, 1 apart and 1 across, used to nudge each other off and turn round to re-centre).
+                if (Vec2.Dist(e.Pos, tile.Center) > (e.Moving ? 0.4f : 0.8f)) { FollowPath(e, tile.Center, 0.3f); return; }
                 e.Moving = false;
                 e.WorkTimer += Dt;
                 if (e.WorkTimer >= 0.1f)
@@ -1821,30 +1831,36 @@ namespace Pez.Sim
                 case DockStep.None:
                 case DockStep.Approach:
                 case DockStep.Queue:
-                    if (BayTaken(refinery, e))
+                case DockStep.Enter:
                     {
-                        // Wait beside the lane, out of the way, until the bay is free.
-                        if (e.Dock == DockStep.Queue || Vec2.Dist(e.Pos, head) < 4f)
+                        // One truck at a time in the bay, the rest in a single-file queue of their own spots beside the lane,
+                        // in the order they joined: when the bay frees, only the front one goes, and the rest each move up a
+                        // spot. (Trucks used to pick spots by id, two to a spot, and all rush the lane when it freed.)
+                        bool queued = e.Dock == DockStep.Queue;
+                        int ahead = queued ? QueueAhead(refinery, e) : 0;
+                        bool near = Vec2.Dist(e.Pos, head) < QueueJoinDist;
+                        // Its turn: already pulling up, or at the front of the queue (or near the lane with no queue) and the
+                        // bay isn't spoken for. Only then does it claim the bay (Enter); a truck merely on its way doesn't.
+                        if (e.Dock == DockStep.Enter || (!BayClaimed(refinery, e) && (queued ? ahead == 0 : near && QueueAhead(refinery, null) == 0)))
                         {
-                            if (e.Dock != DockStep.Queue) e.Path = null;
-                            e.Dock = DockStep.Queue;
-                            var spot = head + across * (e.Id % 2 == 0 ? 1.7f : -1.7f) + outward * 1.3f;
-                            if (!Map.Passable(Int2.Of(spot).X, Int2.Of(spot).Y)) spot = head + across * (e.Id % 2 == 0 ? -1.7f : 1.7f) + outward * 1.3f;
-                            if (!Map.Passable(Int2.Of(spot).X, Int2.Of(spot).Y)) spot = head + outward * 2.5f;
-                            FollowPath(e, spot, 0.4f);
+                            if (e.Dock != DockStep.Enter) e.Path = null;
+                            e.Dock = DockStep.Enter;
+                            if (Vec2.Dist(e.Pos, head) > 0.35f) { FollowPath(e, head, 0.3f); return; }
+                            e.Dock = DockStep.Align;
+                            e.Moving = false;
+                            e.Path = null;
                             return;
                         }
-                        e.Dock = DockStep.Approach;
-                        FollowPath(e, head, 0.35f);
+                        // Still on its way: drive on toward the lane; near it, join the back of the queue.
+                        if (!queued && !near) { e.Dock = DockStep.Approach; FollowPath(e, head, 0.35f); return; }
+                        if (!queued) { e.Dock = DockStep.Queue; e.QueuedAt = Time; e.Path = null; ahead = QueueAhead(refinery, e); }
+                        var spot = QueueSpot(head, outward, across, ahead) ?? e.Pos; // nowhere to line up: wait where it is
+                        float off = Vec2.Dist(e.Pos, spot);
+                        // A band: once at its spot it stays, unless shoved well off it (it doesn't re-centre on every nudge).
+                        if (off > 0.9f || (e.Moving && off > 0.3f)) { FollowPath(e, spot, 0.3f); return; }
+                        e.Moving = false; e.Path = null;
                         return;
                     }
-                    if (e.Dock == DockStep.Queue) e.Path = null;
-                    e.Dock = DockStep.Approach;
-                    if (Vec2.Dist(e.Pos, head) > 0.35f) { FollowPath(e, head, 0.3f); return; }
-                    e.Dock = DockStep.Align;
-                    e.Moving = false;
-                    e.Path = null;
-                    return;
                 case DockStep.Align:
                     // Turn on the spot to face away from the building (the bin end toward it), settling onto the lane.
                     e.Moving = false;
@@ -1926,9 +1942,67 @@ namespace Pez.Sim
                 int waiting = 0;
                 foreach (var o in Entities) if (o != e && !o.Dead && o.IsHarvester && o.DockAt == s.Id) waiting++;
                 float cost = Vec2.Dist(head, e.Pos) + 4f * waiting + (laneOk ? 0 : 30f);
+                if (s.Id == e.DockAt) cost = cost * 0.75f - 2f; // sticks with the one it has unless another is clearly better
                 if (cost < bestCost) { best = s; bestCost = cost; }
             }
             return best;
+        }
+
+        /// <summary>Debug: each drop-off's lane and queue (PEZ_QUEUEDBG).</summary>
+        public string QueueReport()
+        {
+            var sb = new System.Text.StringBuilder();
+            foreach (var s in Entities.Where(x => !x.Dead && x.IsStructure && x.Def.DropOff))
+            {
+                var (bay, head, _, ok) = Bay(s);
+                var outward = (head - bay).Normalized; var across = new Vec2(-outward.Y, outward.X);
+                sb.AppendLine($"#{s.Id} {s.Def.Key} t{s.Team} origin {s.Origin.X},{s.Origin.Y} size {s.Def.SizeX}x{s.Def.SizeY} bay {bay} head {head} lane {ok}");
+                for (int r = 0; r < 4; r++) { var sp = QueueSpot(head, outward, across, r) ?? new Vec2(-1, -1); var t = Int2.Of(sp); sb.AppendLine($"   spot {r} {sp} passable {Map.Passable(t.X, t.Y)} occupant {(Map.InBounds(t.X, t.Y) ? Map.Occupant[Map.Idx(t.X, t.Y)] : -9)}"); }
+                foreach (var o in Entities.Where(o => !o.Dead && o.IsHarvester && o.DockAt == s.Id))
+                    sb.AppendLine($"   truck #{o.Id} {o.Dock} at {o.Pos} rank {(o.Dock == DockStep.Queue ? QueueAhead(s, o) : -1)} path {(o.Path == null ? "-" : string.Join(" ", o.Path))}");
+            }
+            return sb.ToString();
+        }
+
+        /// <summary>How near the head of its lane a truck on its way joins a drop-off's queue (when it has to wait).</summary>
+        public const float QueueJoinDist = 5f;
+
+        /// <summary>Trucks queued for drop-off s ahead of e (joined earlier; ties by id). With e null: all of them.</summary>
+        int QueueAhead(Entity s, Entity e)
+        {
+            int n = 0;
+            foreach (var o in Entities)
+            {
+                if (o == e || o.Dead || !o.IsHarvester || o.DockAt != s.Id || o.Dock != DockStep.Queue) continue;
+                if (e == null || o.QueuedAt < e.QueuedAt || (o.QueuedAt == e.QueuedAt && o.Id < e.Id)) n++;
+            }
+            return n;
+        }
+
+        /// <summary>The bay is spoken for: another truck is pulling up to it (its turn), or in it (lining up, backing in, unloading or pulling out).</summary>
+        bool BayClaimed(Entity s, Entity e)
+        {
+            foreach (var o in Entities)
+                if (o != e && !o.Dead && o.IsHarvester && o.DockAt == s.Id && o.Dock >= DockStep.Enter) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// Queue spot `rank` (0 = next in): a single file beside the lane, 1.25 apart (trucks are 1 across), starting just
+        /// past where a truck pulling out stops, so the lane stays clear; the other side if that's blocked; a line across
+        /// the head of the lane if the lane runs into rock or off the map; straight back along it as a last resort. Null
+        /// if none of those is open ground (it waits where it is).
+        /// </summary>
+        Vec2? QueueSpot(Vec2 head, Vec2 outward, Vec2 across, int rank)
+        {
+            float along = PullOutPast + 0.2f + rank * 1.25f;
+            foreach (var spot in new[] { head + outward * along + across * 1.7f, head + outward * along - across * 1.7f,
+                                         head + across * (2.2f + rank * 1.25f), head - across * (2.2f + rank * 1.25f), head + outward * (along + 1.6f) })
+            {
+                var t = Int2.Of(spot);
+                if (Map.Passable(t.X, t.Y)) return spot;
+            }
+            return null;
         }
 
         /// <summary>Another truck is in this bay (lining up, backing in, unloading or pulling out).</summary>
@@ -2852,6 +2926,7 @@ namespace Pez.Sim
                 s.Pos += bestDir * step;
                 s.Facing = RotateToward(s.Facing, bestDir.Angle, TurnRate(s) * Dt);
                 s.DodgeUntil = Time + 0.25f;
+                if (s.Order == Order.Idle) s.GuardPos = s.Pos; // standing where vehicles drive: it doesn't stroll back into their way
             }
         }
 
@@ -3014,7 +3089,9 @@ namespace Pez.Sim
                 if (e.Dead || e.IsStructure || e.IsMine || e.IsCarried) continue;
                 var step = e.Pos - e.PrevPos;
                 float len = step.Length;
-                if (len > 1f || e.Stranded) { e.DanceVel = default; e.DanceSpeed = e.DanceFor = e.DanceFlips = 0f; e.DanceStep = e.DanceHeading = default; continue; } // a jump (unloaded, evicted), not a step
+                // A jump (unloaded, evicted), a truck in its bay's choreography (swing round, back in, unload, pull out) or a
+                // landed aircraft: not walking anywhere, so nothing to judge. The averages start afresh after.
+                if (len > 1f || e.Stranded || e.Dock >= DockStep.Align || (e.IsAir && e.Landed)) { e.DanceVel = default; e.DanceSpeed = e.DanceFor = e.DanceFlips = 0f; e.DanceStep = e.DanceHeading = default; continue; }
                 e.DanceVel = e.DanceVel * (1f - k) + step * k;
                 e.DanceSpeed = e.DanceSpeed * (1f - k) + len * k;
                 // Reversals of its motion over about 0.3 s (DanceStep: a short running average of its step), against the last

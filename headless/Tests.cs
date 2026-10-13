@@ -1249,7 +1249,7 @@ namespace Pez.Headless
                 if (steps.Count == 0 || steps[steps.Count - 1] != truck.Dock) steps.Add(truck.Dock);
             }
             Check(w.Teams[0].Stats.OreMined - mined0 >= 150, $"a truck docking through a crowd of parked tanks still unloads (delivered {w.Teams[0].Stats.OreMined - mined0}, truck at {truck.Pos}, dock {dock}, {truck.Dock}, t {w.Time:0.0})");
-            Check(string.Join(",", steps).Contains("Approach,Align,Reverse,Unload,PullOut"), $"it lines up, backs into the bay, unloads and pulls out ({string.Join(" > ", steps)})");
+            Check(string.Join(",", steps).Contains("Enter,Align,Reverse,Unload,PullOut"), $"it lines up, backs into the bay, unloads and pulls out ({string.Join(" > ", steps)})");
 
             // Two trucks arriving together: one backs in, the other waits beside the lane, then takes its turn.
             var wq = new World(2, 7, 80);

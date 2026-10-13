@@ -63,6 +63,7 @@ namespace Pez.Headless
                 var ev = game.World.Events.Where(x => x.Type == "crushed").ToList();
                 Console.WriteLine($"after {min:0} min of AI vs AI: {ev.Count / 1} crushed events, kills {string.Join("/", game.World.Teams.Select(t => t.Stats.Kills))}, game over {game.World.GameOver} at {game.World.Time / 60:0.0} min; units now: {string.Join(", ", game.World.Entities.Where(x => !x.Dead && !x.IsStructure).GroupBy(x => x.Def.Key).Select(g => $"{g.Key}x{g.Count()}"))}");
                 foreach (var x in ev.Take(12)) Console.WriteLine($"  [{x.Tick * World.Dt / 60:0.0}m] {x.Text}");
+                if (Environment.GetEnvironmentVariable("PEZ_QUEUEDBG") != null) Console.WriteLine(game.World.QueueReport());
                 if (Environment.GetEnvironmentVariable("PEZ_AIDBG") != null)
                     foreach (var t in game.World.Teams)
                     {

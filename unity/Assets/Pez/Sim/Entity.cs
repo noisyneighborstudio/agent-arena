@@ -9,7 +9,7 @@ namespace Pez.Sim
     /// (Approach), wait beside it if the bay is busy (Queue), turn to face away from the building (Align), reverse in
     /// (Reverse), settle and tip the load (Unload), then drive out (PullOut). See World.UpdateHarvester.
     /// </summary>
-    public enum DockStep { None, Approach, Queue, Align, Reverse, Unload, PullOut }
+    public enum DockStep { None, Approach, Queue, Enter, Align, Reverse, Unload, PullOut } // Enter: its turn, pulling up to the head of the lane
 
     public class Entity
     {
@@ -63,7 +63,8 @@ namespace Pez.Sim
         // The dance guard (World.WatchDances): two-second running averages of its per-tick step (velocity and speed), its
         // last step, how long it's been on the move without getting anywhere, recent reversals, and until when it's settled.
         public Vec2 DanceVel, DanceStep, DanceHeading;
-        public float DanceSpeed, DanceFor, DanceFlips, SettledUntil;      // soldier: getting out of a vehicle's way until then (its walk and aim wait)
+        public float DanceSpeed, DanceFor, DanceFlips, SettledUntil;
+        public float QueuedAt;        // truck: when it joined its drop-off's queue (World.QueueAhead orders the line by it)      // soldier: getting out of a vehicle's way until then (its walk and aim wait)
         public float RepathTimer;
         public bool Moving;
         public int LastAttackerId;
@@ -151,6 +152,7 @@ namespace Pez.Sim
         public string DockName => Order != Order.ReturnOre ? null : Dock switch
         {
             DockStep.Queue => "waiting for the bay",
+            DockStep.Enter => "pulling up to the bay",
             DockStep.Align => "lining up to back in",
             DockStep.Reverse => "backing into the bay",
             DockStep.Unload => "unloading",
