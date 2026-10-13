@@ -479,6 +479,7 @@ namespace Pez.Headless
             Check(w.Teams[0].Zones.TryGetValue(dep.Id, out var flag) && flag.FlaggedBy == sv.Id && sv.Order == Order.Idle, "a one-off survey plants its flags and then waits");
 
             // A drill rig only deploys on a surveyed deposit.
+            w.SpawnStructure(0, "power_plant", w.FindPlacement(0, "power_plant").Value, 1f); // the mine needs 50 power; at half power it pumps 2/s, not the 4/s checked below
             var rig = At(w.SpawnUnit(0, "drill_rig", hq), dep.Pos + new Vec2(8, 0));
             r = Commands.Execute(w, 0, Cmd("type", "deploy", "units", new[] { rig.Id }));
             Check(!Ok(r) && r["error"].ToString().Contains("deep deposit"), $"off a deposit, the rig won't deploy: {r["error"]}");
