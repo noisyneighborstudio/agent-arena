@@ -1668,7 +1668,7 @@ namespace Pez.Headless
             Console.WriteLine("\n-- scripted AI economy");
             bool regrowth = World.RegrowthDisabled;
             World.RegrowthDisabled = true; // ore the scenarios clear away stays gone
-            try { AiRefineries(); AiDeepMining(); AiDrillChoices(); AiDeepRecovery(); AiEconomyRecovery(); AiHeadquartersRecovery(); AiRigDestinations(); AiMinePlan(); AiBuildOverrides(); AiPlanEdges(); AiExpansion(); }
+            try { AiRefineries(); AiRefineryNeed(); AiCopperSteering(); AiDeepMining(); AiDrillChoices(); AiDeepRecovery(); AiEconomyRecovery(); AiHeadquartersRecovery(); AiRigDestinations(); AiMinePlan(); AiBuildOverrides(); AiPlanEdges(); AiExpansion(); }
             finally { World.RegrowthDisabled = regrowth; }
         }
 
@@ -1756,6 +1756,127 @@ namespace Pez.Headless
             raider.Update(w7);
             Check(Vec2.Dist(derrick.Center, w7.Teams[0].StartPos) < Vec2.Dist(foe.Center, w7.Teams[0].StartPos) && tanks.All(u => u.Order == Order.AttackMove && Vec2.Dist(u.OrderPos, foe.Center) < 3),
                   $"a wave goes for the enemy command center, not the derrick beside it (orders to {tanks[0].OrderPos}, base at {foe.Center})");
+        }
+
+        /// <summary>How many refineries the scripted AI wants: more while iron ore backs up, as many as the ore coming in could keep busy and no more, and not where there is no room.</summary>
+        static void AiRefineryNeed()
+        {
+            // A base with `refineries` refineries and power to spare, steel and circuits in plenty (the build order has nothing to wait for), 3,000 iron
+            // ore waiting to be refined, and no ore in the ground: whatever comes in is fed by hand (Income), so the ore coming in is known.
+            (World w, SimpleAI ai, Team t) Base(int refineries)
+            {
+                var (w, ai) = AiWorld();
+                var t = w.Teams[0];
+                AiBase(w, "power_plant", "mining_refinery", "barracks", "factory", "power_plant", "electronics_plant", "gun_turret");
+                for (int i = 1; i < refineries; i++) AiBase(w, "mining_refinery");
+                AiBase(w, "power_plant", "power_plant", "power_plant");
+                for (int i = 0; i < w.Map.Ore.Length; i++) w.Map.Ore[i] = 0;
+                foreach (var d in w.Map.Deep) d.Amount = 0;
+                t.Add("steel", 20000); t.Add("circuits", 5000); t.Add("iron_ore", 3000);
+                return (w, ai, t);
+            }
+            // `rate` iron ore a second arriving (in the stockpile, unless `spent`, and in the team's ore mined), and a little copper ore for the refineries' price.
+            Action Income(Team t, float rate, bool spent = false)
+            {
+                float owed = 0;
+                return () => { owed += rate * World.Dt; int n = (int)owed; owed -= n; if (!spent) t.Add("iron_ore", n); t.Add("copper_ore", 3 * World.Dt); t.Stats.OreMined += n; };
+            }
+
+            // The old cap was four. With 39 ore a second mined, the command center's 1 on top, and 3,000 waiting it goes past four, to the eight that
+            // 40 a second could keep busy.
+            var (w1, ai1, t1) = Base(4);
+            AiRun(w1, ai1, 4 * 60, Income(t1, 39));
+            Check(Have(w1, "mining_refinery") == 8, $"with 39 ore a second mined and iron ore backing up, it builds refineries past four, up to the 8 that income could keep busy ({Have(w1, "mining_refinery")}, {t1.Amount("iron_ore")} iron ore waiting)");
+            var saved = Json.Write(ai1.SaveState());
+            var back = SimpleAI.LoadState((Dictionary<string, object>)Json.Parse(saved));
+            Check(saved.Contains("\"ore_rate\":") && Json.Write(back.SaveState()) == saved, "and what it has measured of the ore coming in is part of the saved game");
+
+            // Half the income, half the refineries; a quarter of it, a quarter. The bound is the income, not the backlog.
+            var (w2, ai2, t2) = Base(2);
+            AiRun(w2, ai2, 4 * 60, Income(t2, 19));
+            Check(Have(w2, "mining_refinery") == 4, $"with 19 ore a second mined (20 with the command center's) it stops at the 4 that could keep busy ({Have(w2, "mining_refinery")})");
+            var (w3, ai3, t3) = Base(2);
+            AiRun(w3, ai3, 4 * 60, Income(t3, 9));
+            Check(Have(w3, "mining_refinery") == 2, $"with 9 a second (10 with the command center's), its two are enough however much is waiting ({Have(w3, "mining_refinery")})");
+            // The command center's own iron ore (1 a second, half in low power) is income the ore mined leaves out: 9.5 mined is 10.5 in all, more than two
+            // refineries' 10, so a third goes up (it stayed at two when only the mined ore was counted).
+            var (w3b, ai3b, t3b) = Base(2);
+            AiRun(w3b, ai3b, 6 * 60, Income(t3b, 9.5f));
+            Check(Have(w3b, "mining_refinery") == 3, $"with 9.5 ore a second mined and the command center's 1 more, it needs a third refinery ({Have(w3b, "mining_refinery")})");
+
+            // No ore coming in at all: nothing to build for, so the backlog alone adds none.
+            var (w4, ai4, t4) = Base(2);
+            AiRun(w4, ai4, 3 * 60);
+            Check(Have(w4, "mining_refinery") == 2, $"with no ore coming in, 3,000 waiting adds no refinery ({Have(w4, "mining_refinery")})");
+
+            // A backlog under the mark wants nothing more, however much comes in (here it is spent as it arrives).
+            var (w5, ai5, t5) = Base(2);
+            t5.Add("iron_ore", -2500); // 500 left
+            AiRun(w5, ai5, 60, Income(t5, 40, spent: true));
+            Check(t5.Amount("iron_ore") < 1000 && Have(w5, "mining_refinery") == 2, $"with only {t5.Amount("iron_ore")} iron ore waiting it builds none ({Have(w5, "mining_refinery")} refineries)");
+
+            // Room: a refinery wanted with nowhere to put it holds back no copper ore for its price (the base is full of factories),
+            // where one with room does.
+            var (w6, ai6, t6) = Base(2);
+            AiRun(w6, ai6, 40, Income(t6, 40));
+            Check(t6.Reserve.TryGetValue("copper_ore", out var held6) && held6 == 100, $"a refinery it can place is saved for: the 100 copper ore it costs is held back (reserve {(t6.Reserve.TryGetValue("copper_ore", out var h6) ? h6 : 0)})");
+            var (w7, ai7, t7) = Base(2);
+            while (w7.FindPlacement(0, "mining_refinery") is Int2 spot) w7.SpawnStructure(0, "factory", spot, 1f);
+            AiRun(w7, ai7, 40, Income(t7, 40));
+            Check(Have(w7, "mining_refinery") == 2 && !(t7.Reserve.TryGetValue("copper_ore", out var held7) && held7 > 0), $"but with no room it does not hold ore back for one (reserve {(t7.Reserve.TryGetValue("copper_ore", out var h7) ? h7 : 0)})");
+            Check(w6.Errors == 0 && w7.Errors == 0, $"no sim errors ({w6.LastError}{w7.LastError})");
+        }
+
+        /// <summary>The scripted AI keeps refined copper to a few hundred: its trucks go back to iron above 600, its deep mines are for copper it is starved of, and the ones pumping into a pile are sold.</summary>
+        static void AiCopperSteering()
+        {
+            // The build order is done as far as the second refinery, so nothing waits on copper ore (a refinery waiting on it sends trucks for it whatever is in hand).
+            (World w, SimpleAI ai, Team t) Base()
+            {
+                var (w, ai) = AiWorld();
+                AiBase(w, "power_plant", "mining_refinery", "barracks", "factory", "power_plant", "electronics_plant", "gun_turret", "mining_refinery", "power_plant");
+                return (w, ai, w.Teams[0]);
+            }
+            void SetCopper(Team t, int amount) { t.Add("copper", amount - t.Amount("copper")); t.Add("copper_ore", -t.Amount("copper_ore")); }
+
+            // Trucks: copper switches on below 300 and off above 600 (it used to be 800 and 1,800).
+            var (w1, ai1, t1) = Base();
+            for (int i = 0; i < 4; i++) w1.SpawnUnit(0, "mining_truck", w1.Owned(0).First(e => e.Def.Key == "command_center"));
+            var trucks = w1.Owned(0).Where(e => e.IsHarvester).ToList();
+            int OnCopper() => trucks.Count(e => e.HarvestType == Map.Copper);
+            void Settle(int copper) { SetCopper(t1, copper); foreach (var e in trucks) e.Cargo = 0; AiRun(w1, ai1, 3); } // (a truck with a load keeps its ore until it has unloaded)
+            Settle(800);
+            Check(OnCopper() == 0, $"with 800 copper no truck goes for more ({OnCopper()} of {trucks.Count})");
+            Settle(400);
+            Check(OnCopper() == 0, $"at 400, between the marks and coming down from above, still none ({OnCopper()})");
+            Settle(100);
+            Check(OnCopper() >= 1, $"below 300 trucks go for copper ({OnCopper()})");
+            Settle(500);
+            Check(OnCopper() >= 1, $"at 500, between the marks and going up from below, they stay on it ({OnCopper()})");
+            Settle(700);
+            Check(OnCopper() == 0, $"above 600 they are back on iron ({OnCopper()})");
+
+            // Deep mines: copper pumped into a pile is sold, iron is not, and copper short of the surplus is left alone.
+            var (w2, ai2, t2) = Base();
+            for (int i = 0; i < w2.Map.Ore.Length; i++) w2.Map.Ore[i] = 0;
+            var deps = w2.Map.Deep.OrderBy(d => Vec2.Dist(d.Pos, t2.StartPos)).Take(2).ToList();
+            deps[0].Type = Map.Copper; deps[1].Type = Map.Iron;
+            var hq = w2.Owned(0).First(e => e.Def.Key == "command_center");
+            var mines = new List<Entity>();
+            foreach (var d in deps)
+            {
+                t2.Surveyed.Add(d.Id); t2.Zones[d.Id] = new ZoneFlag { ZoneId = d.Id, FlaggedBy = 0, FlaggedAt = w2.Time };
+                var rig = At(w2.SpawnUnit(0, "drill_rig", hq), d.Pos + new Vec2(1, 0));
+                Check(Ok(Commands.Execute(w2, 0, Cmd("type", "deploy", "units", new[] { rig.Id }))), $"(a mine on the {Defs.Ores[d.Type]} deposit)");
+                mines.Add(w2.Owned(0).First(e => e.Def.Key == "deep_mine" && e.DepositId == d.Id));
+            }
+            SetCopper(t2, 1000);
+            AiRun(w2, ai2, 5);
+            Check(!mines[0].Dead && !mines[1].Dead, $"a copper mine stays while the copper in hand is short of the surplus ({t2.Amount("copper") + t2.Amount("copper_ore")})");
+            t2.Add("copper", 1000);
+            AiRun(w2, ai2, 5);
+            Check(mines[0].Dead && !mines[1].Dead, $"past 1,500 the copper mine is sold and the iron one is not ({t2.Amount("copper") + t2.Amount("copper_ore")} copper)");
+            Check(w1.Errors == 0 && w2.Errors == 0, $"no sim errors ({w1.LastError}{w2.LastError})");
         }
 
         static void AiDeepMining()
@@ -2427,13 +2548,65 @@ namespace Pez.Headless
             var (w1, ai1, t1, d1) = Dry(0);
             d1[0].Type = Map.Copper; d1[1].Type = Map.Copper;
             t1.Add("copper", 3000); t1.Add("iron_ore", 1000); t1.Add("steel", 1000); t1.Add("copper_ore", -t1.Amount("copper_ore"));
-            AiRun(w1, ai1, 90);
-            Check(GoesTo(w1, d1[0]), $"with 3000 copper but no copper ore for its second refinery and no surface ore left, a rig goes to the copper zone ({w1.Owned(0).Count(e => e.Def.Key == "drill_rig")} rigs, {w1.Owned(0).Count(e => e.Def.Key == "deep_mine")} mines)");
+            bool wentCopper = false; // (the mine is sold again once it has pumped the refinery its 100 copper ore: refined copper is past the surplus)
+            AiRun(w1, ai1, 90, () => wentCopper |= GoesTo(w1, d1[0]));
+            Check(wentCopper, $"with 3000 copper but no copper ore for its second refinery and no surface ore left, a rig goes to the copper zone ({w1.Owned(0).Count(e => e.Def.Key == "drill_rig")} rigs, {w1.Owned(0).Count(e => e.Def.Key == "deep_mine")} mines)");
+            Check(Have(w1, "mining_refinery") >= 2 && !w1.Owned(0).Any(e => e.Def.Key == "deep_mine"),
+                  $"and sells that mine once the refinery has its ore: copper is piling up ({Have(w1, "mining_refinery")} refineries, {w1.Owned(0).Count(e => e.Def.Key == "deep_mine")} mines, {t1.Amount("copper")} copper)");
             var (w1b, ai1b, t1b, d1b) = Dry(1);
             d1b[0].Type = Map.Copper; d1b[1].Type = Map.Copper;
             t1b.Add("copper", 3000); t1b.Add("iron_ore", 1000); t1b.Add("steel", 1000); t1b.Add("copper_ore", -t1b.Amount("copper_ore"));
             AiRun(w1b, ai1b, 90);
             Check(!GoesTo(w1b, d1b[0]) && !GoesTo(w1b, d1b[1]), "but with no refinery waiting on copper ore, copper zones are not worth a rig while copper is plentiful");
+
+            // A copper zone nearer than an iron one, copper in hand (400: not starved, though trucks would still fetch it) and nothing waiting on
+            // copper ore: the rig goes to the iron zone. A mine pumps for as long as the deposit lasts, where a truck can turn back to iron.
+            var (w4, ai4, t4, d4) = Dry(1);
+            d4[0].Type = Map.Copper; d4[1].Type = Map.Iron;
+            t4.Add("copper", 400 - t4.Amount("copper")); t4.Add("copper_ore", -t4.Amount("copper_ore")); t4.Add("iron_ore", 1000); t4.Add("steel", 1000);
+            AiRun(w4, ai4, 90);
+            Check(GoesTo(w4, d4[1]) && !GoesTo(w4, d4[0]), $"with 400 copper in hand the rig goes to the iron zone, not the nearer copper one ({w4.Owned(0).Count(e => e.Def.Key == "drill_rig")} rigs, {w4.Owned(0).Count(e => e.Def.Key == "deep_mine")} mines)");
+            // Out of copper altogether, the nearer copper zone is the one.
+            var (w5, ai5, t5, d5) = Dry(1);
+            d5[0].Type = Map.Copper; d5[1].Type = Map.Iron;
+            t5.Add("copper", -t5.Amount("copper")); t5.Add("copper_ore", -t5.Amount("copper_ore")); t5.Add("iron_ore", 1000); t5.Add("steel", 1000);
+            AiRun(w5, ai5, 90);
+            Check(GoesTo(w5, d5[0]), $"but starved of copper, with none in hand, it goes to the copper zone ({w5.Owned(0).Count(e => e.Def.Key == "drill_rig")} rigs, {w5.Owned(0).Count(e => e.Def.Key == "deep_mine")} mines)");
+            // Two copper zones and nothing else known, starved, with the steel for two rigs: one copper mine is all the starved rule allows (once a
+            // rig is bound for the first, copper is no longer starved and the second zone is not open), so one rig is bought, not two with one left idle.
+            var (w6, ai6, t6, d6) = Dry(1);
+            d6[0].Type = Map.Copper; d6[1].Type = Map.Copper;
+            t6.Add("copper", -t6.Amount("copper")); t6.Add("copper_ore", -t6.Amount("copper_ore")); t6.Add("iron_ore", 1000); t6.Add("steel", 2000);
+            AiRun(w6, ai6, 90);
+            int rigs6 = w6.Owned(0).Count(e => e.Def.Key == "drill_rig"), mines6 = w6.Owned(0).Count(e => e.Def.Key == "deep_mine"), queued6 = t6.UnitQueues[Producer.Factory].Count(q => q.Key == "drill_rig");
+            Check(GoesTo(w6, d6[0]) && rigs6 + mines6 + queued6 == 1 && !w6.Owned(0).Any(e => e.Def.Key == "drill_rig" && e.Order == Order.Idle),
+                  $"with two copper zones and steel for two rigs it buys one, and none is left idle ({rigs6} rigs, {mines6} mines, {queued6} queued, {t6.Amount("steel")} steel)");
+            // The surface copper is gone, there is no refined copper, and the next step is a refinery the base has no room for (an iron mine is pumping,
+            // so the build order is on): the 100 copper ore it costs is held back (reserved) and the refineries can't touch it, so copper ore in the
+            // stockpile is not copper it can use. It is starved all the same, and the rig goes to the copper zone (the reserve once counted as copper
+            // on hand, and the gate on copper zones stayed shut for good).
+            var (w7, ai7, t7, d7) = Dry(0);
+            d7[0].Type = Map.Copper; d7[1].Type = Map.Iron;
+            var hq7 = w7.Owned(0).First(e => e.Def.Key == "command_center");
+            var ironRig = At(w7.SpawnUnit(0, "drill_rig", hq7), d7[1].Pos + new Vec2(1, 0));
+            Check(Ok(Commands.Execute(w7, 0, Cmd("type", "deploy", "units", new[] { ironRig.Id }))), "(an iron mine pumping)");
+            while (w7.FindPlacement(0, "mining_refinery") is Int2 spot7) w7.SpawnStructure(0, "power_plant", spot7, 1f);
+            t7.Add("copper", -t7.Amount("copper")); t7.Add("copper_ore", 100 - t7.Amount("copper_ore")); t7.Add("iron_ore", 1000); t7.Add("steel", 1000);
+            bool wentCopper7 = false;
+            AiRun(w7, ai7, 90, () => wentCopper7 |= GoesTo(w7, d7[0]));
+            Check(Have(w7, "mining_refinery") == 1 && t7.Reserved("copper_ore") >= 100 && wentCopper7,
+                  $"with its refinery held back for want of room, 100 copper ore reserved for it and no copper to use, a rig goes to the copper zone ({w7.Owned(0).Count(e => e.Def.Key == "drill_rig")} rigs, {w7.Owned(0).Count(e => e.Def.Key == "deep_mine")} mines, reserve {t7.Reserved("copper_ore")} copper ore)");
+            // The same with refined copper: 100 of the 150 there is held back (as save_for does for an outpost truck that lacks its circuits; the
+            // electronics plant can't touch it, so no circuits are made and the truck is never bought) is not copper it can use either.
+            var (w8, ai8, t8, d8) = Dry(1);
+            d8[0].Type = Map.Copper; t8.Surveyed.Remove(d8[1].Id);
+            var hq8 = w8.Owned(0).First(e => e.Def.Key == "command_center");
+            for (int i = 0; i < 2; i++) { w8.SpawnUnit(0, "repair_truck", hq8); w8.SpawnUnit(0, "medic", hq8); } // (its upkeep units are there: it buys none, which would spend copper)
+            t8.Add("copper", 150 - t8.Amount("copper")); t8.Add("copper_ore", -t8.Amount("copper_ore")); t8.Add("iron_ore", 1000); t8.Add("steel", 1000);
+            t8.Reserve["copper"] = 100;
+            bool wentCopper8 = false;
+            AiRun(w8, ai8, 90, () => wentCopper8 |= GoesTo(w8, d8[0]));
+            Check(wentCopper8 && t8.Reserved("copper") == 100, $"with 100 of its 150 refined copper reserved, a rig goes to the copper zone ({w8.Owned(0).Count(e => e.Def.Key == "drill_rig")} rigs, {w8.Owned(0).Count(e => e.Def.Key == "deep_mine")} mines, {t8.Amount("copper")} copper)");
 
             // A crystal rig that was stopped keeps its old zone but isn't drilling: its ore is free again, and the rig gets a zone.
             var (w2, ai2, t2, d2) = Dry(0);
