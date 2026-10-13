@@ -923,27 +923,92 @@ namespace Pez.Sim
             return null;
         }
 
-        /// <summary>Finds a valid spot near the team's base, leaving a 1-tile walkway around it.</summary>
+        /// <summary>
+        /// Finds a valid spot near the team's base, leaving a 1-tile walkway around it. The same for every seat: the base is
+        /// measured from the middle of its start tile (where its command center stands), and spots that score alike are told
+        /// apart by what mirrors between seats (nearer the map centre, then on the right as the base faces it), never by scan
+        /// order, which would favour whoever sits at the low end of the map. A drop-off placed without a spot in mind sits
+        /// toward the nearest ore field, so its trucks' trips are short.
+        /// </summary>
         public Int2? FindPlacement(int team, string key, Vec2? near = null, bool requireNear = true)
         {
             var def = Defs.Get(key);
-            var anchor = near ?? Teams[team].StartPos;
+            if (def == null || !def.IsStructure) return null;
+            var anchor = near ?? Int2.Of(Teams[team].StartPos).Center;
             var centre = new Vec2(Map.W / 2f, Map.H / 2f);
-            Int2? best = null; float bestScore = float.MaxValue;
+            var field = def.DropOff && near == null ? NearestOreField(anchor) : new List<Vec2>();
+            float ToField(Vec2 p) { float d = float.MaxValue; foreach (var f in field) d = MathF.Min(d, Vec2.Dist(p, f)); return d; }
+            // Which way is "right" for a base facing the map centre (a base on the centre faces east).
+            var facing = (centre - anchor).Normalized;
+            if (facing.LengthSq < 0.5f) facing = new Vec2(1, 0);
+            var right = new Vec2(facing.Y, -facing.X);
+            const float tie = 1e-4f; // closer than this is a tie (no two different spots are this close, and rounding is far smaller)
+            int Cmp(float a, float b) => a < b - tie ? -1 : a > b + tie ? 1 : 0;
+            Int2? best = null; float bestScore = float.MaxValue, bestCentre = 0, bestRight = 0;
             for (int r = 2; r <= 14; r++)
             {
-                for (int y = (int)anchor.Y - r; y <= (int)anchor.Y + r; y++)
-                    for (int x = (int)anchor.X - r; x <= (int)anchor.X + r; x++)
+                // Each ring of spots (middle within r tiles of the anchor on both axes) is looked at once, so both seats see the same window.
+                for (int y = (int)MathF.Floor(anchor.Y - r - def.SizeY / 2f); y <= (int)MathF.Ceiling(anchor.Y + r - def.SizeY / 2f); y++)
+                    for (int x = (int)MathF.Floor(anchor.X - r - def.SizeX / 2f); x <= (int)MathF.Ceiling(anchor.X + r - def.SizeX / 2f); x++)
                     {
-                        if (CanPlace(team, key, x, y, padding: 1, requireNear: requireNear) != null) continue;
                         var c = new Vec2(x + def.SizeX / 2f, y + def.SizeY / 2f);
-                        // Turrets lean toward the map centre; everything else stays compact.
+                        float reach = MathF.Max(MathF.Abs(c.X - anchor.X), MathF.Abs(c.Y - anchor.Y));
+                        if (reach > r || (r > 2 && reach <= r - 1)) continue;
+                        if (CanPlace(team, key, x, y, padding: 1, requireNear: requireNear) != null) continue;
+                        // Turrets lean toward the map centre; everything else stays compact. Trucks drive to the head of a drop-off's lane
+                        // and back, so each tile between that and the ore counts twice.
                         float score = Vec2.Dist(c, anchor) + (key == "gun_turret" ? Vec2.Dist(c, centre) * 0.6f : 0);
-                        if (score < bestScore) { bestScore = score; best = new Int2(x, y); }
+                        if (field.Count > 0) score += 2f * ToField(Bay(new Int2(x, y), def).head);
+                        int cmp = Cmp(score, bestScore);
+                        float toCentre = 0, toRight = 0;
+                        if (cmp <= 0)
+                        {
+                            toCentre = Vec2.Dist(c, centre);
+                            var d = c - anchor;
+                            toRight = d.X * right.X + d.Y * right.Y;
+                            if (cmp == 0) cmp = Cmp(toCentre, bestCentre);
+                            if (cmp == 0) cmp = Cmp(bestRight, toRight); // the further right wins
+                        }
+                        if (cmp < 0) { bestScore = score; bestCentre = toCentre; bestRight = toRight; best = new Int2(x, y); }
                     }
-                if (best.HasValue && r > 4) break;
+                // A drop-off's score is at least its distance from the base, so once the best is under the next ring's distance
+                // nothing further out can beat it; before that, a spot beside the ore a few rings out may still be far better.
+                if (best.HasValue && (field.Count > 0 ? bestScore + tie <= r : r > 4)) break;
             }
             return best;
+        }
+
+        /// <summary>
+        /// The middle of every tile of the ore field a base would haul from, as far out as the near half of the field: the
+        /// nearest iron (the bulk of what trucks carry) unless some other ore is much nearer. Looks 30 tiles out; empty
+        /// when there is no field that near.
+        /// </summary>
+        List<Vec2> NearestOreField(Vec2 from)
+        {
+            const int look = 30; const float spread = 6f, ironSlack = 8f;
+            int x0 = Math.Max(0, (int)from.X - look), x1 = Math.Min(Map.W - 1, (int)from.X + look);
+            int y0 = Math.Max(0, (int)from.Y - look), y1 = Math.Min(Map.H - 1, (int)from.Y + look);
+            float nearest = float.MaxValue, nearestIron = float.MaxValue; byte kind = 0;
+            for (int y = y0; y <= y1; y++)
+                for (int x = x0; x <= x1; x++)
+                {
+                    int i = Map.Idx(x, y);
+                    if (Map.OreBase[i] <= 0) continue; // the map's fields: not salvage piles, and still there once mined out
+                    float d = Vec2.Dist(new Vec2(x + 0.5f, y + 0.5f), from);
+                    if (d < nearest) { nearest = d; kind = Map.OreBaseType[i]; }
+                    if (Map.OreBaseType[i] == Map.Iron && d < nearestIron) nearestIron = d;
+                }
+            var tiles = new List<Vec2>();
+            if (nearest == float.MaxValue) return tiles;
+            if (nearestIron <= nearest + ironSlack) { kind = Map.Iron; nearest = nearestIron; }
+            for (int y = y0; y <= y1; y++)
+                for (int x = x0; x <= x1; x++)
+                {
+                    int i = Map.Idx(x, y);
+                    var p = new Vec2(x + 0.5f, y + 0.5f);
+                    if (Map.OreBase[i] > 0 && Map.OreBaseType[i] == kind && Vec2.Dist(p, from) <= nearest + spread) tiles.Add(p);
+                }
+            return tiles;
         }
 
         // ------------------------------------------------------------------ orders
