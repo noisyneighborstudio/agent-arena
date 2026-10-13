@@ -180,6 +180,22 @@ Units are tiles (1 tile = 1 Unity unit) and seconds. Rotation speeds are in degr
 
 **Every structure, remove:** Destroyed: shake ±0.03 for 0.4 s, then poof: a soft cream cloud bursts out of the building while it swells 8% for 0.06 s and pops to nothing in 0.14 s. A rubble decal fades in under it. Sold: dust at the footprint corners, then the same poof. Nothing sinks into the ground.
 
+### `deep_mine`
+*Pumps ore from the deep deposit under it straight into the stockpile.*
+
+- **Mechanics:** A headframe over a shaft, run by DeepMineWorks from the sim (Working: the deposit has ore and the mine is built; the deposit's Amount / Initial; the team's LowPower). One trip of the skip every 4 s while it works (16 ore at the sim's 4/s; every 8 s on low power, which halves the rate): the skip (dm_skip) hauls a load of ore candy (dm_load) up out of the shaft (1.1 up in 1.4 s, eased at both ends), its bucket (dm_bucket, pivoted at its back bottom edge) tips 58° at the top so the ore pours down the chute into the bin (dm_heap bobs 0.02 and a puff of ore-tinted dust rises), and it goes back down in 1.3 s. The winding drum (dm_drum) and the team sheave (dm_sheave) are driven by the skip's travel through the rope (the rope's radius on each), so they spin up, slow and reverse with it; the rope below the sheave (dm_rope) stretches to the skip's eye (dm_eye). On low power the winder labours: now and then, on the way up, the skip slows to a crawl for half a second. The ventilation fan (dm_fan) turns at 540°/s while it works (270 on low power) and coasts down when it stops. The dispenser stem shows what's left: six ore bricks (dm_res_0..5, one per sixth of the deposit) on a spring (dm_spring) under its follower (dm_follower). Each time the deposit drops below a sixth the team flip-top head (dm_head, hinged at its back edge) snaps open 48° in 0.1 s, the top brick (dm_candy) rises out and flips over the front lip, the rest ride up a slot on the spring, and the head drops shut with a bounce. Dry, the trip in hand finishes and the skip parks in the shaft, the bin's heap drains out of sight in 1.5 s, the stem is empty and the head hangs open 34°. Glow is state: the amber lamp (dm_lamp) is dark while the deposit holds up, pulses at 0.5 Hz once it runs low (the sim's running-low warning, 5 minutes left; half as bright on low power) and blinks at 0.9 Hz when it's dry. The ore parts are tinted to the deposit's ore (crystal and uranium glow, as they do in the field). The neutral derrick wears the same model: no deposit, so its stem stays full and its ore is iron (it pays steel); its hoist and fan run while a team holds it, with no power needed. All dark until it's built; under fog, neutral and still.
+- **`dm_skip`:** mode=hoist, rise=1.1, trip_s=4 (8 on low power), up_s=1.4, down_s=1.3
+- **`dm_bucket`:** mode=tip, tip_deg=58, tip_s=0.24, hold_s=0.2
+- **`dm_sheave`:** mode=rope_driven, note=turns with the skip: travel / 0.262 rad; dm_drum the same at 0.128
+- **`dm_fan`:** axis=Z, deg_per_s=540 (270 on low power), coast_s=3
+- **`dm_res_0`:** mode=reserve_stack, bricks=6, note=dm_res_0..5, one per sixth of the deposit; dm_spring and dm_follower under them
+- **`dm_head`:** mode=hinge_pop, open_deg=48, open_s=0.1, hang_open_deg=34
+- **Idle:** Working: the skip running every 4 s. Dry: the skip parked in the shaft, the bin empty, the stem empty with its head hanging open, the amber lamp blinking.
+
+**Every structure, emerge:** Rises out of its pad in stages; nothing appears instantly. stage_0 (pad) lifts from y=-0.15 to 0 during build progress 0–10%. stage_1, stage_2 and stage_3 each start at local y = -(stage height) and rise to 0 with ease-out cubic over progress 10–45%, 45–75% and 75–95%. The opaque terrain and pad hide whatever is still below ground. stage_3 ends with a 4% Y-scale overshoot that settles in 0.15 s (spring-loaded). Functional nodes (turret, spinner, door, lift) come last, at 95–100%: a turret rises 0.3 out of its housing, then a spinner spins up from 0 rpm.
+
+**Every structure, remove:** Destroyed: shake ±0.03 for 0.4 s, then poof: a soft cream cloud bursts out of the building while it swells 8% for 0.06 s and pops to nothing in 0.14 s. A rubble decal fades in under it. Sold: dust at the footprint corners, then the same poof. Nothing sinks into the ground.
+
 ## Units
 
 ### `mining_truck`

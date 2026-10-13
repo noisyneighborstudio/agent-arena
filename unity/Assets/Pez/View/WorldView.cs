@@ -60,6 +60,7 @@ namespace Pez.View
             public LaserWorks Laser;     // laser tower: the head's pitch, the coils charging and the lens
             public FusionWorks Fusion;   // fusion reactor: the plasma ring, the pellet injector and the steam
             public FactoryWorks Factory; // factory: the line, the gantry, the press and the flip-top head
+            public DeepMineWorks Headframe; // deep mine (and derrick): the hoist, the sheave and drum, the stem of what's left
             public bool GlowHidden;
             public Sheen Sheen;          // newcomer protection: the sheen over its parts (null when its team isn't protected)
             public Renderer[] Halos;     // power plant: the light rising out of its open stacks      // the neutral "last seen" glow is applied (a stream render of fogged enemy state)
@@ -531,17 +532,6 @@ namespace Pez.View
             return e.Working;
         }
 
-        // ---- deep mining (art pack v0.4 hooks)
-
-        /// <summary>Deep mine: the ore tube takes the deposit's colour and drains with its reserve.</summary>
-        void DeepMine(EV v)
-        {
-            var d = World.Map.DepositById(v.E.DepositId);
-            if (d == null) return;
-            if (v.OreTint != d.Type) { Models.TintOre(v.Rig.Model, d.Type); v.OreTint = d.Type; }
-            v.Rig.Motion.SetOreLevel(d.Initial > 0 ? d.Amount / d.Initial : 0);
-        }
-
         // Power plant tower tops in model space, for a model without stack_0 / stack_1 markers (the two M_E_Cyan cores; the
         // pack's glTF x is mirrored on import).
         static readonly Vector3[] Towers = { new Vector3(0.42f, 1.78f, -0.30f), new Vector3(-0.42f, 1.78f, 0.32f) }; // the mouths of the open stacks (PowerCores)
@@ -866,7 +856,7 @@ namespace Pez.View
                 if (e.Def.Key == "power_plant" || e.Def.Power < 0) Power(v);
                 if (e.IsComplete || v.SmokeK > 0f || v.Sim != null) Damage(v);
                 Construction(v);
-                if (e.Def.Key == "deep_mine") DeepMine(v);
+                if (e.Def.ModelKey == "deep_mine") { Fx.Audience = AudienceFor(e); (v.Headframe ??= DeepMineWorks.For(rig.Model, e.Id, ref v.Glows)).Tick(World, e, SeesState(e, PovTeam), Time.deltaTime); Fx.Audience = null; }
                 if (e.Def.Key == "mining_refinery" && e.IsComplete && e.Team >= 0) Refinery(v);
                 if (e.Def.Key == "outpost" && e.IsComplete && e.Team >= 0) (v.Depot ??= OutpostWorks.For(rig.Model, e.Id)).Tick(World, e, SeesState(e, PovTeam), Time.deltaTime);
                 if (e.Def.Key == "enrichment_plant" && e.Team >= 0) { Fx.Audience = AudienceFor(e); (v.Enrich ??= EnrichWorks.For(rig.Model, e.Id, ref v.Glows)).Tick(World.Teams[e.Team], e.IsComplete, e.Working, SeesState(e, PovTeam), v.FireK < 0.15f, Time.deltaTime); Fx.Audience = null; }

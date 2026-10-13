@@ -321,6 +321,29 @@ STRUCTURES = [
    dict(**TURRET(180), barrel=dict(mode='trunnion_pitch', pitch_min_deg=-30, pitch_max_deg=40, deg_per_s=120, recoil=0),
         coil=dict(mode='charge_glow', charge_s=.4, peak=1.3, drain_s=.25)),
    "The head faces forward and glances now and then (PezMotion's idle turret). The coils breathe on a 2.5 s sine (glow 0.25–0.45) and the lens glows at 0.5."),
+ S('deep_mine', 'Pumps ore from the deep deposit under it straight into the stockpile.', "A headframe over a shaft, run by DeepMineWorks from the sim "
+   "(Working: the deposit has ore and the mine is built; the deposit's Amount / Initial; the team's LowPower). One trip of the skip every 4 s while it works "
+   "(16 ore at the sim's 4/s; every 8 s on low power, which halves the rate): the skip (dm_skip) hauls a load of ore candy (dm_load) up out of the shaft "
+   "(1.1 up in 1.4 s, eased at both ends), its bucket (dm_bucket, pivoted at its back bottom edge) tips 58° at the top so the ore pours down the chute into "
+   "the bin (dm_heap bobs 0.02 and a puff of ore-tinted dust rises), and it goes back down in 1.3 s. The winding drum (dm_drum) and the team sheave "
+   "(dm_sheave) are driven by the skip's travel through the rope (the rope's radius on each), so they spin up, slow and reverse with it; the rope below the "
+   "sheave (dm_rope) stretches to the skip's eye (dm_eye). On low power the winder labours: now and then, on the way up, the skip slows to a crawl for half "
+   "a second. The ventilation fan (dm_fan) turns at 540°/s while it works (270 on low power) and coasts down when it stops. "
+   "The dispenser stem shows what's left: six ore bricks (dm_res_0..5, one per sixth of the deposit) on a spring (dm_spring) under its follower "
+   "(dm_follower). Each time the deposit drops below a sixth the team flip-top head (dm_head, hinged at its back edge) snaps open 48° in 0.1 s, the top brick "
+   "(dm_candy) rises out and flips over the front lip, the rest ride up a slot on the spring, and the head drops shut with a bounce. Dry, the trip in hand "
+   "finishes and the skip parks in the shaft, the bin's heap drains out of sight in 1.5 s, the stem is empty and the head hangs open 34°. "
+   "Glow is state: the amber lamp (dm_lamp) is dark while the deposit holds up, pulses at 0.5 Hz once it runs low (the sim's running-low warning, 5 minutes "
+   "left; half as bright on low power) and blinks at 0.9 Hz when it's dry. The ore parts are tinted to the deposit's ore (crystal and uranium glow, as they "
+   "do in the field). The neutral derrick wears the same model: no deposit, so its stem stays full and its ore is iron (it pays steel); its hoist and fan "
+   "run while a team holds it, with no power needed. All dark until it's built; under fog, neutral and still.",
+   dict(dm_skip=dict(mode='hoist', rise=1.1, trip_s='4 (8 on low power)', up_s=1.4, down_s=1.3),
+        dm_bucket=dict(mode='tip', tip_deg=58, tip_s=.24, hold_s=.2),
+        dm_sheave=dict(mode='rope_driven', note='turns with the skip: travel / 0.262 rad; dm_drum the same at 0.128'),
+        dm_fan=dict(axis='Z', deg_per_s='540 (270 on low power)', coast_s=3),
+        dm_res_0=dict(mode='reserve_stack', bricks=6, note='dm_res_0..5, one per sixth of the deposit; dm_spring and dm_follower under them'),
+        dm_head=dict(mode='hinge_pop', open_deg=48, open_s=.1, hang_open_deg=34)),
+   "Working: the skip running every 4 s. Dry: the skip parked in the shaft, the bin empty, the stem empty with its head hanging open, the amber lamp blinking."),
 ]
 
 ORES = [dict(key=k, kind='ore', role='Resource field (one tile).', mechanics=(

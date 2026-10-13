@@ -730,10 +730,15 @@ namespace Pez.Sim
             Deposit(4, 10.5f, Map.Iron, 0.62f);
             Deposit(10, 10.5f, Map.Iron, 0.3f);
             Item("Deposits running down", "two rings left, then one (a ring fades per third of the reserve)", 7, 10.5f);
-            DeepMineOn(Blue, 16, 10.5f, Map.Copper, 0.6f);
-            Item("Deep mine working", "sheave turning, ore tube tinted copper at 60%", 16, 10.5f);
+            // A copper mine whose deposit runs down from full to dry over 20 s (a brick popped out of the stem every 3.3 s,
+            // the lamp pulsing from 20% left), stands dry for 8 s, then is full again for 4 s.
+            var working = w.Map.DepositById(DeepMineOn(Blue, 16, 10.5f, Map.Copper, 1f).DepositId);
+            holds.Add(() => { float t = T % 32f; working.Amount = working.Initial * (t < 20f ? 1f - 0.98f * t / 20f : t < 28f ? 0f : 1f); });
+            Item("Deep mine working, running down", "the skip hauling copper up and tipping it into the bin, the sheave and drum turning with the rope; the deposit runs from full to dry over 20 s (a brick pops out of the stem every 3.3 s, the lamp pulses from 20% left), dry for 8 s (skip parked, stem empty, head hanging open, lamp blinking), then full again; loops every 32 s", 16, 10.5f);
             DeepMineOn(Blue, 22, 10.5f, Map.Uranium, 0f);
-            Item("Deep mine exhausted", "deposit dry: tube empty, sheave still, no veins", 22, 10.5f);
+            Item("Deep mine exhausted", "deposit dry: skip parked in the shaft, stem empty with the head hanging open, the amber lamp blinking, no veins", 22, 10.5f);
+            DeepMineOn(Green, 28, 10.5f, Map.Iron, 0.55f);
+            Item("Deep mine on low power (Lime)", "the hoist at half speed, the winder labouring (the skip crawls now and then on its way up); four bricks of iron left in the stem", 28, 10.5f);
 
             // The surveyor drives between two spots and surveys each (thumps and ground ripples) in turn.
             var sv = Unit(Blue, "geological_surveyor", 3, 3, AlongRight, pin: false);

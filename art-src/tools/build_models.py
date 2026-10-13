@@ -48,6 +48,7 @@ MATS = {
  'mint':     mat('M_Ore_Mint', '#6FC2A6', 0, .6),
  'crystal':  mat('M_Ore_Crystal', '#8FE4FF', 0, .25),     # crystal stock (not lit: glow means state)
  'uranium':  mat('M_Ore_Uranium', '#93BF3A', 0, .55),    # uranium stock (not lit: glow means state)
+ 'oretint':  mat('M_OreTint', '#C8742F', .2, .5),        # whatever ore is under it: Models.TintOre recolours it at runtime
 }
 
 class Asset:
@@ -1581,6 +1582,161 @@ def S_laser_tower():
     # finds is the lens's centre.
     a.cyl('steel', .1, .15, y=.04, z=.295, axis='z', node=br, sections=14)
     a.cyl('cyan', .075, .03, y=.04, z=.365, axis='z', node=br, sections=14)   # the lens
+    return a
+
+def S_deep_mine():
+    # A headframe over a shaft, built as a toy. The cream headframe stands over the shaft's mouth on the yard side,
+    # braced by its backstays onto the long hoist house beside it, with the team sheave wheel (dm_sheave) on its crown.
+    # The rope runs from the winding drum (dm_drum) on the hoist house's roof up over the sheave and down the shaft to
+    # the skip (dm_skip: a steel bail riding two guide rails, with a team bucket, dm_bucket, pivoted at its back bottom
+    # edge and a load of ore candy in it, dm_load). DeepMineWorks hauls the skip up out of the shaft, tips it at the top
+    # so the ore pours down the chute into the bin behind (its heap: dm_heap; dm_bin marks its mouth), and lowers it
+    # again, the drum and the sheave turning with the rope (the rope below the sheave, dm_rope, stretched to the skip's
+    # eye, dm_eye). In the front corner the ventilation fan (dm_fan) turns while the mine works. On the hoist house's
+    # front end the dispenser stem shows what's left in the deposit: a stack of ore bricks (dm_res_0..5, top down) on a
+    # spring (dm_spring, under its follower plate dm_follower); as the deposit runs down the team flip-top head (dm_head,
+    # hinged at its back edge) pops, a brick (dm_candy) flips out and the spring pushes the rest up a slot. Run dry, the
+    # stem is empty, the head hangs open and the amber lamp (dm_lamp) blinks. The ore parts are M_OreTint: the view
+    # tints them to the deposit's ore. The rope's plane is z = ZS, so the sheave and the drum turn about z; the bucket
+    # tips about x, toward +z.
+    # Build stages: the deck, the hoist house, the fan house and the skip stage_1; the headframe, drum, bin and stem
+    # stage_2; the crown, sheave, rope and the stem's head stage_3.
+    a = Asset('deep_mine', 'structures', 2); pad(a, 2)
+    S1, S2, S3 = a.node('stage_1', a.key), a.node('stage_2', a.key), a.node('stage_3', a.key)
+    XS, ZS, DK = .38, .06, .22                        # the shaft's centre, the deck's top
+    HX0, HX1, HZ0, HZ1, HH = -.84, -.16, -.84, .84, .72   # the hoist house
+    TOP = 1.5                                         # the headframe's posts
+    # The deck and the hoist house: cream, a team wrapper band, a door and windows on its yard side.
+    a.box('cream', 1.72, DK - .08, 1.72, y=.08 + (DK - .08) / 2, node=S1)
+    a.box('cream', HX1 - HX0, HH - DK + .02, HZ1 - HZ0, x=(HX0 + HX1) / 2, y=(DK - .02 + HH) / 2, z=(HZ0 + HZ1) / 2, node=S1)
+    a.box('team', HX1 - HX0 + .04, .08, HZ1 - HZ0 + .04, x=(HX0 + HX1) / 2, y=HH - .1, z=(HZ0 + HZ1) / 2, node=S1)
+    a.box('dark', .03, .24, .22, x=HX1 + .005, y=DK + .12, z=-.56, node=S1)
+    a.box('licorice', .04, .04, .28, x=HX1 + .005, y=DK + .26, z=-.56, node=S1)
+    for z in (-.2, .12, .44): a.box('dark', .03, .1, .14, x=HX1 + .005, y=.47, z=z, node=S1)
+    # The shaft's mouth: dark, in a team collar ring on a steel plate.
+    a.cyl('steel', .27, .03, x=XS, y=DK + .005, z=ZS, node=S1, sections=14)
+    a.cyl('team', .24, .05, x=XS, y=DK + .025, z=ZS, node=S1, sections=14)
+    a.cyl('dark', .18, .02, x=XS, y=DK + .045, z=ZS, node=S1, sections=12)
+    # The headframe: four cream posts round the shaft, girts (the top ones team; a middle one only on the hoist side), two
+    # guide rails for the skip. The faces the camera sees stay open between the low and high girts, so the skip's run
+    # shows, and so does the back, for the bucket to tip through.
+    for sx in (-1, 1):
+        for sz in (-1, 1): a.box('cream', .08, TOP - DK, .08, x=XS + sx * .2, y=(DK + TOP) / 2, z=ZS + sz * .2, node=S2)
+    for y, m in ((.6, 'cream'), (.98, 'cream'), (1.38, 'team')):
+        for sx in (-1, 1):
+            if y != .98 or sx == -1: a.box(m, .06, .06, .34, x=XS + sx * .2, y=y, z=ZS, node=S2)
+        for sz in (-1, 1):
+            if y != .98: a.box(m, .34, .06, .06, x=XS, y=y, z=ZS + sz * .2, node=S2)
+    for sx in (-1, 1): a.box('steel', .03, TOP - DK - .06, .03, x=XS + sx * .135, y=(DK + TOP - .06) / 2, z=ZS, node=S2)
+    # Backstays from the crown down onto the hoist house's roof (they take the rope's pull).
+    for sz in (-1, 1): a.strut('cream', (XS - .2, TOP - .02, ZS + sz * .2), (HX1 - .07, HH, ZS + sz * .2), .04, node=S2, sections=8)
+    for sz in (-1, 1): a.box('steel', .1, .03, .1, x=HX1 - .07, y=HH + .015, z=ZS + sz * .2, node=S2)
+    # The crown: a team collar round the rope's way through, the sheave on two steel pedestals over its back bar.
+    for sx in (-1, 1): a.box('team', .12, .12, .56, x=XS + sx * .22, y=TOP + .06, z=ZS, node=S3)
+    for sz in (-1, 1): a.box('team', .32, .12, .12, x=XS, y=TOP + .06, z=ZS + sz * .22, node=S3)
+    RS, YSH = .25, 1.94
+    XSH = XS - RS                                     # the rope drops off the sheave's front edge straight down the shaft
+    for sz in (-1, 1): a.box('steel', .1, YSH - TOP - .12 + .02, .04, x=XSH, y=(TOP + .12 + YSH) / 2, z=ZS + sz * .075, node=S3)
+    a.cyl('steel', .022, .2, x=XSH, y=YSH, z=ZS, axis='z', node=S3, sections=10)
+    sh = a.node('dm_sheave', S3, (XSH, YSH, ZS))
+    ts = np.linspace(0, 2 * math.pi, 28, endpoint=False)
+    a.hoop('team', np.c_[RS * np.cos(ts), RS * np.sin(ts), np.zeros(28)], .035, node=sh, side=(0, 0, 1), r2=.022, sides=6)
+    a.cyl('steel', .05, .08, axis='z', node=sh, sections=10)
+    for k in range(3): a.box('steel', 2 * RS - .02, .024, .03, node=sh, rot=rz(60 * k))
+    # The winding drum on the hoist house's roof, in a steel cradle: the rope wound on it between team flanges, each with
+    # a licorice bar across it so its turning shows.
+    DX, DY, RD = -.5, HH + .17, .12
+    for sz in (-1, 1): a.box('steel', .18, .2, .04, x=DX, y=HH + .1, z=ZS + sz * .22, node=S2)
+    a.cyl('steel', .02, .5, x=DX, y=DY, z=ZS, axis='z', node=S2, sections=8)
+    dr = a.node('dm_drum', S2, (DX, DY, ZS))
+    a.cyl('licorice', RD, .32, axis='z', node=dr, sections=14)
+    for sz in (-1, 1):
+        a.cyl('team', .17, .03, z=sz * .175, axis='z', node=dr, sections=12)
+        a.box('licorice', .28, .012, .045, z=sz * .195, node=dr)
+    # The rope: from the drum's top up to the sheave, over it and (dm_rope) down the shaft.
+    D, C, rd, rs = np.array([DX, DY]), np.array([XSH, YSH]), RD + .008, RS + .012
+    d = C - D; L = np.linalg.norm(d); al = math.atan2(d[1], d[0])
+    be = al + math.acos((rd - rs) / L)                # the outer tangent on the upper side
+    n = np.array([math.cos(be), math.sin(be)])
+    pd, pc = D + rd * n, C + rs * n
+    a.strut('licorice', (pd[0], pd[1], ZS), (pc[0], pc[1], ZS), .011, node=S3, sections=6)
+    a.tube('licorice', [(XSH + rs * math.cos(p), YSH + rs * math.sin(p), ZS) for p in np.linspace(be, 0, 12)], .011, node=S3, sides=6)
+    YB = -.1                                          # the skip at rest, at the bottom of the shaft (inside the deck)
+    rp = a.node('dm_rope', S3, (XSH + rs, YSH, ZS), rot=np.diag([1, YSH - (YB + .38), 1, 1]))
+    a.cyl('licorice', .011, 1.0, y=-.5, node=rp, sections=6)   # 1 long: DeepMineWorks stretches it to the skip's eye
+    # The skip: a steel bail riding the rails, its crossbar where the rope's eye takes it, and the team
+    # bucket pivoted at its back (+z, the bin's side) bottom edge.
+    sk = a.node('dm_skip', S1, (XS, YB, ZS))
+    for sx in (-1, 1): a.box('steel', .025, .32, .05, x=sx * .11, y=.16, node=sk)
+    a.box('steel', .23, .04, .06, y=.32, node=sk)
+    a.cyl('steel', .02, .05, y=.36, node=sk, sections=8)
+    a.node('dm_eye', sk, (0, .38, 0))
+    bk = a.node('dm_bucket', sk, (0, 0, .1))
+    a.box('team', .18, .2, .2, y=.1, z=-.1, node=bk)
+    a.box('dark', .14, .012, .16, y=.2, z=-.1, node=bk)
+    ld = a.node('dm_load', bk, (0, .2, -.1))
+    for (dx, dz, r) in ((-.02, -.03, .058), (.035, .04, .05), (-.04, .035, .045)):
+        a.sphere('oretint', r, x=dx, y=r * .45, z=dz, node=ld, sub=1)
+    # The chute from under the tipped bucket's lip down into the bin behind, and the bin: a cream funnel with a team rim
+    # on a pedestal, heaped with ore (dm_heap).
+    BZ = ZS + .6
+    c0, c1 = np.array([ZS + .15, .92]), np.array([ZS + .48, .78])     # (z, y): from under the lip to over the bin
+    cl = np.linalg.norm(c1 - c0); ca = math.degrees(math.atan2(c0[1] - c1[1], c0[0] - c1[0]))
+    cm = (c0 + c1) / 2
+    a.box('steel', .16, .02, cl, x=XS, y=cm[1], z=cm[0], rot=rx(-ca), node=S2)
+    for sx in (-1, 1): a.box('steel', .015, .06, cl, x=XS + sx * .08, y=cm[1] + .03, z=cm[0], rot=rx(-ca), node=S2)
+    a.box('cream', .3, .24, .3, x=XS, y=DK + .12, z=BZ, node=S2)
+    a.box('team', .32, .06, .32, x=XS, y=DK + .21, z=BZ, node=S2)
+    a.rev('cream', [(0, .48), (.08, .48), (.21, .78), (.19, .8), (0, .72)], x=XS, z=BZ, node=S2, sections=14)
+    a.rev('team', [(.18, .7), (.195, .7), (.225, .8), (.205, .81)], x=XS, z=BZ, node=S2, sections=14)
+    a.cyl('dark', .18, .02, x=XS, y=.76, z=BZ, node=S2, sections=14)
+    a.node('dm_bin', a.key, (XS, .8, BZ))
+    hp = a.node('dm_heap', S2, (XS, .77, BZ))
+    for (dx, dz, r) in ((0, .01, .09), (.08, -.06, .06), (-.08, -.04, .06)):
+        a.sphere('oretint', r, x=dx, y=-.03 + r * .5, z=dz, node=hp, sub=1)
+    # The dispenser stem on the hoist house's front end: smoke plastic round a clear window on its front, team grip slats
+    # on its side, a dark lip; inside, the stack of ore bricks on its spring and follower; the team flip-top head on top.
+    SX, SZ, s0, s1, w = -.52, -.56, HH, 1.5, .3
+    a.box('smoke', w, s1 - s0, .04, x=SX, y=(s0 + s1) / 2, z=SZ + w / 2 - .02, node=S2)
+    for s in (-1, 1): a.box('smoke', .04, s1 - s0, w, x=SX + s * (w / 2 - .02), y=(s0 + s1) / 2, z=SZ, node=S2)
+    a.box('smoke', w, .14, .04, x=SX, y=s0 + .07, z=SZ - w / 2 + .02, node=S2)
+    a.box('smoke', w, .08, .04, x=SX, y=s1 - .04, z=SZ - w / 2 + .02, node=S2)
+    a.box('smoke', w - .04, .03, w - .04, x=SX, y=s0 + .055, z=SZ, node=S2)   # the floor the spring stands on
+    a.box('clear', w - .08, s1 - s0 - .22, .01, x=SX, y=(s0 + .14 + s1 - .08) / 2, z=SZ - w / 2 + .015, node=S2)
+    for i in range(3): a.box('team', .03, .05, .2, x=SX + w / 2 + .005, y=.98 + i * .12, z=SZ, node=S2)
+    a.box('dark', w - .06, .04, .05, x=SX, y=s1 + .02, z=SZ - w / 2 + .035, node=S2)
+    PB, HB = .095, .075                               # the stack's pitch and a brick's height
+    ytop = s1 - .08 - HB / 2 - .01                    # the top brick's centre
+    for i in range(6):
+        m = a.node(f'dm_res_{i}', S2, (SX, ytop - i * PB, SZ))
+        a.box('oretint', .2, HB, .16, node=m)
+    fl = s0 + .07                                     # the spring's foot
+    yf = ytop - 5 * PB - HB / 2                       # the follower under a full stack
+    sp = a.node('dm_spring', S2, (SX, fl, SZ), rot=np.diag([1, (yf - .02 - fl) / .3, 1, 1]))
+    a.coil('steel', .07, .01, 0, .3, 5, node=sp, per_turn=8, sides=4)   # built .3 tall, held squashed under a full stack
+    fo = a.node('dm_follower', S2, (SX, yf, SZ))
+    a.box('steel', .2, .02, .16, y=-.01, node=fo)
+    hd = a.node('dm_head', S3, (SX, s1 + .02, SZ + w / 2), rot=rx(6))
+    a.box('team', w + .06, .2, w + .04, y=.11, z=-(w + .04) / 2, node=hd)
+    a.box('team', w - .04, .07, .08, y=.03, z=-(w + .04) + .01, node=hd)
+    a.cyl('steel', .028, w + .04, axis='x', node=hd, sections=8)
+    cd = a.node('dm_candy', S3, (SX, s1 + .06, SZ - w / 2 + .06))
+    a.box('oretint', .2, HB, .16, node=cd)
+    # The ventilation fan house in the front corner: a mine breathes. Cream, a team band, the duct's mouth on its front
+    # with the fan in it (dm_fan), turning while the mine works.
+    FX, FZ = .44, -.58
+    a.box('cream', .5, .36, .36, x=FX, y=DK + .18, z=FZ, node=S1)
+    a.box('team', .54, .07, .4, x=FX, y=DK + .3, z=FZ, node=S1)
+    a.cyl('steel', .15, .03, x=FX, y=DK + .16, z=FZ - .185, axis='z', node=S1, sections=12)
+    a.cyl('dark', .12, .03, x=FX, y=DK + .16, z=FZ - .19, axis='z', node=S1, sections=12)
+    fn = a.node('dm_fan', S1, (FX, DK + .16, FZ - .205))
+    a.cyl('steel', .03, .03, axis='z', node=fn, sections=8)
+    for k in range(3): a.box('foil', .2, .045, .012, x=.1 * math.cos(math.radians(120 * k)), y=.1 * math.sin(math.radians(120 * k)), node=fn, rot=rz(120 * k) @ rx(25))
+    # The lamp on the hoist house's roof: dark while the deposit holds up; it pulses as it runs low, and blinks when dry.
+    a.cyl('steel', .018, .12, x=-.26, y=HH + .06, z=-.72, node=S2, sections=6)
+    ln = a.node('dm_lamp', S2, (-.26, HH + .165, -.72))
+    a.cyl('amber', .06, .09, node=ln, sections=8)
+    a.cyl('team', .065, .03, y=.058, node=ln, sections=8)
     return a
 
 # ---------------------------------------------------------------- vehicles
