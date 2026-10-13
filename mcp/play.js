@@ -265,7 +265,7 @@ export const Command = z
     until: z.string().optional().describe("attack on a structure: \"capturable\" to hold fire once it's at 50% health or less (and again if it's repaired), so an engineer can capture it"),
     transport: z.number().int().optional().describe("load: id of your apc or transport_chopper"),
     ore: z.enum(["iron_ore", "copper_ore", "crystal", "uranium", "any"]).optional().describe("harvest: which ore type the trucks should mine"),
-    structure_id: z.number().int().optional().describe("rally/sell: your structure id; train: which of your barracks/factories the units come out of"),
+    structure_id: z.number().int().optional().describe("rally/sell: your structure id; train: which of your barracks/factories trains them (they come out there, and wait for it if it is busy)"),
     item: z.string().optional().describe("reserve: the item your converters must leave alone, e.g. iron_ore"),
     amount: z.number().min(0).optional().describe("reserve: how much of item to keep back (0 clears it)"),
     spread: z.union([z.boolean(), z.number().min(1).max(6)]).optional().describe("move/attack_move: tiles between units (true = 3) to open the formation against splash"),

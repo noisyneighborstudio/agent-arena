@@ -770,13 +770,20 @@ namespace Pez.View
                 var d = Defs.Get(t.StructureQueue[0].Key);
                 rows.Add(new ProdRow { Key = d.Key, Name = d.Name, Pct = s?.BuildProgress ?? 0, Count = 1 });
             }
-            foreach (var q in t.UnitQueues.Values)
+            foreach (var kv in t.UnitQueues)
             {
+                var q = kv.Value;
                 if (q.Count == 0) continue;
-                var d = Defs.Get(q[0].Key);
-                int n = 0;
-                while (n < q.Count && q[n].Key == q[0].Key) n++;
-                rows.Add(new ProdRow { Key = d.Key, Name = d.Name, Pct = d.BuildTime > 0 ? q[0].Progress / d.BuildTime : 0, Count = n });
+                // A row for each unit a building is working on (each barracks has its own); a queue nothing works on shows its head.
+                var now = t.Working(kv.Key);
+                if (now.Count == 0) now.Add(q[0]);
+                var counted = new HashSet<string>();
+                foreach (var p in now)
+                {
+                    var d = Defs.Get(p.Key);
+                    // The first row of a unit says how many of it are queued.
+                    rows.Add(new ProdRow { Key = d.Key, Name = d.Name, Pct = d.BuildTime > 0 ? p.Progress / d.BuildTime : 0, Count = counted.Add(p.Key) ? q.Count(x => x.Key == p.Key) : 1 });
+                }
             }
             return rows;
         }
@@ -961,7 +968,9 @@ namespace Pez.View
                 {
                     var q = t.UnitQueues[d.BuiltBy];
                     queued = q.Count(p => p.Key == d.Key);
-                    if (q.Count > 0 && q[0].Key == d.Key) pct = d.BuildTime > 0 ? q[0].Progress / d.BuildTime : 0;
+                    // The furthest along of this unit that a building is working on (the head, if nothing is).
+                    var going = q.Where(p => p.Key == d.Key && p.WorkerId != 0).OrderByDescending(p => p.Progress).FirstOrDefault() ?? (q.Count > 0 && q[0].Key == d.Key ? q[0] : null);
+                    if (going != null) pct = d.BuildTime > 0 ? going.Progress / d.BuildTime : 0;
                 }
                 bool ready = d.IsStructure && input.PlacingKey == d.Key;
                 bool locked = W.MissingPrereq(Team, d) != null;

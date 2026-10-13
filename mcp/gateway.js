@@ -19,7 +19,9 @@
 // Env: PEZZ_GATEWAY_PORT (7790), PEZZ_GATEWAY_HOST (127.0.0.1), PEZZ_PUBLIC_URL (override the URL shown to agents),
 //      PEZZ_MAX_ROOMS (default 6), PEZZ_ROOM_IDLE_MIN (close a room nobody plays after this many minutes, default 10),
 //      PEZZ_ENGINE (the headless engine dll rooms run), PEZZ_ROOM_BASE_PORT (local rooms' first port, default 7801),
-//      PEZZ_WATCH_DELAY (seconds the public /watch spectator view lags the game, default 45), PEZZ_GAME (only for a
+//      PEZZ_WATCH_DELAY (seconds the public /watch spectator view lags the game, default 45), PEZZ_CLIENT_IP_HEADER
+//      (behind a proxy: the one header it sets to the client's address, for per-address limits; unset, the socket's
+//      address is used and no header is trusted), PEZZ_GAME (only for a
 //      gateway in front of one game it doesn't run, the Unity app's open arena, the CI room or a test room: that game
 //      is room 1, always)
 import http from "node:http";
@@ -41,6 +43,7 @@ import * as inventions from "./inventions.js";
 import { chooseTeamName } from "./names.js";
 import { LookBroker, LOOK_MAX_BYTES } from "./browserlook.js";
 import { opsSite } from "./ops.js";
+import { clientIpOf, joinLimiter } from "./joinlimit.js";
 import { wantsPage, landingPage, llmsTxt } from "./site.js";
 import { watcherScript } from "./watcher.js";
 
@@ -113,14 +116,16 @@ function publicBase(req) {
   return `${proto}://${host}`;
 }
 
-// Behind Cloudflare or tailscale every request comes from localhost, so use the proxy's client-address header.
-// The client's address, for rate limits and session records. PEZZ_CLIENT_IP_HEADER names the one header the proxy in front
-// sets itself (x-real-ip behind CapRover's nginx); without it, Cloudflare's header, else the first forwarded address.
+// The client's address, for rate limits and session records: the socket's, unless PEZZ_CLIENT_IP_HEADER names the one header
+// the proxy in front sets itself (x-real-ip behind CapRover's nginx, cf-connecting-ip behind Cloudflare, x-forwarded-for
+// behind tailscale serve). Behind a proxy with no header named here, every client looks like the proxy. See mcp/joinlimit.js.
 const IP_HEADER = (process.env.PEZZ_CLIENT_IP_HEADER || "").toLowerCase();
-function clientIp(req) {
-  const v = IP_HEADER ? req.headers[IP_HEADER] : req.headers["cf-connecting-ip"] || req.headers["x-forwarded-for"];
-  return String(v || req.socket.remoteAddress || "?").split(",")[0].trim();
-}
+const clientIp = (req) => clientIpOf(req.headers, req.socket.remoteAddress, IP_HEADER);
+
+// One limit on taking a seat per address, shared by POST /join and the MCP join tool (switch_seat included): joins and
+// leaves mint salvage, so cycling seats has to cost something. 5 per 10 minutes.
+const joins = joinLimiter({ max: 5, windowS: 600 });
+const joinLimitMessage = (ip) => `too many joins from your address (${joins.max} per ${joins.windowS / 60} minutes); try again in about ${Math.max(1, Math.ceil(joins.retryAfter(ip) / 60))} minute(s). A team you already have keeps playing: resume it with rejoin and its token.`;
 
 // ------------------------------------------------------------------ what's new
 // Each player is told about new capabilities once (as a 🆕 notice in state/wait), only those their room's build has.
@@ -1157,7 +1162,7 @@ A typical opening is power plant → more trucks → mining refinery → barrack
 
 Things that trip new players up:
 - **Placement:** new buildings go within 6 tiles of one of yours. A failed \`build\` names the nearest valid spot.
-- **Units come out of buildings:** infantry from a finished barracks, vehicles from a finished factory.
+- **Units come out of buildings:** infantry from a finished barracks, vehicles from a finished factory. Each finished barracks, factory or airfield trains one unit at a time from your queue, so two barracks train twice as fast as one (\`train\` with \`structure_id\` picks the building and waits for it).
 - **Outposts are deployed, not built:** train an \`outpost_truck\` at a factory, drive it out, and \`deploy\` it. A \`construction_truck\` deploys into a new command center, and a \`drill_rig\` into a deep mine on a surveyed zone.
 - **Surface ore near your base runs out in 5–10 minutes.** Then there are only two ways on: survey underground (a \`geological_surveyor\` flags deep deposits, a \`drill_rig\` mines one), or explore the map for more surface fields (\`ore_fields\` lists only what you've explored) and put an outpost beside one. Start before it runs out.
 - **To bank for something expensive while converters eat your stock,** use \`{"type":"save_for","unit":"drill_rig"}\`.
@@ -1233,8 +1238,10 @@ function mcpServerFor(seat, baseUrl) {
       try { alive = JSON.parse(await seat.player.call("/api/state")).you.status === "playing"; } catch { alive = false; }
       if (alive && !switch_seat) return { content: [{ type: "text", text: "You're already playing in this session. Use get_state, or leave first. To run a second team from this session, call join with switch_seat:true (you get previous_token to rejoin the first one)." }] };
       if (alive) previous = seat.token;
-      seat.player = null; seat.token = null;
     }
+    // Checked before the old seat is let go, so a refused join leaves the session as it was.
+    if (!joins.take(seat.ip ?? "?")) return { content: [{ type: "text", text: `Error: ${joinLimitMessage(seat.ip ?? "?")}` }], isError: true };
+    seat.player = null; seat.token = null;
     try {
       const r = await join(name, room ?? invite, baseUrl, region ?? seat.region ?? null, seat.ip ?? null, team_name, { match_hours, min_players, private: priv });
       seatFromToken(seat, r.token);
@@ -1550,7 +1557,7 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { latest: LATEST, room: room?.id ?? null, changes: list, keep_up: "Check this at the start of each session; ?since=<id> lists only newer entries." });
     }
     if (p === "/join" && req.method === "POST") {
-      if (!allow(`join:${ip}`, 5 / 600, 5)) return send(res, 429, { ok: false, error: "too many joins from your address; try again later" });
+      if (!joins.take(ip)) return send(res, 429, { ok: false, error: joinLimitMessage(ip) });
       const b = (await readBody(req)) ?? {};
       const region = /^(us|eu|ap)$/.test(String(b.region ?? "")) ? b.region : regionOf(req.headers["cf-ipcountry"]);
       return send(res, 200, await join(b.name, b.room ?? b.invite, base, region, ip, b.team_name, b));

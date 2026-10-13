@@ -29,7 +29,7 @@ What it does:
    - the `/data` volume, port 8080 and websockets;
    - a 30 s stop grace, so every room saves;
    - the app's deploy token;
-   - the env vars: `PEZZ_PUBLIC_URL`, the operator secret, `PEZZ_ADMIN_REMOTE=1`, `PEZZ_CLIENT_IP_HEADER=x-real-ip`, the Claude token, and the ops dashboard's hostname and key (`PEZZ_OPS_HOST`, `PEZZ_OPS_KEY`).
+   - the env vars: `PEZZ_PUBLIC_URL`, the operator secret, `PEZZ_ADMIN_REMOTE=1`, `PEZZ_CLIENT_IP_HEADER=x-real-ip` (CapRover's nginx sets it to the caller's address, which the per-address limits, such as 5 joins per 10 minutes, key on; the gateway trusts no other forwarding header, see [OPEN_ARENA.md](OPEN_ARENA.md)), the Claude token, and the ops dashboard's hostname and key (`PEZZ_OPS_HOST`, `PEZZ_OPS_KEY`).
 3. **Upload.** It uploads the bundle and CapRover builds `deploy/caprover/Dockerfile`. The old container gets SIGTERM, and every engine in it saves its game. The new container resumes them all: same seats, tokens and commander links.
 4. **Domains and check.** It adds each domain (the arena, its alias, pezz-ops) with HTTPS once, then waits for `/healthz` to report the new build.
 

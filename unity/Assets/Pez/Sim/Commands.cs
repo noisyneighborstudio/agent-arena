@@ -14,7 +14,8 @@ namespace Pez.Sim
 @"Commands (JSON objects with a ""type"" field):
   {""type"":""build"", ""structure"":KEY, ""x"":X, ""y"":Y}   place a structure (bottom-left tile). Omit x/y to auto-place near your base.
   {""type"":""train"", ""unit"":KEY, ""count"":N}            queue N units (1-10) at the barracks / war factory
-      add ""structure_id"":ID to have them come out of that building (e.g. a forward barracks); otherwise your first one
+      each of your barracks / factories / airfields trains one unit at a time from the shared queue, so two barracks train twice as fast
+      add ""structure_id"":ID to have them built and come out at that building (e.g. a forward barracks), waiting for it if it's busy; otherwise any free one
   {""type"":""move"", ""units"":[IDS], ""x"":X, ""y"":Y}     move, ignoring enemies
   {""type"":""attack_move"", ""units"":[IDS], ""x"":X, ""y"":Y}  move, engaging enemies on the way, except derricks someone holds (worth capturing: attack one to destroy it)
       add ""derricks"":true to attack_move to shoot enemy-held derricks on the way too (never neutral ones: they can't be hurt)
@@ -180,7 +181,12 @@ namespace Pez.Sim
             }
             string saved = queued > 0 && t.Bought(key) ? $" (that was what you were saving for: converters are back to normal)" : "";
             if (queued == 0) return Err($"{key}: {t.Missing(def.Cost)}{ReserveHint(w, team, def.Cost, key)}");
-            return Ok($"queued {queued}x {key}" + (at != null ? $" at {at.Def.Key} #{at.Id}" : "") + (queued < count ? $" (could only afford {queued})" : "") + $"; {t.UnitQueues[def.BuiltBy].Count} in the queue shared by your {Defs.ProducerKey(def.BuiltBy)} buildings" + saved);
+            // Each completed producer works one queued unit at a time, so the queue moves as fast as there are buildings.
+            int sharing = w.Owned(team).Count(s => s.IsStructure && s.IsComplete && s.Def.Produces == def.BuiltBy);
+            var maker = Defs.ProducerKey(def.BuiltBy);
+            string shared = sharing == 1 ? $"for your only {maker}, which trains one at a time (a second {maker} would train two at once)"
+                                         : $"shared by your {sharing} {maker} buildings, each training one at a time";
+            return Ok($"queued {queued}x {key}" + (at != null ? $" at {at.Def.Key} #{at.Id}" : "") + (queued < count ? $" (could only afford {queued})" : "") + $"; {t.UnitQueues[def.BuiltBy].Count} in the queue {shared}" + saved);
         }
 
         static List<Entity> ResolveUnits(World w, int team, Dictionary<string, object> c)
