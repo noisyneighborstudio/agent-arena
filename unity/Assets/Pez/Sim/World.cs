@@ -2161,8 +2161,9 @@ namespace Pez.Sim
                             // A unit parked on the head of the lane counts as the truck being there (FollowPath stops it as close
                             // as it can get): it swings in from where it stopped, and Align holds its line, so separation shoves
                             // the parked unit aside. (Waiting for the unit to leave, a truck sat in Enter for good behind a tank
-                            // parked on the lane.)
-                            if (Vec2.Dist(e.Pos, head) > 0.35f && !(FollowPath(e, head, 0.3f) && Vec2.Dist(e.Pos, head) <= TakenReach(e))) return;
+                            // parked on the lane.) Only over open ground: Align and Reverse move in a straight line, so a truck
+                            // stopped across rock beside the lane stays in Enter, trying for the head, until the unit moves.
+                            if (Vec2.Dist(e.Pos, head) > 0.35f && !(FollowPath(e, head, 0.3f) && Vec2.Dist(e.Pos, head) <= TakenReach(e) && LineClear(e.Pos, head))) return;
                             e.Dock = DockStep.Align;
                             e.Moving = false;
                             e.Path = null;

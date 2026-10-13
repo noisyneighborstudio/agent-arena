@@ -1293,6 +1293,34 @@ namespace Pez.Headless
             Check(!hq.Burning && !hq.Dead, "a healthy building never burns");
         }
 
+        /// <summary>A tank parked on the head of a lane with rock beside the lane, and a truck stopped by it on the far side of the rock: it
+        /// never stands on the rock (swinging in to Align from there carried it across), and docks once the tank has gone.</summary>
+        static void DockBesideRock()
+        {
+            var w = new World(2, 7, 80);
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var refinery = w.SpawnStructure(0, "mining_refinery", w.FindPlacement(0, "mining_refinery").Value, 1f);
+            var (dock, head, _, _) = w.Bay(refinery);
+            var outward = (head - dock).Normalized;
+            var across = new Vec2(-outward.Y, outward.X);
+            foreach (var o in w.Owned(0).Where(e => e.IsHarvester).ToList()) w.Remove(o);
+            var rock = Int2.Of(head + across);
+            w.Map.Tiles[w.Map.Idx(rock.X, rock.Y)] = Terrain.Rock; // the tile beside the head of the lane
+            var tank = At(w.SpawnUnit(0, "heavy_tank", hq), head); w.SetOrder(tank, Order.Idle, tank.Pos);
+            var truck = At(w.SpawnUnit(0, "mining_truck", refinery), head + across * 1.55f); // within reach of the head, across the rock
+            truck.Cargo = 150; truck.CargoType = 0; w.SetOrder(truck, Order.ReturnOre, truck.Pos);
+            int mined0 = w.Teams[0].Stats.OreMined;
+            bool onRock = false, parked = true;
+            for (int k = 0; k < 30 * World.TickRate && w.Teams[0].Stats.OreMined - mined0 < 150; k++)
+            {
+                if (parked && k == 8 * World.TickRate) { w.Remove(tank); parked = false; }
+                w.Step();
+                var at = Int2.Of(truck.Pos);
+                if (!w.Map.Passable(at.X, at.Y)) onRock = true;
+            }
+            Check(!onRock && w.Teams[0].Stats.OreMined - mined0 >= 150, $"a truck held off the lane head by a parked tank never crosses the rock beside the lane, and docks once the tank is gone (on rock {onRock}, delivered {w.Teams[0].Stats.OreMined - mined0}, {truck.Dock}, t {w.Time:0.0})");
+        }
+
         static void NoGridlock()
         {
             // A truck docking at a refinery with idle tanks parked all over the dock still unloads.
@@ -1344,6 +1372,7 @@ namespace Pez.Headless
             Check(done1 && done2 && queued && !bothIn && backedIn,
                   $"two trucks share one bay: one waits its turn beside the lane, each unloads backed in, facing out (both delivered {done1 && done2}, queued {queued}, both in at once {bothIn}, after {wq.Time:0.0}s)");
             Check(waitedStill, $"and the truck that waits stands still on its spot in the queue (it stood still there {waitedStill})");
+            DockBesideRock();
 
             // Nothing can be built on a truck lane, and a drop-off whose south is walled off gets a bay on a clear side.
             var (bayL, headL, _, okL) = wq.Bay(hqq);
