@@ -2873,8 +2873,10 @@ namespace Pez.Headless
             AiLacked(w6, ai6);
             AiRun(w6, ai6, 90);
             int rigs6 = w6.Owned(0).Count(e => e.Def.Key == "drill_rig"), mines6 = w6.Owned(0).Count(e => e.Def.Key == "deep_mine"), queued6 = t6.UnitQueues[Producer.Factory].Count(q => q.Key == "drill_rig");
-            Check(GoesTo(w6, d6[0]) && rigs6 + mines6 + queued6 == 1 && !w6.Owned(0).Any(e => e.Def.Key == "drill_rig" && e.Order == Order.Idle),
-                  $"with two copper zones and steel for two rigs it buys one, and none is left idle ({rigs6} rigs, {mines6} mines, {queued6} queued, {t6.Amount("steel")} steel)");
+            // (A surveyor may find an iron zone meanwhile and a rig goes there: only the copper ones are counted.)
+            int copperRigs6 = w6.Owned(0).Count(e => (e.Def.Key == "drill_rig" && e.ZoneId != 0 && w6.Map.DepositById(e.ZoneId).Type == Map.Copper) || (e.Def.Key == "deep_mine" && w6.Map.DepositById(e.DepositId).Type == Map.Copper));
+            Check(GoesTo(w6, d6[0]) && copperRigs6 == 1 && !w6.Owned(0).Any(e => e.Def.Key == "drill_rig" && e.Order == Order.Idle),
+                  $"with two copper zones and steel for two rigs it buys one for copper, and none is left idle ({copperRigs6} on copper; {rigs6} rigs, {mines6} mines, {queued6} queued, {t6.Amount("steel")} steel)");
             // Out of copper for less than the hold is a dip, not starvation: no rig yet, and a dip that ends (the trucks brought some in) starts
             // the count again, so two short dips a few minutes apart don't add up to one long one. The lack that lasts is answered.
             var (w9, ai9, t9, d9) = Dry(1);
