@@ -2908,13 +2908,25 @@ namespace Pez.Headless
             string endedPoints = EconReport.HowEnded(endw);
             // End to end: the match clock moved to a few minutes off, so the game ends on points with both teams standing.
             var clock = EconReport.PlayGame(2, 80, 1f, true, 62, w => { w.Tick = 57 * 60 * World.TickRate; w.SuddenDeathAt = 1f; });
-            var knock = EconReport.PlayGame(1, 80, 1f, false, 30);
+            World knockWorld = null;
+            var knock = EconReport.PlayGame(1, 80, 1f, false, 30, w => knockWorld = w);
             var tables = new System.Text.StringBuilder();
             EconReport.MatrixSection(tables, new List<EconReport.GameRun> { clock }, new EconReport.Options { Seeds = new[] { 2 }, Sizes = new[] { 80 }, Ores = new[] { 1f }, Modes = new[] { "passive" }, Minutes = 62 });
             string csvDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "econ-report-test-" + Guid.NewGuid().ToString("N"));
             EconReport.WriteCsv(csvDir, new List<EconReport.GameRun> { clock, knock });
             string gamesCsv = System.IO.File.ReadAllText(System.IO.Path.Combine(csvDir, "games.csv"));
             System.IO.Directory.Delete(csvDir, true);
+            // games.csv carries each seat's exact final counters; a game that ended between minute boundaries is one minutes.csv alone can't total.
+            var gamesLines = gamesCsv.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            var gamesHead = gamesLines[0].Split(',');
+            string[] knockRow = gamesLines.Skip(1).Select(l => l.Split(',')).First(c => c[Array.IndexOf(gamesHead, "ended")] == "knockout");
+            string Col(string name) => knockRow[Array.IndexOf(gamesHead, name)];
+            var ks0 = knockWorld.Teams[0].Stats; var ks1 = knockWorld.Teams[1].Stats;
+            Check(gamesHead.Take(14).SequenceEqual(new[] { "mode", "size", "ore", "seed", "game_over", "ended", "winner", "end_min", "errors", "surface_start", "deep_start", "deep_left", "far_ore_end", "surface_end" })
+                  && knock.EndMinute % 1.0 > 0.01 && knock.Teams.Any(t => t.Mined != t.Rows.Last().Mined)
+                  && Col("seat0_mined") == ks0.OreMined.ToString() && Col("seat0_deep_mined") == ks0.DeepMined.ToString() && Col("seat0_salvage_mined") == ks0.SalvageMined.ToString()
+                  && Col("seat1_mined") == ks1.OreMined.ToString() && Col("seat1_deep_mined") == ks1.DeepMined.ToString() && Col("seat1_salvage_mined") == ks1.SalvageMined.ToString(),
+                  $"games.csv holds each seat's final mined / deep / salvage counters exactly, for a game that ended at {knock.EndMinute:0.00} min ({Col("seat0_mined")} vs the sim's {ks0.OreMined}, {Col("seat1_mined")} vs {ks1.OreMined}; last whole minute said {knock.Teams[0].Rows.Last().Mined} and {knock.Teams[1].Rows.Last().Mined})");
             Check(endedRun == "unfinished" && endedKnock == "knockout" && endedBoth == "draw" && endedPoints == "points"
                   && (clock.Ended == "points" || clock.Ended == "draw") && clock.GameOver && clock.Teams.All(t => !t.Defeated) && clock.EndMinute > 59.9 && clock.EndMinute < 60.2
                   && knock.Ended == "knockout" && tables.ToString().Contains("| passive 80x80 ore 1.0 | 1 | 0 / 0 | - |") && gamesCsv.Contains(",ended,") && gamesCsv.Contains("," + clock.Ended + ",") && gamesCsv.Contains(",knockout,"),

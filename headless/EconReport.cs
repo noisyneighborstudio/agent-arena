@@ -29,7 +29,7 @@ namespace Pez.Headless
     ///   --econ-modes war,passive scripted AI (attacks in waves) or house AI (builds and defends only)
     ///   --econ-minutes 45        game-minutes per matrix game (300 or more lets the match clock end a game on points: counted apart from knockouts)
     ///   --econ-jobs 8            games played at once (each game is its own World; they share nothing but the read-only defs)
-    ///   --econ-out DIR           also write report.md, games.csv and minutes.csv there
+    ///   --econ-out DIR           also write report.md, games.csv and minutes.csv there (columns: see WriteCsv)
     /// A matrix game is deterministic: the same seed, size, richness and mode give the same numbers on any run, whatever --econ-jobs says.
     /// The full default matrix (96 games of 45 game-minutes) takes about 10 minutes; DOTNET_gcServer=1 in the environment roughly halves that.
     /// Example: DOTNET_gcServer=1 dotnet run -c Release -- --econ-report --econ-out /tmp/econ
@@ -966,11 +966,18 @@ namespace Pez.Headless
             Table(sb, new[] { "group", "built by min 10 (ore value)", "by min 20", "by min 30", "trucks at 30", "refineries at 30", "deep mines at 30", "units at 30", "structures at 30" }, built);
         }
 
+        /// <summary>
+        /// games.csv (one row a game) and minutes.csv (one row a team a game-minute) in `dir`. The last columns of games.csv are each seat's exact
+        /// final counters at game end, from the sim's TeamStats and not rounded to a minute (minutes.csv stops at the last whole minute):
+        /// seat0_mined and seat1_mined (all ore delivered, TeamStats.OreMined), seat0_deep_mined and seat1_deep_mined (of it, from deep mines),
+        /// seat0_salvage_mined and seat1_salvage_mined (of it, salvage). Surface ore by truck is mined less deep less salvage.
+        /// </summary>
         internal static void WriteCsv(string dir, List<GameRun> games)
         {
             Directory.CreateDirectory(dir);
-            var g = new StringBuilder("mode,size,ore,seed,game_over,ended,winner,end_min,errors,surface_start,deep_start,deep_left,far_ore_end,surface_end\n");
-            foreach (var x in games) g.AppendLine(string.Join(",", x.Mode, x.Size, OreLabel(x.Ore), x.Seed, x.GameOver ? 1 : 0, x.Ended, x.Winner, F(x.EndMinute, "0.0"), x.Errors, F(x.SurfaceStart, "0"), F(x.DeepStart, "0"), F(x.DeepLeft, "0"), F(x.FarOreEnd, "0"), F(x.SurfaceEnd, "0")));
+            var g = new StringBuilder("mode,size,ore,seed,game_over,ended,winner,end_min,errors,surface_start,deep_start,deep_left,far_ore_end,surface_end,seat0_mined,seat0_deep_mined,seat0_salvage_mined,seat1_mined,seat1_deep_mined,seat1_salvage_mined\n");
+            foreach (var x in games) g.AppendLine(string.Join(",", x.Mode, x.Size, OreLabel(x.Ore), x.Seed, x.GameOver ? 1 : 0, x.Ended, x.Winner, F(x.EndMinute, "0.0"), x.Errors, F(x.SurfaceStart, "0"), F(x.DeepStart, "0"), F(x.DeepLeft, "0"), F(x.FarOreEnd, "0"), F(x.SurfaceEnd, "0"),
+                x.Teams[0].Mined, x.Teams[0].Deep, x.Teams[0].SalvageMined, x.Teams[1].Mined, x.Teams[1].Deep, x.Teams[1].SalvageMined));
             File.WriteAllText(Path.Combine(dir, "games.csv"), g.ToString());
             var items = Defs.Items.ToArray();
             var m = new StringBuilder("mode,size,ore,seed,team,min,mined,deep,salvage,derrick_steel,cc_trickle,upkeep,lowpower_s,spent,trucks,deep_mines,derricks,refineries,power_made,power_used,units,structures,kills,home_ore," + string.Join(",", items) + "\n");
