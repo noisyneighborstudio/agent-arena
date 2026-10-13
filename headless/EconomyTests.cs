@@ -1668,8 +1668,179 @@ namespace Pez.Headless
             Console.WriteLine("\n-- scripted AI economy");
             bool regrowth = World.RegrowthDisabled;
             World.RegrowthDisabled = true; // ore the scenarios clear away stays gone
-            try { AiRefineries(); AiRefineryNeed(); AiCopperSteering(); AiDeepMining(); AiDrillChoices(); AiDeepRecovery(); AiEconomyRecovery(); AiHeadquartersRecovery(); AiRigDestinations(); AiMinePlan(); AiBuildOverrides(); AiPlanEdges(); AiExpansion(); }
+            try { AiRefineries(); AiRefineryNeed(); AiCopperSteering(); AiDeepMining(); AiDrillChoices(); AiDeepRecovery(); AiEconomyRecovery(); AiHeadquartersRecovery(); AiRigDestinations(); AiMinePlan(); AiBuildOverrides(); AiPlanEdges(); AiExpansion(); AiHouseDefence(); AiTruckReach(); }
             finally { World.RegrowthDisabled = regrowth; }
+        }
+
+        /// <summary>
+        /// The house AI answers an armed enemy, an engineer or a mine layer near its structures with its army, but not a truck, surveyor or outpost truck: in
+        /// passive games both armies used to chase each other's trucks to the contested ore, park there and shoot every truck sent to mine it
+        /// (#87: 10 of one seat's 16 trucks and its outpost). The attacking AI still goes for anything near its base.
+        /// </summary>
+        static void AiHouseDefence()
+        {
+            // The enemy unit stands 9 tiles from the command center, in sight but out of the tanks' range (so they only move if the AI sends them).
+            (World w, List<Entity> tanks) Scene(string foeKey)
+            {
+                var w0 = new World(2, 3, 80);
+                var hq0 = w0.Owned(0).First(e => e.Def.Key == "command_center");
+                var tanks0 = Enumerable.Range(0, 6).Select(_ => w0.SpawnUnit(0, "light_tank", hq0)).ToList();
+                var foe0 = w0.SpawnUnit(1, foeKey, hq0);
+                foe0.Pos = foe0.PrevPos = foe0.GuardPos = new Vec2(hq0.Center.X + 9f, hq0.Center.Y);
+                foreach (var u in w0.Owned(0).Where(e => !e.IsStructure)) { w0.SetOrder(u, Order.Idle, u.Pos); u.GuardPos = u.Pos; }
+                return (w0, tanks0);
+            }
+            bool Sent(World w, List<Entity> tanks, SimpleAI ai)
+            {
+                for (int i = 0; i < 2 * World.TickRate; i++) { ai.Update(w); w.Step(); }
+                return tanks.Any(u => u.Order == Order.AttackMove);
+            }
+            var sent = new Dictionary<string, bool>();
+            foreach (var key in new[] { "mining_truck", "outpost_truck", "geological_surveyor", "drill_rig", "medic", "repair_truck", "rifleman", "engineer", "minelayer" })
+            {
+                var (w, tanks) = Scene(key);
+                sent[key] = Sent(w, tanks, new SimpleAI(0, passive: true));
+            }
+            Check(!sent["mining_truck"] && !sent["outpost_truck"] && !sent["geological_surveyor"],
+                  $"the house AI doesn't send its army after an unarmed enemy mining truck ({(sent["mining_truck"] ? "sent" : "held")}), outpost truck ({(sent["outpost_truck"] ? "sent" : "held")}) or surveyor ({(sent["geological_surveyor"] ? "sent" : "held")}) near its base");
+            Check(!sent["drill_rig"] && !sent["medic"] && !sent["repair_truck"], "nor a drill rig, medic or repair truck");
+            Check(sent["rifleman"] && sent["engineer"] && sent["minelayer"],
+                  $"but it does answer an armed enemy ({(sent["rifleman"] ? "sent" : "held")}), an engineer ({(sent["engineer"] ? "sent" : "held")}) or a mine layer ({(sent["minelayer"] ? "sent" : "held")}) there");
+            var (wr, tanksR) = Scene("mining_truck");
+            Check(Sent(wr, tanksR, new SimpleAI(0)), "the attacking AI still goes for an enemy truck near its base");
+
+            // Only the units near a threat answer it: tanks across the map stay where they are.
+            var (wf, tanksF) = Scene("rifleman");
+            var hqF = wf.Owned(0).First(e => e.Def.Key == "command_center");
+            var home = tanksF.Take(3).ToList();
+            foreach (var u in tanksF.Skip(3)) { u.Pos = u.PrevPos = u.GuardPos = new Vec2(hqF.Center.X + 50f, hqF.Center.Y + 50f); }
+            Sent(wf, tanksF, new SimpleAI(0, passive: true));
+            Check(home.All(u => u.Order == Order.AttackMove) && tanksF.Skip(3).All(u => u.Order == Order.Idle),
+                  $"the house AI answers with the tanks at home ({home.Count(u => u.Order == Order.AttackMove)} of 3 sent) and not the ones 70 tiles off ({tanksF.Skip(3).Count(u => u.Order == Order.AttackMove)} of 3 sent)");
+            var (wa, tanksA) = Scene("rifleman");
+            var hqA = wa.Owned(0).First(e => e.Def.Key == "command_center");
+            foreach (var u in tanksA.Skip(3)) { u.Pos = u.PrevPos = u.GuardPos = new Vec2(hqA.Center.X + 50f, hqA.Center.Y + 50f); }
+            Sent(wa, tanksA, new SimpleAI(0));
+            Check(tanksA.All(u => u.Order == Order.AttackMove), "the attacking AI still sends everyone");
+
+            // A threat at a remote outpost with no army near it doesn't hide one at the base: the tanks there answer that one.
+            var wt = new World(2, 3, 80);
+            var hqT = wt.Owned(0).First(e => e.Def.Key == "command_center");
+            var post = wt.SpawnStructure(0, "outpost", new Int2(40, 40), 1f);
+            var farFoe = wt.SpawnUnit(1, "rifleman", post); // (first in the entity list, so the first threat found)
+            farFoe.Pos = farFoe.PrevPos = farFoe.GuardPos = new Vec2(post.Center.X + 5f, post.Center.Y);
+            var tanksT = Enumerable.Range(0, 6).Select(_ => wt.SpawnUnit(0, "light_tank", hqT)).ToList();
+            var nearFoe = wt.SpawnUnit(1, "rifleman", hqT);
+            nearFoe.Pos = nearFoe.PrevPos = nearFoe.GuardPos = new Vec2(hqT.Center.X + 9f, hqT.Center.Y);
+            foreach (var u in wt.Owned(0).Where(e => !e.IsStructure)) { wt.SetOrder(u, Order.Idle, u.Pos); u.GuardPos = u.Pos; }
+            for (int i = 0; i < 2 * World.TickRate; i++) wt.Step(); // (both foes in sight before the AI first looks)
+            foreach (var u in tanksT) { wt.SetOrder(u, Order.Idle, u.Pos); u.GuardPos = u.Pos; }
+            var aiT = new SimpleAI(0, passive: true);
+            for (int i = 0; i < 3 * World.TickRate && !tanksT.Any(u => u.Order == Order.AttackMove); i++) { aiT.Update(wt); if (!tanksT.Any(u => u.Order == Order.AttackMove)) wt.Step(); } // (looked at the moment the AI answers, before the tanks move)
+            Check(Vec2.Dist(post.Center, hqT.Center) > 30f && tanksT.All(u => u.Order == Order.AttackMove && Vec2.Dist(u.OrderPos, nearFoe.Pos) < 3f),
+                  $"an enemy at a remote outpost with no army near it doesn't stop the tanks answering the one by the base ({tanksT.Count(u => u.Order == Order.AttackMove && Vec2.Dist(u.OrderPos, nearFoe.Pos) < 3f)} of {tanksT.Count} sent to it; outpost {Vec2.Dist(post.Center, hqT.Center):0} tiles off)");
+        }
+
+        /// <summary>
+        /// The AI doesn't send trucks to ore by a base site that isn't its own unless its drop-offs reach it: with its own ore mined out, the
+        /// nearest ore within 80 tiles was the rival's home field or a free corner the rival's army sits in (#87). Ore in the open middle is still fair.
+        /// </summary>
+        static void AiTruckReach()
+        {
+            void Field(World wf, int cx, int cy, byte ore = Map.Iron)
+            {
+                for (int y = cy - 2; y <= cy + 2; y++)
+                    for (int x = cx - 2; x <= cx + 2; x++)
+                    {
+                        int i = wf.Map.Idx(x, y);
+                        wf.Map.Tiles[i] = Terrain.Dirt; wf.Map.Ore[i] = wf.Map.OreBase[i] = 200; wf.Map.OreType[i] = wf.Map.OreBaseType[i] = ore;
+                    }
+                wf.Map.FieldsChanged();
+            }
+            (World w, SimpleAI ai, Entity hq, List<Entity> trucks) Bare()
+            {
+                var w0 = new World(2, 3, 80);
+                var hq0 = w0.Owned(0).First(e => e.Def.Key == "command_center");
+                for (int i = 0; i < w0.Map.Ore.Length; i++) w0.Map.Ore[i] = 0; // no ore at all but the field the test lays
+                for (int i = 0; i < 5; i++) w0.SpawnUnit(0, "mining_truck", hq0);
+                return (w0, new SimpleAI(0, passive: true), hq0, w0.Owned(0).Where(e => e.IsHarvester).ToList());
+            }
+            // The rival's home is at (70.5,70.5): a field 14 tiles from it is its ore, 71 tiles from this base and past the 35-tile reach.
+            var (w, ai, hq, trucks) = Bare();
+            Field(w, 60, 60);
+            Check(Vec2.Dist(new Vec2(60, 60), hq.Center) > 60f && Vec2.Dist(new Vec2(60, 60), hq.Center) < 80f && Vec2.Dist(new Vec2(60, 60), w.Map.Spawns[1]) < 24f,
+                  $"(set up: the one field is {Vec2.Dist(new Vec2(60, 60), hq.Center):0} tiles from the command center and {Vec2.Dist(new Vec2(60, 60), w.Map.Spawns[1]):0} from the rival's base)");
+            AiRun(w, ai, 90);
+            Check(trucks.All(e => Vec2.Dist(e.Pos, hq.Center) < World.LeashDist) && trucks.All(e => e.Order != Order.Harvest || !e.HarvestTile.HasValue || Vec2.Dist(e.HarvestTile.Value.Center, hq.Center) < World.LeashDist),
+                  $"with nothing in reach its idle trucks stay home instead of driving to the rival's field ({trucks.Count(e => Vec2.Dist(e.Pos, hq.Center) >= World.LeashDist)} of {trucks.Count} left)");
+
+            // A truck already working a tile like that (it crept there from field to field) is called off, not left to go on.
+            var drifter = trucks[0];
+            drifter.Pos = drifter.PrevPos = new Vec2(60.5f, 60.5f);
+            w.SetOrder(drifter, Order.Harvest, new Vec2(60.5f, 60.5f));
+            Check(drifter.Order == Order.Harvest && drifter.HarvestTile.HasValue, "(set up: a truck mining the rival's field)");
+            AiRun(w, ai, 3);
+            Check(drifter.Order == Order.Idle, $"and a truck found mining it is stopped ({drifter.OrderName})");
+
+            // The same distance away in the middle of the map, by no base site: it is worth the trip.
+            var (w2, ai2, hq2, trucks2) = Bare();
+            Field(w2, 40, 40);
+            AiRun(w2, ai2, 90);
+            int there = trucks2.Count(e => e.HarvestTile.HasValue && Vec2.Dist(e.HarvestTile.Value.Center, new Vec2(40, 40)) < 6f);
+            Check(Vec2.Dist(new Vec2(40, 40), hq2.Center) > World.LeashDist && there >= 3 && w2.Teams[0].Stats.OreMined > 0,
+                  $"ore {Vec2.Dist(new Vec2(40, 40), hq2.Center):0} tiles off in the open middle is still worked ({there} of {trucks2.Count} trucks on it, {w2.Teams[0].Stats.OreMined} ore mined)");
+
+            // And ore in reach, as ever.
+            var (w3, ai3, hq3, trucks3) = Bare();
+            Field(w3, (int)hq3.Center.X + 15, (int)hq3.Center.Y);
+            AiRun(w3, ai3, 60);
+            int near = trucks3.Count(e => e.HarvestTile.HasValue && Vec2.Dist(e.HarvestTile.Value.Center, hq3.Center) <= World.LeashDist);
+            Check(near >= 3 && w3.Teams[0].Stats.OreMined > 0, $"and ore by the base is worked ({near} of {trucks3.Count} trucks on it, {w3.Teams[0].Stats.OreMined} ore mined)");
+
+            // A truck whose wanted ore changes (the plan has its first two on iron) with no fair ore of the new kind is stopped, not left mining the old kind.
+            var (w4, ai4, hq4, trucks4) = Bare();
+            Field(w4, (int)hq4.Center.X + 15, (int)hq4.Center.Y, Map.Copper); // copper by the base, no iron anywhere
+            foreach (var e in trucks4.Take(2)) w4.SetOrder(e, Order.Harvest, new Vec2(hq4.Center.X + 15.5f, hq4.Center.Y + 0.5f));
+            Check(trucks4.Take(2).All(e => e.Order == Order.Harvest && e.HarvestType == Map.Copper && e.Cargo == 0), "(set up: two trucks mining copper, which the plan has on iron)");
+            AiRun(w4, ai4, 3);
+            Check(trucks4.Take(2).All(e => e.Order == Order.Idle), $"with no iron to send them to they are stopped, not left on copper ({string.Join(", ", trucks4.Take(2).Select(e => e.OrderName))})");
+
+            // An idle truck is not sent to a tile of a field that is fair only at its root: the root (mined out) is in reach, the ore left is 38 tiles off by the rival's corner.
+            var (w5, ai5, hq5, trucks5) = Bare();
+            for (int x = 43; x <= 47; x++) { int i = w5.Map.Idx(x, 9); w5.Map.Tiles[i] = Terrain.Dirt; w5.Map.OreBase[i] = x == 43 ? 300 : 100; w5.Map.OreBaseType[i] = Map.Iron; }
+            for (int y = 7; y <= 11; y++) { int i = w5.Map.Idx(47, y); w5.Map.Tiles[i] = Terrain.Dirt; w5.Map.OreBase[i] = 100; w5.Map.OreBaseType[i] = Map.Iron; w5.Map.Ore[i] = 100; w5.Map.OreType[i] = Map.Iron; }
+            w5.Map.FieldsChanged();
+            Array.Fill(w5.Teams[0].Explored, true);
+            Check(Vec2.Dist(new Vec2(43.5f, 9.5f), hq5.Center) <= World.LeashDist && Vec2.Dist(new Vec2(47.5f, 9.5f), hq5.Center) > World.LeashDist && Vec2.Dist(new Vec2(47.5f, 9.5f), w5.Map.Spawns[2]) < 24f,
+                  "(set up: the field's root is in reach, its only ore is out of reach and within 24 tiles of a free corner)");
+            float farthest = 0;
+            AiRun(w5, ai5, 60, () => { foreach (var e in trucks5.Where(e => e.Order == Order.Harvest)) farthest = Math.Max(farthest, Vec2.Dist(e.OrderPos, hq5.Center)); });
+            Check(farthest <= World.LeashDist, $"and none of its idle trucks is sent to it (the farthest harvest order was {farthest:0} tiles from the base)");
+
+            // A field that straddles the reach boundary is still worked at its fair tiles, by a truck more than 80 tiles away: the ore nearest
+            // the root is out of reach by the free corner, the ore 4 tiles the other way is in reach.
+            var w6 = new World(2, 3, 128);
+            var ai6 = new SimpleAI(0, passive: true);
+            var hq6 = w6.Owned(0).First(e => e.Def.Key == "command_center");
+            for (int i = 0; i < w6.Map.Ore.Length; i++) w6.Map.Ore[i] = 0;
+            for (int i = 0; i < 5; i++) w6.SpawnUnit(0, "mining_truck", hq6);
+            var site6 = w6.Map.Spawns[2];
+            int ox = (int)(site6.X - 39.5f), row = (int)site6.Y;
+            var outpost6 = w6.SpawnStructure(0, "outpost", new Int2(ox, row - 1), 1f); // 38.5 tiles from the corner's site
+            for (int x = ox + 30; x <= ox + 36; x++)
+            {
+                int i = w6.Map.Idx(x, row);
+                w6.Map.Tiles[i] = Terrain.Dirt; w6.Map.OreBase[i] = x == ox + 34 ? 300 : 100; w6.Map.OreBaseType[i] = Map.Iron;
+                if (x == ox + 30 || x == ox + 36) { w6.Map.Ore[i] = 100; w6.Map.OreType[i] = Map.Iron; } // (the root, ox+34, and the tiles by it are mined out)
+            }
+            w6.Map.FieldsChanged();
+            Array.Fill(w6.Teams[0].Explored, true);
+            var fairTile = new Vec2(ox + 30.5f, row + 0.5f); var farTile = new Vec2(ox + 36.5f, row + 0.5f);
+            Check(Vec2.Dist(new Vec2(ox + 34.5f, row + 0.5f), outpost6.Center) <= World.LeashDist && Vec2.Dist(farTile, outpost6.Center) > World.LeashDist && Vec2.Dist(farTile, site6) < 24f && Vec2.Dist(fairTile, hq6.Center) > 80f,
+                  "(set up: a field whose root is in reach of an outpost; its ore at one end is out of reach by the corner's site, at the other in reach; 80 tiles from the trucks)");
+            Vec2? sentTo = null;
+            AiRun(w6, ai6, 30, () => { foreach (var e in w6.Owned(0).Where(e => e.IsHarvester && e.Order == Order.Harvest && Vec2.Dist(e.OrderPos, hq6.Center) > 30f)) sentTo = e.OrderPos; });
+            Check(sentTo.HasValue && Vec2.Dist(sentTo.Value, fairTile) < 1.5f, $"the truck is sent to the tile in reach ({(sentTo.HasValue ? sentTo.Value.ToString() : "none")}; the tile in reach is at {fairTile})");
         }
 
         static void AiRefineries()
@@ -2319,7 +2490,8 @@ namespace Pez.Headless
             var (w5, ai5, t5, hq5) = Thin(1); // corner 1 is an enemy's, corners 2 and 3 are free sites
             var free5 = new[] { w5.Map.Spawns[2], w5.Map.Spawns[3] };
             float nearest5 = float.MaxValue; // the closest any outpost or any outpost truck's destination comes to a free site
-            AiRun(w5, ai5, 6 * 60, () =>
+            // (20 minutes: its idle trucks used to find the middle field by driving to the free corners' ore, or creeping on past it, which they no longer do (#87), so the recon drone finds it.)
+            AiRun(w5, ai5, 20 * 60, () =>
             {
                 foreach (var e in w5.Owned(0).Where(e => e.Def.Key == "outpost" || e.Def.Key == "outpost_truck"))
                     foreach (var s in free5) nearest5 = Math.Min(nearest5, Vec2.Dist(e.Def.Key == "outpost" ? e.Center : e.OrderPos, s));
@@ -3040,7 +3212,14 @@ namespace Pez.Headless
             double fieldBefore = EconReport.FieldOreTotal(pm);
             int bare = Enumerable.Range(0, pm.Ore.Length).First(i => pm.Ore[i] == 0 && pm.OreBase[i] == 0 && pm.TerrainPassable(i % pm.W, i / pm.W));
             pm.Ore[bare] = 100; pm.Salvage[bare] = 100; pm.OreType[bare] = Map.Iron;
-            var played = EconReport.PlayGame(1, 80, 1f, true, 12);
+            // (A passive game no longer has kills to leave any, so the setup lays some on the 40 bare tiles farthest from both bases: the trucks reach them last.)
+            var played = EconReport.PlayGame(1, 80, 1f, true, 12, setup: g =>
+            {
+                var gm = g.Map;
+                foreach (int far in Enumerable.Range(0, gm.Ore.Length).Where(i => gm.Ore[i] == 0 && gm.OreBase[i] == 0 && gm.TerrainPassable(i % gm.W, i / gm.W))
+                                              .OrderByDescending(i => g.Teams.Min(t => Vec2.Dist(new Vec2(i % gm.W + .5f, i / gm.W + .5f), t.StartPos))).Take(40))
+                { gm.Ore[far] = 100; gm.Salvage[far] = 100; gm.OreType[far] = Map.Iron; }
+            });
             Check(EconReport.FieldOreTotal(pm) == fieldBefore && pm.Ore.Sum() == (int)fieldBefore + 100 && played.SalvageEnd > 0 && played.SurfaceByMinute[12] == played.SurfaceEnd,
                   $"the harness's surface ore leaves out salvage (100 salvage on the map: field ore stays {EconReport.FieldOreTotal(pm):0}); in a played game with {played.SalvageEnd:0} ore of salvage lying at the end, the last minute's snapshot is the field ore alone ({played.SurfaceByMinute[12]:0})");
 
