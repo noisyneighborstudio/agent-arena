@@ -30,6 +30,15 @@ namespace Pez.Sim
         const int MaxOutposts = 4; // outposts at once while the ore within reach is thin (two otherwise)
         const float SiteClear = 18f; // in an open arena the outpost itself stands at least this far from any base site but its own: the 18 tiles the derricks keep
         const float SiteBerth = 24f; // in an open arena an outpost keeps this far from any base site but its own: the 18 tiles the derricks keep, and 6 for where it lands beside a field
+        const int OreBacklog = 1000; // iron ore lying unrefined past this wants another refinery
+        const float IncomeWindow = 60f; // seconds the ore coming in is averaged over
+        const int CopperLow = 300, CopperHigh = 600; // refined copper on hand: the trucks go for copper below the low mark and leave it above the high one
+        const int CopperSurplus = 1500; // refined copper past this is more than anything uses: its deep mines are sold
+        /// <summary>Iron ore a second one refinery converts: the ore coming in is measured against it.</summary>
+        static readonly float RefineryRate = Defs.Get("mining_refinery").Recipes.First(r => r.Inputs.ContainsKey("iron_ore")).Rate;
+        float oreRate; // ore a second the trucks and deep mines bring in, averaged over IncomeWindow
+        float ratedAt = -1f; // when it was last worked out, and the team's Stats.OreMined then
+        int ratedMined;
 
         static readonly string[] BuildOrder =
         {
@@ -180,6 +189,8 @@ namespace Pez.Sim
             float Near(Vec2 p) => System.MathF.Round(Vec2.Dist(p, t.StartPos), 2);
             float Rightward(Vec2 p) => (p.X - t.StartPos.X) * right.X + (p.Y - t.StartPos.Y) * right.Y;
             if (t.Defeated) return;
+            if (ratedAt >= 0f && w.Time > ratedAt) oreRate += ((t.Stats.OreMined - ratedMined) / (w.Time - ratedAt) - oreRate) * System.MathF.Min(1f, (w.Time - ratedAt) / IncomeWindow);
+            ratedAt = w.Time; ratedMined = t.Stats.OreMined;
             var mine = w.Owned(team).ToList();
             var structures = mine.Where(e => e.IsStructure).ToList();
             var have = structures.GroupBy(s => s.Def.Key).ToDictionary(g => g.Key, g => g.Count());
@@ -194,16 +205,20 @@ namespace Pez.Sim
             // Past the electronics plant it prospects anyway: deep mines are the economy's second stage.
             bool prospect = w.HasComplete(team, "electronics_plant") && t.Amount("steel") > 400;
             // Ores worth mining now: iron always; copper, crystal and uranium while the stock is low (the last two only with
-            // something to refine them). Each switches on below a low mark and off above a higher one, so trucks don't flap.
+            // something to refine them). Each switches on below a low mark and off above a higher one, so trucks don't flap. (Copper's
+            // marks are low: little but circuits use it, and steel is what limits them.)
             int copperOnHand = t.Amount("copper") + t.Amount("copper_ore"), ironOnHand = t.Amount("steel") + t.Amount("iron_ore");
-            // Trucks queueing for the bays (each bay takes one truck at a time), or iron ore piling up unrefined: another refinery.
-            bool moreRefineries = (!surfaceDry && trucks0.Count(e => e.Dock == DockStep.Queue) >= 2 || t.Amount("iron_ore") > 1500) && Count("mining_refinery") is int nr && nr >= 1 && nr < 4;
+            // Trucks queueing for the bays (each bay takes one truck at a time), or iron ore piling up unrefined: another refinery. Not more
+            // than the ore coming in could keep busy (all of it may be iron, and a refinery converts RefineryRate of it a second), and only
+            // where there is room for one.
+            bool moreRefineries = (!surfaceDry && trucks0.Count(e => e.Dock == DockStep.Queue) >= 2 || t.Amount("iron_ore") > OreBacklog) && Count("mining_refinery") is int nr && nr >= 1 &&
+                                  nr < System.MathF.Ceiling(oreRate / RefineryRate) && w.FindPlacement(team, "mining_refinery").HasValue;
             // Raw ore that a purchase it is waiting on (the first step of the build order, a refinery it wants more of) costs and it
             // lacks: worth mining, by truck or deep mine, whatever refined copper or steel it has in hand.
             var waiting = FirstUnbuilt(Count);
             bool RawShort(string ore) => (waiting != null && Defs.Get(waiting).Cost.TryGetValue(ore, out var needed) && t.Amount(ore) < needed) ||
                                          (moreRefineries && Defs.Get("mining_refinery").Cost.TryGetValue(ore, out var needed2) && t.Amount(ore) < needed2);
-            wantCopper = copperOnHand < (wantCopper ? 1800 : 800);
+            wantCopper = copperOnHand < (wantCopper ? CopperHigh : CopperLow);
             wantCrystal = (Count("optics_lab") > 0 || Count("composite_foundry") > 0) && t.Amount("crystal") < (wantCrystal ? 800 : 300);
             wantUranium = Count("enrichment_plant") > 0 && t.Amount("uranium") < (wantUranium ? 600 : 250);
             bool OreWanted(int type) => type == Map.Iron || (type == Map.Copper ? wantCopper || RawShort("copper_ore") : type == Map.Crystal ? wantCrystal : wantUranium);
@@ -229,8 +244,9 @@ namespace Pez.Sim
             bool Starved(int ore) => ore < Map.Crystal && has[ore] == 0 && OreWanted(ore) && (OnHand(ore) < 100 || RawShort(Defs.Ores[ore]));
             bool Needy(int type) => type >= Map.Crystal && OreWanted(type) && t.Amount(Defs.Ores[type]) < 100;
             // The flagged zones worth a rig, best first (iron and copper it's short of, then the rest, nearest first), and the ones no
-            // rig of its own is heading for.
-            var freeZones = w.Map.Deep.Where(d => t.Surveyed.Contains(d.Id) && OreWanted(d.Type) && w.DrillBlocker(d, team) == null)
+            // rig of its own is heading for. (Copper zones only while starved of copper: a deep mine pumps 4 ore a second until its deposit
+            // is dry whatever the stockpile holds, where a truck is turned back to iron once there is enough.)
+            var freeZones = w.Map.Deep.Where(d => t.Surveyed.Contains(d.Id) && OreWanted(d.Type) && (d.Type != Map.Copper || Starved(Map.Copper)) && w.DrillBlocker(d, team) == null)
                                       .OrderBy(d => Short(d.Type) || Starved(d.Type) ? 0 : Needy(d.Type) ? 1 : d.Type >= Map.Crystal ? 3 : 2).ThenBy(d => Near(d.Pos)).ThenByDescending(d => Rightward(d.Pos)).ToList();
             var open = freeZones.Where(d => w.RigsBound(team, d.Id).Count == 0).ToList();
             // Slots: how many more mines each ore may start. Iron and copper share the cap, except that a starved one always gets its
@@ -570,6 +586,10 @@ namespace Pez.Sim
             void Sell(Entity e) { if (w.StillStanding(team, e)) Do(w, "type", "sell", "structure_id", e.Id); }
             foreach (var dm in deepMines.Where(e => e.IsComplete && !Pumping(e))) Sell(dm);
             if (retire != null) Sell(retire);
+            // Copper piling up: a deep copper mine adds to it for as long as its deposit lasts and draws 50 power, so past the surplus the
+            // mines are sold and their rigs' slots go to iron (unless a purchase is waiting on the raw copper ore that mine pumps).
+            if (copperOnHand > CopperSurplus && !RawShort("copper_ore"))
+                foreach (var cm in deepMines.Where(e => e.IsComplete && Pumping(e) && w.Map.DepositById(e.DepositId).Type == Map.Copper)) Sell(cm);
             // Surveyors and rigs that exist get their work whether or not there is a factory (it is needed to buy more, not to use them).
             if (wantDeep)
             {
