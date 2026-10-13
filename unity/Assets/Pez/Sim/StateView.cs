@@ -611,7 +611,7 @@ namespace Pez.Sim
                 "Keep power produced >= power used or production and refining halve.",
                 "Rockets beat vehicles, rifles beat infantry, tanks are all-round. Heavy tanks splash.",
                 "Use attack_move to send armies; units fight what they meet, except derricks someone holds (add \"derricks\":true for those). Use 'all' or 'idle' for units.",
-                "Omit x,y on build to auto-place near your base.",
+                "Omit x,y on build to auto-place near your base (a mining_refinery goes toward your nearest iron field, so trucks' trips are short; every seat is placed by the same rules).",
                 "The map starts shrouded. Your base reveals a radius around it; units and harvesters reveal what they pass. Scout to find the enemy (bases start near corners) and more ore: ore_fields lists only fields you've explored. A radar_dome reveals 16 tiles around it.",
             });
             o.Set("structures", Defs.All.Values.Where(d => d.IsStructure).Select(DefJson).ToList());
