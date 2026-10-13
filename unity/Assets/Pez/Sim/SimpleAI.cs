@@ -166,37 +166,64 @@ namespace Pez.Sim
             wantUranium = Count("enrichment_plant") > 0 && t.Amount("uranium") < (wantUranium ? 600 : 250);
             bool OreWanted(int type) => type == Map.Iron || (type == Map.Copper ? wantCopper || RawShort("copper_ore") : type == Map.Crystal ? wantCrystal : wantUranium);
 
-            // Deep mines still pumping (a dry one draws 50 power for nothing) and the flagged deposits worth a drill rig next:
-            // iron and copper it's short of first, then a crystal / uranium it has a plant for and none of, then the rest of the
-            // iron and copper, then crystal / uranium it merely has some of (a deep mine pumps 4 a second, far more than anything
-            // uses), nearest first.
+            // ---- The mine plan, worked out once; buying rigs and sending them both read it.
+            // Deep mines still pumping (a dry one draws 50 power for nothing), rigs actually on their way (World.RigsBound counts them
+            // so: a rig that was stopped keeps its old zone but isn't drilling anything), and what each ore has: mines + rigs heading out.
             var deepMines = mine.Where(e => e.Def.Key == "deep_mine").ToList();
             bool Pumping(Entity m) => w.Map.DepositById(m.DepositId) is DeepDeposit dd && dd.Amount > 0;
             int pumping = deepMines.Count(Pumping);
-            bool Short(int type) => type == Map.Iron ? ironOnHand < 400 || RawShort("iron_ore") : type == Map.Copper && (copperOnHand < 300 || copperOnHand * 4 < ironOnHand || RawShort("copper_ore"));
             var rigs = mine.Where(e => e.Def.Key == "drill_rig").ToList();
-            // (One mine on crystal or on uranium at a time is plenty: pumping, or a rig actually on its way, as World.RigsBound counts
-            // them. A rig that was stopped keeps its old zone but isn't drilling anything.)
             bool Bound(Entity r) => r.ZoneId != 0 && (r.Order == Order.Drill || (r.Order == Order.Refuel && r.ResumeOrder == Order.Drill));
-            var drilling = deepMines.Where(Pumping).Select(m => w.Map.DepositById(m.DepositId).Type).Concat(rigs.Where(Bound).Select(r => w.Map.DepositById(r.ZoneId)?.Type ?? -1)).ToList();
+            int queuedRigs = t.UnitQueues[Producer.Factory].Count(q => q.Key == "drill_rig");
+            int rigsInFlight = rigs.Count + queuedRigs;
+            var has = new int[4];
+            foreach (var m in deepMines.Where(Pumping)) has[w.Map.DepositById(m.DepositId).Type]++;
+            foreach (var r in rigs.Where(Bound)) { var z = w.Map.DepositById(r.ZoneId); if (z != null) has[z.Type]++; }
+            int OnHand(int ore) => ore == Map.Iron ? ironOnHand : ore == Map.Copper ? copperOnHand : t.Amount(Defs.Ores[ore]);
+            bool Short(int type) => type == Map.Iron ? ironOnHand < 400 || RawShort("iron_ore") : type == Map.Copper && (copperOnHand < 300 || copperOnHand * 4 < ironOnHand || RawShort("copper_ore"));
+            // A basic ore it wants, has next to none of and no mine on gets one whatever the cap says; crystal / uranium it has a plant for
+            // and none of go ahead of the ordinary iron and copper (a deep mine pumps 4 a second, far more than anything uses).
+            bool Starved(int ore) => ore < Map.Crystal && has[ore] == 0 && OreWanted(ore) && OnHand(ore) < 100;
             bool Needy(int type) => type >= Map.Crystal && OreWanted(type) && t.Amount(Defs.Ores[type]) < 100;
-            var freeZones = w.Map.Deep.Where(d => t.Surveyed.Contains(d.Id) && OreWanted(d.Type) && (d.Type < Map.Crystal || !drilling.Contains(d.Type)) && w.DrillBlocker(d, team) == null)
-                                      .OrderBy(d => Short(d.Type) ? 0 : Needy(d.Type) ? 1 : d.Type >= Map.Crystal ? 3 : 2).ThenBy(d => Vec2.Dist(d.Pos, t.StartPos)).ToList();
-            int rigsInFlight = rigs.Count + t.UnitQueues[Producer.Factory].Count(q => q.Key == "drill_rig");
-            // The cap on iron and copper mines counts the mines pumping and every rig it has or has ordered, for deciding whether to buy
-            // another: once they fill it only crystal and uranium zones are left to buy a rig for, so a plant with nothing to refine
-            // always gets its mine however many basic-ore mines came first. (A rig that already exists is a different matter: it is
-            // sent to a free zone while the mines and rigs actually heading for one are under the cap; see the dispatch below.)
-            int basicWorking = deepMines.Count(m => Pumping(m) && w.Map.DepositById(m.DepositId).Type < Map.Crystal) + rigs.Count(r => Bound(r) && w.Map.DepositById(r.ZoneId)?.Type < Map.Crystal);
-            int basic = deepMines.Count(m => Pumping(m) && w.Map.DepositById(m.DepositId).Type < Map.Crystal) + rigsInFlight - rigs.Count(r => Bound(r) && w.Map.DepositById(r.ZoneId)?.Type >= Map.Crystal);
-            var zones = basic >= MaxDeepMines ? freeZones.Where(d => d.Type >= Map.Crystal).ToList() : freeZones;
+            // The flagged zones worth a rig, best first (iron and copper it's short of, then the rest, nearest first), and the ones no
+            // rig of its own is heading for.
+            var freeZones = w.Map.Deep.Where(d => t.Surveyed.Contains(d.Id) && OreWanted(d.Type) && w.DrillBlocker(d, team) == null)
+                                      .OrderBy(d => Short(d.Type) || Starved(d.Type) ? 0 : Needy(d.Type) ? 1 : d.Type >= Map.Crystal ? 3 : 2).ThenBy(d => Vec2.Dist(d.Pos, t.StartPos)).ToList();
+            var open = freeZones.Where(d => w.RigsBound(team, d.Id).Count == 0).ToList();
+            // Slots: how many more mines each ore may start. Iron and copper share the cap, except that a starved one always gets its
+            // first (and the other keeps its place); crystal and uranium have one each, while wanted.
+            int sharedFree = MaxDeepMines - has[Map.Iron] - has[Map.Copper];
+            int basicRoom = System.Math.Max(sharedFree, (Starved(Map.Iron) ? 1 : 0) + (Starved(Map.Copper) ? 1 : 0));
+            var slots = new int[4];
+            for (int o = Map.Iron; o <= Map.Copper; o++)
+                slots[o] = System.Math.Max(Starved(o) ? 1 : 0, basicRoom - (Starved(1 - o) ? 1 : 0));
+            slots[Map.Crystal] = OreWanted(Map.Crystal) ? System.Math.Max(0, 1 - has[Map.Crystal]) : 0;
+            slots[Map.Uranium] = OreWanted(Map.Uranium) ? System.Math.Max(0, 1 - has[Map.Uranium]) : 0;
+            int Open(int ore) => open.Count(d => d.Type == ore);
+            // Rigs worth having in all: as many as there are slots with an open zone to fill them. Buying stops there, so none idles.
+            int usable = System.Math.Min(basicRoom, System.Math.Min(slots[Map.Iron], Open(Map.Iron)) + System.Math.Min(slots[Map.Copper], Open(Map.Copper)))
+                       + System.Math.Min(slots[Map.Crystal], Open(Map.Crystal)) + System.Math.Min(slots[Map.Uranium], Open(Map.Uranium));
+            int unsent = rigs.Count(r => !Bound(r)) + queuedRigs;
+            // A starved basic ore with the cap full of the other: retire that one's mine with the most left, to make the room. Only when
+            // something is waiting on the missing ore and the rig to replace it can be had.
+            bool Waiting(int ore)
+            {
+                string raw = Defs.Ores[ore], refined = ore == Map.Iron ? "steel" : "copper";
+                return RawShort(raw) || (waiting != null && Defs.Get(waiting).Cost.Any(kv => (kv.Key == raw || kv.Key == refined) && t.Amount(kv.Key) < kv.Value));
+            }
+            Entity retire = null;
+            for (int o = Map.Iron; o <= Map.Copper && retire == null; o++)
+                if (sharedFree <= 0 && Starved(o) && Open(o) > 0 && has[1 - o] >= 2 && Waiting(o) &&
+                    w.MissingPrereq(team, Defs.Get("drill_rig")) == null && (unsent > 0 || t.Missing(Defs.Get("drill_rig").Cost) == null))
+                    retire = deepMines.Where(m => m.IsComplete && Pumping(m) && w.Map.DepositById(m.DepositId).Type == 1 - o)
+                                      .OrderByDescending(m => w.Map.DepositById(m.DepositId).Amount).FirstOrDefault();
             wentDeep |= deepMines.Count > 0 || rigsInFlight > 0;
             bool wantDeep = surfaceDry || prospect || wentDeep;
             bool deepOn = w.HasComplete(team, "factory") && wantDeep;
             var surveyors = mine.Where(e => e.Def.Key == "geological_surveyor").ToList();
             bool Queued(string k) => t.UnitQueues[Producer.Factory].Any(q => q.Key == k);
-            bool wantRig = deepOn && w.MissingPrereq(team, Defs.Get("drill_rig")) == null && rigsInFlight < System.Math.Min(2, zones.Count);
-            bool wantSurveyor = deepOn && surveyors.Count == 0 && zones.Count < 2 && !Queued("geological_surveyor");
+            bool wantRig = deepOn && w.MissingPrereq(team, Defs.Get("drill_rig")) == null && unsent < usable && rigsInFlight < 2;
+            bool wantSurveyor = deepOn && surveyors.Count == 0 && usable < 2 && !Queued("geological_surveyor");
             // What it saves up for, so the army and the build order don't spend it as it arrives and the converters leave it alone:
             // the first two mines' rigs, or the surveyor that finds them. With the command center gone, the construction truck that
             // puts one back comes before any of that (1500 steel is never there if the army spends it as it comes in).
@@ -212,7 +239,7 @@ namespace Pez.Sim
             // mining zone already flagged and no deep mine pumping means saving for a rig too. (Once it has been deep, with
             // no zone left to drill, it carries on: surveyors are still looking.) It holds back the army, defences and tech, never the
             // buildings the economy stands on: if any of those is gone, putting it back comes first (see FirstMissingEconomy below).
-            bool economyFirst = (surfaceDry || zones.Count > 0) && pumping == 0 && rigsInFlight == 0 && w.HasComplete(team, "electronics_plant") && (!wentDeep || zones.Count > 0);
+            bool economyFirst = (surfaceDry || usable > 0) && pumping == 0 && rigsInFlight == 0 && w.HasComplete(team, "electronics_plant") && (!wentDeep || usable > 0);
 
             // Down to its last couple of mining trucks, a truck comes before anything else (they are where the money comes from).
             var trucks = mine.Where(e => e.IsHarvester).ToList();
@@ -231,13 +258,15 @@ namespace Pez.Sim
             if (!economyFirst) step = PickStep(w, t, Count, out head);
             else { stuckSince.Clear(); step = head = FirstMissingEconomy(Count); }
             int draw = (step != null ? System.Math.Max(0, -Defs.Get(step).Power) : 0) + 50 * rigsInFlight;
-            string next = null;
-            if (t.PowerProduced - t.PowerUsed + pending - draw < 25 && structures.Count > 1)
-                // (A fusion reactor only if it can be paid for now: short of circuits, plain power plants keep the lights on.)
-                next = w.MissingPrereq(team, Defs.Get("fusion_reactor")) == null && t.Amount("plasma") > 80 && Count("fusion_reactor") == 0 && t.Missing(Defs.Get("fusion_reactor").Cost) == null ? "fusion_reactor" : "power_plant";
-            else if (moreRefineries && t.Missing(Defs.Get("mining_refinery").Cost) == null)
-                next = "mining_refinery";
-            else next = step;
+            // What to build: the step, unless something more urgent goes first. Every such override goes through Override(): it has to be
+            // buildable (the buildings it needs stand) and, unless it is worth saving up for, paid for; otherwise the step stands. So a
+            // blocked override can never hide the step it was meant to jump ahead of.
+            string Override(string key, bool saveUp = false) =>
+                key != null && w.MissingPrereq(team, Defs.Get(key)) == null && (saveUp || t.Missing(Defs.Get(key).Cost) == null) ? key : null;
+            bool powerShort = t.PowerProduced - t.PowerUsed + pending - draw < 25 && structures.Count > 1;
+            // (A fusion reactor only if it can be paid for now: short of circuits, plain power plants keep the lights on.)
+            string powerFix = !powerShort ? null : t.Amount("plasma") > 80 && Count("fusion_reactor") == 0 ? Override("fusion_reactor") ?? "power_plant" : "power_plant";
+            string next = Override(powerFix, saveUp: true) ?? Override(moreRefineries ? "mining_refinery" : null) ?? step;
             if (next != null && t.StructureQueue.Count == 0 && t.Missing(Defs.Get(next).Cost) == null && w.MissingPrereq(team, Defs.Get(next)) == null &&
                 (saving == null || EconomyStructures.Contains(next) || next == "fusion_reactor" || Defs.Get(next).Cost.All(kv => t.Amount(kv.Key) - (savingCost.TryGetValue(kv.Key, out var rc) ? rc : 0) >= kv.Value)))
                 Do(w, "type", "build", "structure", next);
@@ -379,21 +408,21 @@ namespace Pez.Sim
             // A mine whose deposit is used up pumps nothing but still draws power: sell it.
             foreach (var dm in deepMines.Where(e => e.IsComplete && !Pumping(e)))
                 Do(w, "type", "sell", "structure_id", dm.Id);
+            if (retire != null) Do(w, "type", "sell", "structure_id", retire.Id); // (refused while it is under fire: tried again next second)
             // Surveyors and rigs that exist get their work whether or not there is a factory (it is needed to buy more, not to use them).
             if (wantDeep)
             {
-                // Idle rigs go to the best free zone nobody is heading for and deploy there by themselves.
-                var open = freeZones.Where(d => w.RigsBound(team, d.Id).Count == 0).ToList();
-                int basicSent = basicWorking;
+                // Idle rigs go to the best open zone whose ore has a slot left and deploy there by themselves.
+                int roomLeft = basicRoom;
                 foreach (var rig in rigs.Where(e => e.Order == Order.Idle))
                 {
-                    var zone = open.FirstOrDefault(d => d.Type >= Map.Crystal || basicSent < MaxDeepMines);
+                    var zone = open.FirstOrDefault(d => slots[d.Type] > 0 && (d.Type >= Map.Crystal || roomLeft > 0));
                     if (zone == null) break;
                     open.Remove(zone);
                     var sent = Do(w, "type", "drill", "units", new[] { rig.Id }, "zone", zone.Id);
                     if (!(sent["ok"] is bool ok && ok)) continue;
-                    // (A rig sent to crystal or uranium takes that ore's one mine: no other rig goes for it this tick.)
-                    if (zone.Type >= Map.Crystal) open.RemoveAll(d => d.Type == zone.Type); else basicSent++;
+                    slots[zone.Type]--;
+                    if (zone.Type < Map.Crystal) roomLeft--;
                 }
                 // Surveyors prospect around the base on their own, flagging mining zones as they go; when the area is
                 // covered they widen it.
