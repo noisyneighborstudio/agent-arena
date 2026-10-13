@@ -1595,6 +1595,25 @@ namespace Pez.Headless
                   $"a game saved before regrowth gets its fields' original amounts back from its seed ({old.World.Map.OreBase.Count(x => x > 0)} field tiles, {g.World.Map.OreBase.Count(x => x > 0)} originally)");
             Step(old, 10);
             Check(old.World.Errors == 0, "and plays on");
+
+            // ...and a game saved when the base sites sat on tile corners (9 tiles in) is rebuilt with the generator it was made with, not
+            // the one that puts the sites on tile centres: what such a save restores is the terrain, the ore on the ground and the
+            // spawns, and the rebuilt fields must be the ones it started with, tile for tile.
+            foreach (var (size, seed, scale) in new[] { (80, 31, 0.3f), (80, 7, 1f), (128, 5, 1f) })
+            {
+                var madeThen = Map.Generate(size, size, seed, scale, extraFields: false, inset: Map.LegacySiteInset);
+                var restored = new Map(size, size) { OreScale = scale };
+                Array.Copy(madeThen.Tiles, restored.Tiles, madeThen.Tiles.Length);
+                Array.Copy(madeThen.Ore, restored.Ore, madeThen.Ore.Length);
+                Array.Copy(madeThen.OreType, restored.OreType, madeThen.OreType.Length);
+                restored.Spawns.AddRange(madeThen.Spawns);
+                restored.BaseMissing = true; // (no ore_base in the save)
+                restored.RebuildBase(seed, size, scale);
+                bool exact = restored.OreBase.SequenceEqual(madeThen.OreBase) && restored.OreBaseType.SequenceEqual(madeThen.OreBaseType);
+                var newer = Map.Generate(size, size, seed, scale, extraFields: false);
+                Check(madeThen.Spawns[0].X == 9f && newer.Spawns[0].X == 9.5f && exact && !newer.OreBase.SequenceEqual(madeThen.OreBase),
+                      $"a {size}x{size} game saved with its base sites on tile corners rebuilds exactly its original fields ({restored.OreBase.Count(x => x > 0)} field tiles; today's generator, with the sites on tile centres, would give a different map)");
+            }
         }
 
         /// <summary>Ore of each type within r tiles of p.</summary>

@@ -74,30 +74,32 @@ namespace Pez.Sim
         public const byte Iron = 0, Copper = 1, Crystal = 2, Uranium = 3;
 
         /// <param name="extraFields">Add the neutral surface fields a bigger map gets (false rebuilds a map from before them: see RebuildBase).</param>
-        public static Map Generate(int w, int h, int seed, float oreScale = 1f, bool extraFields = true)
+        /// <param name="inset">How far in from the edges the base sites sit: SiteInset, or LegacySiteInset to rebuild a map made when they sat on tile corners (see RebuildBase).</param>
+        public static Map Generate(int w, int h, int seed, float oreScale = 1f, bool extraFields = true, float inset = SiteInset)
         {
             for (int attempt = 0; attempt < 20; attempt++)
             {
-                var m = TryGenerate(w, h, seed + attempt * 7919, oreScale, extraFields);
+                var m = TryGenerate(w, h, seed + attempt * 7919, oreScale, extraFields, inset);
                 if (m.SpawnsConnected()) return m;
             }
-            return TryGenerate(w, h, seed, oreScale, extraFields);
+            return TryGenerate(w, h, seed, oreScale, extraFields, inset);
         }
+
+        /// <summary>Base sites sit on tile centres, 9 tiles in from the edges: a command center is 3x3 round its site's tile, so then each base is exactly the half-turned copy of the next (Images).</summary>
+        public const float SiteInset = 9.5f;
+        /// <summary>Where they sat before: on the tile corner (9 and w - 9), which left the far bases a tile too far out. Maps saved then are rebuilt with this.</summary>
+        public const float LegacySiteInset = 9f;
 
         public const int MinSize = 48, MaxSize = 320;
         /// <summary>Menu presets. Any size between MinSize and MaxSize works through the API and command line.</summary>
         public static readonly (string name, int size)[] Presets = { ("Small", 56), ("Medium", 80), ("Large", 112), ("Huge", 160), ("Vast", 240) };
 
-        static Map TryGenerate(int w, int h, int seed, float oreScale = 1f, bool extraFields = true)
+        static Map TryGenerate(int w, int h, int seed, float oreScale = 1f, bool extraFields = true, float inset = SiteInset)
         {
             // Scatter counts were tuned on an 80x80 map; scale them with area so bigger maps aren't empty.
             float area = w * h / 6400f;
             var rng = new Random(seed);
             var m = new Map(w, h) { OreScale = oreScale };
-            // Base sites sit on tile centres, 9 tiles in from the edges: a command center is 3x3 round its site's tile, so then each
-            // base is exactly the half-turned copy of the next (Images). On the tile corner (9 and w - 9) the far bases stood a tile
-            // too far out, and their ore a tile farther from them than the near bases'.
-            float inset = 9.5f;
             m.Spawns.Add(new Vec2(inset, inset));
             m.Spawns.Add(new Vec2(w - inset, h - inset));
             m.Spawns.Add(new Vec2(w - inset, inset));

@@ -627,7 +627,10 @@ namespace Pez.Sim
             int size = Math.Clamp(initialSize, MinSize, MaxSize);
             if (size <= W && size <= H)
             {
-                var g = Generate(size, size, seed, oreScale, extraFields: false); // as it was made: the neutral fields came later
+                // As it was made: the neutral fields came later, and the base sites sat on tile corners (9 tiles in) until they moved to
+                // tile centres, so a map whose sites are on corners is rebuilt with the generator it was made with.
+                bool corners = Spawns.Count > 0 && Spawns[0].X == MathF.Floor(Spawns[0].X) && Spawns[0].Y == MathF.Floor(Spawns[0].Y);
+                var g = Generate(size, size, seed, oreScale, extraFields: false, inset: corners ? LegacySiteInset : SiteInset);
                 int same = 0, total = size * size;
                 for (int y = 0; y < size; y++)
                     for (int x = 0; x < size; x++)
