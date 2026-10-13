@@ -21,6 +21,12 @@ namespace Pez.Sim
         public float TurretFacing;    // radians, weapon
         public float Hp;
         public bool Dead;
+        /// <summary>
+        /// The share of what this cost that the arena's gift paid (0..1; Team.Pay): 1 for the starting base and units and a late
+        /// joiner's catch-up buildings, which weren't paid for at all. It is worth that much less as kill value, salvage and a
+        /// dismantled base (World.AddWorth), whoever holds it later, and a refund of it is that much gift again. Saved with the game.
+        /// </summary>
+        public float GrantedShare;
 
         // Structures
         public Int2 Origin;
@@ -73,6 +79,7 @@ namespace Pez.Sim
 
         // Mining trucks
         public int Cargo;
+        public int CargoSalvage;     // of Cargo, how much is salvage picked up off the ground (it counts as mined when it's delivered, not before)
         public int CargoType = -1;   // index into Defs.Ores while carrying
         public int HarvestType = -1; // preferred ore type, -1 = nearest of any
         public Int2? HarvestTile;
