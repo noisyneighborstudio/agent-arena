@@ -95,6 +95,13 @@ namespace Pez.Sim
             { Producer.Factory, new List<ProdItem>() },
             { Producer.Airfield, new List<ProdItem>() },
         };
+        /// <summary>The units of one kind in production right now: those a building is working on (several at once with several buildings), in queue order.</summary>
+        public List<ProdItem> Working(Producer kind)
+        {
+            var now = new List<ProdItem>();
+            foreach (var p in UnitQueues[kind]) if (p.WorkerId != 0) now.Add(p);
+            return now;
+        }
         /// <summary>Enemy structures this team has seen: id -> (key, origin, team).</summary>
         // Sorted by id so every reader (the scripted AI, rally points) sees the same order in a game and in its resumed copy.
         public readonly SortedDictionary<int, (string key, Int2 origin, int team)> KnownEnemyStructures = new SortedDictionary<int, (string, Int2, int)>();
