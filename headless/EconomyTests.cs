@@ -2566,6 +2566,15 @@ namespace Pez.Headless
             t5.Add("copper", -t5.Amount("copper")); t5.Add("copper_ore", -t5.Amount("copper_ore")); t5.Add("iron_ore", 1000); t5.Add("steel", 1000);
             AiRun(w5, ai5, 90);
             Check(GoesTo(w5, d5[0]), $"but starved of copper, with none in hand, it goes to the copper zone ({w5.Owned(0).Count(e => e.Def.Key == "drill_rig")} rigs, {w5.Owned(0).Count(e => e.Def.Key == "deep_mine")} mines)");
+            // Two copper zones and nothing else known, starved, with the steel for two rigs: one copper mine is all the starved rule allows (once a
+            // rig is bound for the first, copper is no longer starved and the second zone is not open), so one rig is bought, not two with one left idle.
+            var (w6, ai6, t6, d6) = Dry(1);
+            d6[0].Type = Map.Copper; d6[1].Type = Map.Copper;
+            t6.Add("copper", -t6.Amount("copper")); t6.Add("copper_ore", -t6.Amount("copper_ore")); t6.Add("iron_ore", 1000); t6.Add("steel", 2000);
+            AiRun(w6, ai6, 90);
+            int rigs6 = w6.Owned(0).Count(e => e.Def.Key == "drill_rig"), mines6 = w6.Owned(0).Count(e => e.Def.Key == "deep_mine"), queued6 = t6.UnitQueues[Producer.Factory].Count(q => q.Key == "drill_rig");
+            Check(GoesTo(w6, d6[0]) && rigs6 + mines6 + queued6 == 1 && !w6.Owned(0).Any(e => e.Def.Key == "drill_rig" && e.Order == Order.Idle),
+                  $"with two copper zones and steel for two rigs it buys one, and none is left idle ({rigs6} rigs, {mines6} mines, {queued6} queued, {t6.Amount("steel")} steel)");
 
             // A crystal rig that was stopped keeps its old zone but isn't drilling: its ore is free again, and the rig gets a zone.
             var (w2, ai2, t2, d2) = Dry(0);

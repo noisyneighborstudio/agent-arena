@@ -34,8 +34,8 @@ namespace Pez.Sim
         const float IncomeWindow = 60f; // seconds the ore coming in is averaged over
         const int CopperLow = 300, CopperHigh = 600; // refined copper on hand: the trucks go for copper below the low mark and leave it above the high one
         const int CopperSurplus = 1500; // refined copper past this is more than anything uses: its deep mines are sold
-        /// <summary>Iron ore a second one refinery converts: the ore coming in is measured against it.</summary>
-        static readonly float RefineryRate = Defs.Get("mining_refinery").Recipes.First(r => r.Inputs.ContainsKey("iron_ore")).Rate;
+        /// <summary>Iron ore a second one refinery converts (its recipe's cycles a second times the iron ore a cycle takes): the ore coming in is measured against it.</summary>
+        static readonly float RefineryRate = Defs.Get("mining_refinery").Recipes.Where(r => r.Inputs.ContainsKey("iron_ore")).Sum(r => r.Rate * r.Inputs["iron_ore"]);
         float oreRate; // ore a second the trucks and deep mines bring in, averaged over IncomeWindow
         float ratedAt = -1f; // when it was last worked out, and the team's Stats.OreMined then
         int ratedMined;
@@ -256,6 +256,7 @@ namespace Pez.Sim
             var slots = new int[4];
             for (int o = Map.Iron; o <= Map.Copper; o++)
                 slots[o] = System.Math.Max(Starved(o) ? 1 : 0, basicRoom - (Starved(1 - o) ? 1 : 0));
+            slots[Map.Copper] = System.Math.Min(slots[Map.Copper], 1); // (copper zones are open only while starved, which allows one mine: a second rig bought for another would find no zone)
             slots[Map.Crystal] = OreWanted(Map.Crystal) ? System.Math.Max(0, 1 - has[Map.Crystal]) : 0;
             slots[Map.Uranium] = OreWanted(Map.Uranium) ? System.Math.Max(0, 1 - has[Map.Uranium]) : 0;
             int Open(int ore) => open.Count(d => d.Type == ore);
