@@ -2780,6 +2780,65 @@ namespace Pez.Headless
             var (w1f, ai1f, t1f) = Reserved(false);
             AiRun(w1f, ai1f, 60);
             Check(RigsOf(w1f) == 0, $"but with that protection over the trucks can mine it and the wait stands ({RigsOf(w1f)} rigs)");
+            // A reachable field whose own tiles are all reserved, with unreserved copper within 12 tiles of its root but past every drop-off's leash:
+            // a truck would refuse that tile too (the leash applies to the tile it mines), so the lack is starved at once. No map has such a field to
+            // hand, so one is made: a field 25 to 30 tiles from the base's drop-offs is the only copper (its ore turned to copper), a newcomer's base
+            // sits just behind it, and one more copper tile lies just past the leash on its far side.
+            (World w, SimpleAI ai, Team t, bool found) Straddle(bool protectedSeat)
+            {
+                for (int seed = 1; seed <= 300; seed++)
+                {
+                    var x = new World(2, seed, 80 + 48 * (seed % 2));
+                    var xai = new SimpleAI(0, passive: true);
+                    var xt = x.Teams[0];
+                    AiBase(x, "power_plant", "mining_refinery", "barracks", "factory", "power_plant", "electronics_plant", "gun_turret");
+                    var m = x.Map;
+                    var drops = x.Owned(0).Where(e => e.IsStructure && e.Def.DropOff).Select(e => e.Center).ToList();
+                    bool In(Vec2 p) => drops.Any(dp => Vec2.Dist(dp, p) <= World.LeashDist);
+                    Vec2 C(int i) => new Vec2(i % m.W + .5f, i / m.W + .5f);
+                    m.FieldIndex(out var tiles, out var roots);
+                    foreach (int r in tiles.Where(i => roots[i]))
+                    {
+                        var near = drops.OrderBy(dp => Vec2.Dist(dp, C(r))).First();
+                        float dR = Vec2.Dist(near, C(r));
+                        if (dR < 25f || dR > 30f) continue;
+                        var dir = (C(r) - near).Normalized;
+                        var tPos = C(r) + dir * (World.LeashDist + 1.5f - dR);
+                        if (!m.InBounds((int)tPos.X, (int)tPos.Y) || In(tPos)) continue;
+                        var seat = C(r) - dir * 9.9f;
+                        // the field is the only copper: its ore (the 9x9 around its root) turned to copper, all other copper gone, one tile at tPos
+                        for (int i = 0; i < m.Ore.Length; i++) if (m.OreType[i] == Map.Copper) m.Ore[i] = 0;
+                        for (int dy = -4; dy <= 4; dy++)
+                            for (int dx = -4; dx <= 4; dx++)
+                            {
+                                int px = (int)C(r).X + dx, py = (int)C(r).Y + dy;
+                                if (!m.InBounds(px, py)) continue;
+                                int pj = m.Idx(px, py);
+                                xt.Explored[pj] = true; // (the AI only knows the fields it has seen)
+                                if (m.Ore[pj] > 0) { m.OreType[pj] = (byte)Map.Copper; if (m.OreBase[pj] > 0) m.OreBaseType[pj] = (byte)Map.Copper; }
+                            }
+                        m.OreBaseType[r] = (byte)Map.Copper;
+                        int ti = m.Idx((int)tPos.X, (int)tPos.Y);
+                        m.Ore[ti] = 200; m.OreType[ti] = (byte)Map.Copper;
+                        foreach (var d in m.Deep.OrderBy(d => Vec2.Dist(d.Pos, xt.StartPos)).Take(2)) { d.Type = Map.Copper; xt.Surveyed.Add(d.Id); xt.Zones[d.Id] = new ZoneFlag { ZoneId = d.Id, FlaggedBy = 0, FlaggedAt = x.Time }; }
+                        x.Teams[1].StartPos = seat;
+                        x.Teams[1].ProtectedUntil = protectedSeat ? x.Time + 100000f : 0f;
+                        xt.Add("copper", 3000); xt.Add("iron_ore", 1000); xt.Add("steel", 2000); xt.Add("copper_ore", -xt.Amount("copper_ore"));
+                        return (x, xai, xt, true);
+                    }
+                }
+                return (null, null, null, false);
+            }
+            var (w1h, ai1h, t1h, found1h) = Straddle(true);
+            Check(found1h, "(a map with a field 25 to 30 tiles from the drop-offs was found)");
+            if (found1h)
+            {
+                AiRun(w1h, ai1h, 60);
+                Check(RigsOf(w1h) >= 1, $"when the reachable field is reserved and the only unreserved copper near it lies past the leash, the lack is starved at once ({RigsOf(w1h)} rigs bought in 60 s)");
+                var (w1i, ai1i, _, _) = Straddle(false);
+                AiRun(w1i, ai1i, 60);
+                Check(RigsOf(w1i) == 0, $"but with the protection over the field is the trucks' to mine and the wait stands ({RigsOf(w1i)} rigs)");
+            }
             // The same for a field an enemy base it knows of stands by (its trucks keep World.HostileOreRadius from that).
             var (w1g, ai1g, t1g) = Reserved(false);
             t1g.KnownEnemyStructures[901] = ("command_center", Int2.Of(w1g.Teams[1].StartPos), 1);

@@ -260,11 +260,12 @@ namespace Pez.Sim
             bool Reached(Vec2 p) => drops.Any(dp => Vec2.Dist(dp, p) <= World.LeashDist);
             var fields = KnownFields(w, t);
             var foes = t.KnownEnemyStructures.Values.Where(k => k.team >= 0 && k.key != "derrick").Select(k => k.origin.Center).ToList();
-            // (Copper the trucks may really mine: a field in reach with a live copper tile near its root that no newcomer's protection reserves
-            // (World.OreReserved) and no enemy base it knows of is within HostileOreRadius of, as a truck choosing for itself would pick.)
+            // (Copper the trucks may really mine: a field in reach with a live copper tile near its root that is itself in reach (the leash is
+            // kept on the tile mined), that no newcomer's protection reserves (World.OreReserved) and that no enemy base it knows of is within
+            // HostileOreRadius of, as a truck choosing for itself would pick.)
             bool? surfaceCopperMemo = null;
             bool SurfaceCopper() => surfaceCopperMemo ??= fields.Any(f => f.type == Map.Copper && f.ore >= 100 && Reached(f.at) &&
-                w.Map.NearestOre(f.at, 12, tt => !w.OreReserved(tt, team) && !foes.Any(h => Vec2.Dist(h, tt.Center) < World.HostileOreRadius), Map.Copper, t.StartPos).HasValue);
+                w.Map.NearestOre(f.at, 12, tt => Reached(tt.Center) && !w.OreReserved(tt, team) && !foes.Any(h => Vec2.Dist(h, tt.Center) < World.HostileOreRadius), Map.Copper, t.StartPos).HasValue);
             bool lackOver = has[Map.Copper] > 0 || OnHand(Map.Copper) >= CopperLow;
             copperStarvedSince = Lacking(Map.Copper) ? (copperStarvedSince < 0f ? w.Time : copperStarvedSince) : lackOver ? -1f : copperStarvedSince;
             bool Starved(int ore) => ore == Map.Copper ? Lacking(ore) && (RawShort("copper_ore") && !SurfaceCopper() || copperStarvedSince >= 0f && w.Time - copperStarvedSince >= CopperStarveHold) : Lacking(ore);
