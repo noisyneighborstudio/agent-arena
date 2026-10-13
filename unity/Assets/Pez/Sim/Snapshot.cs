@@ -380,7 +380,7 @@ namespace Pez.Sim
                 foreach (var t in world.Teams.Where(t => t.Controller == "ai" && !t.Left && !t.Defeated)) ais.Add(new SimpleAI(t.Id, passive: cfg.Open));
             ResumedFrom = root.Str("saved_at");
             if (world.Map.BaseMissing) world.Map.RebuildBase(cfg.Seed, cfg.MapSize, cfg.OreScale);
-            if (world.Map.SalvageMissing) world.Map.DeriveSalvage();
+            if (world.Map.SalvageMissing) { world.Map.DeriveSalvage(); world.MigrateSalvageCount(); }
             // From before the match clock: it starts now. Sudden death comes at the configured hour, or (a game already
             // past it, or nearly) half an hour from now, so the players get their warnings and time to act on them.
             if (!root.Obj("world").ContainsKey("sudden_death_at") && cfg.MatchHours > 0 && !cfg.KitchenSink)

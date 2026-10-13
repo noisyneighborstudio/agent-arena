@@ -430,6 +430,38 @@ namespace Pez.Headless
             root["min_reader"] = (double)(Snapshot.Schema + 1);
             try { Snapshot.Parse(Json.Write(root)); err = null; } catch (FormatException ex) { err = ex.Message; }
             Check(err != null && err.Contains("newer build"), $"a snapshot that needs a newer reader is refused rather than misread ({err})");
+            SalvageCountMigrates();
+        }
+
+        /// <summary>A save from before salvage counted when delivered: the salvage aboard trucks was already off the score; it comes back.</summary>
+        static void SalvageCountMigrates()
+        {
+            var game = new Game(new GameConfig { Seed = 5, MapSize = 64, Controllers = new[] { "llm", "llm" } });
+            var w = game.World;
+            var truck0 = w.Owned(0).First(e => e.IsHarvester); var truck1 = w.Owned(1).First(e => e.IsHarvester);
+            w.Teams[0].Stats.OreMined = 1000; w.Teams[0].Stats.SalvageMined = 400; truck0.Cargo = 150; truck0.CargoType = 0; // 150 of the 400 are aboard, counted at pickup
+            w.Teams[1].Stats.OreMined = 500; w.Teams[1].Stats.SalvageMined = 50; truck1.Cargo = 150; truck1.CargoType = 0;
+            var current = Resume(Snap(game)).World;
+            Check(current.Teams[0].Stats.SalvageMined == 400 && current.Teams[1].Stats.SalvageMined == 50, "a save with the salvage layer is taken as it is");
+            var root = (Dictionary<string, object>)Json.Parse(Snap(game));
+            ((Dictionary<string, object>)((Dictionary<string, object>)root["world"])["map"]).Remove("salvage");
+            var g = new Game(new GameConfig { Seed = 1, MapSize = 48, Controllers = new[] { "llm" } });
+            g.Restore(root);
+            var b = g.World;
+            Check(b.Teams[0].Stats.SalvageMined == 250 && b.Teams[1].Stats.SalvageMined == 0,
+                  $"from an older save each truck's load comes back out of the salvage count, not below zero ({b.Teams[0].Stats.SalvageMined} of 400 less 150; {b.Teams[1].Stats.SalvageMined} of 50 less 150)");
+            // A truck holding salvage that was counted at pickup, lost after the load: the score no longer pays for it.
+            var game2 = new Game(new GameConfig { Seed = 5, MapSize = 64, Controllers = new[] { "llm", "llm" } });
+            var w2 = game2.World;
+            var truck2 = w2.Owned(0).First(e => e.IsHarvester);
+            w2.Teams[0].Stats.OreMined = 1000; w2.Teams[0].Stats.SalvageMined = 150; truck2.Cargo = 150; truck2.CargoType = 0;
+            var root2 = (Dictionary<string, object>)Json.Parse(Snap(game2));
+            ((Dictionary<string, object>)((Dictionary<string, object>)root2["world"])["map"]).Remove("salvage");
+            var g2 = new Game(new GameConfig { Seed = 1, MapSize = 48, Controllers = new[] { "llm" } });
+            g2.Restore(root2);
+            var lost2 = g2.World.Owned(0).First(e => e.IsHarvester && e.Cargo == 150);
+            g2.World.Remove(lost2); // lost before it delivered
+            Check(g2.World.Teams[0].Stats.SalvageMined == 0 && g2.World.Scores().First(s => s.Team == 0).OreMined == 1000, "so 1000 delivered field ore with 150 salvage aboard a lost truck scores 1000, not 850");
         }
 
         /// <summary>The host saves, stops and starts again: the same seats answer to the same tokens.</summary>

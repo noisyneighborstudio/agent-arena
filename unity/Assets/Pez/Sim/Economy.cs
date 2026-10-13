@@ -186,8 +186,7 @@ namespace Pez.Sim
             {
                 if (t.PlasmaOwed <= 0) continue;
                 float take = MathF.Min(t.PlasmaOwed, MathF.Max(0f, t.Stock.TryGetValue("plasma", out var pl) ? pl : 0));
-                t.Add("plasma", -take);
-                t.PlasmaOwed -= take;
+                t.SettleOwed(take);
             }
         }
 
@@ -435,6 +434,20 @@ namespace Pez.Sim
         void AddWorth(float[] into, Entity e, float share)
         {
             if (e.GrantedShare < 1f) AddValue(into, ValueOf(e.Def), share * (1f - e.GrantedShare));
+        }
+
+        /// <summary>
+        /// A save from before salvage counted as mined when it's delivered (SalvageMined went up at pickup): the salvage still aboard
+        /// a truck at save time is already in the count, and off the economy score, though it was never delivered (if that truck is
+        /// lost it would stay off for good). A load can't be told from field ore there, so each truck's whole load comes back out of
+        /// its team's count, not below zero. A guess, and it errs toward the player: a little too much comes back out, so the
+        /// score ends a little too high rather than too low.
+        /// </summary>
+        internal void MigrateSalvageCount()
+        {
+            foreach (var e in Entities)
+                if (!e.Dead && e.IsHarvester && e.Cargo > 0 && e.Team >= 0 && e.Team < Teams.Count)
+                    Teams[e.Team].Stats.SalvageMined = Math.Max(0, Teams[e.Team].Stats.SalvageMined - e.Cargo);
         }
 
         /// <summary>

@@ -69,7 +69,22 @@ namespace Pez.Sim
         public void Add(string item, float n)
         {
             Stock[item] = (Stock.TryGetValue(item, out var v) ? v : 0) + n;
-            if (n < 0 && Granted.TryGetValue(item, out var g)) Granted[item] = MathF.Max(0f, g + n);
+            if (n < 0 && Granted.TryGetValue(item, out var g)) Granted[item] = g - MathF.Min(-n, GiftFree(item));
+        }
+        /// <summary>
+        /// The gift still free to spend. Plasma the reactors have burned but the stockpile hasn't paid yet (PlasmaOwed) is charged
+        /// to the gift first, as any spending is, so that much of it is already spoken for.
+        /// </summary>
+        float GiftFree(string item) => item == "plasma" ? MathF.Max(0f, Gift(item) - PlasmaOwed) : Gift(item);
+        /// <summary>
+        /// The stockpile pays `take` of the plasma the reactors owe (World.SettleFusionBurn): it comes off the gift first, like
+        /// the rest of the spending, so the gift left free (GiftFree) is the same before and after.
+        /// </summary>
+        public void SettleOwed(float take)
+        {
+            Stock["plasma"] = (Stock.TryGetValue("plasma", out var v) ? v : 0f) - take;
+            PlasmaOwed -= take;
+            if (Granted.TryGetValue("plasma", out var g)) Granted["plasma"] = MathF.Max(0f, g - take);
         }
         /// <summary>
         /// The part of the stockpile the arena gave this team and it hasn't spent yet, per item (the starting ore, a late joiner's
@@ -83,7 +98,7 @@ namespace Pez.Sim
         public void Give(string item, float n) { Add(item, n); Granted[item] = Gift(item) + n; }
         public float Gift(string item) => Granted.TryGetValue(item, out var g) ? g : 0f;
         /// <summary>What of an item the team holds above its gift: the part it mined, made or won itself, which a spill gives up.</summary>
-        public float Own(string item) => Stock.TryGetValue(item, out var v) ? MathF.Max(0f, (item == "plasma" ? v - PlasmaOwed : v) - Gift(item)) : 0f;
+        public float Own(string item) => Stock.TryGetValue(item, out var v) ? MathF.Max(0f, (item == "plasma" ? v - PlasmaOwed : v) - GiftFree(item)) : 0f;
         /// <summary>Add `n` of an item of which `giftShare` is gift: a refund of something bought with gift, or what a converter makes of it.</summary>
         public void Gain(string item, float n, float giftShare)
         {
@@ -109,7 +124,7 @@ namespace Pez.Sim
             foreach (var kv in cost)
             {
                 float amount = kv.Value * factor, w = Worth(kv.Key);
-                total += amount * w; fromGift += MathF.Min(Gift(kv.Key), amount) * w;
+                total += amount * w; fromGift += MathF.Min(GiftFree(kv.Key), amount) * w;
                 Add(kv.Key, -amount);
             }
             float share = total > 0f ? fromGift / total : 0f;

@@ -1550,6 +1550,25 @@ namespace Pez.Headless
             for (int i = 0; i < 200 * World.TickRate && truck15.Cargo < 150; i++) w15.Step();
             Check(truck15.Cargo == 150 && truck15.CargoSalvage == 60 && w15.Map.Salvage[ti15] == 0 && w15.Map.Ore[ti15] == 310,
                   $"a truck takes the salvage on a field tile first: of its load of {truck15.Cargo}, {truck15.CargoSalvage} is salvage ({w15.Map.Ore[ti15]} ore left on the tile)");
+            // Plasma the reactors owe is charged to the gift first, like any spending: stock 30 with 27.5 of it gift and 0.03 owed
+            // leaves 2.5 of the team's own, not 2.47.
+            var tp = new Team();
+            tp.Stock["plasma"] = 30f; tp.Granted["plasma"] = 27.5f; tp.PlasmaOwed = 0.03f;
+            Check(Math.Abs(tp.Own("plasma") - 2.5f) < 0.001f, $"owed plasma comes off the gift first: of 30 plasma, 27.5 gift and 0.03 owed, {tp.Own("plasma"):0.000} is the team's own");
+            var tq = new Team();
+            tq.Stock["plasma"] = 30f; tq.Granted["plasma"] = 5f; tq.PlasmaOwed = 4f; // only 1 of the gift is free of what's owed
+            float own0 = tq.Own("plasma");
+            float shareQ = tq.Pay(new Dictionary<string, int> { { "plasma", 10 } });
+            Check(Math.Abs(shareQ - 0.1f) < 0.001f && tq.Gift("plasma") == 4f, $"a purchase can only spend the gift that isn't already owed: 1 of its 10 plasma ({shareQ:0.00}), leaving the 4 that's owed");
+            float ownBefore = tq.Own("plasma");
+            tq.SettleOwed(4f);
+            Check(Math.Abs(tq.Own("plasma") - ownBefore) < 0.001f && tq.PlasmaOwed == 0f && tq.Gift("plasma") == 0f && Math.Abs(own0 - 25f) < 0.001f && Math.Abs(ownBefore - 16f) < 0.001f,
+                  $"and settling what's owed comes off the gift too, so the team's own plasma doesn't move ({ownBefore:0.0} -> {tq.Own("plasma"):0.0})");
+
+            // Structured state (format=json) has salvage_mined too.
+            w9.Teams[0].Stats.SalvageMined = 123;
+            var stats9 = (Dictionary<string, object>)D(StateData.Team(w9, 0))["stats"];
+            Check(stats9.ContainsKey("salvage_mined") && (double)stats9["salvage_mined"] == 123 && stats9.ContainsKey("ore_mined"), "format=json state carries salvage_mined next to ore_mined");
             Check(w6.Errors == 0 && w7.Errors == 0 && w8.Errors == 0 && w9.Errors == 0 && w10.Errors == 0 && w11.Errors == 0 && w12.Errors == 0 && w13.Errors == 0 && w14.Errors == 0 && w15.Errors == 0, "no sim errors");
         }
 
