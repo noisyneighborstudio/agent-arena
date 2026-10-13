@@ -100,8 +100,8 @@ Mines are hidden unless an enemy is within 1.5 tiles or inside its radar range, 
 
 A player can design a variant of an armed unit they can already build, with `propose_tech` (rules_version 9; the full design and numbers are in `docs/spikes/AGENT_INVENTED_TECH.md`):
 
-- **What can change:** hp, speed, damage, range, cooldown, sight and fuel, each within limits around the base unit. The unit can also mount another buildable unit's weapon (`weapon_from`), e.g. a light tank with rocket-soldier rockets that can hit aircraft. It can't gain abilities: a ground unit can't fly, and nothing gains stealth.
-- **Price:** computed relative to the base unit, never set by the player. No design out-fights its base unit per unit of cost, so inventions are counters and side-grades, not upgrades.
+- **What can change:** hp, speed, damage, range, cooldown, sight and fuel, each within limits around the base unit. The unit can also mount another buildable unit's weapon (`weapon_from`), e.g. a light tank with rocket-soldier rockets that can hit aircraft (the commando's C4 only goes on infantry, and a borrowed weapon brings its unit's materials). It can't gain abilities: a ground unit can't fly, and nothing gains stealth.
+- **Price:** computed relative to the base unit, never set by the player. No design out-fights its base unit, or the unit whose weapon it carries, per unit of cost (slowing a unit down is never a discount), so inventions are counters and side-grades, not upgrades.
 - **Research:** the research bill (steel and circuits, growing with how different the design is) is paid up front. Research happens at an `electronics_plant`, and the design is then trained by its key (`t<team>:<name>`) at its base unit's producer.
 - **Limits:** 3 per player, one in research at a time, 24 per game. Only the inventing team can build a design; enemies see its stats when they meet it.
 - **Looks:** an invention is drawn with its base unit's model and icon, plus an amber badge, and the selection panel says INVENTED.
