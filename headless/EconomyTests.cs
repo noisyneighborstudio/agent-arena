@@ -28,6 +28,148 @@ namespace Pez.Headless
             AttackUntilCapturable();
             AttackMoveDerricks();
             DefenceUpkeep();
+            DeepDepositKits();
+            DeepKitForJoiners();
+        }
+
+        /// <summary>A base site's deep deposits within `within` tiles as a string: ore, starting amount and distance, sorted.</summary>
+        static string DeepSignature(Map m, Vec2 site, float within) =>
+            string.Join(" ", m.Deep.Where(d => Vec2.Dist(d.Pos, site) <= within).Select(d => $"{Defs.Ores[d.Type]}:{d.Initial:0}@{Vec2.Dist(d.Pos, site):0.0}").OrderBy(x => x, StringComparer.Ordinal));
+
+        /// <summary>The deposit of this ore nearest a site.</summary>
+        static DeepDeposit NearestDeep(Map m, Vec2 site, int ore) => m.Deep.Where(d => d.Type == ore).OrderBy(d => Vec2.Dist(d.Pos, site)).FirstOrDefault();
+
+        /// <summary>Deep deposits on a new map are the same from every base site: a kit each, the rest in the middle, every ore there.</summary>
+        static void DeepDepositKits()
+        {
+            var sizes = new[] { 56, 80, 96, 112, 160 }; var seeds = new[] { 1, 7, 99, 1337, 4242 };
+            var uneven = new List<string>(); var noKit = new List<string>(); var noOre = new List<string>(); var badAmount = new List<string>(); var noRoom = new List<string>(); var crowded = new List<string>();
+            int maps = 0;
+            foreach (int size in sizes)
+                foreach (int seed in seeds)
+                {
+                    var m = Map.Generate(size, size, seed); maps++;
+                    string tag = $"{seed}/{size}";
+                    var sites = m.Spawns.Take(4).ToList();
+                    // Same ore, amount and distance at all four corners, near and far.
+                    foreach (float within in new[] { Map.DeepKitReach, 30f, 40f })
+                        if (sites.Select(s => DeepSignature(m, s, within)).Distinct().Count() > 1) uneven.Add($"{tag} within {within}");
+                    // Each base has a deep iron and a deep copper deposit of its own in reach (and, where the bases are far enough apart
+                    // not to share reach, exactly one of each).
+                    if (!sites.All(s => Vec2.Dist(NearestDeep(m, s, Map.Iron).Pos, s) <= Map.DeepKitReach && Vec2.Dist(NearestDeep(m, s, Map.Copper).Pos, s) <= Map.DeepKitReach &&
+                                        (size < 80 || (m.Deep.Count(d => d.Type == Map.Iron && Vec2.Dist(d.Pos, s) <= Map.DeepKitReach) == 1 && m.Deep.Count(d => d.Type == Map.Copper && Vec2.Dist(d.Pos, s) <= Map.DeepKitReach) == 1)))) noKit.Add(tag);
+                    // Crystal and uranium are in the middle, not in a base's kit area (on maps big enough to have the room).
+                    if (size >= 80 && m.Deep.Any(d => d.Type >= Map.Crystal && sites.Any(s => Vec2.Dist(d.Pos, s) <= Map.DeepKitReach))) crowded.Add(tag);
+                    // Every ore exists deep, in the usual amounts.
+                    if (Enumerable.Range(0, 4).Any(t => m.Deep.All(d => d.Type != t))) noOre.Add(tag);
+                    if (m.Deep.Any(d => d.Type <= Map.Copper ? d.Initial < 4000 || d.Initial >= 8000 : d.Type == Map.Crystal ? d.Initial < 2000 || d.Initial >= 4000 : d.Initial < 1500 || d.Initial >= 3000)) badAmount.Add(tag);
+                    // Open ground a deep mine can stand on, and a way there from the sites.
+                    var reach = new bool[m.W * m.H]; var q = new Queue<Int2>(); var start = Int2.Of(m.Spawns[0]);
+                    reach[m.Idx(start.X, start.Y)] = true; q.Enqueue(start);
+                    while (q.Count > 0)
+                    {
+                        var c = q.Dequeue();
+                        foreach (var n in new[] { new Int2(c.X + 1, c.Y), new Int2(c.X - 1, c.Y), new Int2(c.X, c.Y + 1), new Int2(c.X, c.Y - 1) })
+                            if (m.TerrainPassable(n.X, n.Y) && !reach[m.Idx(n.X, n.Y)]) { reach[m.Idx(n.X, n.Y)] = true; q.Enqueue(n); }
+                    }
+                    if (!m.Deep.All(d => m.Passable((int)d.Pos.X, (int)d.Pos.Y) && reach[m.Idx((int)d.Pos.X, (int)d.Pos.Y)])) noRoom.Add(tag);
+                }
+            string of = $"{maps} maps: seeds {string.Join(",", seeds)} at sizes {string.Join(",", sizes)}";
+            Check(uneven.Count == 0, $"every base site sees the same deep deposits (ore, amount, distance) within {Map.DeepKitReach}, 30 and 40 tiles, on {of}" + (uneven.Count > 0 ? $"; uneven: {string.Join(", ", uneven)}" : ""));
+            Check(noKit.Count == 0, "each base has its own deep iron and deep copper deposit in reach (exactly one of each where bases don't share reach)" + (noKit.Count > 0 ? $"; not on {string.Join(", ", noKit)}" : ""));
+            Check(crowded.Count == 0, "crystal and uranium deposits keep out of the bases' kit areas (80 and up)" + (crowded.Count > 0 ? $"; inside on {string.Join(", ", crowded)}" : ""));
+            Check(noOre.Count == 0, "every ore, uranium and crystal too, has a deep deposit on every map" + (noOre.Count > 0 ? $"; missing on {string.Join(", ", noOre)}" : ""));
+            Check(badAmount.Count == 0, "deposit amounts stay in the old ranges (iron and copper 4000-8000, crystal 2000-4000, uranium 1500-3000)" + (badAmount.Count > 0 ? $"; out of range on {string.Join(", ", badAmount)}" : ""));
+            Check(noRoom.Count == 0, "every deposit is on open, reachable ground" + (noRoom.Count > 0 ? $"; not on {string.Join(", ", noRoom)}" : ""));
+
+            // The case the issue measured: two players at opposite corners get equal deposits on their own sides, whatever the seed.
+            var lopsided = new List<string>();
+            foreach (var (seed, size) in new[] { (1, 80), (99, 80), (7, 80), (7, 96), (1337, 80) })
+            {
+                var m = Map.Generate(size, size, seed);
+                var a = m.Spawns[0]; var b = m.Spawns[1];
+                var mine = m.Deep.Where(d => Vec2.Dist(d.Pos, a) < Vec2.Dist(d.Pos, b) - 0.01f).ToList();
+                var theirs = m.Deep.Where(d => Vec2.Dist(d.Pos, b) < Vec2.Dist(d.Pos, a) - 0.01f).ToList();
+                if (mine.Count != theirs.Count || mine.Sum(d => d.Initial) != theirs.Sum(d => d.Initial)) lopsided.Add($"{seed}/{size}: {mine.Count} deposits {mine.Sum(d => d.Initial):0} ore vs {theirs.Count} deposits {theirs.Sum(d => d.Initial):0}");
+            }
+            Check(lopsided.Count == 0, "two players get the same number of deposits and the same ore nearer their own base than the other's (the seeds that were lopsided before)" + (lopsided.Count > 0 ? $"; {string.Join("; ", lopsided)}" : ""));
+
+            // New maps are still made from the seed alone, and different seeds differ.
+            var one = Map.Generate(80, 80, 7); var again = Map.Generate(80, 80, 7); var other = Map.Generate(80, 80, 8);
+            string Dump(Map m) => string.Join("|", m.Deep.Select(d => $"{d.Id} {d.Type} {d.Pos.X},{d.Pos.Y} {d.Initial}"));
+            Check(Dump(one) == Dump(again) && Dump(one) != Dump(other), "deep deposits come from the seed: the same seed makes the same ones, another seed other ones");
+
+            // A mine can be built on each deposit of a real game, and a saved game keeps the deposits it has (only new maps change).
+            var w = new World(2, 7, 80);
+            Check(w.Map.Deep.All(d => w.DeepMineSpot(d, 0, out _) != null), $"a deep mine fits on every one of a game's {w.Map.Deep.Count} deposits");
+            var game = new Game(new GameConfig { Seed = 99, MapSize = 80, Controllers = new[] { "llm", "llm" } });
+            string Deposits(Game g) => string.Join("|", g.World.Map.Deep.Select(d => $"{d.Id} {d.Type} {d.Pos.X},{d.Pos.Y} {d.Amount} {d.Initial} {d.MineId}"));
+            game.World.Map.Deep[3].Amount -= 250; // part mined out
+            var back = Resume(Snap(game));
+            Check(Deposits(back) == Deposits(game) && back.World.Map.Deep.Count > 0, "a saved game resumes with exactly the deep deposits it had");
+        }
+
+        /// <summary>A base added by a join gets the same kit as the others; the strip's random extras stay in neutral ground.</summary>
+        static void DeepKitForJoiners()
+        {
+            var bad = new List<string>(); int joins = 0;
+            foreach (int seed in new[] { 3, 7, 1337 })
+            {
+                var w = new World(2, seed, 80) { Open = true };
+                var home = w.Map.Spawns[0];
+                var iron = NearestDeep(w.Map, home, Map.Iron); var copper = NearestDeep(w.Map, home, Map.Copper);
+                iron.Amount = 12; // base one has mined its deep iron nearly out: a newcomer's kit is still the full one
+                for (int j = 0; j < 3; j++, joins++)
+                {
+                    var oldDeposits = w.Map.Deep.Select(d => $"{d.Id} {d.Type} {d.Pos.X},{d.Pos.Y} {d.Initial}").ToList();
+                    int lastId = w.Map.Deep.Max(d => d.Id);
+                    var team = w.AddTeam("llm", $"Joiner{j}", out var err);
+                    string tag = $"seed {seed} join {j + 1}";
+                    if (team == null) { bad.Add($"{tag}: {err}"); continue; }
+                    var site = team.StartPos;
+                    var fresh = w.Map.Deep.Where(d => d.Id > lastId).ToList();
+                    var kit = w.Map.Deep.Where(d => Vec2.Dist(d.Pos, site) <= Map.DeepKitReach).ToList();
+                    var ni = kit.Where(d => d.Type == Map.Iron).ToList(); var nc = kit.Where(d => d.Type == Map.Copper).ToList();
+                    if (kit.Count != 2 || ni.Count != 1 || nc.Count != 1) { bad.Add($"{tag}: {kit.Count} deposits in reach of the new base ({string.Join(", ", kit.Select(d => Defs.Ores[d.Type]))})"); continue; }
+                    if (ni[0].Initial != iron.Initial || nc[0].Initial != copper.Initial || ni[0].Amount != ni[0].Initial) bad.Add($"{tag}: kit amounts {ni[0].Initial:0}/{nc[0].Initial:0}, wanted {iron.Initial:0}/{copper.Initial:0}");
+                    if (MathF.Abs(Vec2.Dist(ni[0].Pos, site) - Vec2.Dist(iron.Pos, home)) > 1.5f || MathF.Abs(Vec2.Dist(nc[0].Pos, site) - Vec2.Dist(copper.Pos, home)) > 1.5f)
+                        bad.Add($"{tag}: kit distances {Vec2.Dist(ni[0].Pos, site):0.0}/{Vec2.Dist(nc[0].Pos, site):0.0}, wanted {Vec2.Dist(iron.Pos, home):0.0}/{Vec2.Dist(copper.Pos, home):0.0}");
+                    if (!kit.All(d => fresh.Contains(d))) bad.Add($"{tag}: the kit isn't new deposits");
+                    // The strip's other deposits are neutral: out of every base's reach.
+                    var extras = fresh.Where(d => !kit.Contains(d)).ToList();
+                    if (extras.Any(d => w.Map.Spawns.Any(s => Vec2.Dist(d.Pos, s) <= Map.DeepKitReach))) bad.Add($"{tag}: a random extra inside a base's reach");
+                    // Everything that was already there is untouched.
+                    if (!oldDeposits.All(o => w.Map.Deep.Select(d => $"{d.Id} {d.Type} {d.Pos.X},{d.Pos.Y} {d.Initial}").Contains(o))) bad.Add($"{tag}: an old deposit changed");
+                    if (!w.Map.Deep.All(d => w.DeepMineSpot(d, team.Id, out _) != null || w.Entities.Any(e => !e.Dead && e.DepositId == d.Id))) bad.Add($"{tag}: a deposit with no room for a mine");
+                }
+            }
+            Check(bad.Count == 0, $"each of {joins} joiners gets the first base's kit (same ores and amounts at the same distances, whatever it has mined), and the strip's extras stay in neutral ground" + (bad.Count > 0 ? $"; {string.Join("; ", bad)}" : ""));
+
+            // A game from before kits (nothing of the sort near its first base) still gives a newcomer a kit, with fresh amounts.
+            var old = new World(2, 7, 80) { Open = true };
+            old.Map.Deep.Clear();
+            old.Map.Deep.Add(new DeepDeposit { Id = 1, Pos = new Vec2(40.5f, 40.5f), Type = Map.Uranium, Amount = 2000, Initial = 2000 });
+            var late = old.AddTeam("llm", "Late", out _);
+            var lateKit = old.Map.Deep.Where(d => Vec2.Dist(d.Pos, late.StartPos) <= Map.DeepKitReach).ToList();
+            Check(lateKit.Count == 2 && lateKit.Any(d => d.Type == Map.Iron && d.Initial >= 4000 && d.Initial < 8000) && lateKit.Any(d => d.Type == Map.Copper && d.Initial >= 4000 && d.Initial < 8000) && old.Map.Deep.Count(d => d.Id == 1) == 1,
+                  $"a map with no kits still gives a joiner one: {string.Join(", ", lateKit.Select(d => $"{Defs.Ores[d.Type]} {d.Initial:0}"))}");
+
+            // A copy lands on a tile centre, which can be up to 0.7 tiles from where it was aimed: with the first base's copper right at the
+            // edge of its reach (21.9 tiles, and the 11.5 ahead, 18.5 aside spot), no copy may end up past the reach and so out of the kit.
+            var past = new List<string>(); int tried = 0;
+            foreach (int seed in new[] { 3, 7, 1337 })
+                foreach (var (ahead, aside) in new[] { (21.9f, 0f), (20.8f, -6.8f), (20.8f, 6.8f), (17.5f, -13.2f), (17.5f, 13.2f), (15.1f, 15.9f), (11.5f, 18.5f), (11.5f, -18.5f) })
+                {
+                    var w = new World(2, seed, 80) { Open = true };
+                    var home = w.Map.Spawns[0];
+                    var dir = (new Vec2(w.Map.W / 2f, w.Map.H / 2f) - home).Normalized; var side = new Vec2(-dir.Y, dir.X);
+                    var copper = NearestDeep(w.Map, home, Map.Copper);
+                    copper.Pos = home + dir * ahead + side * aside;
+                    int lastId = w.Map.Deep.Max(d => d.Id);
+                    var joiner = w.AddTeam("llm", "Edge", out _); tried++;
+                    if (!w.Map.Deep.Any(d => d.Id > lastId && d.Type == Map.Copper && d.Initial == copper.Initial && Vec2.Dist(d.Pos, joiner.StartPos) <= Map.DeepKitReach)) past.Add($"{seed} ({ahead}, {aside})");
+                }
+            Check(past.Count == 0, $"a joiner's copy of a kit deposit always lands inside the kit's reach, even when the first base's is at its edge ({tried} cases)" + (past.Count > 0 ? $"; copper missing for {string.Join(", ", past)}" : ""));
         }
 
         static void DefenceUpkeep()
