@@ -810,7 +810,7 @@ namespace Pez.Headless
             Table(sb, new[] { "group", "games", "wins seat 0 / seat 1 / undecided", "p (two-sided, even odds)", "mean minutes played", "ore@3m seat 0 / seat 1", "ahead at 3m seat 0 / seat 1" }, split);
 
             Sub(sb, "Income by source (ore a second per team, mean over the minutes a team was in the game)");
-            sb.AppendLine("Each cell is `surface by truck (salvage) / deep mines / derricks (steel) / command-center trickle = total`.");
+            sb.AppendLine("Each cell is `surface field ore by truck (salvage by truck) / deep mines / derricks (steel) / command-center trickle = total` of all five.");
             sb.AppendLine();
             var inc = new List<string[]>();
             foreach (var gr in groups)
@@ -821,7 +821,7 @@ namespace Pez.Headless
                     var parts = gr.SelectMany(g => g.Teams).Select(t => Income(t, from, to)).Where(x => x != null).ToList();
                     if (parts.Count == 0) { cells.Add("-"); continue; }
                     double s = parts.Average(p => p[0]), sv = parts.Average(p => p[1]), d = parts.Average(p => p[2]), dr = parts.Average(p => p[3]), tr = parts.Average(p => p[4]);
-                    cells.Add($"{s:0.0} ({sv:0.0}) / {d:0.0} / {dr:0.0} / {tr:0.0} = **{s + d + dr + tr:0.0}**");
+                    cells.Add($"{s:0.0} ({sv:0.0}) / {d:0.0} / {dr:0.0} / {tr:0.0} = **{s + sv + d + dr + tr:0.0}**");
                 }
                 inc.Add(cells.ToArray());
             }
