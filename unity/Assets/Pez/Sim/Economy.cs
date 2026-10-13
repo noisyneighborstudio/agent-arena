@@ -466,7 +466,7 @@ namespace Pez.Sim
             int size = Math.Clamp(initialSize, MinSize, MaxSize);
             if (size <= W && size <= H)
             {
-                var g = Generate(size, size, seed, oreScale);
+                var g = Generate(size, size, seed, oreScale, extraFields: false); // as it was made: the neutral fields came later
                 int same = 0, total = size * size;
                 for (int y = 0; y < size; y++)
                     for (int x = 0; x < size; x++)

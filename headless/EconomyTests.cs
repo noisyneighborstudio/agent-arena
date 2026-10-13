@@ -30,6 +30,56 @@ namespace Pez.Headless
             DefenceUpkeep();
             DeepDepositKits();
             DeepKitForJoiners();
+            SurfaceOreScalesWithArea();
+        }
+
+        /// <summary>Surface ore grows with the map's area at a fixed richness, with the extra fields turned round the centre; joins add their share too.</summary>
+        static void SurfaceOreScalesWithArea()
+        {
+            long Ore(Map m) => m.Ore.Sum(o => (long)o);
+            foreach (float richness in new[] { 1f, 0.3f })
+            {
+                var seeds = new[] { 1, 2, 3 };
+                var sizes = new[] { 80, 96, 112, 128, 160, 240 };
+                var ore = sizes.Select(size => seeds.Average(seed => (double)Ore(Map.Generate(size, size, seed, richness)))).ToList();
+                var perArea = sizes.Select((size, i) => ore[i] / (size * size / 6400.0)).ToList();
+                bool grows = Enumerable.Range(1, sizes.Length - 1).All(i => ore[i] > ore[i - 1] * 1.1);
+                bool proportional = perArea.Skip(1).All(a => a > perArea[0] * 0.8 && a < perArea[0] * 1.4);
+                Check(grows && proportional, $"at richness {richness} surface ore grows with map area (80 to 240 tiles: {string.Join(", ", ore.Select(o => $"{o / 1000:0}k"))}; per 80x80 {string.Join(", ", perArea.Select(a => $"{a / 1000:0}k"))})");
+            }
+
+            // The extra fields (the map with them, less the map without) are the same in every quarter of the map, and keep off the base sites.
+            var uneven = new List<string>(); var close = new List<string>(); int maps = 0;
+            foreach (int size in new[] { 128, 160 })
+                foreach (int seed in new[] { 1, 2, 3 })
+                {
+                    var with = Map.Generate(size, size, seed); var without = Map.Generate(size, size, seed, 1f, false);
+                    var quarter = new long[4];
+                    for (int y = 0; y < size; y++)
+                        for (int x = 0; x < size; x++)
+                        {
+                            int extra = with.Ore[with.Idx(x, y)] - without.Ore[without.Idx(x, y)];
+                            if (extra <= 0) continue;
+                            quarter[(x < size / 2 ? 0 : 1) + (y < size / 2 ? 0 : 2)] += extra;
+                            if (with.Spawns.Any(s => Vec2.Dist(s, new Vec2(x + 0.5f, y + 0.5f)) < 12f)) close.Add($"{seed}/{size}");
+                        }
+                    if (quarter[0] == 0 || quarter.Distinct().Count() > 1) uneven.Add($"{seed}/{size}: {string.Join(" ", quarter)}");
+                    maps++;
+                }
+            Check(uneven.Count == 0 && maps == 6, "the extra surface fields hold the same ore in all four quarters of the map" + (uneven.Count > 0 ? $"; uneven: {string.Join("; ", uneven)}" : ""));
+            Check(close.Count == 0, "and none lies on a base site");
+            Check(Ore(Map.Generate(160, 160, 1, 1f, false)) < 70000, "a map built without them (a game saved before they existed) has only the fixed fields");
+
+            // A join's new ground gets its share too.
+            var added = new List<double>();
+            foreach (int seed in new[] { 3, 7, 1337 })
+            {
+                var w = new World(2, seed, 80) { Open = true };
+                long before = Ore(w.Map);
+                w.AddTeam("llm", "Joiner", out _);
+                added.Add(Ore(w.Map) - before);
+            }
+            Check(added.All(a => a > 40000), $"a join adds a strip's worth of surface ore along with the new base's own fields ({string.Join(", ", added.Select(a => $"{a / 1000:0}k"))} on 80x80 at richness 1)");
         }
 
         /// <summary>A base site's deep deposits within `within` tiles as a string: ore, starting amount and distance, sorted.</summary>
@@ -822,21 +872,21 @@ namespace Pez.Headless
         }
 
         /// <summary>Mine a fresh map bare, let it regrow: how much comes back in 10 and 20 minutes, and where.</summary>
-        static (int total, int middle, int edges, int fieldOre) RegrowBare(int size, float oreScale, float minutes, int seed = 7)
+        static (int total, int middle, int edges, int fieldOre, int midField, int edgeField) RegrowBare(int size, float oreScale, float minutes, int seed = 7)
         {
             var w = new World(2, seed, size, oreScale);
             foreach (var e in w.Entities.Where(e => e.IsHarvester).ToList()) w.Remove(e);
             int field = w.Map.OreBase.Sum();
             Array.Clear(w.Map.Ore, 0, w.Map.Ore.Length);
             Run(w, minutes * 60);
-            int mid = 0, edge = 0;
+            int mid = 0, edge = 0, midField = 0, edgeField = 0;
             float half = 0.5f * MathF.Sqrt(2) * size;
             for (int i = 0; i < w.Map.Ore.Length; i++)
             {
                 float dx = i % size + 0.5f - size / 2f, dy = i / size + 0.5f - size / 2f;
-                if (MathF.Sqrt(dx * dx + dy * dy) < half * 0.4f) mid += w.Map.Ore[i]; else edge += w.Map.Ore[i];
+                if (MathF.Sqrt(dx * dx + dy * dy) < half * 0.4f) { mid += w.Map.Ore[i]; midField += w.Map.OreBase[i]; } else { edge += w.Map.Ore[i]; edgeField += w.Map.OreBase[i]; }
             }
-            return (w.Map.Ore.Sum(), mid, edge, field);
+            return (w.Map.Ore.Sum(), mid, edge, field, midField, edgeField);
         }
 
         static void OreRegrowth()
@@ -844,9 +894,11 @@ namespace Pez.Headless
             foreach (var (size, scale) in new[] { (96, 1f), (96, 0.3f), (208, 0.3f) })
             {
                 var r = RegrowBare(size, scale, 20);
-                Console.WriteLine($"      regrowth {size}x{size} ore x{scale}, 20 min after mined bare: {r.total} of {r.fieldOre} ({r.total / 1200f:0.0} ore/s), middle {r.middle}, edges {r.edges}");
-                Check(r.total / 1200f > 1.5f && r.total / 1200f < 10f && r.middle > r.edges * 1.4f,
-                      $"a mined-bare {size}x{size} map (ore x{scale}) earns back meaningful income in 20 minutes ({r.total / 1200f:0.0} ore/s, a deep mine pumps 4), mostly in the middle ({r.middle} vs {r.edges} at the edges)");
+                Console.WriteLine($"      regrowth {size}x{size} ore x{scale}, 20 min after mined bare: {r.total} of {r.fieldOre} ({r.total / 1200f:0.0} ore/s), middle {r.middle} of {r.midField}, edges {r.edges} of {r.edgeField}");
+                // Ore grows with the map's area, and so does what regrows: the ceiling is per 80x80. The middle regrows a larger share of its fields than the edges do.
+                float perArea = r.total / 1200f / MathF.Max(1f, size * size / 6400f), midShare = (float)r.middle / r.midField, edgeShare = (float)r.edges / r.edgeField;
+                Check(r.total / 1200f > 1.5f && perArea < 10f && midShare > edgeShare * 1.4f,
+                      $"a mined-bare {size}x{size} map (ore x{scale}) earns back meaningful income in 20 minutes ({r.total / 1200f:0.0} ore/s, {perArea:0.0} per 80x80; a deep mine pumps 4), mostly in the middle ({midShare:P0} of the middle's field ore regrown vs {edgeShare:P0} at the edges)");
             }
 
             // Never past the original amount, from a field's root when it's mined to nothing, never under a structure or
