@@ -1592,7 +1592,9 @@ namespace Pez.Sim
 
         void FireAt(Entity e, Entity t)
         {
-            if (IsProtected(e.Team) && Showcase == null) return; // newcomer protection: a protected team can't attack, whatever order its units are on
+            // Newcomer protection: a protected team can't attack, whatever order its units are on. Not in the showcase, whose teams are
+            // protected for good (ProtectedUntil = MaxValue, which a restored copy keeps though it has no Showcase) so nothing takes damage.
+            if (IsProtected(e.Team) && Showcase == null && Teams[e.Team].ProtectedUntil < float.MaxValue) return;
             e.LastFiredAt = Time;
             var dir = t.Center - e.Pos;
             float want = dir.Angle;
