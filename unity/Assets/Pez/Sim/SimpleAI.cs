@@ -173,6 +173,12 @@ namespace Pez.Sim
             if (w.Time < nextThink || w.GameOver) return;
             nextThink = w.Time + 1f;
             var t = w.Teams[team];
+            // Choosing the nearest of several things: two equally near (a derrick, field or corner mirrored across the line from this base to
+            // the middle of the map) go to the one on the right as the base faces the middle, so the seats' choices are mirror images and not
+            // both the first in some list (the same derrick, the same corner).
+            var right = w.RightOf(t.StartPos);
+            float Near(Vec2 p) => System.MathF.Round(Vec2.Dist(p, t.StartPos), 2);
+            float Rightward(Vec2 p) => (p.X - t.StartPos.X) * right.X + (p.Y - t.StartPos.Y) * right.Y;
             if (t.Defeated) return;
             var mine = w.Owned(team).ToList();
             var structures = mine.Where(e => e.IsStructure).ToList();
@@ -225,7 +231,7 @@ namespace Pez.Sim
             // The flagged zones worth a rig, best first (iron and copper it's short of, then the rest, nearest first), and the ones no
             // rig of its own is heading for.
             var freeZones = w.Map.Deep.Where(d => t.Surveyed.Contains(d.Id) && OreWanted(d.Type) && w.DrillBlocker(d, team) == null)
-                                      .OrderBy(d => Short(d.Type) || Starved(d.Type) ? 0 : Needy(d.Type) ? 1 : d.Type >= Map.Crystal ? 3 : 2).ThenBy(d => Vec2.Dist(d.Pos, t.StartPos)).ToList();
+                                      .OrderBy(d => Short(d.Type) || Starved(d.Type) ? 0 : Needy(d.Type) ? 1 : d.Type >= Map.Crystal ? 3 : 2).ThenBy(d => Near(d.Pos)).ThenByDescending(d => Rightward(d.Pos)).ToList();
             var open = freeZones.Where(d => w.RigsBound(team, d.Id).Count == 0).ToList();
             // Slots: how many more mines each ore may start. Iron and copper share the cap, except that a starved one always gets its
             // first (and the other keeps its place); crystal and uranium have one each, while wanted.
@@ -280,7 +286,7 @@ namespace Pez.Sim
             // HostileOreRadius from those, World.UpdateHarvester's Safe, and a coordinate harvest would not); null if there is none.
             Vec2? SafeOreNear(Vec2 at, int ore)
             {
-                var tile = w.Map.NearestOre(at, 12, tt => !foes.Any(h => Vec2.Dist(h, tt.Center) < World.HostileOreRadius), ore);
+                var tile = w.Map.NearestOre(at, 12, tt => !foes.Any(h => Vec2.Dist(h, tt.Center) < World.HostileOreRadius), ore, t.StartPos); // (equally near tiles: as this base's own trucks choose them)
                 return tile.HasValue ? tile.Value.Center : (Vec2?)null;
             }
             var fields = KnownFields(w, t);
@@ -319,7 +325,7 @@ namespace Pez.Sim
                     if (t.Explored[w.Map.Idx((int)at.X, (int)at.Y)] && !fields.Any(f => f.ore >= 200 && Vec2.Dist(f.at, at) < 14f)) continue; // seen, and nothing there
                     Consider(at, 0f);
                 }
-                foreach (var c in sites.OrderBy(x => x.score))
+                foreach (var c in sites.OrderBy(x => System.MathF.Round(x.score, 2)).ThenByDescending(x => Rightward(x.at)))
                     if (DeploySpot(c.at) is Vec2 spot) return spot;
                 return null;
             }
@@ -429,7 +435,7 @@ namespace Pez.Sim
                     // None of its ore within 80 tiles: it goes to the nearest field of that ore its drop-offs reach, an outpost's perhaps, to a tile of
                     // it that is safe (the first field that has one).
                     var farField = tr.Order == Order.Idle && w.Map.NearestOre(tr.Pos, 80, null, type) == null
-                        ? fields.Where(f => f.type == type && f.ore >= 100 && Reached(f.at)).OrderBy(f => Vec2.Dist(f.at, tr.Pos)).Select(f => SafeOreNear(f.at, type)).FirstOrDefault(p => p.HasValue) : null;
+                        ? fields.Where(f => f.type == type && f.ore >= 100 && Reached(f.at)).OrderBy(f => System.MathF.Round(Vec2.Dist(f.at, tr.Pos), 2)).ThenByDescending(f => Rightward(f.at)).Select(f => SafeOreNear(f.at, type)).FirstOrDefault(p => p.HasValue) : null;
                     if (farField.HasValue) Do(w, "type", "harvest", "units", new[] { tr.Id }, "ore", Defs.Ores[type], "x", farField.Value.X, "y", farField.Value.Y);
                     else Do(w, "type", "harvest", "units", new[] { tr.Id }, "ore", Defs.Ores[type]);
                 }
@@ -537,7 +543,7 @@ namespace Pez.Sim
             {
                 var engineers = mine.Where(e => e.Def.Engineer).ToList();
                 var targets = w.Derricks.Where(d => d.Team != team && (d.Team < 0 || (!Passive && World.Capturable(d) && w.IsVisibleTo(team, d))))
-                                        .OrderBy(d => Vec2.Dist(d.Center, t.StartPos)).ToList();
+                                        .OrderBy(d => Near(d.Center)).ThenByDescending(d => Rightward(d.Center)).ToList();
                 foreach (var d in targets)
                 {
                     if (engineers.Any(en => en.Order == Order.Capture && en.TargetId == d.Id)) continue;
@@ -642,12 +648,12 @@ namespace Pez.Sim
                 // (Not derricks: attack-move leaves a held one alone, so a wave aimed at the nearest derrick stopped beside it and
                 // the next wave did the same, for the rest of the game, while the enemy base behind it stood.)
                 var known = t.KnownEnemyStructures.Values.Where(k => k.team >= 0 && k.key != "derrick").ToList();
-                if (known.Count > 0) { var k = known.OrderBy(x => Vec2.Dist(new Vec2(x.origin.X, x.origin.Y), t.StartPos)).First(); goal = new Vec2(k.origin.X + 1, k.origin.Y + 1); }
+                if (known.Count > 0) { var k = known.OrderBy(x => Near(new Vec2(x.origin.X, x.origin.Y))).ThenByDescending(x => Rightward(new Vec2(x.origin.X, x.origin.Y))).First(); goal = new Vec2(k.origin.X + 1, k.origin.Y + 1); }
                 else
                 {
                     var corners = w.Map.Spawns.Where(s => !t.Explored[w.Map.Idx((int)s.X, (int)s.Y)]).ToList();
                     if (corners.Count == 0) corners = w.Map.Spawns.Where(s => Vec2.Dist(s, t.StartPos) > 5).ToList();
-                    goal = corners.OrderBy(s => Vec2.Dist(s, t.StartPos)).First();
+                    goal = corners.OrderBy(s => Near(s)).ThenByDescending(s => Rightward(s)).First();
                 }
                 foreach (var u in idle) w.SetOrder(u, Order.AttackMove, goal);
                 waveSize = System.Math.Min(10, waveSize + 1);
