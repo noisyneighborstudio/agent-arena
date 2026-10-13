@@ -1904,7 +1904,7 @@ namespace Pez.Headless
                 wa.SpawnStructure(0, "outpost", new Int2(66, 56), 1f); // its own outpost beside the field
                 foreach (var tr in wa.Owned(0).Where(e => e.IsHarvester)) tr.Pos = tr.PrevPos = tr.GuardPos = new Vec2(6, 6); // 83 tiles from it
                 for (int y = 48; y <= 68; y++) for (int x = 58; x <= 79; x++) ta.Explored[wa.Map.Idx(x, y)] = true;
-                if (foeThere) ta.KnownEnemyStructures[960] = ("command_center", new Int2(72, 45), 1); // (out of sight of the outpost, which would otherwise see it is not there)
+                if (foeThere) ta.KnownEnemyStructures[960] = ("command_center", new Int2(74, 48), 1); // (out of sight of the outpost, which would otherwise see it is not there)
                 var sentIds = new HashSet<int>();
                 AiRun(wa, aia, 90, () => { foreach (var e in wa.Owned(0).Where(e => e.IsHarvester && e.Order == Order.Harvest && Vec2.Dist(e.OrderPos, new Vec2(73, 57)) < 12f)) sentIds.Add(e.Id); });
                 int sent = sentIds.Count;
@@ -1920,6 +1920,63 @@ namespace Pez.Headless
             for (int s = 0; s < 90 && (drone10 == null || drone10.Order != Order.Move); s++) { AiRun(w10, ai10, 1); drone10 = w10.Owned(0).FirstOrDefault(e => e.Def.Key == "recon_drone"); }
             Check(drone10 != null && drone10.Order == Order.Move && Vec2.Dist(drone10.OrderPos, new Vec2(48, 30)) < 3f,
                   $"a 3x3 unseen patch that no grid point lies in is found by the tile-by-tile fallback: the drone is sent to {(drone10 != null ? drone10.OrderPos.ToString() : "nowhere")}, the patch is around (48,30)");
+
+            // A coordinate harvest takes the nearest live ore within 12 tiles of the point, which need not be at the field's root: here the root and
+            // the rows by it are mined out, the root is 15 tiles from an enemy structure it knows of, and the ore that is left lies on the side
+            // towards it, 13 tiles away. Checking the root would send the trucks there; the ore tile itself is what is checked.
+            foreach (bool safeTile in new[] { false, true })
+            {
+                var (wb, aib, tb, hqb) = Thin();
+                for (int i = 0; i < wb.Map.Ore.Length; i++) wb.Map.Ore[i] = 0;
+                for (int y = 56; y <= 59; y++)
+                    for (int x = 72; x <= 75; x++)
+                    {
+                        int i = wb.Map.Idx(x, y);
+                        wb.Map.Tiles[i] = Terrain.Dirt; wb.Map.OreBase[i] = 200; wb.Map.OreType[i] = wb.Map.OreBaseType[i] = Map.Iron;
+                        wb.Map.Ore[i] = y >= 58 ? 200 : 0; // the near rows are mined out
+                    }
+                if (safeTile) wb.Map.Ore[wb.Map.Idx(75, 56)] = 200; // but one live tile on the far side of the field
+                wb.Map.FieldsChanged();
+                wb.SpawnStructure(0, "outpost", new Int2(66, 56), 1f);
+                foreach (var tr in wb.Owned(0).Where(e => e.IsHarvester)) tr.Pos = tr.PrevPos = tr.GuardPos = new Vec2(6, 6);
+                for (int y = 48; y <= 68; y++) for (int x = 58; x <= 79; x++) tb.Explored[wb.Map.Idx(x, y)] = true;
+                tb.KnownEnemyStructures[960] = ("command_center", new Int2(72, 71), 1); // 15 tiles from the root, out of sight
+                var firstTarget = new Dictionary<int, Vec2>();
+                AiRun(wb, aib, 90, () => { foreach (var e in wb.Owned(0).Where(e => e.IsHarvester && e.Order == Order.Harvest && Vec2.Dist(e.OrderPos, new Vec2(73, 57)) < 12f)) if (!firstTarget.ContainsKey(e.Id)) firstTarget[e.Id] = e.OrderPos; });
+                bool ok = safeTile ? firstTarget.Count >= 3 && firstTarget.Values.All(v => Vec2.Dist(v, new Vec2(75.5f, 56.5f)) < 1f) : firstTarget.Count == 0;
+                Check(ok, safeTile ? $"with a live tile on the safe side of the field the trucks are sent to that tile ({firstTarget.Count} sent, to {string.Join(" ", firstTarget.Values.Distinct())})"
+                                   : $"with all the ore that is left within reach of an enemy structure it knows of, no truck is sent, though the field's root is 15 tiles from it ({firstTarget.Count} sent, to {string.Join(" ", firstTarget.Values.Distinct())})");
+            }
+
+            // The electronics plant is needed to buy an outpost truck, not to send one it has already paid for (Deploy doesn't need it): with
+            // the plant gone the truck it has still gets its destination, and no second one is bought.
+            var (wc, aic, tc, hqc) = Thin();
+            var paid = wc.SpawnUnit(0, "outpost_truck", hqc);
+            foreach (var plant in wc.Owned(0).Where(e => e.Def.Key == "electronics_plant").ToList()) wc.Remove(plant);
+            AiRun(wc, aic, 3); // (before the AI has built the plant again)
+            Check(!wc.HasComplete(0, "electronics_plant") && paid.Order == Order.Move && Vec2.Dist(paid.OrderPos, tc.StartPos) > 30f && wc.Owned(0).Count(e => e.Def.Key == "outpost_truck") == 1 && !tc.UnitQueues[Producer.Factory].Any(q => q.Key == "outpost_truck"),
+                  $"an outpost truck it has paid for gets a destination although the electronics plant is gone, and no second is bought ({paid.OrderName} to {paid.OrderPos}; plant standing: {wc.HasComplete(0, "electronics_plant")})");
+
+            // A field seen only at its edges is a field: the two columns of it that are explored show iron, though the root (the tile that held
+            // the most) is still in the fog. The AI goes for it rather than the free corner.
+            var (wd, aid, td, hqd) = Thin();
+            for (int y = 32; y <= 35; y++)
+                for (int x = 55; x <= 58; x++)
+                {
+                    int i = wd.Map.Idx(x, y);
+                    wd.Map.Tiles[i] = Terrain.Dirt; wd.Map.Ore[i] = wd.Map.OreBase[i] = 200; wd.Map.OreType[i] = wd.Map.OreBaseType[i] = Map.Iron;
+                }
+            wd.Map.FieldsChanged();
+            for (int y = 28; y <= 38; y++) for (int x = 57; x <= 62; x++) td.Explored[wd.Map.Idx(x, y)] = true; // x 55 and 56 stay unseen, root (55,32) with them
+            bool rootFogged = !td.Explored[wd.Map.Idx(55, 32)]; // (the truck's own sight clears it on arrival)
+            Vec2? firstGoalD = null;
+            AiRun(wd, aid, 2 * 60, () =>
+            {
+                var tk = wd.Owned(0).FirstOrDefault(e => e.Def.Key == "outpost_truck");
+                if (tk != null && firstGoalD == null && tk.Order == Order.Move && Vec2.Dist(tk.OrderPos, td.StartPos) > 30f) firstGoalD = tk.OrderPos;
+            });
+            Check(rootFogged && firstGoalD.HasValue && Vec2.Dist(firstGoalD.Value, new Vec2(57, 34)) < 12f,
+                  $"a field whose root is unseen but whose edge shows iron is recognised: the truck's first destination is {(firstGoalD.HasValue ? firstGoalD.Value.ToString() : "none")}, the field at (57,34)");
 
             // In an open arena the free base sites are kept for the players who join later (a newcomer takes a free site, and an outpost by it
             // would pin them or use up the seat; the ore there is theirs while they are protected). The house AI (passive, as here) still
