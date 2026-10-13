@@ -181,9 +181,10 @@ namespace Pez.Sim
             foreach (var r in rigs.Where(Bound)) { var z = w.Map.DepositById(r.ZoneId); if (z != null) has[z.Type]++; }
             int OnHand(int ore) => ore == Map.Iron ? ironOnHand : ore == Map.Copper ? copperOnHand : t.Amount(Defs.Ores[ore]);
             bool Short(int type) => type == Map.Iron ? ironOnHand < 400 || RawShort("iron_ore") : type == Map.Copper && (copperOnHand < 300 || copperOnHand * 4 < ironOnHand || RawShort("copper_ore"));
-            // A basic ore it wants, has next to none of and no mine on gets one whatever the cap says; crystal / uranium it has a plant for
-            // and none of go ahead of the ordinary iron and copper (a deep mine pumps 4 a second, far more than anything uses).
-            bool Starved(int ore) => ore < Map.Crystal && has[ore] == 0 && OreWanted(ore) && OnHand(ore) < 100;
+            // A basic ore it wants, has no mine on and next to none of (or is short of as the raw ore something is waiting on) gets one
+            // whatever the cap says; crystal / uranium it has a plant for and none of go ahead of the ordinary iron and copper (a deep mine
+            // pumps 4 a second, far more than anything uses).
+            bool Starved(int ore) => ore < Map.Crystal && has[ore] == 0 && OreWanted(ore) && (OnHand(ore) < 100 || RawShort(Defs.Ores[ore]));
             bool Needy(int type) => type >= Map.Crystal && OreWanted(type) && t.Amount(Defs.Ores[type]) < 100;
             // The flagged zones worth a rig, best first (iron and copper it's short of, then the rest, nearest first), and the ones no
             // rig of its own is heading for.
@@ -205,18 +206,23 @@ namespace Pez.Sim
                        + System.Math.Min(slots[Map.Crystal], Open(Map.Crystal)) + System.Math.Min(slots[Map.Uranium], Open(Map.Uranium));
             int unsent = rigs.Count(r => !Bound(r)) + queuedRigs;
             // A starved basic ore with the cap full of the other: retire that one's mine with the most left, to make the room. Only when
-            // something is waiting on the missing ore and the rig to replace it can be had.
+            // something is waiting on the missing ore, and only once the rig that replaces it is bought (built or queued, so paid for):
+            // until then the rig is saved for, and the mine keeps pumping.
             bool Waiting(int ore)
             {
                 string raw = Defs.Ores[ore], refined = ore == Map.Iron ? "steel" : "copper";
                 return RawShort(raw) || (waiting != null && Defs.Get(waiting).Cost.Any(kv => (kv.Key == raw || kv.Key == refined) && t.Amount(kv.Key) < kv.Value));
             }
             Entity retire = null;
-            for (int o = Map.Iron; o <= Map.Copper && retire == null; o++)
-                if (sharedFree <= 0 && Starved(o) && Open(o) > 0 && has[1 - o] >= 2 && Waiting(o) &&
-                    w.MissingPrereq(team, Defs.Get("drill_rig")) == null && (unsent > 0 || t.Missing(Defs.Get("drill_rig").Cost) == null))
-                    retire = deepMines.Where(m => m.IsComplete && Pumping(m) && w.Map.DepositById(m.DepositId).Type == 1 - o)
-                                      .OrderByDescending(m => w.Map.DepositById(m.DepositId).Amount).FirstOrDefault();
+            bool retireWanted = false;
+            for (int o = Map.Iron; o <= Map.Copper && !retireWanted; o++)
+                if (sharedFree <= 0 && Starved(o) && Open(o) > 0 && has[1 - o] >= 2 && Waiting(o) && w.MissingPrereq(team, Defs.Get("drill_rig")) == null)
+                {
+                    retireWanted = true;
+                    if (unsent > 0)
+                        retire = deepMines.Where(m => m.IsComplete && Pumping(m) && w.Map.DepositById(m.DepositId).Type == 1 - o)
+                                          .OrderByDescending(m => w.Map.DepositById(m.DepositId).Amount).FirstOrDefault();
+                }
             wentDeep |= deepMines.Count > 0 || rigsInFlight > 0;
             bool wantDeep = surfaceDry || prospect || wentDeep;
             bool deepOn = w.HasComplete(team, "factory") && wantDeep;
@@ -229,7 +235,7 @@ namespace Pez.Sim
             // puts one back comes before any of that (1500 steel is never there if the army spends it as it comes in).
             bool needHq = Count("command_center") == 0 && !mine.Any(e => e.Def.Key == "construction_truck") && !Queued("construction_truck") &&
                           w.HasComplete(team, "factory") && w.HasComplete(team, "electronics_plant");
-            string saving = needHq ? "construction_truck" : wantRig && pumping < 2 ? "drill_rig" : wantSurveyor && pumping == 0 ? "geological_surveyor" : null;
+            string saving = needHq ? "construction_truck" : wantRig && (pumping < 2 || retireWanted) ? "drill_rig" : wantSurveyor && pumping == 0 ? "geological_surveyor" : null;
             var savingCost = saving != null ? Defs.Get(saving).Cost : null;
             if (saving != t.SaveFor) { if (saving != null) Do(w, "type", "save_for", "unit", saving); else Do(w, "type", "save_for"); }
 
@@ -406,9 +412,11 @@ namespace Pez.Sim
 
             // ---- Deep mining: when the surface runs dry, survey outward from the base and drill what turns up.
             // A mine whose deposit is used up pumps nothing but still draws power: sell it.
-            foreach (var dm in deepMines.Where(e => e.IsComplete && !Pumping(e)))
-                Do(w, "type", "sell", "structure_id", dm.Id);
-            if (retire != null) Do(w, "type", "sell", "structure_id", retire.Id); // (refused while it is under fire: tried again next second)
+            // (Never a structure the team is standing on: with it gone the team would be out of the game, a rig on its way or not.
+            // Refused while it is under fire: tried again next second.)
+            void Sell(Entity e) { if (w.StillStanding(team, e)) Do(w, "type", "sell", "structure_id", e.Id); }
+            foreach (var dm in deepMines.Where(e => e.IsComplete && !Pumping(e))) Sell(dm);
+            if (retire != null) Sell(retire);
             // Surveyors and rigs that exist get their work whether or not there is a factory (it is needed to buy more, not to use them).
             if (wantDeep)
             {

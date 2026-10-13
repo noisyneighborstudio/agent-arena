@@ -1378,7 +1378,7 @@ namespace Pez.Headless
             Console.WriteLine("\n-- scripted AI economy");
             bool regrowth = World.RegrowthDisabled;
             World.RegrowthDisabled = true; // ore the scenarios clear away stays gone
-            try { AiRefineries(); AiDeepMining(); AiDrillChoices(); AiDeepRecovery(); AiEconomyRecovery(); AiHeadquartersRecovery(); AiRigDestinations(); AiMinePlan(); AiBuildOverrides(); }
+            try { AiRefineries(); AiDeepMining(); AiDrillChoices(); AiDeepRecovery(); AiEconomyRecovery(); AiHeadquartersRecovery(); AiRigDestinations(); AiMinePlan(); AiBuildOverrides(); AiPlanEdges(); }
             finally { World.RegrowthDisabled = regrowth; }
         }
 
@@ -1726,6 +1726,52 @@ namespace Pez.Headless
             int bought = w2.Teams[0].Stats.Built.TryGetValue("drill_rig", out var nb) ? nb : 0;
             Check(bought == 1 && !w2.Owned(0).Any(e => e.Def.Key == "drill_rig" && e.Order == Order.Idle) && w2.Owned(0).Count(e => e.Def.Key == "deep_mine") == 5,
                   $"two crystal zones, one mine on crystal: it buys one rig, not two ({bought} rigs bought, {w2.Owned(0).Count(e => e.Def.Key == "deep_mine")} mines)");
+        }
+
+        /// <summary>Selling a mine must never cost the AI the game, a retired mine needs its paid replacement first, and a raw-ore shortage earns a slot like an empty stockpile.</summary>
+        static void AiPlanEdges()
+        {
+            // The dry mine is the last structure standing and a rig is on its way to a fresh deposit: selling it would eliminate the team
+            // (a drill rig doesn't keep a team in the game), so it stays until the new mine is up.
+            var (w, ai) = AiWorld();
+            var t = w.Teams[0];
+            for (int i = 0; i < w.Map.Ore.Length; i++) w.Map.Ore[i] = 0;
+            var deps = w.Map.Deep.OrderBy(d => Vec2.Dist(d.Pos, t.StartPos)).Take(2).ToList();
+            foreach (var d in deps) { d.Type = Map.Iron; d.Amount = d.Initial = 6000; t.Surveyed.Add(d.Id); t.Zones[d.Id] = new ZoneFlag { ZoneId = d.Id, FlaggedBy = 0, FlaggedAt = w.Time }; }
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var first = At(w.SpawnUnit(0, "drill_rig", hq), deps[0].Pos + new Vec2(1, 0));
+            Check(Ok(Commands.Execute(w, 0, Cmd("type", "deploy", "units", new[] { first.Id }))), "(a mine on the first deposit)");
+            var spare = At(w.SpawnUnit(0, "drill_rig", hq), t.StartPos + new Vec2(4, 4));
+            w.SetOrder(spare, Order.Idle, spare.Pos);
+            w.Remove(hq);
+            foreach (var e in w.Owned(0).Where(e => e.IsStructure && e.Def.Key != "deep_mine").ToList()) w.Remove(e);
+            deps[0].Amount = 0; // the mine has run dry: it is the only structure left
+            AiRun(w, ai, 60);
+            Check(!t.Defeated && w.Owned(0).Any(e => e.Def.Key == "deep_mine" && e.DepositId == deps[1].Id), $"a dry mine that is the last structure is kept until the new one is up ({(t.Defeated ? "the team was eliminated" : "still in the game")}, {w.Owned(0).Count(e => e.Def.Key == "deep_mine")} mines)");
+
+            // Four iron mines, no copper, 800 steel and a step waiting on copper: the iron mine is only retired once the rig that replaces
+            // it is bought (the budget used to be checked, then spent on something else, and the mine was gone for nothing).
+            var (w2, ai2, t2, d2) = AiDeepBase(Map.Iron, Map.Iron, Map.Iron, Map.Iron, Map.Copper);
+            for (int i = 0; i < 4; i++) AiPump(w2, d2[i]);
+            t2.Add("copper_ore", -t2.Amount("copper_ore")); t2.Add("steel", 800); t2.Add("circuits", 300);
+            AiRun(w2, ai2, 1); // its first think
+            int ironNow = w2.Owned(0).Count(e => e.Def.Key == "deep_mine");
+            bool paid = w2.Teams[0].UnitQueues[Producer.Factory].Any(q => q.Key == "drill_rig") || w2.Owned(0).Any(e => e.Def.Key == "drill_rig");
+            Check(ironNow == 4 && paid, $"it buys the replacement rig first and keeps all four mines meanwhile ({ironNow} mines, rig bought {paid})");
+            AiRun(w2, ai2, 5 * 60);
+            Check(w2.Owned(0).Any(e => e.Def.Key == "deep_mine" && w2.Map.DepositById(e.DepositId).Type == Map.Copper) && w2.Owned(0).Count(e => e.Def.Key == "deep_mine" && w2.Map.DepositById(e.DepositId).Type == Map.Iron) >= 3,
+                  $"and then swaps one iron mine for a copper one ({w2.Owned(0).Count(e => e.Def.Key == "deep_mine")} mines)");
+
+            // Four iron mines pump, a rig stands paid for and idle, there is plenty of refined copper but no copper ore, and a refinery is
+            // waiting on 100 copper ore: that raw shortage earns the copper zone a slot as an empty stockpile would.
+            var (w3, ai3, t3, d3) = AiDeepBase(Map.Iron, Map.Iron, Map.Iron, Map.Iron, Map.Copper);
+            AiBase(w3, "gun_turret");
+            for (int i = 0; i < 4; i++) AiPump(w3, d3[i]);
+            var idle = At(w3.SpawnUnit(0, "drill_rig", w3.Owned(0).First(e => e.Def.Key == "command_center")), t3.StartPos + new Vec2(4, 4));
+            w3.SetOrder(idle, Order.Idle, idle.Pos);
+            t3.Add("copper", 3000); t3.Add("copper_ore", -t3.Amount("copper_ore")); t3.Add("steel", 500); t3.Add("iron_ore", 1000); t3.Add("circuits", 300);
+            AiRun(w3, ai3, 5);
+            Check(idle.Order == Order.Drill && idle.ZoneId == d3[4].Id, $"3000 copper but none of the copper ore a refinery is waiting on, four iron mines up: the idle rig goes to the copper zone ({idle.OrderName}, zone {idle.ZoneId})");
         }
 
         /// <summary>The structure it builds is PickStep's step unless something urgent goes first, and that must be buildable: a blocked override never hides the step.</summary>
