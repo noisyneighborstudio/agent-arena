@@ -152,6 +152,23 @@ namespace Pez.Headless
             var lateKit = old.Map.Deep.Where(d => Vec2.Dist(d.Pos, late.StartPos) <= Map.DeepKitReach).ToList();
             Check(lateKit.Count == 2 && lateKit.Any(d => d.Type == Map.Iron && d.Initial >= 4000 && d.Initial < 8000) && lateKit.Any(d => d.Type == Map.Copper && d.Initial >= 4000 && d.Initial < 8000) && old.Map.Deep.Count(d => d.Id == 1) == 1,
                   $"a map with no kits still gives a joiner one: {string.Join(", ", lateKit.Select(d => $"{Defs.Ores[d.Type]} {d.Initial:0}"))}");
+
+            // A copy lands on a tile centre, which can be up to 0.7 tiles from where it was aimed: with the first base's copper right at the
+            // edge of its reach (21.9 tiles, and the 11.5 ahead, 18.5 aside spot), no copy may end up past the reach and so out of the kit.
+            var past = new List<string>(); int tried = 0;
+            foreach (int seed in new[] { 3, 7, 1337 })
+                foreach (var (ahead, aside) in new[] { (21.9f, 0f), (20.8f, -6.8f), (20.8f, 6.8f), (17.5f, -13.2f), (17.5f, 13.2f), (15.1f, 15.9f), (11.5f, 18.5f), (11.5f, -18.5f) })
+                {
+                    var w = new World(2, seed, 80) { Open = true };
+                    var home = w.Map.Spawns[0];
+                    var dir = (new Vec2(w.Map.W / 2f, w.Map.H / 2f) - home).Normalized; var side = new Vec2(-dir.Y, dir.X);
+                    var copper = NearestDeep(w.Map, home, Map.Copper);
+                    copper.Pos = home + dir * ahead + side * aside;
+                    int lastId = w.Map.Deep.Max(d => d.Id);
+                    var joiner = w.AddTeam("llm", "Edge", out _); tried++;
+                    if (!w.Map.Deep.Any(d => d.Id > lastId && d.Type == Map.Copper && d.Initial == copper.Initial && Vec2.Dist(d.Pos, joiner.StartPos) <= Map.DeepKitReach)) past.Add($"{seed} ({ahead}, {aside})");
+                }
+            Check(past.Count == 0, $"a joiner's copy of a kit deposit always lands inside the kit's reach, even when the first base's is at its edge ({tried} cases)" + (past.Count > 0 ? $"; copper missing for {string.Join(", ", past)}" : ""));
         }
 
         static void DefenceUpkeep()

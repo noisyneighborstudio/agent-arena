@@ -175,10 +175,11 @@ namespace Pez.Sim
         /// <summary>
         /// Add a deposit of this ore and amount at each of `spots`, if every one can go there: clear ground, at least `apart`
         /// from each other and from every deposit already made, at least `away` from every base site, and off the derricks' ring.
-        /// If not, none is added.
+        /// If not, none is added (and null `spots`, a spot that fell outside a kit's reach, never fits).
         /// </summary>
         bool AddDeep(Vec2[] spots, byte type, float amount, bool[] reach, float apart, float away)
         {
+            if (spots == null) return false;
             for (int a = 0; a < spots.Length; a++)
             {
                 var p = spots[a];
@@ -250,7 +251,12 @@ namespace Pez.Sim
         {
             var dir = (centre - home).Normalized; var side = new Vec2(-dir.Y, dir.X);
             float toCentre = Vec2.Dist(centre, home);
-            Vec2[] Spots(float ahead, float aside) { var p = DeepTile(home + dir * ahead + side * aside); return all ? Images(p) : new[] { p }; }
+            // The spot, on its tile centre (which can be most of a tile from where it was aimed), with its copies; null if that tile is past the kit's reach.
+            Vec2[] Spots(float ahead, float aside)
+            {
+                var p = DeepTile(home + dir * ahead + side * aside);
+                return Vec2.Dist(p, home) > DeepKitReach ? null : all ? Images(p) : new[] { p };
+            }
             bool Copy(KitSpot k)
             {
                 float r = MathF.Sqrt(k.Ahead * k.Ahead + k.Aside * k.Aside), bearing = MathF.Atan2(k.Aside, k.Ahead);
