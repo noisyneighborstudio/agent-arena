@@ -1536,6 +1536,19 @@ namespace Pez.Headless
             }
             Check(w3.Alerts.All.Count == 500 && w3.Alerts.All.Contains(running) && running.LastTick == w3.Tick,
                   $"the 500-alert cap keeps an alert that is still merging, however old ({w3.Alerts.All.Count} alerts, the first one {(w3.Alerts.All.Contains(running) ? "kept" : "trimmed")})");
+
+            // 600 distinct alerts arrive inside one merge window (all open, so none can be trimmed); later raises only refresh one of them
+            // and the rest close. The cap is enforced again once there are closed ones to drop, not only when a new alert is created.
+            var w4 = new World(2, 7);
+            var keeper = w4.Alerts.Raise(w4, 0, "enemy_near_base", Priority.High, new Vec2(10, 10));
+            for (int i = 0; i < 600; i++) w4.Alerts.Raise(w4, 1, "burst_" + i, Priority.Medium, new Vec2(30, 30));
+            Check(w4.Alerts.All.Count == 601, $"alerts that are all still open are not trimmed ({w4.Alerts.All.Count})");
+            for (int step = 0; step < 3; step++)
+            {
+                w4.Tick += 120; // 6 s: inside the keeper's merge window, and past the others' after two steps
+                w4.Alerts.Raise(w4, 0, "enemy_near_base", Priority.High, new Vec2(10, 10));
+            }
+            Check(w4.Alerts.All.Count == 500 && w4.Alerts.All.Contains(keeper), $"and once they have closed, raises that only refresh one bring the log back to the cap ({w4.Alerts.All.Count} alerts)");
         }
 
         static void InterruptibleWait()
