@@ -3044,6 +3044,23 @@ namespace Pez.Headless
             Check(EconReport.FieldOreTotal(pm) == fieldBefore && pm.Ore.Sum() == (int)fieldBefore + 100 && played.SalvageEnd > 0 && played.SurfaceByMinute[12] == played.SurfaceEnd,
                   $"the harness's surface ore leaves out salvage (100 salvage on the map: field ore stays {EconReport.FieldOreTotal(pm):0}); in a played game with {played.SalvageEnd:0} ore of salvage lying at the end, the last minute's snapshot is the field ore alone ({played.SurfaceByMinute[12]:0})");
 
+            // Unmined surface ore by ore and by reach: the per-ore columns sum to the totals the report already gives (minute 45's `left` and the end's surface and beyond-the-leash ore).
+            var long45 = EconReport.PlayGame(1, 48, 1f, true, 45);
+            double Sum(double[] xs) => xs.Sum();
+            Check(long45.Min45 && !played.Min45 && Math.Abs(Sum(long45.Min45Near) + Sum(long45.Min45Far) - long45.SurfaceByMinute[45]) < 1e-6 && long45.SurfaceByMinute[45] > 0
+                  && Math.Abs(Sum(long45.EndNear) + Sum(long45.EndFar) - long45.SurfaceEnd) < 1e-6 && Math.Abs(Sum(long45.EndFar) - long45.FarOreEnd) < 1e-6
+                  && Math.Abs(Sum(played.EndNear) + Sum(played.EndFar) - played.SurfaceEnd) < 1e-6,
+                  $"unmined surface ore by ore and reach adds up: minute 45 near {Sum(long45.Min45Near):0} + far {Sum(long45.Min45Far):0} = left {long45.SurfaceByMinute[45]:0}; at the end {Sum(long45.EndNear):0} + {Sum(long45.EndFar):0} = {long45.SurfaceEnd:0}, far {long45.FarOreEnd:0}");
+            string perOreDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "econ-report-test-" + Guid.NewGuid().ToString("N"));
+            EconReport.WriteCsv(perOreDir, new List<EconReport.GameRun> { long45, played });
+            string perOre = System.IO.File.ReadAllText(System.IO.Path.Combine(perOreDir, "games.csv"));
+            System.IO.Directory.Delete(perOreDir, true);
+            var perOreLines = perOre.Split('\n');
+            Check(perOre.EndsWith("\n") && perOreLines.Length == 4 && perOreLines.Take(3).All(l => l.Split(',').Length == perOreLines[0].Split(',').Length)
+                  && perOreLines[0].Contains("seat1_salvage_mined,left45_iron_near,left45_iron_far,left45_copper_near") && perOreLines[0].EndsWith("leftend_uranium_far")
+                  && perOreLines[2].Split(',').Skip(20).Take(8).All(v => v == ""),
+                  "games.csv gets the per-ore columns at the end, each row ends in a newline, and a game that never reached minute 45 leaves the left45_ columns empty");
+
             // Richness is kept exact in group names and exports, and --profile can't corrupt a sweep of parallel worlds.
             Check(EconReport.OreLabel(0.26f) == "0.26" && EconReport.OreLabel(0.34f) == "0.34" && EconReport.OreLabel(1f) == "1.0" && EconReport.OreLabel(0.3f) == "0.3"
                   && new EconReport.GameRun { Mode = "war", Size = 80, Ore = 0.26f }.Group != new EconReport.GameRun { Mode = "war", Size = 80, Ore = 0.34f }.Group,

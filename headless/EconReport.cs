@@ -661,6 +661,8 @@ namespace Pez.Headless
             public double[] DeepStartByType = new double[4], DeepLeftByType = new double[4];
             public double[] SurfaceByMinute, RegrownByMinute;   // world totals after each minute: field ore (salvage excluded), ore regrown
             public double FarOreEnd, SurfaceEnd, SalvageEnd;                 // at the end: surface field ore (salvage excluded) farther than LeashDist from every drop-off, and all of it
+            /// <summary>Surface field ore (salvage excluded) by ore (Map.Iron..Map.Uranium): within World.LeashDist of a finished drop-off (Near) and beyond every one (Far), at minute 45 (the `left min 45` measure; Min45 is false if the game ended or was cut off first) and at the game's end.</summary>
+            public bool Min45; public double[] Min45Near = new double[4], Min45Far = new double[4], EndNear = new double[4], EndFar = new double[4];
             public double WallSeconds;
             public List<TeamRun> Teams = new List<TeamRun>();
             public string Group => $"{Mode} {Size}x{Size} ore {OreLabel(Ore)}";
@@ -746,6 +748,7 @@ namespace Pez.Headless
                 int min = w.Tick / ticksPerMin;
                 g.SurfaceByMinute[min] = FieldOreTotal(w.Map);
                 g.RegrownByMinute[min] = w.Regrown;
+                if (min == SnapshotMinute) { g.Min45 = true; SurfaceByReach(w, g.Min45Near, g.Min45Far); }
                 for (int i = 0; i < 2; i++)
                 {
                     var t = w.Teams[i]; var s = t.Stats; var tr = g.Teams[i];
@@ -778,6 +781,7 @@ namespace Pez.Headless
                 var p = new Vec2(i % m.W + .5f, i / m.W + .5f);
                 if (!drops.Any(d => Vec2.Dist(d, p) <= World.LeashDist)) g.FarOreEnd += field;
             }
+            SurfaceByReach(w, g.EndNear, g.EndFar);
             for (int i = 0; i < 2; i++)
             {
                 var t = w.Teams[i]; var tr = g.Teams[i]; var s = t.Stats;
@@ -787,6 +791,27 @@ namespace Pez.Headless
             }
             g.WallSeconds = sw.Elapsed.TotalSeconds;
             return g;
+        }
+
+        /// <summary>The minute whose unmined surface ore is broken down by ore and reach (the report's `left min 45`).</summary>
+        const int SnapshotMinute = 45;
+
+        /// <summary>
+        /// The surface field ore (salvage excluded) now on the map by ore, split into what lies within World.LeashDist of a finished drop-off
+        /// (command center, outpost, refinery: any complete structure that takes ore) and what lies beyond every one. Fills near[ore] and far[ore]; together they sum to FieldOreTotal.
+        /// </summary>
+        static void SurfaceByReach(World w, double[] near, double[] far)
+        {
+            var m = w.Map;
+            var drops = w.Entities.Where(e => !e.Dead && e.IsStructure && e.IsComplete && e.Def.DropOff).Select(e => e.Center).ToList();
+            Array.Clear(near, 0, near.Length); Array.Clear(far, 0, far.Length);
+            for (int i = 0; i < m.Ore.Length; i++)
+            {
+                int field = m.FieldOre(i);
+                if (field <= 0) continue;
+                var p = new Vec2(i % m.W + .5f, i / m.W + .5f);
+                (drops.Any(d => Vec2.Dist(d, p) <= World.LeashDist) ? near : far)[m.OreType[i]] += field;
+            }
         }
 
         /// <summary>Iron and copper still in a team's home fields: the field ore (not salvage) of every iron or copper field tile within HomeOreRadius of its start.</summary>
@@ -955,6 +980,33 @@ namespace Pez.Headless
             }
             Table(sb, new[] { "group", "surface ore at start", "left min 10", "left min 20", "left min 30", "left min 45", "minute the home fields are 90% used (median)", "end of undecided games: field ore beyond the leash", "world regrowth ore/s, min 30-end" }, surf);
 
+            Sub(sb, "Unmined surface ore by ore, and by reach");
+            sb.AppendLine("The field ore (salvage excluded) still on the map, a game's mean, by ore: \"near + far\" is the part within the 35-tile leash of a finished drop-off (command center, outpost, refinery) plus the part beyond every one (so out of a truck's reach on its own). The first table is minute 45 (the `left min 45` column above; games that ended or were cut off before it are left out, so a war group with no game that long shows \"-\"), the second the end of every game. The last two columns are the mean crystal and uranium a team held at the end of those same games, for comparison with the crystal and uranium left lying.");
+            sb.AppendLine();
+            string K(double v) => F(v / 1000, "0.00") + "k";
+            var items0 = Defs.Items.ToArray();
+            void ReachTable(string label, List<IGrouping<string, GameRun>> gs, Func<GameRun, bool> has, Func<GameRun, (double[] near, double[] far)> pick)
+            {
+                var rows = new List<string[]>();
+                foreach (var gr in gs)
+                {
+                    var set = gr.Where(has).ToList();
+                    if (set.Count == 0) { rows.Add(new[] { gr.Key, "0" }.Concat(Enumerable.Repeat("-", 7)).ToArray()); continue; }
+                    double Near(int k) => set.Average(g => pick(g).near[k]);
+                    double Far(int k) => set.Average(g => pick(g).far[k]);
+                    var cells = new List<string> { gr.Key, set.Count.ToString() };
+                    for (int k = 0; k < 4; k++) cells.Add(K(Near(k)) + " + " + K(Far(k)));
+                    cells.Add(K(Enumerable.Range(0, 4).Sum(Near)) + " + " + K(Enumerable.Range(0, 4).Sum(Far)));
+                    foreach (string ore in new[] { "crystal", "uranium" }) { int s = Array.IndexOf(items0, ore); cells.Add(F(set.SelectMany(g => g.Teams).Average(t => t.FinalStock[s]), "0")); }
+                    rows.Add(cells.ToArray());
+                }
+                sb.AppendLine("**" + label + "**");
+                sb.AppendLine();
+                Table(sb, new[] { "group", "games", "iron", "copper", "crystal", "uranium", "all ores", "crystal held", "uranium held" }, rows);
+            }
+            ReachTable("minute 45", groups, g => g.Min45, g => (g.Min45Near, g.Min45Far));
+            ReachTable("end of game", groups, g => true, g => (g.EndNear, g.EndFar));
+
             Sub(sb, "What a founding team had built");
             var built = new List<string[]>();
             foreach (var gr in groups)
@@ -971,13 +1023,18 @@ namespace Pez.Headless
         /// final counters at game end, from the sim's TeamStats and not rounded to a minute (minutes.csv stops at the last whole minute):
         /// seat0_mined and seat1_mined (all ore delivered, TeamStats.OreMined), seat0_deep_mined and seat1_deep_mined (of it, from deep mines),
         /// seat0_salvage_mined and seat1_salvage_mined (of it, salvage). Surface ore by truck is mined less deep less salvage.
+        /// After them come the unmined surface field ore (salvage excluded) by ore and reach, at minute 45 (left45_) and at the game's end (leftend_):
+        /// left45_iron_near, left45_iron_far, left45_copper_near, ... left45_uranium_far, then the same eight with leftend_. "near" is within World.LeashDist
+        /// of a finished drop-off, "far" beyond every one; the eight leftend_ columns sum to surface_end, and the left45_ ones are empty in a game
+        /// that did not reach minute 45.
         /// </summary>
         internal static void WriteCsv(string dir, List<GameRun> games)
         {
             Directory.CreateDirectory(dir);
-            var g = new StringBuilder("mode,size,ore,seed,game_over,ended,winner,end_min,errors,surface_start,deep_start,deep_left,far_ore_end,surface_end,seat0_mined,seat0_deep_mined,seat0_salvage_mined,seat1_mined,seat1_deep_mined,seat1_salvage_mined\n");
+            var g = new StringBuilder("mode,size,ore,seed,game_over,ended,winner,end_min,errors,surface_start,deep_start,deep_left,far_ore_end,surface_end,seat0_mined,seat0_deep_mined,seat0_salvage_mined,seat1_mined,seat1_deep_mined,seat1_salvage_mined," + string.Join(",", new[] { "left45", "leftend" }.SelectMany(p => Defs.Ores.SelectMany(o => new[] { p + "_" + o.Replace("_ore", "") + "_near", p + "_" + o.Replace("_ore", "") + "_far" }))) + "\n");
             foreach (var x in games) g.Append(string.Join(",", x.Mode, x.Size, OreLabel(x.Ore), x.Seed, x.GameOver ? 1 : 0, x.Ended, x.Winner, F(x.EndMinute, "0.0"), x.Errors, F(x.SurfaceStart, "0"), F(x.DeepStart, "0"), F(x.DeepLeft, "0"), F(x.FarOreEnd, "0"), F(x.SurfaceEnd, "0"),
-                x.Teams[0].Mined, x.Teams[0].Deep, x.Teams[0].SalvageMined, x.Teams[1].Mined, x.Teams[1].Deep, x.Teams[1].SalvageMined)).Append('\n');
+                x.Teams[0].Mined, x.Teams[0].Deep, x.Teams[0].SalvageMined, x.Teams[1].Mined, x.Teams[1].Deep, x.Teams[1].SalvageMined,
+                string.Join(",", Enumerable.Range(0, 4).Select(k => x.Min45 ? F(x.Min45Near[k], "0") + "," + F(x.Min45Far[k], "0") : ",")), string.Join(",", Enumerable.Range(0, 4).Select(k => F(x.EndNear[k], "0") + "," + F(x.EndFar[k], "0"))))).Append('\n');
             File.WriteAllText(Path.Combine(dir, "games.csv"), g.ToString());
             var items = Defs.Items.ToArray();
             var m = new StringBuilder("mode,size,ore,seed,team,min,mined,deep,salvage,derrick_steel,cc_trickle,upkeep,lowpower_s,spent,trucks,deep_mines,derricks,refineries,power_made,power_used,units,structures,kills,home_ore," + string.Join(",", items) + "\n");
