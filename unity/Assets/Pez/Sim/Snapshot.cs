@@ -83,7 +83,7 @@ namespace Pez.Sim
             var o = new JObj().Set("id", t.Id).Set("name", t.Name).Set("controller", t.Controller).Put("player", t.PlayerName)
                 .Put("standing_orders", t.StandingOrders).Put("orders_version", t.OrdersVersion)
                 .Set("stock", SnapIO.Floats(t.Stock)).Set("rates", SnapIO.Floats(t.Rates))
-                .Set("power_produced", t.PowerProduced).Set("power_used", t.PowerUsed)
+                .Set("power_produced", t.PowerProduced).Set("power_used", t.PowerUsed).Put("plasma_owed", t.PlasmaOwed)
                 .Set("start", SnapIO.V(t.StartPos)).Put("defeated", t.Defeated).Put("left", t.Left).Put("resigned", t.Resigned)
                 .Put("stalled_since", t.StalledSince, -1f).Put("house", t.House).Set("seat", t.Seat).Put("protected_until", t.ProtectedUntil)
                 .Put("surface_warned_at", t.SurfaceWarnedAt, -999f).Put("home_ore_warned", t.HomeOreWarned, 0).Set("last_active_at", t.LastActiveAt);
@@ -127,7 +127,7 @@ namespace Pez.Sim
             d.Load("name", ref t.Name); d.Load("controller", ref t.Controller); d.Load("player", ref t.PlayerName);
             d.Load("standing_orders", ref t.StandingOrders); d.Load("orders_version", ref t.OrdersVersion);
             SnapIO.LoadFloats(d.Obj("stock"), t.Stock); SnapIO.LoadFloats(d.Obj("rates"), t.Rates);
-            d.Load("power_produced", ref t.PowerProduced); d.Load("power_used", ref t.PowerUsed);
+            d.Load("power_produced", ref t.PowerProduced); d.Load("power_used", ref t.PowerUsed); d.Load("plasma_owed", ref t.PlasmaOwed);
             d.Load("start", ref t.StartPos); d.Load("defeated", ref t.Defeated); d.Load("left", ref t.Left); d.Load("resigned", ref t.Resigned);
             d.Load("stalled_since", ref t.StalledSince); d.Load("house", ref t.House); d.Load("seat", ref t.Seat);
             d.Load("protected_until", ref t.ProtectedUntil); d.Load("surface_warned_at", ref t.SurfaceWarnedAt); d.Load("home_ore_warned", ref t.HomeOreWarned); d.Load("last_active_at", ref t.LastActiveAt);

@@ -57,7 +57,7 @@ namespace Pez.Headless
                 "LastCallForHelp LastAttackerTeam Responding HomePos Cargo CargoType HarvestType HarvestTile WorkTimer Burning Dock DockAt DepositId Working Output Offline CarrierId Passengers Fuel Landed Stranded " +
                 "FuelCap AtDepot FuelWarned NoAutoRefuelUntil ResumeOrder ResumePos ResumeGuard ResumeTarget ResumeWaypoints ResumeSpeedCap MineQueue LastFiredAt " +
                 "Prospecting ProspectCenter ProspectRadius SkipSites SurveyFailure SurveyFailedAt ZoneId | CmdId", // CmdId: the observation feed's command tracking, which restarts (as a new stream) with the process
-            [typeof(Team)] = "Id Name Controller PlayerName StandingOrders OrdersVersion Stock Rates PowerProduced PowerUsed Detected Revealed Defeated StartPos " +
+            [typeof(Team)] = "Id Name Controller PlayerName StandingOrders OrdersVersion Stock Rates PowerProduced PowerUsed PlasmaOwed Detected Revealed Defeated StartPos " +
                 "Visible Explored Left Resigned StalledSince House Seat ProtectedUntil StructureQueue UnitQueues KnownEnemyStructures Surveyed SurveySites Zones " +
                 "SurfaceWarnedAt HomeOreWarned LastActiveAt Reserve SaveFor SaveForCost Stats",
             [typeof(World)] = "Map Paths MapVersion Open MaxPlayers MaxMapSize GrowStep SafeJoinDistance ProtectionSeconds Teams ById Entities Projectiles Events " +

@@ -61,7 +61,9 @@ namespace Pez.Sim
         /// <summary>Enemies briefly revealed by firing on this team (entity id -> game time the reveal ends).</summary>
         public readonly Dictionary<int, float> Revealed = new Dictionary<int, float>();
 
-        public int Amount(string item) => Stock.TryGetValue(item, out var v) ? (int)v : 0;
+        /// <summary>Plasma the team's fusion reactors have burned but the stockpile hasn't paid yet (World.SettleFusionBurn): not available to spend.</summary>
+        public float PlasmaOwed;
+        public int Amount(string item) => Stock.TryGetValue(item, out var v) ? (int)(item == "plasma" ? v - PlasmaOwed : v) : 0;
         public void Add(string item, float n) => Stock[item] = (Stock.TryGetValue(item, out var v) ? v : 0) + n;
         public string Missing(Dictionary<string, int> cost)
         {
@@ -560,7 +562,7 @@ namespace Pez.Sim
             var tiles = new List<Int2>();
             for (int y = 0; y < cc.Def.SizeY; y++) for (int x = 0; x < cc.Def.SizeX; x++) tiles.Add(new Int2(cc.Origin.X + x, cc.Origin.Y + y));
             float total = SpillSalvage(value, tiles);
-            t.Stock.Clear();
+            t.Stock.Clear(); t.PlasmaOwed = 0;
             if (total <= 0) return;
             var where = StateView.Sector(cc.Center);
             string msg = $"{t.Name}'s last command center fell at sector {where}: its stockpile spilled out as about {(int)total} units of salvage ore. First come, first served.";
@@ -596,7 +598,7 @@ namespace Pez.Sim
             float total = SpillSalvage(value, tiles);
             t.Left = true;
             t.Defeated = true;
-            t.Stock.Clear();
+            t.Stock.Clear(); t.PlasmaOwed = 0;
             scoreCache = null;
             ForgetTeam(teamId);
             MapVersion++;
@@ -683,7 +685,7 @@ namespace Pez.Sim
 
         void OnStructureComplete(Entity e)
         {
-            StartReactor(e, false);
+            StartReactor(e);
             UpdatePower();
             if (e.Def.Key == "mining_refinery") SpawnUnit(e.Team, "mining_truck", e);
         }
@@ -1048,6 +1050,7 @@ namespace Pez.Sim
                 }
                 e.Working = any;
             }
+            if (Tick % TickRate == 0) SettleFusionBurn();
             if (powerChanged) UpdatePower();
 
             // Per-second net rates, from a stock snapshot each second, averaged over about 15 s: a truck unloading 150 ore
@@ -1496,7 +1499,7 @@ namespace Pez.Sim
                  text: $"{Teams[e.Team].Name}'s engineer captured {(old >= 0 ? $"{Teams[old].Name}'s" : "a neutral")} {t.Def.Key} #{t.Id} at {(int)t.Center.X},{(int)t.Center.Y}");
             if (old >= 0) Alerts.Raise(this, old, "structure_lost", Priority.Critical, t.Center, attacker: e).Lost.Add($"{t.Def.Key} #{t.Id} (captured by an engineer)");
             if (t.Def.Key == "derrick") DerrickCaptured(t, old);
-            StartReactor(t, true);
+            StartReactor(t);
             Remove(e); // the engineer moves in for good
             UpdatePower();
         }
