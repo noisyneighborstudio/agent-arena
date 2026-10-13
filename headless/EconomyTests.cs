@@ -24,9 +24,71 @@ namespace Pez.Headless
             ConstructionTruck();
             MatchClock();
             Derricks();
+            SellRules();
             AttackUntilCapturable();
             AttackMoveDerricks();
             DefenceUpkeep();
+        }
+
+        /// <summary>Selling can't dodge a loss: unfinished buildings refund by health, a building under fire can't be sold, and derricks can't be sold at all.</summary>
+        static void SellRules()
+        {
+            var w = new World(2, 7, 96);
+            var t = w.Teams[1];
+            foreach (var u in w.Entities.Where(e => !e.IsStructure).ToList()) w.Remove(u);
+            int Steel() => (int)t.Amount("steel");
+
+            // Unfinished, healthy (the health it should have at that point of the build): the unbuilt share back, as before.
+            var healthy = w.SpawnStructure(1, "factory", w.FindPlacement(1, "factory").Value, 0.5f);
+            healthy.Hp = healthy.Def.MaxHp * (0.1f + 0.9f * 0.5f);
+            int s0 = Steel();
+            var ok = Commands.Execute(w, 1, Cmd("type", "sell", "structure_id", healthy.Id, "confirm", true));
+            Check(Ok(ok) && healthy.Dead && Steel() - s0 == 225, $"a healthy half-built factory still refunds 75% ({Steel() - s0} steel): {Said(ok)}");
+            // Unfinished and almost destroyed: it refunds what's left of it, not the whole unbuilt share.
+            var wreck = w.SpawnStructure(1, "factory", w.FindPlacement(1, "factory").Value, 0.5f);
+            wreck.Hp = 1;
+            s0 = Steel();
+            var bad = Commands.Execute(w, 1, Cmd("type", "sell", "structure_id", wreck.Id, "confirm", true));
+            Check(Ok(bad) && wreck.Dead && Steel() - s0 <= 1, $"a half-built factory at 1 HP refunds almost nothing ({Steel() - s0} steel, was 225)");
+            // A fresh foundation at its starting health (10%) is not "damaged": it refunds in full.
+            var fresh = w.SpawnStructure(1, "factory", w.FindPlacement(1, "factory").Value, 0f);
+            s0 = Steel();
+            Commands.Execute(w, 1, Cmd("type", "sell", "structure_id", fresh.Id, "confirm", true));
+            Check(fresh.Dead && Steel() - s0 == 300, $"a new foundation at its starting health refunds in full ({Steel() - s0} steel)");
+            // A foundation at half its starting health refunds half.
+            var half = w.SpawnStructure(1, "factory", w.FindPlacement(1, "factory").Value, 0f);
+            half.Hp = half.Def.MaxHp * 0.05f;
+            s0 = Steel();
+            Commands.Execute(w, 1, Cmd("type", "sell", "structure_id", half.Id, "confirm", true));
+            Check(half.Dead && Steel() - s0 == 150, $"a foundation at half its health refunds half ({Steel() - s0} steel)");
+
+            // Under fire: refused for 10 s after the last hit, with when it can be sold; then it sells.
+            var pp = w.SpawnStructure(1, "power_plant", w.FindPlacement(1, "power_plant").Value, 1f);
+            w.Hurt(pp, 100, null, 0);
+            var no = Commands.Execute(w, 1, Cmd("type", "sell", "structure_id", pp.Id));
+            Check(!Ok(no) && !pp.Dead && Said(no).Contains("under fire") && Said(no).Contains("10 s"), $"a building an enemy just hit can't be sold: {Said(no)}");
+            Run(w, 6);
+            no = Commands.Execute(w, 1, Cmd("type", "sell", "structure_id", pp.Id));
+            Check(!Ok(no) && !pp.Dead && Said(no).Contains("in 4 s"), $"and the error counts down: {Said(no)}");
+            Run(w, 4.5f);
+            var yes = Commands.Execute(w, 1, Cmd("type", "sell", "structure_id", pp.Id, "confirm", true));
+            Check(Ok(yes) && pp.Dead, $"10 s after the last hit it can be sold: {Said(yes)}");
+            // Unfinished buildings are covered too.
+            var site = w.SpawnStructure(1, "factory", w.FindPlacement(1, "factory").Value, 0.3f);
+            w.Hurt(site, 10, null, 0);
+            Check(!Ok(Commands.Execute(w, 1, Cmd("type", "sell", "structure_id", site.Id))) && !site.Dead, "an unfinished building that was just hit can't be sold either");
+
+            // Derricks can't be sold, whoever holds them; if one is ever removed another way, its site still comes back.
+            var d = w.Derricks.First();
+            d.Team = 1;
+            var nd = Commands.Execute(w, 1, Cmd("type", "sell", "structure_id", d.Id));
+            Check(!Ok(nd) && !d.Dead && d.Team == 1 && Said(nd).Contains("can't be sold") && Said(nd).Contains("steel/s"), $"a held derrick can't be sold: {Said(nd)}");
+            int before = w.Derricks.Count();
+            w.Remove(d);
+            Check(w.DerrickRespawns.Count == 1 && w.Derricks.Count() == before - 1, "removed any other way, a derrick still queues its respawn");
+            Run(w, World.DerrickRespawn + 2);
+            var back = w.Derricks.FirstOrDefault(x => x.Origin.Equals(d.Origin));
+            Check(back != null && back.Team == -1 && w.DerrickRespawns.Count == 0 && w.Derricks.Count() == before, "and a fresh neutral derrick rises on the site");
         }
 
         static void DefenceUpkeep()
