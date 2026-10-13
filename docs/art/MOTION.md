@@ -29,10 +29,16 @@ Units are tiles (1 tile = 1 Unity unit) and seconds. Rotation speeds are in degr
 - **Idle:** The crane idles in a slow ±10° sweep every 8 s, its trolley home and the hook swaying 0.008 on a 3 s sine. The comms dish turns at 30°/s (15 on low power). The amber beacon on the crane's apex blinks once every 1.5 s.
 
 ### `outpost`
-*Forward bunker and ore drop-off.*
+*Forward ore drop-off, refuelling point and lookout (vision 9).*
 
-- **Mechanics:** Created only by deploying an outpost_truck (see that entry). Mining trucks unload on the south drop pad: they reverse onto it and tip their bin. No door.
-- **Idle:** Antenna tip blinks amber once every 2 s.
+- **Mechanics:** A forward ore depot: a dispenser being filled, run by OutpostWorks from the sim's dock steps. Created only by deploying an outpost_truck (see that entry): while its stages rise the lookout's mast is down, and once stage_3 lands it telescopes up 0.24 in 0.6 s with a small overshoot. Mining trucks back up to the hopper on the south edge (no door). When a truck lines up in the bay (Align) the hopper's two team trapdoors (flap_l, flap_r, hinged on the rim's sides) swing open 105° in 0.4 s with a small overshoot; they stay open while it reverses and tips, and slam shut 0.3 s after it starts to pull out. The truck's ore-coloured pour falls into the open hopper. Every 20 ore that leaves the bin (the sim tips 10 every 0.1 s, so about 8 lumps a load) a lump of that ore comes up out of the hopper onto the cleated belt (feed_in) 0.4 s later and rides it up the ramp at 0.7 tiles/s to its head (feed_out); the head drum (drum) turns with the belt, which spins up in 0.3 s and runs down in 0.5 s. At the top each lump is tossed over the stem's lip into the dispenser stem (drop) in 0.35 s. The team flip-top head (head, hinged at its back edge) lifts 55° in 0.2 s as the first lump nears the top, holds open while the ore comes in, and drops shut with two bounces 0.5 s after the last. Every second lump a pressed brick of that ore drops onto the stack behind the stem's window (silo_0..4, pitch 0.085, up to five, tinted to the ore; crystal and uranium glow as they do in the field). Between deliveries the stack is fed away underground: every 3.5 s it slides down a slot in 0.6 s and the bottom brick leaves the window, down to one. The lookout (lookout, on lookout_mast) sweeps ±80° around the bay side at 25°/s with a 1–1.6 s pause at each end; an enemy unit its team can see within 9 tiles draws it round (up to 120°/s) to follow the nearest. The outpost makes its own power (+10), so low power doesn't slow it. Under fog (a render whose team only remembers it) the belt is empty and nothing moves.
+- **`flap_l`:** axis=Z (hinge on the rim side), open_deg=105, open_s=0.4, close_s=0.3, note=flap_r mirrors it; open from Align until 0.3 s into PullOut
+- **`drum`:** axis=X, mode=belt_head, belt_speed=0.7
+- **`head`:** mode=hinge_open_while_fed, open_deg=55, open_s=0.2, close_delay_s=0.5
+- **`silo_0`:** mode=stack, pitch=0.085, note=silo_0..4: a brick per two lumps, fed away every 3.5 s down to one
+- **`lookout`:** axis=Y, mode=sweep_or_track, sweep_deg=80, deg_per_s=25, track_deg_s=120, range=9
+- **`lookout_mast`:** mode=telescope_on_deploy, travel=0.24, s=0.6
+- **Idle:** The trapdoors shut and the belt still; one or two pressed bricks in the stem's window; the lookout sweeping across the bay side and pausing at each end.
 
 ### `power_plant`
 *Generates power.*
@@ -45,94 +51,147 @@ Units are tiles (1 tile = 1 Unity unit) and seconds. Rotation speeds are in degr
 ### `mining_refinery`
 *Turns ore into stockpile.* Produces: mining_truck (free).
 
-- **Mechanics:** The dock door rolls up when a mining truck reverses in and closes after it leaves. While refining, lumps of iron and copper ore ride the belt over the dock from the intake hood to the smelter hood at 0.5 tiles/s, flattened as they pass under the foil crusher roll (the spinner), which turns with the belt. Both smokestacks puff pale smoke from their mouths (stack_0, stack_1), each about every 0.3 s. Out of ore, the belt runs on until it's empty and stops, the roll spins down and the stacks give a thin wisp every few seconds. Low power halves the belt, the roll and the smoke. Dispenses one mining_truck through the dock when it finishes building.
+- **Mechanics:** The dock door rolls up when a mining truck reverses in and closes after it leaves. While refining, lumps of iron and copper ore ride the belt over the dock from the intake hood to the smelter hood at 0.5 tiles/s, flattened as they pass under the foil crusher roll (the spinner), which turns with the belt. Both smokestacks puff pale smoke from their mouths (stack_0, stack_1), each about every 0.3 s. Out of ore, the belt runs on until it's empty and stops, the roll spins down and the stacks give a thin wisp every few seconds. Low power halves the belt, the roll and the smoke. Dispenses one mining_truck through the dock when it finishes building. The truck bay is on the south, through the dock door; when terrain blocks that lane it moves to the first clear side (east, west or north), and the dock's kraft chute then comes out of that wall. Each of those walls has a hatch (hatch_0, hatch_1, hatch_2: a licorice frame round a dark opening and a cream roll-up shutter with a team lip): the shutter facing the bay rolls up in 0.3 s when a truck lines up, the chute waits for it, slides out through the opening to the truck and back, and the shutter rolls down in 0.4 s once the chute is inside. The shutter stays up while the chute is out, so it never passes through a closed one. Drop-offs the game places for you face south, so this is for terrain-blocked bays and the player's own placements; if the sim moves a bay to another wall mid-match (the building that blocked the south lane is destroyed, or one is put on it), the chute draws back, the old hatch shuts, the chute shrinks away and comes up on the new side.
 - **`door`:** mode=rollup, open_s=0.35, close_s=0.5
+- **`hatch`:** mode=rollup, open_s=0.3, close_s=0.4, with_chute=True
 - **`spinner`:** axis=Z, idle_rpm=0, active_rpm=32, spinup_s=0.5
 - **Idle:** Dock lights blink alternately at 1 Hz while a truck is docking.
 
 ### `barracks`
 *Trains infantry.* Produces: rifleman, rocket_soldier, laser_trooper, medic.
 
-- **Mechanics:** Each soldier comes out through the roll-up door (see each infantry unit's emerge entry). The roof heads flip up 15° in sequence while a soldier is training.
-- **`door`:** mode=rollup, open_s=0.25, close_s=0.4
-- **Idle:** The flag sways ±6° on a 1.8 s sine.
+- **Mechanics:** A soldier dispenser, driven by the sim's training queue (BarracksWorks). The clear case under the flip-top head holds four soldiers stacked like candy: raw dough at the bottom, primed in the middle, finished with a team helmet at the top. While a soldier trains the stack (stack_lo to stack_hi) rises with its progress, each figure baking as it climbs, a fresh lump of dough swells in at the bottom, and the amber oven strip (oven) at the case's foot glows. 1.5 s before the soldier is out, the top figure rises out of the case into the head; at 1.25 s the head snaps open, and at 1.1 s it spits the soldier out of its mouth (pop), full size and tucked into a ball (0.65 of its height). It somersaults 540° on a ballistic arc to the ground in front (land) in 0.55 s, kicking up a puff of dust, rolls on to its feet (exit) through another 180° with a squash, and stands up as the real unit appears there. The head drops shut. No door.
+- **`head`:** mode=flip_top, open_s=1.25 s before the soldier is out, close_s=after the spit
+- **`stack`:** mode=rise_with_progress, slots=4
+- **`soldier`:** mode=spit_tuck_roll, spit_s=0.55, roll_s=0.35, spin_deg=720, tuck=0.65
+- **Idle:** The flag on the pole (flag) is cloth: it streams downwind and ripples, harder in a stronger wind.
 
 ### `factory`
 *Builds vehicles.* Produces: mining_truck, repair_truck, outpost_truck, scout_buggy, light_tank, heavy_tank, artillery, laser_tank.
 
-- **Mechanics:** While building, the team wrapper band pulses brighter by 10%. Each finished vehicle comes out through the roll-up door. The door takes 0.35 s to open.
+- **Mechanics:** A Pez dispenser lying on its side: the head house over the door is its flip-top head, the tray behind it the candy channel. It runs from the item the factory is making (f = progress / build time, so low power halves it with the sim). A hull blank rises onto the tray at the back (f 0 to 0.12). The gantry (gantry node, on the tray walls) dips its hoist over the press and picks up a team head (hook_head takes die_head's place, f 0.09), carries it over the hull (f 0.14 to 0.3), lets it down on its cable and sets it on (blank_head, f 0.44) with welding sparks every 0.2 s, and lifts the hook by f 0.55. Then the spring-loaded pusher (pusher; the cream spring node stretches to stay on it) feeds the hull up the tray into the head house, reaching the chamber mouth at f 1, the gantry riding with it to the end of its runway. On trained the hull is inside, the pusher snaps back and the spring recoils (a damped spring, about 12% overshoot), cocked for the next. A cancelled item's hull is dropped and its head goes back on the die. While producing the press ram strokes 0.25 every 1.5 s (fall 0.1 s, dwell, slow rise); each stroke restocks the die, indexes the foil wrapper roll (spool) 36°, puffs steam off the die and pale smoke from the stack (stack_0). Low power: a stroke every 3 s with a stall on the way up, sparks every 0.4 s. The flip-top head (head node, hinged at its back edge) lifts up to 22° as the roll-up door opens and drops back with a bounce when it closes. Roll-out anticipation (lamps, roof vents, the door open before the unit appears, the dark bay) is WorldView's RollOut. A remembered factory under fog shows idle; a burning factory's stack doesn't puff.
 - **`door`:** mode=rollup, open_s=0.35, close_s=0.5
-- **Idle:** Exhaust stack puffs every 3 s.
+- **`head`:** mode=hinge_with_door, open_deg=22
+- **`gantry`:** mode=slide_z_with_progress, speed=1.6
+- **`hoist`:** mode=drop_on_cable, speed=0.8
+- **`pusher`:** mode=slide_z_with_progress, push_from=0.55
+- **`spring`:** mode=scale_y_to_pusher
+- **`ram`:** mode=stroke, travel=0.25, period_s=1.5, low_power_period_s=3
+- **`spool`:** axis=Z, index_deg=36
+- **Idle:** The gantry parked over the press with its hook up and a head waiting on the die, the pusher cocked, the line empty; the stack gives a thin wisp every 3 s (every 4 to 7 s on low power).
 
 ### `electronics_plant`
-*Turns copper into circuits.*
+*Turns copper and steel into circuits.*
 
-- **Mechanics:** The sour-acid panels scroll a circuit-trace UV pattern while producing. The roof vents spin (no named node; use a UV or shader effect).
-- **Idle:** Panels flicker softly.
+- **Mechanics:** A circuit-candy line, one cycle per circuit the sim makes (1 s; 2 s on low power, which halves production). Each cycle the pick-and-place carriage (gantry, a little team head) dips its nozzle at the copper feeder, carries the chip (held) along its bridge, pecks it onto the board under it (chip_N appears, with a solder glint) and runs home; then the belt indexes one slot in 0.3 s: a blank drops out of the magazine, the boards (board_N) move on through the reflow oven, whose vent (fume) puffs a wisp of solder fumes, and the last goes into the dispenser stem, where the finished boards stack up behind its window (mag_N). Every fifth board the team flip-top head (head, hinged at its back edge) pops open 40° in 0.1 s, the stack empties from the top, a board (candy) flips out over the lip and away, and the head drops shut with a bounce. The copper reel (reel) turns at 40°/s while the line runs; the roof fan turns at 90 rpm while the plant has power (45 on low power). Starved (Working false: not enough copper or steel), the line finishes the board in hand and parks, and what ran out shows: the reel's copper (winding) runs down to the hub, the magazine's blanks are gone. Glow is state: the clean-room panes and skylight (panes) are lit while it runs, at half on low power, and stand by at 0.22 while it's starved; the signal tower's acid lamp (lamp_run) is steady while it runs and blinks at 2 Hz on low power; its amber lamp (lamp_wait) blinks at 0.9 Hz while it waits for inputs. All dark until it's built; under fog, neutral and still.
+- **`gantry`:** mode=shuttle_z, cycle_s=1 (2 on low power)
+- **`nozzle`:** mode=dip, pick_and_place=True
+- **`head`:** mode=hinge_pop, open_deg=40, open_s=0.1, every_boards=5
+- **`reel`:** axis=Z, deg_per_s=40
+- **`fan`:** axis=Y, rpm=90 (45 on low power)
+- **Idle:** Starved: parked, panes at standby, the amber lamp blinking; the fan still turns while it has power.
 
 ### `optics_lab`
 *Turns crystal into lenses.*
 
-- **Mechanics:** The spinner (prism) floats and turns at 20 rpm, bobbing ±0.04 on a 2 s sine. While producing, it speeds up to 60 rpm and casts cyan caustics on the dome.
-- **`spinner`:** axis=Y, idle_rpm=20, active_rpm=60, spinup_s=1.0, bob=0.04
-- **Idle:** Prism rotates and bobs.
+- **Mechanics:** An observatory that grinds lenses, driven by OpticsWorks from the sim's Working (it had crystal to grind) and its team's power. While it works, the team dome (head) tracks the sky at 3°/s and every 9 to 14 s slews 40–120° to a new star at 25°/s, the telescope (scope) nodding to a new height (−12° to +8°) at 12°/s. The dome turns only through the 260° arc that keeps the telescope 50° clear of the dispenser's bearing either side (it reaches the dispenser within 29°), reversing at the arc's ends, and the telescope looks down (parks) only at home, so the barrel never passes through the dispenser, the hopper or the bench. The light (light, a cyan rod from the collimator on the drum) reaches out to the glass prism in 0.2 s, then the prism lights and fans it into three rays (rays) onto the lens blanks on the turntable (lathe), which turns at 80 rpm. Each lens finished (0.5 a second, the recipe's rate) pops out of the dispenser on the left, a Pez stem of lens candies: its team head (cap, hinged at the back) snaps open 40° in 0.12 s, the top lens (candy) rises 0.1 into the throat with a cyan glint and slips out over the lip, then the head drops shut with a bounce while the stack (stack) pushes the next lens up 0.12 into its place (1.1 s in all). Out of crystal, the rays and then the light go out, the turntable coasts to a stop, the dome turns home at 20°/s the way it came and the telescope parks, pointing down, its objective lens dim. On low power everything runs at half speed (a lens every 4 s), the dome turns in jerks, and the light and rays brown out: a 4 Hz flicker with a dropout every 2.5 s. A lab remembered under fog shows dark and still.
+- **`head`:** axis=Y, track_deg_per_s=3, slew_deg_per_s=25, slew_every_s=9–14, arc_deg=260, clear_of_dispenser_deg=50
+- **`scope`:** axis=X, nod_deg=−12 to +8, parked_deg=40
+- **`light`:** mode=scale_on_off, s=0.2
+- **`rays`:** mode=scale_on_off, s=0.2
+- **`lathe`:** axis=Y, active_rpm=80, idle_rpm=0
+- **`cap`:** mode=hinge_pop, open_deg=40, open_s=0.12, every_s=2
+- **`stack`:** mode=push_up, step=0.12
+- **Idle:** Dome home, telescope parked, light out, turntable still.
 
 ### `enrichment_plant`
-*Turns uranium into plasma feedstock.*
+*Turns uranium into plasma.*
 
-- **Mechanics:** Each centrifuge's acid bands chase upward (emission scrolls) while producing. Ambient centrifuge vibration is 0.003 at 25 Hz.
-- **Idle:** Bands breathe slowly.
+- **Mechanics:** A centrifuge hall, one cycle per plasma the sim makes (2.5 s; 5 s on low power, which halves production). The cascade of six squat rotors (rotor_0..5, foil drums with team caps) spins under the skylight while the plant works: up to 450°/s in about 1.5 s, at half speed on low power, where it also sags to a third for half a second every 2.6 s as the supply browns out; starved, it coasts to a stop over about 3 s. Each cycle a slug of uranium runs out of the hopper: the heap (ore) slumps 0.015 and settles, and the sight glass on the hopper's pedestal (sight) flashes as it passes. At the end of the cycle a magenta plasma brick comes up into the dispenser stem from below and pushes the stack up a slot (mag_0..3, pitch 0.12), and the exhaust vent (vent) puffs. Every fourth brick the team flip-top head (head, hinged at its back edge) pops open 40° in 0.1 s, the stack empties from the top, a brick (candy) flips out over the lip and away, and the head drops shut with a bounce. Starved (Working false: out of uranium), the cycle in hand finishes, the rotors coast down, the hopper's heap drains out of sight in 1.5 s and the amber lamp (lamp_wait) blinks at 0.9 Hz. Glow is state: the sight glass sits at 0.45 while ore runs (0.3 on low power) and flashes to full with each slug, dark while starved; the uranium itself is unlit ore. All dark until it's built; under fog, neutral and still.
+- **`rotor_0`:** axis=Y, deg_per_s=450 (225 on low power), spinup_s=1.5, coast_s=3, note=rotor_1..5 the same, each a few % faster
+- **`ore`:** mode=slump_drain, slump=0.015, drain=0.14
+- **`mag_0`:** mode=push_up, pitch=0.12, note=mag_0..3: the stack in the stem
+- **`head`:** mode=hinge_pop, open_deg=40, open_s=0.1, every_bricks=4
+- **Idle:** Starved: the cascade still, the hopper empty, the amber lamp blinking.
 
 ### `composite_foundry`
 *Makes stealth composite.*
 
-- **Mechanics:** Grape vents puff dark, non-glowing smoke every 2 s while producing. No moving nodes.
-- **Idle:** Heat shimmer over the vents.
+- **Mechanics:** Steel and crystal in at the back, composite out at the front. One press cycle for every composite the sim makes: 2 s at full power, 4 s on low power. Each cycle a steel blank (blank) slides out of the furnace house's feed slot (press_feed) onto the press bed (press_bed) in 0.32 s; the ram drops fast, slows for the last tenth of its 0.3 stroke and clamps it; its seam glows hot and steam hisses out at both sides of the platen, and under it the blank fuses to black composite. The ram lifts, the tile slides along the rails onto the stack in the magazine (press_out) and the stack (stack) steps down a tile with it, 0.06. The grape vents (vent_0, vent_1) puff pale smoke one after the other after each stroke. The furnace's amber peephole glows while it works (at about half on low power). Out of steel or crystal the press finishes its cycle and stops with the ram up and the bed empty, the peephole cools over 1.5 s and the vents give a thin wisp every 3 to 6 s. A burning foundry gives no steam or puffs.
+- **`ram`:** mode=press, stroke=0.3, down=to the blank on the bed, cycle_s=2 (4 on low power)
+- **`blank`:** mode=path, path=press_feed > press_bed > press_out, material=steel until fused, then licorice
+- **`stack`:** mode=step_down, step=0.06
+- **Idle:** Peephole dark; a thin wisp from a vent every 3 to 6 s.
 
 ### `fusion_reactor`
 *High-output power.*
 
-- **Mechanics:** The spinner (magenta core and its inner ring) spins at 45 rpm and tumbles slowly, rotating 10°/s on X. Under high load it spins up to 120 rpm and the ring emission rises. Destroyed: before collapsing, the core shrinks to 0 over 0.5 s and fires a large magenta shockwave effect.
-- **`spinner`:** axis=Y, idle_rpm=45, active_rpm=120, spinup_s=2.0, tumble_x_deg_s=10
-- **Idle:** Core spins and tumbles.
+- **Mechanics:** A tokamak. While it has plasma to burn, the plasma ring in the vessel (plasma) circulates at 10 to 30 rpm with the team's power load, its helical strands crawling round under the coils. Every 3.2 s with nothing drawing (1.3 s at full load) the injector fires a pellet: the magazine's spring steps the stack (pellets) up one pellet into the head in 0.16 s, a small magenta zap leaves the muzzle (port) for the ring and the plasma flares. The steam generator puffs from its vent (vent_0), faster under load. Out of plasma the ring quenches (flickers and fades over 1.5 s, coasts to a stop over 2.5 s), the steam gives a last puff and the stack sinks into the magazine's base (1.2 s), leaving the cage empty. When plasma is back the stack rises (1 s) and the central solenoid strikes the plasma: three magenta arcs 0.12 s apart from its cap into the ring, a flash, and it spins up over 2 s. Unfinished it is dark with an empty magazine, so finishing one is its first light.
+- **`plasma`:** axis=Y, rpm=10–30 with load, spinup_s=2, coast_s=2.5, quench_s=1.5
+- **`pellets`:** mode=step_up, pitch=0.085, step_s=0.16, shot_s=3.2–1.3 with load, empty=sinks 0.68 in 1.2 s
+- **Idle:** Plasma circulates; a pellet every few seconds.
 
 ### `airfield`
-*Builds and rearms aircraft.* Produces: gunship, stealth_bomber.
+*Builds and rearms aircraft.* Produces: gunship, transport_chopper, stealth_bomber.
 
-- **Mechanics:** The lift node starts at y=−0.6 and rises to 0 to present each new aircraft (1.2 s). Landing aircraft descend onto the lift, which lowers 0.6 for rearming (3 s) and rises again. The runway lights chase toward −Z at 3 Hz during takeoff.
-- **`lift`:** down_y=-0.6, rise_s=1.2, lower_s=0.8
-- **Idle:** Tower beacon blinks every 1.5 s.
+- **Mechanics:** The lift (deck flush in a collar with the team landing ring, in the middle of the runway) is where new and landing aircraft are. While an aircraft is in this airfield's queue the approach lights (approach_0..4: four amber chevrons pointing −Z and a threshold bar) glow a steady low amber and the tower radar (radar) turns at 120°/s (40°/s idle, eased between). 1.5 s before the aircraft is done the lift goes down its well (−0.6 in 1.2 s, eased); when it's done the aircraft stands on the deck and rides it up (0.7 s, eased), then lifts off with its usual spawn ease. If the lift wasn't sent down (another airfield's queue, a fogged view) the aircraft just lifts off the deck. From 2 s before until 1.5 s after a launch the approach lights chase toward −Z (a sweep every 0.5 s) and the tower beacon blinks at 2 Hz. Low power: the lift and radar run at half speed, the chase sweeps once a second, every glow is halved and the beacon blinks every 3 s. The windsock (windsock) turns about its pole to point downwind and droops as the wind drops.
+- **`lift`:** down_y=-0.6, lower_s=1.2, rise_s=0.7, lead_s=1.5, ease=smoothstep
+- **`radar`:** axis=Y, idle_deg_s=40, producing_deg_s=120
+- **`approach`:** chase=−Z, sweep_s=0.5, from_s=-2.0, to_s=1.5
+- **`windsock`:** mode=downwind, droop_deg=65 calm to 10 in wind
+- **Idle:** The lights are dark, the radar turns at 40°/s, the tower beacon blinks once every 1.5 s and the windsock follows the wind.
 
 ### `radar_dome`
-*Reveals the minimap.*
+*Sees 16 tiles, finds stealth units in that range and warns of enemy aircraft out to 28.*
 
-- **Mechanics:** The spinner (dish) yaws at 12 rpm. When it detects a new enemy, it snaps to that direction at 180°/s, holds for 1 s, then resumes rotating. When power is low, the dish stops and the beacon goes out.
-- **`spinner`:** axis=Y, idle_rpm=12, active_rpm=12, spinup_s=0.5
-- **Idle:** The amber beacon blinks every 1 s.
+- **Mechanics:** The search antenna on top of the dome (the spinner; its beam looks toward the feed marker on the horn) is driven by RadarWorks, not by its rpm: while the base has power it sweeps clockwise at 12 rpm. When a new contact comes into this dome's range (an enemy aircraft on radar within 28 tiles, or a stealth unit it has found within 16) it breaks off and swings onto it (up to 180°/s, eased), follows it for 1 s, then spins back up into the sweep over 0.5 s. On low power (the sim switches the air search off; the dome still finds stealth) it coasts to a stop, and every 2.5 to 4.5 s the motor catches and throws it 20–30° round before it stalls again. Still while building.
+- **`spinner`:** axis=Y, idle_rpm=0, active_rpm=0, mode=sweep, sweep_rpm=12, slew_deg_s=180, hold_s=1
+- **Idle:** The amber beacon on the antenna blinks once a second while it sweeps, double-flashes while the dome holds contacts, and is dark on low power.
 
 ### `gun_turret`
 *Ground defence cannon.*
 
-- **Mechanics:** The turret yaws at 120°/s and fires when within 5° of the target. Recoil is 0.1 over 0.05 s with a 0.3 s return. The turret has 360° of rotation.
+- **Mechanics:** A revolver cannon under a team flip-top head. The turret has 360° of rotation and follows the sim's aim (at least 240°/s in the view, so the shot leaves along the barrel); the sim fires within 20° of the target, every 1.3 s. Shots and flashes leave from the brick muzzle at the barrel's far end. On each shot the barrel recoils 0.1 into its sleeve over 0.05 s and returns over 0.3 s, pressing the recoil spring round it against the sleeve (spring, scaled along the barrel to the gap the collar leaves). The drum (six candy-brick rounds) indexes one chamber, 60°, starting 0.05 s after the shot and taking 0.2 s, turning the fired chamber toward the ejection side (the eject marker) and the next round up to the barrel; halfway through, the spent round's foil wrapper flicks out of that side and tumbles to the ground. Low power doesn't slow it.
 - **`turret`:** yaw_speed_deg=120, yaw_limit_deg=360, idle_scan=True
 - **`barrel`:** recoil=0.1, recoil_out_s=0.05, return_s=0.3, pitch_deg=0
-- **Idle:** Slow ±45° scan every 5 s.
+- **`drum`:** axis=Z, index_deg=60, delay_s=0.05, index_s=0.2
+- **`spring`:** mode=scale_y_with_recoil
+- **Idle:** Holds its aim 3 s after a fight, settles forward, and now and then (every 20–45 s) glances up to 24° to one side for 2–3 s.
 
 ### `sam_site`
 *Anti-air missile launcher.*
 
-- **Mechanics:** The turret yaws at 200°/s. The barrel (missile rack) pitches between −10° and −70° to lead air targets. It fires 4 missiles 0.15 s apart, and the rack kicks back 0.04 per launch. Reload is 3 s: the rack dips to −5° and comes back up.
+- **Mechanics:** A twin-pod launcher on a jacked turntable. The turret yaws at 200°/s to the sim's aim. The rack (barrel: the elevation axle with a two-tube pod on each end) rests 25° nose-up; while the site is engaging it raises to the air target it faces, 10° to 70° (eased, up to 140°/s), holds that 3 s after the last launch, then settles back. The search radar (radar) turns at 20 rpm (10 on low power); on contact it carries on round to face forward and locks there. Each launch (one per sim shot, every 1.6 s) empties the next loaded tube, the pods taking turns, top tubes first: its round (missile_N, pivot at the mouth, team nose out) drops out of sight, the shot and its flash leave from that mouth with a cream smoke trail, smoke blows out of the pod's back, a dust ring runs out on the ground and the rack bucks 3° (nose up from a top tube, down from a bottom one). No recoil. 2.4 s later a new round slides up into the tube over 0.45 s. Offline (upkeep unpaid) the rack lowers to 4° and the radar stops.
 - **`turret`:** yaw_speed_deg=200, yaw_limit_deg=360, idle_scan=True
-- **`barrel`:** recoil=0.04, recoil_out_s=0.03, return_s=0.15, pitch_deg=-25
-- **Idle:** Rack rests at −25° and tracks the sky in a slow sweep.
+- **`barrel`:** recoil=0, pitch_deg=-25, pitch_range=10–70° nose-up toward the target, kick_deg=3.2
+- **`radar`:** axis=Y, rpm=20, low_power_rpm=10, lock=faces forward while tracking
+- **`missile`:** count=4, hidden_z=-0.16, reload_s=2.4, slide_s=0.45
+- **Idle:** The rack rests at 25° nose-up and the radar sweeps round at 20 rpm; the turret glances aside now and then.
 
 ### `laser_tower`
 *Beam defence.*
 
-- **Mechanics:** The turret (collar) yaws at 180°/s. Charge is 0.3 s, during which the pylon coils light from bottom to top. The beam lasts 0.6 s and the prism tip spins 360° during it. Cooldown is 1.0 s. No recoil.
+- **Mechanics:** A searchlight on a coil pylon. The turret (the yoke on its turntable) yaws at 180°/s to follow the sim's aim. The emitter head (the barrel node, on trunnions between the yoke's arms) pitches toward the target's live position, −30° to +40° at up to 120°/s: down at tanks, up at aircraft; after a fight it holds 3 s, then levels off at 30°/s. The shot charges in the last 0.4 s before it's due (the 1.1 s cooldown after the last shot, while it's engaged): the four pylon coils (coil_0 at the bottom .. coil_3) light one after another from the bottom, to 1.3, and the lens brightens. On the shot the cyan beam leaves the lens, the lens flashes and fades over 0.3 s, the coils drain from the top down in 0.25 s and the head's rear vent breathes out a wisp of heat. A charge that isn't fired bleeds away over 0.4 s. No recoil. The coils cast light (GlowCaster): a cyan point light (no shadows) halfway up the coils on their near side lights the cream pylon, the pad and nearby units, and an additive pool splashes the pad and the ground round it (1.2 tiles); it follows the coils' glow, 0.53–0.59 on the idle breath, rising gently to about 0.6 as the coils fill and to about 0.66 in the flash of the shot (the brightest moment), then down with the drain. Low power halves every glow and the light; an offline tower (upkeep unpaid) is dark and still and casts no light, and a tower remembered under fog casts none either. Only the 3 nearest the middle of the view get a real light (handed over with 0.35 s fades); every tower keeps its pool.
 - **`turret`:** yaw_speed_deg=180, yaw_limit_deg=360, idle_scan=True
-- **`barrel`:** recoil=0, recoil_out_s=0.05, return_s=0.35, pitch_deg=0
-- **Idle:** Coils breathe on a 2.5 s sine; the prism turns at 6 rpm.
+- **`barrel`:** mode=trunnion_pitch, pitch_min_deg=-30, pitch_max_deg=40, deg_per_s=120, recoil=0
+- **`coil`:** mode=charge_glow, charge_s=0.4, peak=1.3, drain_s=0.25, light=GlowCaster cyan, 2.8 x glow, range 2.4, pool 1.2
+- **Idle:** The head faces forward and glances now and then (PezMotion's idle turret). The coils breathe on a 2.5 s sine (glow 0.25–0.45) and the lens glows at 0.5.
+
+**Every structure, emerge:** Rises out of its pad in stages; nothing appears instantly. stage_0 (pad) lifts from y=-0.15 to 0 during build progress 0–10%. stage_1, stage_2 and stage_3 each start at local y = -(stage height) and rise to 0 with ease-out cubic over progress 10–45%, 45–75% and 75–95%. The opaque terrain and pad hide whatever is still below ground. stage_3 ends with a 4% Y-scale overshoot that settles in 0.15 s (spring-loaded). Functional nodes (turret, spinner, door, lift) come last, at 95–100%: a turret rises 0.3 out of its housing, then a spinner spins up from 0 rpm.
+
+**Every structure, remove:** Destroyed: shake ±0.03 for 0.4 s, then poof: a soft cream cloud bursts out of the building while it swells 8% for 0.06 s and pops to nothing in 0.14 s. A rubble decal fades in under it. Sold: dust at the footprint corners, then the same poof. Nothing sinks into the ground.
+
+### `deep_mine`
+*Pumps ore from the deep deposit under it straight into the stockpile.*
+
+- **Mechanics:** A headframe over a shaft, run by DeepMineWorks from the sim (Working: the deposit has ore and the mine is built; the deposit's Amount / Initial; the team's LowPower). One trip of the skip every 4 s while it works (16 ore at the sim's 4/s; every 8 s on low power, which halves the rate): the skip (dm_skip) hauls a load of ore candy (dm_load) up out of the shaft (1.1 up in 1.4 s, eased at both ends), its bucket (dm_bucket, pivoted at its back bottom edge) tips 58° at the top so the ore pours down the chute into the bin (dm_heap bobs 0.02 and a puff of ore-tinted dust rises), and it goes back down in 1.3 s. The winding drum (dm_drum) and the team sheave (dm_sheave) are driven by the skip's travel through the rope (the rope's radius on each), so they spin up, slow and reverse with it; the rope below the sheave (dm_rope) stretches to the skip's eye (dm_eye). On low power the winder labours: now and then, on the way up, the skip slows to a crawl for half a second. The ventilation fan (dm_fan) turns at 540°/s while it works (270 on low power) and coasts down when it stops. The dispenser stem shows what's left: six ore bricks (dm_res_0..5, one per sixth of the deposit) on a spring (dm_spring) under its follower (dm_follower). Each time the deposit drops below a sixth the team flip-top head (dm_head, hinged at its back edge) snaps open 48° in 0.1 s, the top brick (dm_candy) rises out and flips over the front lip, the rest ride up a slot on the spring, and the head drops shut with a bounce. Dry, the trip in hand finishes and the skip parks in the shaft, the bin's heap drains out of sight in 1.5 s, the stem is empty and the head hangs open 34°. Glow is state: the amber lamp (dm_lamp) is dark while the deposit holds up, pulses at 0.5 Hz once it runs low (the sim's running-low warning, 5 minutes left; half as bright on low power) and blinks at 0.9 Hz when it's dry. The ore parts are tinted to the deposit's ore (crystal and uranium glow, as they do in the field). The neutral derrick wears the same model: no deposit, so its stem stays full and its ore is iron (it pays steel); its hoist and fan run while a team holds it, with no power needed. All dark until it's built; under fog, neutral and still.
+- **`dm_skip`:** mode=hoist, rise=1.1, trip_s=4 (8 on low power), up_s=1.4, down_s=1.3
+- **`dm_bucket`:** mode=tip, tip_deg=58, tip_s=0.24, hold_s=0.2
+- **`dm_sheave`:** mode=rope_driven, note=turns with the skip: travel / 0.262 rad; dm_drum the same at 0.128
+- **`dm_fan`:** axis=Z, deg_per_s=540 (270 on low power), coast_s=3
+- **`dm_res_0`:** mode=reserve_stack, bricks=6, note=dm_res_0..5, one per sixth of the deposit; dm_spring and dm_follower under them
+- **`dm_head`:** mode=hinge_pop, open_deg=48, open_s=0.1, hang_open_deg=34
+- **Idle:** Working: the skip running every 4 s. Dry: the skip parked in the shaft, the bin empty, the stem empty with its head hanging open, the amber lamp blinking.
 
 **Every structure, emerge:** Rises out of its pad in stages; nothing appears instantly. stage_0 (pad) lifts from y=-0.15 to 0 during build progress 0–10%. stage_1, stage_2 and stage_3 each start at local y = -(stage height) and rise to 0 with ease-out cubic over progress 10–45%, 45–75% and 75–95%. The opaque terrain and pad hide whatever is still below ground. stage_3 ends with a 4% Y-scale overshoot that settles in 0.15 s (spring-loaded). Functional nodes (turret, spinner, door, lift) come last, at 95–100%: a turret rises 0.3 out of its housing, then a spinner spins up from 0 rpm.
 
@@ -287,10 +346,10 @@ Units are tiles (1 tile = 1 Unity unit) and seconds. Rotation speeds are in degr
 *Basic infantry.* Built at **barracks**.
 
 - **Locomotion:** biped · max 1.1 t/s · accel 4.0 t/s² · decel 6.0 t/s² · turn 360°/s · turns in place: yes
-- **Mechanics:** Biped: it turns in place almost instantly. The body bobs 0.02 at 2× its stride frequency while walking. A 4-soldier squad spreads out in a diamond 0.3 apart. The turret node (arms) aims at 400°/s and can aim ±70° from the body heading before the body turns. The barrel (rifle) recoils 0.02 per shot in 3-round bursts. When it is shot it goes prone: root lowers 0.25 and pitches 80° over 0.3 s.
+- **Mechanics:** The candy trooper every soldier is built on (build_models.candy_trooper): a toy on short legs in licorice boots, a smoke-plastic uniform with kraft webbing, a big cream head under the team helmet, team shoulder boards, a kraft pack; the rifle is +40% for the silhouette. Biped: it turns in place almost instantly. Walking (Gait) drives the leg_l / leg_r nodes from the hips: the stride follows the ground it really covers, the swinging leg tucks, the hips drop while both feet are planted (two bobs per stride), sway over the planted foot and lean into the walk and into turns. The turret node is the torso: it twists at the waist to aim at 400°/s, up to ±70° from the body heading before the body turns. The arms node carries both arms and the rifle, authored lowered (16° down, a low ready). With a target in range (the sim is tracking one) it brings the rifle up level in 0.18 s, holds it there 2.5 s after the last shot and lowers it over 0.45 s; the head tips to the sights, cheek on the stock. Each shot: the muzzle flash and the tracer leave from the muzzle node at the rifle's tip, the barrel (rifle) slides back 0.025, and the arms kick the muzzle up 9° and settle in about 0.2 s. From the barracks: spat out of its head tucked into a ball, it somersaults, lands, rolls to its feet and stands up at the exit, where the real unit takes over at the same size, facing the same way, and walks off to its rally point. Boarding a transport it slides in and shrinks away; unloading it reappears beside it.
 - **`turret`:** yaw_speed_deg=400, yaw_limit_deg=70, idle_scan=True
-- **`barrel`:** recoil=0.02, recoil_out_s=0.02, return_s=0.05, pitch_deg=0
-- **Idle:** Weight shift: hips sway 0.01 on a 3 s sine; scans with the arms ±20°.
+- **`barrel`:** recoil=0.025, recoil_out_s=0.02, return_s=0.1, pitch_deg=0
+- **Idle:** Weight shift: the hips sway 0.008 over the feet on a 3 s sine and breathe. The head glances about (a look to one side for 1.2–2.4 s, back to the front for 2–5 s, ±42°, ±18° walking); now and then (every 20–45 s) the torso turns with it, ±24°.
 - **Emerge:** Spawns 0.4 behind the barracks door. The door rolls up (0.25 s) and the soldier walks out along −Z for 1.0 tile, then takes its rally order. The door closes after the last soldier in the batch.
 - **Remove:** Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540°/s) and fades out over 0.6 s. The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then goes poof.
 

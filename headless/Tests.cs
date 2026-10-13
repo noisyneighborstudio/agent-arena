@@ -31,6 +31,17 @@ namespace Pez.Headless
 
         static bool Ok(JObj r) => r["ok"] is bool b && b;
 
+        /// <summary>A port nothing is listening on, for a test's API server: fixed ports collided when two copies of the suite
+        /// ran on one machine (CI and a developer's run), failing CI with "address already in use".</summary>
+        static int FreePort()
+        {
+            var l = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+            l.Start();
+            int port = ((System.Net.IPEndPoint)l.LocalEndpoint).Port;
+            l.Stop();
+            return port;
+        }
+
         public static int Run()
         {
             RepairTruck();
@@ -57,6 +68,11 @@ namespace Pez.Headless
             RetreatOncePerWound();
             NoDancing();
             RunOver();
+            NoSpinBesideParkedTruck();
+            NoSpinBetweenTanks();
+            MovementGate();
+            DropOffsFaceTheirBays();
+            ViewCopyReplaysOrders();
             GroupMove();
             ResignWhenStalled();
             IdleSeatsResign();
@@ -312,6 +328,149 @@ namespace Pez.Headless
             Check(w.Errors == 0 && w2.Errors == 0 && w3.Errors == 0 && w4.Errors == 0 && w5.Errors == 0, $"no sim errors ({w.LastError ?? w2.LastError ?? w3.LastError ?? w4.LastError ?? w5.LastError})");
         }
 
+        static void NoSpinBesideParkedTruck()
+        {
+            // A truck that went idle mid-drive stops counting as moving, and a soldier never dodges a parked vehicle: one
+            // walking to a spot beside it used to step aside, walk back and spin round on the spot forever.
+            var w = new World(2, 7, 80);
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var road = hq.Center + new Vec2(10, 12);
+            var truck = At(w.SpawnUnit(0, "mining_truck", hq), road);
+            w.SetOrder(truck, Order.Move, road + new Vec2(6, 0)); truck.Facing = 0;
+            Run(w, 0.5f);
+            w.SetOrder(truck, Order.Idle, truck.Pos);
+            Check(!truck.Moving, "a unit ordered to stop isn't left moving");
+            truck.Moving = true; // as rooms saved before rules 37 have it
+            var at = truck.Pos;
+            var walker = At(w.SpawnUnit(0, "rifleman", hq), at + new Vec2(1.2f, 1.5f));
+            var spot = at + new Vec2(1.3f, 0.4f); // just ahead of the truck, inside its path
+            w.SetOrder(walker, Order.Move, spot);
+            int flips = 0; float was = walker.Facing;
+            for (int i = 0; i < 8 * World.TickRate; i++)
+            {
+                w.Step();
+                float df = MathF.Abs(walker.Facing - was); if (df > MathF.PI) df = 2 * MathF.PI - df;
+                if (df > 0.8f) flips++;
+                was = walker.Facing;
+            }
+            Check(walker.Order == Order.Idle && flips <= 2 && truck.Pos.Equals(at), $"a soldier walks to a spot beside a parked truck and stops ({walker.OrderName} at {walker.Pos} for {spot}, {flips} snap turns)");
+        }
+
+        static void NoSpinBetweenTanks()
+        {
+            // Two of its own tanks drive past a soldier at right angles. It gets out of both their ways in one go, without
+            // stepping out of one's path into the other's and back every tick (spinning on the spot, as it used to).
+            var w = new World(2, 7, 80);
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var at = hq.Center + new Vec2(12, 12);
+            var soldier = At(w.SpawnUnit(0, "rocket_soldier", hq), at);
+            var a = At(w.SpawnUnit(0, "heavy_tank", hq), at + new Vec2(-2.2f, 0.3f));
+            var b = At(w.SpawnUnit(0, "light_tank", hq), at + new Vec2(0.3f, -2.2f));
+            w.SetOrder(a, Order.Move, at + new Vec2(8, 0.3f)); a.Facing = 0;
+            w.SetOrder(b, Order.Move, at + new Vec2(0.3f, 8)); b.Facing = MathF.PI / 2;
+            int flips = 0; float was = soldier.Facing;
+            for (int i = 0; i < 5 * World.TickRate; i++)
+            {
+                w.Step();
+                float df = MathF.Abs(soldier.Facing - was); if (df > MathF.PI) df = 2 * MathF.PI - df;
+                if (df > 0.8f) flips++;
+                was = soldier.Facing;
+            }
+            Check(!soldier.Dead && flips <= 3 && !w.Events.Any(e => e.Type == "crushed"), $"a soldier between two tanks driving past gets out of both ways without spinning ({flips} snap turns, at {soldier.Pos})");
+        }
+
+        /// <summary>The drop-off's trucks back into its door side: its bay has a clear lane and the building's door faces it.</summary>
+        static bool DoorBay(World w, Entity s)
+        {
+            var (_, _, facing, laneOk) = w.Bay(s);
+            return laneOk && MathF.Abs(w.DoorFacing(s) - facing) < 0.001f;
+        }
+
+        static void DropOffsFaceTheirBays()
+        {
+            // Placing by itself (the AI, a build command without x,y, a suggested spot), a drop-off's trucks back into its door side.
+            // (Rules 41 did it by keeping the bay on the south side and placing drop-offs where the south lane is clear; since the
+            // economy audit, Rules 43, the bay opens on the clear side nearest the ore and the building turns its door to it.)
+            // A player's own x,y is still accepted wherever CanPlace allows it.
+            var w = new World(2, 7, 80);
+            var def = Defs.Get("mining_refinery");
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            Int2? sideSpot = null;
+            for (int y = hq.Origin.Y - 6; y <= hq.Origin.Y + 12 && sideSpot == null; y++)
+                for (int x = hq.Origin.X - 6; x <= hq.Origin.X + 12 && sideSpot == null; x++)
+                {
+                    if (w.CanPlace(0, "mining_refinery", x, y) != null) continue;
+                    var (_, _, f, ok) = w.Bay(new Int2(x, y), def);
+                    if (ok && MathF.Abs(f - -MathF.PI / 2) > 0.001f) sideSpot = new Int2(x, y);
+                }
+            Check(sideSpot.HasValue, $"CanPlace still accepts a refinery whose south lane is blocked (at {sideSpot}): a player's x,y is unchanged");
+            for (int i = 0; i < 4; i++)
+            {
+                var spot = w.FindPlacement(0, "mining_refinery");
+                if (!spot.HasValue) { Check(false, $"FindPlacement finds a spot for refinery #{i + 1}"); break; }
+                var r = w.SpawnStructure(0, "mining_refinery", spot.Value, 1f);
+                Check(DoorBay(w, r), $"auto-placed refinery #{i + 1} at {spot.Value} has a clear bay on its door side");
+            }
+
+            // House AIs on several maps: every refinery and command center they build has a clear bay on its door side.
+            int refineries = 0, bad = 0;
+            for (int seed = 1; seed <= 4; seed++)
+            {
+                var game = new Game(new GameConfig { Seed = seed, MapSize = 80, Controllers = new[] { "ai", "ai" }, Orders = new[] { "", "" } });
+                for (int i = 0; i < 8 * 60 * World.TickRate; i++) game.Advance(World.Dt);
+                foreach (var s in game.World.Entities)
+                {
+                    if (s.Dead || !s.IsStructure || (s.Def.Key != "mining_refinery" && s.Def.Key != "command_center")) continue;
+                    if (s.Def.Key == "mining_refinery") refineries++;
+                    if (!DoorBay(game.World, s)) { bad++; Console.WriteLine($"  no door-side bay: {s.Def.Key} #{s.Id} team {s.Team} at {s.Origin} (seed {seed})"); }
+                }
+            }
+            Check(refineries >= 8 && bad == 0, $"house-AI refineries and command centers all have a clear bay on their door side ({refineries} refineries over 4 matches, {bad} without)");
+        }
+
+        static void ViewCopyReplaysOrders()
+        {
+            // A browser's copy runs on from one snapshot to the next. The next snapshot brings the orders given meanwhile, at
+            // their ticks, and the copy gives them again: it arrives where the game is, with nothing to slide over.
+            var host = new Game(new GameConfig { Seed = 9, MapSize = 80, Controllers = new[] { "llm", "llm" } });
+            var w = host.World;
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var army = Enumerable.Range(0, 12).Select(i => At(w.SpawnUnit(0, i % 3 == 0 ? "light_tank" : "rocket_soldier", hq), hq.Center + new Vec2(5 + i % 4 * 1.5f, 4 + i / 4 * 1.5f))).ToList();
+            void Give(Dictionary<string, object> c) { if (Ok(Commands.Execute(w, 0, c))) w.LogCommand(0, c); }
+            void Steps(Game g, int n) { int to = g.World.Tick + n; while (g.World.Tick < to) g.CatchUp(Math.Min(to, g.World.Tick + 60), 0); }
+            Steps(host, 20);
+            Dictionary<string, object> Snap(int team) => Snapshot.Parse(Json.Write(ApiServer.ViewSnapshot(host, team)));
+            var before = Snap(-1); var beforeMine = Snap(0);
+            Steps(host, 7);
+            Give(Cmd("type", "move", "units", army.Take(6).Select(e => e.Id).ToArray(), "x", hq.Center.X + 21.37, "y", hq.Center.Y + 3.11));
+            Steps(host, 25);
+            Give(Cmd("type", "attack_move", "units", army.Skip(6).Select(e => e.Id).ToArray(), "x", hq.Center.X + 14, "y", hq.Center.Y + 18));
+            Give(Cmd("type", "say", "text", "go"));
+            Steps(host, 40);
+            Give(Cmd("type", "stop", "units", new[] { army[0].Id }));
+            Steps(host, 8);
+            var after = Snap(-1); var afterMine = Snap(0);
+
+            float Drift(Dictionary<string, object> from, Dictionary<string, object> to, bool replay)
+            {
+                var copy = new Game(new GameConfig { Seed = 1, MapSize = 48, Controllers = new[] { "llm" } });
+                copy.Restore(from); copy.World.Mirror = true;
+                if (replay)
+                    foreach (var x in to.Obj("world").Arr("commands"))
+                        if (x is List<object> l && l[3] is Dictionary<string, object> cmd)
+                            copy.Replay[(long)(double)l[0]] = new LoggedCommand { Seq = (long)(double)l[0], Tick = (int)(double)l[1], Team = (int)(double)l[2], Cmd = cmd };
+                Steps(copy, w.Tick - copy.World.Tick);
+                return army.Max(e => Vec2.Dist(e.Pos, copy.World.Get(e.Id).Pos));
+            }
+            float off = Drift(before, after, true), offMine = Drift(beforeMine, afterMine, true), without = Drift(before, after, false);
+            Check(off < 0.001f && offMine < 0.05f && without > 1f,
+                  $"a view's copy replays the orders given between snapshots (worst unit off {off:0.000} tiles; in a player's fogged copy {offMine:0.000}; without the orders {without:0.0})");
+            var mine = afterMine.Obj("world").Arr("commands");
+            Check(mine.Count == 3 && after.Obj("world").Arr("commands").Count == 3, $"the snapshot carries the orders but not the chat ({mine.Count})");
+            var rival = Snapshot.Parse(Json.Write(ApiServer.ViewSnapshot(host, 1))).Obj("world").Arr("commands");
+            Check(rival.Count == 0, "a rival's snapshot doesn't carry your orders");
+        }
+
         static void GroupMove()
         {
             var w = new World(2, 7, 80);
@@ -411,7 +570,8 @@ namespace Pez.Headless
         {
             var game = new Game(new GameConfig { Seed = 6, MapSize = 64, Open = true, Controllers = new[] { "ai" }, HouseAIs = 1 });
             var w = game.World;
-            var api = new ApiServer(7987);
+            int port = FreePort();
+            var api = new ApiServer(port);
             api.Start();
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
             // One thread: the request is answered by pumping the API here, between game ticks, like the host's loop.
@@ -420,7 +580,7 @@ namespace Pez.Headless
                 while (!req.IsCompleted) { game.Advance(0.01f); api.Pump(game); Thread.Sleep(10); }
                 return (Dictionary<string, object>)Json.Parse(req.Result.Content.ReadAsStringAsync().Result);
             }
-            const string Url = "http://127.0.0.1:7987";
+            string Url = $"http://127.0.0.1:{port}";
             var reg = Call(http.PostAsync($"{Url}/api/register", new StringContent("{\"name\":\"Napper\"}")));
             var tok = reg.Str("token"); int id = (int)(double)reg["team"];
             foreach (var (what, req) in new (string, Func<System.Threading.Tasks.Task<HttpResponseMessage>>)[] {
@@ -1155,7 +1315,7 @@ namespace Pez.Headless
                 if (steps.Count == 0 || steps[steps.Count - 1] != truck.Dock) steps.Add(truck.Dock);
             }
             Check(w.Teams[0].Stats.OreMined - mined0 >= 150, $"a truck docking through a crowd of parked tanks still unloads (delivered {w.Teams[0].Stats.OreMined - mined0}, truck at {truck.Pos}, dock {dock}, {truck.Dock}, t {w.Time:0.0})");
-            Check(string.Join(",", steps).Contains("Approach,Align,Reverse,Unload,PullOut"), $"it lines up, backs into the bay, unloads and pulls out ({string.Join(" > ", steps)})");
+            Check(string.Join(",", steps).Contains("Enter,Align,Reverse,Unload,PullOut"), $"it lines up, backs into the bay, unloads and pulls out ({string.Join(" > ", steps)})");
 
             // Two trucks arriving together: one backs in, the other waits beside the lane, then takes its turn.
             var wq = new World(2, 7, 80);
@@ -1570,7 +1730,8 @@ namespace Pez.Headless
         static void InterruptibleWait()
         {
             var game = new Game(new GameConfig { Seed = 7, Controllers = new[] { "llm", "llm" } });
-            var api = new ApiServer(7799);
+            int port = FreePort();
+            var api = new ApiServer(port);
             api.Start();
             Entity raiderToPlace = null;
             bool stop = false;
@@ -1594,14 +1755,14 @@ namespace Pez.Headless
             loop.Start();
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(40) };
             var t0 = DateTime.UtcNow;
-            var body = http.GetStringAsync("http://127.0.0.1:7799/api/wait?team=0&seconds=25&since=0").Result;
+            var body = http.GetStringAsync($"http://127.0.0.1:{port}/api/wait?team=0&seconds=25&since=0").Result;
             double took = (DateTime.UtcNow - t0).TotalSeconds;
             var r = (Dictionary<string, object>)Json.Parse(body);
             Check(r["interrupted"] is bool b && b && took < 8, $"wait(25s) returns early when the base is attacked ({took:0.0}s)");
             Check(body.Contains("BASE UNDER ATTACK") || body.Contains("ENEMY NEAR BASE"), "the interrupted wait carries the alert");
             t0 = DateTime.UtcNow;
             // Red is fighting too, so only a critical alert should cut its wait short; nothing critical happens to Red here.
-            body = http.GetStringAsync($"http://127.0.0.1:7799/api/wait?team=1&seconds=1.5&min=critical").Result;
+            body = http.GetStringAsync($"http://127.0.0.1:{port}/api/wait?team=1&seconds=1.5&min=critical").Result;
             took = (DateTime.UtcNow - t0).TotalSeconds;
             r = (Dictionary<string, object>)Json.Parse(body);
             Check(r["interrupted"] is bool b2 && !b2 && took >= 1.4 && took < 4, $"with nothing happening, wait runs its full time ({took:0.0}s)");
@@ -1617,7 +1778,8 @@ namespace Pez.Headless
             Check(st.Contains("\"standing_orders\":\"Rush with infantry.\""), "get_state carries standing_orders");
             Check(Json.Write(StateView.TeamState(w, 1)).Contains("\"standing_orders\":\"none\""), "the other team sees only its own (none)");
 
-            var api = new ApiServer(7798);
+            int port = FreePort();
+            var api = new ApiServer(port);
             api.Start();
             bool stop = false, sent = false;
             var loop = new Thread(() =>
@@ -1635,12 +1797,12 @@ namespace Pez.Headless
             loop.Start();
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(40) };
             var t0 = DateTime.UtcNow;
-            var body = http.GetStringAsync("http://127.0.0.1:7798/api/wait?team=1&seconds=20&orders_version=0").Result;
+            var body = http.GetStringAsync($"http://127.0.0.1:{port}/api/wait?team=1&seconds=20&orders_version=0").Result;
             double took = (DateTime.UtcNow - t0).TotalSeconds;
             var r = (Dictionary<string, object>)Json.Parse(body);
             Check(r["interrupted"] is bool b && b && took < 5, $"new orders cut a 20s wait short ({took:0.0}s)");
             Check(r["orders_changed"] is bool oc && oc && body.Contains("Expand to the uranium"), "the wait result carries the new orders");
-            var post = http.PostAsync("http://127.0.0.1:7798/api/admin/orders?team=0", new StringContent("{\"text\":\"Turtle.\"}")).Result.Content.ReadAsStringAsync().Result;
+            var post = http.PostAsync($"http://127.0.0.1:{port}/api/admin/orders?team=0", new StringContent("{\"text\":\"Turtle.\"}")).Result.Content.ReadAsStringAsync().Result;
             Check(post.Contains("\"orders_version\":2") && post.Contains("Turtle."), "POST /api/admin/orders replaces orders and bumps the version");
             stop = true;
             api.Stop();

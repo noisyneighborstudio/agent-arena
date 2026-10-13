@@ -189,7 +189,7 @@ namespace Pez.Sim
             o.Put("cooldown", e.Cooldown).Put("speed_cap", e.SpeedCap).Put("group", e.Group, 0)
              .PutV("progress_pos", e.ProgressPos).Put("progress_at", e.ProgressAt).Put("ghost_until", e.GhostUntil).Put("progress_dist", e.ProgressDist);
             if (e.Waypoints.Count > 0) o.Set("waypoints", SnapIO.Vs(e.Waypoints));
-            o.Put("waypoint_loop", e.WaypointLoop).Put("retreat_below", e.RetreatBelow).Put("retreating", e.Retreating).Put("retreat_spent", e.RetreatSpent).Put("giving_way", e.GivingWay).Put("own_blocked_since", e.OwnBlockedSince)
+            o.Put("waypoint_loop", e.WaypointLoop).Put("retreat_below", e.RetreatBelow).Put("retreating", e.Retreating).Put("retreat_spent", e.RetreatSpent).Put("giving_way", e.GivingWay).Put("own_blocked_since", e.OwnBlockedSince).Put("dodge_until", e.DodgeUntil).PutV("dance_vel", e.DanceVel).PutV("dance_step", e.DanceStep).PutV("dance_heading", e.DanceHeading).Put("dance_speed", e.DanceSpeed).Put("dance_for", e.DanceFor).Put("dance_flips", e.DanceFlips).Put("settled_until", e.SettledUntil).Put("queued_at", e.QueuedAt)
              .Put("repath_timer", e.RepathTimer).Put("moving", e.Moving).Put("last_attacker", e.LastAttackerId).Put("last_attacker_team", e.LastAttackerTeam, -1)
              .Put("last_hit_time", e.LastHitTime, -999f).Put("last_call_for_help", e.LastCallForHelp, -999f)
              .Put("responding", e.Responding).PutV("home_pos", e.HomePos)
@@ -229,7 +229,7 @@ namespace Pez.Sim
             d.Load("cooldown", ref e.Cooldown); d.Load("speed_cap", ref e.SpeedCap); d.Load("group", ref e.Group);
             d.Load("progress_pos", ref e.ProgressPos); d.Load("progress_at", ref e.ProgressAt); d.Load("ghost_until", ref e.GhostUntil); d.Load("progress_dist", ref e.ProgressDist);
             e.Waypoints.AddRange(SnapIO.ToVecs(d.Arr("waypoints")));
-            d.Load("waypoint_loop", ref e.WaypointLoop); d.Load("retreat_below", ref e.RetreatBelow); d.Load("retreating", ref e.Retreating); d.Load("retreat_spent", ref e.RetreatSpent); d.Load("giving_way", ref e.GivingWay); d.Load("own_blocked_since", ref e.OwnBlockedSince);
+            d.Load("waypoint_loop", ref e.WaypointLoop); d.Load("retreat_below", ref e.RetreatBelow); d.Load("retreating", ref e.Retreating); d.Load("retreat_spent", ref e.RetreatSpent); d.Load("giving_way", ref e.GivingWay); d.Load("own_blocked_since", ref e.OwnBlockedSince); d.Load("dodge_until", ref e.DodgeUntil); d.Load("dance_vel", ref e.DanceVel); d.Load("dance_step", ref e.DanceStep); d.Load("dance_heading", ref e.DanceHeading); d.Load("dance_speed", ref e.DanceSpeed); d.Load("dance_for", ref e.DanceFor); d.Load("dance_flips", ref e.DanceFlips); d.Load("settled_until", ref e.SettledUntil); d.Load("queued_at", ref e.QueuedAt);
             d.Load("repath_timer", ref e.RepathTimer); d.Load("moving", ref e.Moving); d.Load("last_attacker", ref e.LastAttackerId); d.Load("last_attacker_team", ref e.LastAttackerTeam);
             d.Load("last_hit_time", ref e.LastHitTime); d.Load("last_call_for_help", ref e.LastCallForHelp);
             d.Load("responding", ref e.Responding); d.Load("home_pos", ref e.HomePos);
@@ -514,10 +514,11 @@ namespace Pez.Sim
                 .Set("tick", Tick).Set("game_id", GameId).Put("game_over", GameOver).Put("winner", Winner, -1).Set("map_version", MapVersion)
                 .Put("open", Open).Set("max_players", MaxPlayers).Set("max_map_size", MaxMapSize).Set("grow_step", GrowStep)
                 .Set("safe_join_distance", SnapIO.X(SafeJoinDistance)).Set("protection_seconds", SnapIO.X(ProtectionSeconds)).Set("stall_grace", SnapIO.X(StallGrace))
-                .Set("next_id", nextId).Set("next_seq", nextSeq).Set("seat_counter", seatCounter).Set("rng", rng.State.ToString("x16"))
+                .Set("next_id", nextId).Set("next_seq", nextSeq).Put("command_seq", CommandSeq, 0L).Set("seat_counter", seatCounter).Set("rng", rng.State.ToString("x16"))
                 .Put("errors", Errors).Put("last_error", LastError).Put("arena_champion", ArenaChampion).Put("contested", contested).Put("regrown", Regrown).Set("sudden_death_at", SnapIO.X(SuddenDeathAt))
                 .Set("derrick_respawns", DerrickRespawns.Select(r => (object)new List<object> { r.origin.X, r.origin.Y, SnapIO.X(r.at) }).ToList())
                 .Set("event_counts", EventCounts.Aggregate(new JObj(), (j, kv) => j.Set(kv.Key, kv.Value)))
+                .Set("settle_counts", SettleCounts.Aggregate(new JObj(), (j, kv) => j.Set(kv.Key, kv.Value)))
                 .Set("rate_snapshot", rateSnapshot.Select(kv => (object)new JObj().Set("team", kv.Key).Set("stock", SnapIO.Floats(kv.Value))).ToList())
                 .Set("air_warned", airWarned.Select(kv => (object)new List<object> { kv.Key.team, kv.Key.id, SnapIO.X(kv.Value) }).ToList())
                 .Set("derrick_hinted", derrickHinted.Select(kv => (object)new List<object> { kv.Key.team, kv.Key.id, SnapIO.X(kv.Value) }).ToList())
@@ -550,7 +551,7 @@ namespace Pez.Sim
             d.Load("tick", ref w.Tick); d.Load("game_id", ref w.GameId); d.Load("game_over", ref w.GameOver); d.Load("winner", ref w.Winner); d.Load("map_version", ref w.MapVersion);
             d.Load("open", ref w.Open); d.Load("max_players", ref w.MaxPlayers); d.Load("max_map_size", ref w.MaxMapSize); d.Load("grow_step", ref w.GrowStep);
             d.Load("safe_join_distance", ref w.SafeJoinDistance); d.Load("protection_seconds", ref w.ProtectionSeconds); d.Load("stall_grace", ref w.StallGrace);
-            d.Load("errors", ref w.Errors); d.Load("last_error", ref w.LastError);
+            d.Load("errors", ref w.Errors); d.Load("last_error", ref w.LastError); d.Load("command_seq", ref w.CommandSeq);
             d.Load("arena_champion", ref w.ArenaChampion); d.Load("contested", ref w.contested); d.Load("regrown", ref w.Regrown); d.Load("sudden_death_at", ref w.SuddenDeathAt);
             foreach (var x in d.Arr("derrick_respawns"))
                 if (x is List<object> l && l.Count >= 3) w.DerrickRespawns.Add((new Int2(SnapIO.ToI(l[0]), SnapIO.ToI(l[1])), SnapIO.ToF(l[2])));
@@ -584,6 +585,7 @@ namespace Pez.Sim
             foreach (var ev in d.Objs("events")) { var e = Snapshot.ReadEvent(ev); if (e != null) w.Events.Add(e); }
             var counts = d.Obj("event_counts");
             if (counts != null) foreach (var kv in counts) if (kv.Value is double n) w.EventCounts[kv.Key] = (int)n;
+            if (d.Obj("settle_counts") is D settles) foreach (var kv in settles) if (kv.Value is double n) w.SettleCounts[kv.Key] = (int)n;
             foreach (var x in d.Objs("rate_snapshot"))
             {
                 var stock = new Dictionary<string, float>();
@@ -701,6 +703,7 @@ namespace Pez.Sim
 
         public static JObj Put(this JObj o, string k, float v, float def = 0f) { if (!v.Equals(def)) o[k] = X(v); return o; }
         public static JObj Put(this JObj o, string k, int v, int def = 0) { if (v != def) o[k] = v; return o; }
+        public static JObj Put(this JObj o, string k, long v, long def) { if (v != def) o[k] = v; return o; }
         public static JObj Put(this JObj o, string k, bool v) { if (v) o[k] = true; return o; }
         public static JObj Put(this JObj o, string k, string v) { if (v != null) o[k] = v; return o; }
         public static JObj PutV(this JObj o, string k, Vec2 v) { if (v.X != 0 || v.Y != 0) o[k] = V(v); return o; }

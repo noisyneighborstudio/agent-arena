@@ -102,6 +102,60 @@ namespace Pez.Sim
         }
 
         static JObj Ok(string msg = null) { var o = new JObj().Set("ok", true); if (msg != null) o.Set("result", msg); return o; }
+        /// <summary>
+        /// A group's slots around dest (docs/MOVEMENT.md: every goal point is owned). A grid `gap` apart, turned to face the
+        /// way the group is going, on open ground: a slot on rock or in a building moves to the nearest open spot no other
+        /// slot has. Units get slots by where they stand, front to back and left to right, so their paths don't cross
+        /// (handed out in command order they did, and wedged each other short of their slots).
+        /// </summary>
+        static Dictionary<Entity, Vec2> FormationSlots(World w, List<Entity> units, Vec2 dest, float gap)
+        {
+            int n = units.Count, cols = (int)MathF.Ceiling(MathF.Sqrt(n)), rows = (n + cols - 1) / cols;
+            var centre = new Vec2(units.Average(u => u.Pos.X), units.Average(u => u.Pos.Y));
+            var fwd = dest - centre;
+            fwd = fwd.LengthSq > 1e-4f ? fwd.Normalized : new Vec2(1, 0);
+            var side = new Vec2(-fwd.Y, fwd.X);
+            var slots = new List<(Vec2 at, int row, float lat)>();
+            for (int k = 0; k < n; k++)
+            {
+                int r = k / cols, cIdx = k % cols;
+                float lat = (cIdx - (cols - 1) / 2f) * gap, along = ((rows - 1) / 2f - r) * gap; // row 0 is the front
+                slots.Add((dest + side * lat + fwd * along, r, lat));
+            }
+            // Open ground only, and never two slots on one spot.
+            var taken = new List<Vec2>();
+            for (int k = 0; k < slots.Count; k++)
+            {
+                var at = slots[k].at;
+                bool Open(Vec2 p) { var t = Int2.Of(p); return w.Map.Passable(t.X, t.Y) && taken.All(q => Vec2.DistSq(q, p) >= gap * gap * 0.81f); }
+                if (!Open(at))
+                {
+                    Vec2? found = null;
+                    for (int ring = 1; ring <= 6 && found == null; ring++)
+                        for (int a = 0; a < 8 * ring && found == null; a++)
+                        {
+                            float ang = a * MathF.PI * 2f / (8 * ring);
+                            var p = at + new Vec2(MathF.Cos(ang), MathF.Sin(ang)) * (ring * gap * 0.75f);
+                            if (Open(p)) found = p;
+                        }
+                    at = found ?? at;
+                }
+                taken.Add(at);
+                slots[k] = (at, slots[k].row, slots[k].lat);
+            }
+            // Front units to front slots, left to left.
+            float Dot(Vec2 a, Vec2 b) => a.X * b.X + a.Y * b.Y;
+            var byPlace = units.OrderByDescending(u => Dot(u.Pos - centre, fwd)).ThenBy(u => u.Id).ToList();
+            var result = new Dictionary<Entity, Vec2>();
+            for (int r = 0; r < rows; r++)
+            {
+                var rowUnits = byPlace.Skip(r * cols).Take(cols).OrderBy(u => Dot(u.Pos - centre, side)).ThenBy(u => u.Id).ToList();
+                var rowSlots = slots.Where(sl => sl.row == r).OrderBy(sl => sl.lat).ToList();
+                for (int k = 0; k < rowUnits.Count && k < rowSlots.Count; k++) result[rowUnits[k]] = rowSlots[k].at;
+            }
+            return result;
+        }
+
         static JObj Err(string msg) => new JObj().Set("ok", false).Set("error", msg);
 
         static JObj Build(World w, int team, Dictionary<string, object> c)
@@ -279,12 +333,11 @@ namespace Pez.Sim
             // Never closer than the biggest member is wide: 0.9-tile slots under mammoth tanks overlap, so they arrive on
             // top of each other and shove each other about.
             gap = MathF.Max(gap, units.Where(u => !u.IsAir).Select(u => u.Def.Radius * 2f + 0.1f).DefaultIfEmpty(0f).Max());
-            int n = units.Count, i = 0;
-            int cols = (int)MathF.Ceiling(MathF.Sqrt(n));
+            int n = units.Count;
+            var slotOf = n > 1 && order != Order.Idle ? FormationSlots(w, units, dest, gap) : null;
             foreach (var u in units)
             {
-                var off = new Vec2((i % cols - (cols - 1) / 2f) * gap, (i / cols - (cols - 1) / 2f) * gap);
-                i++;
+                var off = slotOf != null ? slotOf[u] - dest : default;
                 var target = n > 1 && order != Order.Idle ? dest + off : dest;
                 if (u.IsHarvester && order == Order.AttackMove) { w.SetOrder(u, Order.Move, target); continue; }
                 w.SetOrder(u, order, order == Order.Idle ? u.Pos : target);

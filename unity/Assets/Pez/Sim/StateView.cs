@@ -311,7 +311,7 @@ namespace Pez.Sim
                     case "arena_cleared": s = e.Text; break;
                     case "captured": if (e.Team == team || (e.Text != null && e.Text.Contains(w.Teams[team].Name + "'s"))) s = e.Text; break;
                     case "low_fuel": case "stranded": case "refuelled": case "retreating": case "unstalled": case "surveyed": case "depleted": case "drilled": case "drill_failed": case "survey_failed": case "capture_stopped": case "out_of_range": case "low_power": case "power_restored": case "derrick_skipped":
-                    case "defences_offline": case "defences_online": case "crushed":
+                    case "defences_offline": case "defences_online": case "crushed": case "made_room":
                     case "research_started": case "researched":
                         if (e.Team == team) s = e.Text; break;
                     case "defeated": case "game_over": s = e.Text; break;
@@ -578,13 +578,35 @@ namespace Pez.Sim
         ///     leaves trimmed alerts open.
         /// 36: the observation feed (/api/observe, Observations.cs): a team's fogged view as an event log with cursors; commands
         ///     get ids (cmd), the units they affected, and tracked outcomes; optional command-controller leases (/api/controller).
-        /// 37: the economy audit (#42): the stockpile spills however the last command center is lost and knocked-out teams
+        /// 37: a unit ordered to stop stops counting as moving, and soldiers only dodge a vehicle that is rolling or waiting on
+        ///     them (one beside a parked truck stepped aside and back forever); the scripted AI doesn't send waves at derricks.
+        /// 38: a soldier dodges every vehicle bearing down at once (between two it no longer steps from one's path into the
+        ///     other's and back), finishes a dodge before walking or aiming again, and waits rather than walk into a moving
+        ///     vehicle's path.
+        /// 39: movement phase 1 (docs/MOVEMENT.md): the dance guard settles any unit on the move without getting anywhere (or
+        ///     reversing over and over) for 3 s; infantry and aircraft turn at a rate instead of snapping round; aircraft
+        ///     land in their own slots on a pad (4 on an airfield) and hold nearby when it's full, a thirsty one has a full,
+        ///     idle one lift off for it, and landed aircraft aren't shoved; an aircraft gliding in on empty still reaches its slot.
+        /// 40: movement phase 2: trucks queue single file for a bay, in order, and only the front one pulls up (Enter); a
+        ///     truck sticks with its drop-off unless another is clearly better; firing and harvesting have bands (stop at
+        ///     0.9x range, keep firing to 1x; re-centre on ore only 0.8 off); an idle unit at its leash holds; a soldier
+        ///     that dodges keeps its new spot; a group's slots face its way, sit on open ground and go by where units stand.
+        /// 41: a drop-off placed for you (the scripted AI, or a build command without x,y, or the "nearest valid spot" an
+        ///     error suggests) goes where its south lane is clear, so trucks back into its door side; a spot with a building
+        ///     2 tiles south (the 1-tile walkway leaves only the first tile of the 3-tile lane free) used to be taken and
+        ///     gave a side bay, about a third of the AI's refineries. Your own x,y is checked as before.
+        /// 42: no stop-go: a parked truck mines ore within 1.5 tiles without moving and, when it must move, drives to where a
+        ///     stop collects most (it hopped tile to tile on thin ore); vehicles drive where they face (no crabwise slide as
+        ///     they turn); a unit as close as it can get to a point another stands on has arrived; a path through something
+        ///     built since is planned again; the dance guard only counts time a unit spends moving.
+        /// 43: the economy audit (#42): the stockpile spills however the last command center is lost and knocked-out teams
         ///     leave salvage; one valuation (raw-ore mix); gifts (start and catch-up) are worth nothing; economy score excludes
         ///     salvage; selling can't dodge losses or delete derricks; protection covers the base only; parallel production per
         ///     building; cheaper fusion with partial output; upkeep 4% of steel price; regrowth by ore; bays face the ore; fair
-        ///     deep kits and neutral fields; invention pricing fixes; seat-symmetric placement, doors and tie-breaks.
+        ///     deep kits and neutral fields; invention pricing fixes; seat-symmetric placement, doors and tie-breaks. A drop-off's
+        ///     bay opens on its clear side nearest the ore and its door turns to face it (this replaces 41's south-lane placement).
         /// </summary>
-        public const int RulesVersion = 37;
+        public const int RulesVersion = 43;
 
         public static JObj Rules()
         {

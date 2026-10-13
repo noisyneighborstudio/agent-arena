@@ -508,6 +508,7 @@ namespace Pez.Api
                         {
                             // Tracked: each command gets an id (cmd), the units it affected, and observations of what they then do.
                             var r = cmd is Dictionary<string, object> cd ? w.Observe.Track(team, cd, () => game.Execute(team, cd)) : new JObj().Set("ok", false).Set("error", "each command must be an object");
+                            if (r["ok"] is bool done && done) w.LogCommand(team, (Dictionary<string, object>)cmd); // browser copies replay it (ViewSnapshot)
                             results.Add(r);
                             OnCommand?.Invoke(team, Json.Write(cmd), Json.Write(r));
                         }
@@ -800,6 +801,10 @@ namespace Pez.Api
                 if (team >= 0)
                     world["events"] = events.OfType<JObj>().Where(e => PublicEvent(e["type"] as string) || Num(e["team"] ?? -1) == team || (!OwnerEvent(e["type"] as string) && Sees(w, team, e["pos"]))).Cast<object>().ToList();
             }
+            // Orders given lately, which the client's copy gives again at their ticks (Game.Replay) so it moves as the game did
+            // rather than sliding to it at the next snapshot. A player's copy gets only its own team's.
+            world["commands"] = w.CommandLog.Where(c => team < 0 || c.Team == team)
+                .Select(c => (object)new List<object> { c.Seq, c.Tick, c.Team, Exact(c.Cmd) }).ToList();
             if (team < 0) return snap;
             var t0 = w.Teams[team];
             // The scoreboard counts everyone's territory, ore and kills, which the fog hides: send the server's own count.
@@ -846,6 +851,15 @@ namespace Pez.Api
                 map["deep"] = deep.OfType<JObj>().Where(d => t0.Surveyed.Contains((int)Num(d["id"]))).Cast<object>().ToList();
             return snap;
         }
+
+        /// <summary>A command as given, numbers in full (Json.Write rounds to 2 places): the copy must give the same order.</summary>
+        static object Exact(object v) => v switch
+        {
+            double d => new JExact(d.ToString("R", System.Globalization.CultureInfo.InvariantCulture)),
+            Dictionary<string, object> m => m.ToDictionary(kv => kv.Key, kv => Exact(kv.Value)),
+            List<object> l => l.Select(Exact).ToList(),
+            _ => v,
+        };
 
         /// <summary>A rival's base position in a player's snapshot: hidden, far off any map.</summary>
         public const float HiddenStart = -10000f;
@@ -973,7 +987,8 @@ namespace Pez.Api
                 .Set("game_over", w.GameOver).Set("winner", w.Winner)
                 .Set("match", StateView.MatchJson(w))
                 .Set("resumed_from", game.ResumedFrom).Set("last_saved", game.LastSaved)
-                .Set("sim_errors", w.Errors).Set("last_sim_error", w.LastError).Set("render_fps", MathF.Round(game.RenderFps, 1))
+                .Set("sim_errors", w.Errors).Set("last_sim_error", w.LastError)
+                .Set("movement_settles", w.SettleCounts.Values.Sum()).Set("movement_settles_by", w.SettleCounts.OrderByDescending(kv => kv.Value).Take(8).Aggregate(new JObj(), (j, kv) => j.Set(kv.Key, kv.Value))) // the dance guard (docs/MOVEMENT.md).Set("render_fps", MathF.Round(game.RenderFps, 1))
                 .Set("teams", w.Teams.Select(t => new JObj()
                     .Set("team", t.Id).Set("seat", t.Seat).Set("name", t.Name).Set("controller", t.Controller).Set("player", t.PlayerName)
                     .Set("stockpile", StateView.Stockpile(t)).Set("defeated", t.Defeated)

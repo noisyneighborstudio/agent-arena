@@ -123,8 +123,29 @@ namespace Pez.Sim
             return steps;
         }
 
+        /// <summary>
+        /// A view's copy (WebClient): orders players gave the host (World.LogCommand), by number, each given again when the
+        /// copy reaches its tick, before that tick's step as on the host. Ones the restored world already has (numbered up
+        /// to its CommandSeq) are dropped.
+        /// </summary>
+        public readonly SortedDictionary<long, LoggedCommand> Replay = new SortedDictionary<long, LoggedCommand>();
+
+        void PlayReplay()
+        {
+            while (Replay.Count > 0)
+            {
+                var c = Replay.First().Value;
+                if (c.Tick > World.Tick) return;
+                Replay.Remove(c.Seq);
+                if (c.Seq <= World.CommandSeq) continue;
+                World.CommandSeq = c.Seq;
+                Commands.Execute(World, c.Team, c.Cmd);
+            }
+        }
+
         void Step()
         {
+            if (Replay.Count > 0) PlayReplay();
             foreach (var ai in ais.ToList()) ai.Update(World);
             World.Step();
             HousePolicy();

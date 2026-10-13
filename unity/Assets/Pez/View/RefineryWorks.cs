@@ -9,6 +9,11 @@ namespace Pez.View
     /// has waiting. When the refinery runs out of ore the belt runs on until it's empty, then stops. Half speed on low
     /// power. The smokestacks' mouths (stack_0, stack_1) are where WorldView's stack smoke leaves from.
     /// A model without the belt markers gets an inert works: no lumps, no stacks.
+    /// The wall hatches (hatch_0, hatch_1, ...: roll-up shutters in the east, west and north walls) are this class's too: when
+    /// terrain moves the truck bay to one of those walls, the dock's chute (DockView) comes out through it. The shutter facing
+    /// the bay rolls up (0.3 s) before the chute is let out and stays up while the chute is out or on its way, then rolls
+    /// down (0.4 s) once it is back inside, so the chute never passes through a closed shutter. DockView holds the chute
+    /// until Open says the hatch is up.
     /// </summary>
     public class RefineryWorks
     {
@@ -25,14 +30,27 @@ namespace Pez.View
         float phase;
         bool shown = true;
 
+        readonly Transform[] hatches;
+        readonly Vector3[] hatchOut, hatchRest;   // each hatch's outward direction (model space) and rest scale
+        readonly float[] hatchK;                   // 0 shut .. 1 rolled up
+        bool dockHooked;
+
         static Material iron, copper;
 
         public int Stacks => stacks.Length;
         public Vector3 Mouth(int i) => stacks[i].position;
 
-        RefineryWorks(Transform model, Transform a, Transform b, Transform[] stacks)
+        RefineryWorks(Transform model, Transform a, Transform b, Transform[] stacks, Transform[] hatches)
         {
             this.stacks = stacks;
+            this.hatches = hatches;
+            hatchK = new float[hatches.Length]; hatchOut = new Vector3[hatches.Length]; hatchRest = new Vector3[hatches.Length];
+            for (int i = 0; i < hatches.Length; i++)
+            {
+                var p = model.InverseTransformPoint(hatches[i].position); p.y = 0f;
+                hatchOut[i] = Mathf.Abs(p.x) > Mathf.Abs(p.z) ? new Vector3(Mathf.Sign(p.x), 0f, 0f) : new Vector3(0f, 0f, Mathf.Sign(p.z));
+                hatchRest[i] = hatches[i].localScale;
+            }
             lumps = new Transform[a != null && b != null ? Count : 0];
             riding = new bool[lumps.Length]; last = new float[lumps.Length];
             if (lumps.Length == 0) return;
@@ -57,7 +75,33 @@ namespace Pez.View
             var t = model.transform;
             var stacks = new System.Collections.Generic.List<Transform>();
             for (Transform s; (s = PezMotion.FindDeep(t, "stack_" + stacks.Count)) != null; ) stacks.Add(s);
-            return new RefineryWorks(t, PezMotion.FindDeep(t, "belt_in"), PezMotion.FindDeep(t, "belt_out"), stacks.ToArray());
+            var hatches = new System.Collections.Generic.List<Transform>();
+            for (Transform h; (h = PezMotion.FindDeep(t, "hatch_" + hatches.Count)) != null; ) hatches.Add(h);
+            return new RefineryWorks(t, PezMotion.FindDeep(t, "belt_in"), PezMotion.FindDeep(t, "belt_out"), stacks.ToArray(), hatches.ToArray());
+        }
+
+        /// <summary>How far the hatch in the wall toward `dir` (model space) is rolled up, 0 to 1; 1 when there is none.</summary>
+        public float Open(Vector3 dir)
+        {
+            for (int i = 0; i < hatches.Length; i++)
+                if (Vector3.Dot(hatchOut[i], dir) > 0.9f) return hatchK[i];
+            return 1f;
+        }
+
+        /// <summary>Per frame, with the refinery's dock: rolls the shutter in the bay's wall up while the chute is wanted out or
+        /// still out, and down again once it's back inside.</summary>
+        public void Hatches(DockView dock, float dt)
+        {
+            if (hatches.Length == 0) return;
+            if (dock != null && !dockHooked) { dock.Opening = Open; dockHooked = true; }
+            for (int i = 0; i < hatches.Length; i++)
+            {
+                bool up = dock != null && dock.ChuteBusy && Vector3.Dot(hatchOut[i], dock.Dir) > 0.9f;
+                hatchK[i] = Mathf.MoveTowards(hatchK[i], up ? 1f : 0f, dt / (up ? 0.3f : 0.4f));
+                float k = hatchK[i] * hatchK[i] * (3f - 2f * hatchK[i]);
+                var sc = hatchRest[i]; sc.y *= Mathf.Lerp(1f, 0.06f, k);   // rolls up into the lintel, from its top edge
+                hatches[i].localScale = sc;
+            }
         }
 
         /// <summary>A stream render whose team only remembers this refinery under fog shows an empty belt.</summary>

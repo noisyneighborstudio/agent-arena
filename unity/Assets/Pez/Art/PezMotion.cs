@@ -26,7 +26,7 @@ namespace Pez
         Vector3 barrelRestPos;
         Quaternion turretRest, binRest;
         float yaw, targetYaw, recoilT = -1f, rpm, doorScale = 1f, doorTarget = 1f;
-        float liftRestY, liftOffset, liftTarget, binLoad, binShown, tipT = -1f;
+        float liftRestY, liftOffset, liftTarget, liftSpeed = 0.5f, binLoad, binShown, tipT = -1f;
         bool hasTarget;
         float scanPhase;
         // deep mining
@@ -226,7 +226,8 @@ namespace Pez
         float machineRate = 1f;
         public void SetDoorOpen(bool open) => doorTarget = open ? 0.05f : 1f;
         public bool DoorIsOpen => doorScale <= 0.06f;
-        public void SetLiftUp(bool up) => liftTarget = up ? 0f : -0.6f;
+        /// <summary>Raise (0) or lower (-0.6) the airfield lift over `seconds` for the full travel (eased in and out).</summary>
+        public void SetLiftUp(bool up, float seconds = 1.2f) { liftTarget = up ? 0f : -0.6f; liftSpeed = 0.6f / Mathf.Max(0.1f, seconds); }
         public void SnapLiftDown() { liftOffset = liftTarget = -0.6f; ApplyLift(); }
         public void SetBinLoad(float fraction) => binLoad = Mathf.Clamp01(fraction);
         public void TipBin() => tipT = 0f;
@@ -303,7 +304,7 @@ namespace Pez
 
             if (lift)
             {
-                liftOffset = Mathf.MoveTowards(liftOffset, liftTarget, dt * machineRate * (0.6f / 1.2f));
+                liftOffset = Mathf.MoveTowards(liftOffset, liftTarget, dt * machineRate * liftSpeed);
                 ApplyLift();
             }
 
@@ -363,7 +364,8 @@ namespace Pez
 
         void ApplyLift()
         {
-            var p = lift.localPosition; p.y = liftRestY + liftOffset; lift.localPosition = p;
+            // Eased at both ends of its travel, so it starts and stops like a lift rather than a piston.
+            var p = lift.localPosition; p.y = liftRestY - 0.6f + 0.6f * Mathf.SmoothStep(0f, 1f, (liftOffset + 0.6f) / 0.6f); lift.localPosition = p;
         }
 
         public static Transform FindDeep(Transform root, string nodeName)

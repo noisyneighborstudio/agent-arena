@@ -351,7 +351,7 @@ namespace Pez.Sim
 
         void Works()
         {
-            Begin("works", "Works: construction and production", "Lemon's yard: the crane builds, factories roll units out on a loop.", 89, 120, 48, 22);
+            Begin("works", "Works: construction and production", "Lemon's yard: the crane builds, factories roll units out on a loop.", 89, 120, 60, 22);
             var cc = Bldg(Yellow, "command_center", 4, 15);
             Item("Command center crane", "slews to the site under construction; cream beam and welding sparks every 0.25 s", 4, 15);
 
@@ -397,11 +397,30 @@ namespace Pez.Sim
             Item("Factory roll-out", "lamps blink, vents puff, door rolls up, the unit eases out of the dark bay; looping", 4, 4);
             Produce(Bldg(Yellow, "barracks", 11, 4), Producer.Barracks, new[] { "rifleman", "rocket_soldier", "medic", "laser_trooper", "engineer", "sniper", "commando" });
             Item("Barracks roll-out", "lamps, vent and door as infantry march out; looping", 11, 4);
-            Produce(Bldg(Yellow, "airfield", 18, 4), Producer.Airfield, new[] { "gunship", "transport_chopper", "stealth_bomber", "long_range_drone", "reaper_drone" });
-            Item("Airfield launch", "the lift raises each new aircraft; looping", 18, 4);
+            var airfield = Bldg(Yellow, "airfield", 18, 4);
+            Produce(airfield, Producer.Airfield, new[] { "gunship", "transport_chopper", "stealth_bomber", "long_range_drone", "reaper_drone" });
+            airfield.Rally = airfield.Center + new Vec2(0f, -14f); // aircraft fly out of the shot before they're cleared away
+            Item("Airfield launch", "approach lights chase, the lift goes down and brings each new aircraft up, which lifts off; looping", 18, 4);
             Bldg(Yellow, "power_plant", 25, 4);
             Bldg(Yellow, "power_plant", 31, 4);
             Item("Lemon's power plants", "powered: steady cores and steam under load", 28, 4);
+            // An optics lab that runs out of crystal for 8 s in every 20 (the hold runs after the economy, so the view sees it idle).
+            var lab = Bldg(Yellow, "optics_lab", 43, 4);
+            holds.Add(() => { if (T % 20f >= 12f) lab.Working = false; });
+            Item("Optics lab at work and idle", "12 s grinding (the dome tracks and slews, light through the prism onto the turning lathe, a lens popped out of the dispenser every 2 s), then 8 s out of crystal (light out, dome home, telescope parked); loops every 20 s", 43, 4);
+
+            // The electronics plant's line runs for 12 s, then Lemon is out of copper for 8 s: the line parks, the reel's
+            // copper runs down and the amber lamp blinks.
+            Bldg(Yellow, "electronics_plant", 37, 4);
+            holds.Add(() => { if (T % 20f >= 12f) team.Stock["copper"] = 0; });
+            Item("Electronics plant line", "runs 12 s (pick-and-place, reflow fumes, boards stack, the head pops every 5), then out of copper 8 s (parks, empty reel, amber lamp); looping", 37, 4);
+
+            // The enrichment plant runs for 15 s, then Lemon is out of uranium for 8 s: the cascade coasts to a stop, the
+            // hopper drains and the amber lamp blinks.
+            Bldg(Yellow, "enrichment_plant", 49, 4);
+            Bldg(Yellow, "power_plant", 55, 4); // its draw: Lemon stays powered when the barracks site finishes
+            holds.Add(() => { if (T % 23f >= 15f) team.Stock["uranium"] = 0; });
+            Item("Enrichment plant cascade", "runs 15 s (the rotors spin, ore slugs flash through the sight glass, plasma bricks stack in the stem, the head pops every 4), then out of uranium 8 s (the cascade coasts down, the hopper drains, amber lamp); looping", 49, 4);
 
             // Units the works produce drive (or fly) to their rally point and are cleared away after a few seconds.
             var born = new Dictionary<int, float>();
@@ -437,8 +456,10 @@ namespace Pez.Sim
         {
             Begin("economy", "Economy loop", "Trucks harvest each ore and dock at each kind of drop-off: queue, line up, reverse, tip, pull out.", 0, 80, 60, 18);
             Loop(Blue, "mining_refinery", Map.Iron, 6, "Iron ore into a refinery");
-            Loop(Red, "mining_refinery", Map.Copper, 20, "Copper ore into a refinery");
-            Loop(Blue, "outpost", Map.Crystal, 34, "Crystal into an outpost");
+            Loop(Red, "mining_refinery", Map.Copper, 20, "Copper ore into a refinery, its south and east lanes blocked by rock",
+                "the bay moves to the west wall: the wall's hatch opens, the chute slides out of it to the truck, and the hatch shuts once it has drawn back in; otherwise as the iron refinery", blockSouth: true);
+            Loop(Blue, "outpost", Map.Crystal, 34, "Crystal into an outpost",
+                "harvest, queue, align (the hopper's trapdoors swing open), reverse, unload with an ore-coloured pour into the hopper; the crystal rides the belt up into the stem, whose head lifts to take it, and stacks behind its window; the trapdoors slam shut as the truck pulls out, and the stack is fed away between deliveries");
             Loop(Red, "command_center", Map.Uranium, 48, "Uranium into a command center");
 
             Unit(Blue, "mining_truck", 57, 12);
@@ -447,9 +468,16 @@ namespace Pez.Sim
         }
 
         /// <summary>A drop-off, an ore field below it on screen and three trucks working it.</summary>
-        void Loop(int team, string dropOff, int ore, float a, string name)
+        void Loop(int team, string dropOff, int ore, float a, string name, string states = null, bool blockSouth = false)
         {
             var d = Bldg(team, dropOff, a, 13);
+            if (blockSouth)
+            {
+                // Rock across the south and east lanes: the bay moves to the first clear side (west, the wall that faces the
+                // camera), so the dock's chute comes out of a side wall.
+                foreach (var (x, y) in new[] { (d.Origin.X + d.Def.SizeX / 2, d.Origin.Y - 2), (d.Origin.X + d.Def.SizeX + 1, d.Origin.Y + d.Def.SizeY / 2) })
+                    if (w.Map.InBounds(x, y)) w.Map.Tiles[w.Map.Idx(x, y)] = Terrain.Rock;
+            }
             var field = OreField(a + 3.5f, 4, ore, 2.3f, 420);
             for (int i = 0; i < 3; i++)
             {
@@ -463,22 +491,59 @@ namespace Pez.Sim
                 if (w.Tick % World.TickRate != 0) return;
                 foreach (var (idx, amount) in field) { w.Map.Ore[idx] = amount; w.Map.OreType[idx] = (byte)ore; }
             });
-            Item(name, "harvest, queue, align, reverse, unload with an ore-coloured pour, pull out", a + 1.5f, 8.5f, 9);
+            Item(name, states ?? "harvest, queue, align, reverse, unload with an ore-coloured pour, pull out", a + 1.5f, 8.5f, 9);
         }
 
         void Power()
         {
-            Begin("power", "Power", "Blueberry is powered; Lime's base draws more than its plant makes.", 72, 80, 40, 16);
+            Begin("power", "Power", "Blueberry is powered; Lime's base draws more than its plant makes.", 72, 80, 54, 16);
             string[] row = { "power_plant", "barracks", "electronics_plant", "radar_dome", "optics_lab" };
             for (int i = 0; i < row.Length; i++)
             {
                 Bldg(Blue, row[i], 4 + 6 * i, 10);
                 Bldg(Green, row[i], 4 + 6 * i, 3);
             }
-            Bldg(Blue, "fusion_reactor", 34, 10);
+            // The fusion reactor burns for 14 s, then runs dry for 8 s (quench, the magazine empties) and refuels (the stack
+            // rises, the solenoid strikes the plasma). Only this reactor's state is held: the stockpile stays full, so Blue's
+            // power never drops.
+            var fusion = Bldg(Blue, "fusion_reactor", 34, 10);
+            holds.Add(() => { if (T % 22f >= 14f) fusion.Working = false; });
             Bldg(Green, "command_center", 34, 3);
+            // An airfield launching on low power: half-speed lift and radar, a stuttering chase. Its aircraft are cleared
+            // away a few seconds after they're up.
+            var field = Bldg(Green, "airfield", 40, 3);
+            Produce(field, Producer.Airfield, new[] { "gunship", "transport_chopper" });
+            field.Rally = field.Center + new Vec2(0f, -14f); // they fly off out of the shot before they're cleared
+            var up = new Dictionary<int, float>();
+            holds.Add(() =>
+            {
+                foreach (var e in w.Entities)
+                    if (!e.Dead && e.Team == Green && e.IsAir && !up.ContainsKey(e.Id) && Vec2.Dist(e.Pos, field.Center) < 6f) up[e.Id] = T;
+                foreach (var kv in up.Where(kv => T - kv.Value > 6f).ToList()) { var e = w.Get(kv.Key); if (e != null && !e.Dead) w.Remove(e); up.Remove(kv.Key); }
+            });
+            // An enrichment plant on low power: the cascade at half speed, sagging as the supply browns out; a brick every 5 s.
+            Bldg(Green, "enrichment_plant", 52, 3);
+            Item("Low-power enrichment plant (Lime)", "the cascade at half speed, sagging every 2.6 s as the supply browns out; a plasma brick every 5 s, the sight glass at half", 52, 3);
+            Item("Low-power airfield (Lime)", "an aircraft every ~5 s: the lift goes down and brings it up at half speed, the approach lights chase once a second at half glow", 40, 3);
             Item("Powered (Blueberry)", "power plant cores glow with the load, steady steam; consumers at full light and speed", 16, 10, 9);
             Item("Low power (Lime)", "plant cores flicker at 4 Hz with dropouts, steam sputters; consumers dimmed to half, machinery at half speed", 16, 3, 9);
+            Item("Fusion reactor", "the plasma ring circulates and a pellet fires into it every few seconds; every 22 s it runs dry for 8 s: the plasma quenches and the magazine empties, then refuels and the solenoid strikes it alight", 34, 10, 8);
+
+            // A factory on each side (beside Lime's airfield) making a heavy tank that never finishes (it starts over 2 s short of done, so no roll-out
+            // and no lamps): the line, gantry and press at full speed on Blueberry, at half and labouring on Lime.
+            foreach (var (team, b) in new[] { (Blue, 10f), (Green, 3f) })
+            {
+                var fac = Bldg(team, "factory", 46, b);
+                var q = w.Teams[team].UnitQueues[Producer.Factory];
+                var item = new ProdItem { Key = "heavy_tank", StructureId = fac.Id };
+                float cap = w.Def("heavy_tank").BuildTime - 2f;
+                holds.Add(() =>
+                {
+                    if (!q.Contains(item)) q.Insert(0, item);
+                    if (item.Progress >= cap) item.Progress = 0f;
+                });
+            }
+            Item("Factory line, powered and low", "the line, gantry and press making a heavy tank that never finishes: Blueberry at full speed, Lime at half with the press labouring", 46, 6.5f, 9);
         }
 
         void Fires()
@@ -575,9 +640,34 @@ namespace Pez.Sim
             Lane("flak_track", "recon_drone", a0, 14, 6.2f, "Flak (air bursts)");
             Lane("gunship", "light_tank", a0, 18, 4.4f, "Gunship rockets");
             Lane("stealth_bomber", "outpost", a0, 22.5f, 0f, "Stealth bomber (bombs)");
-            Lane("gun_turret", "light_tank", a0, 26, 5f, "Gun turret");
-            Lane("sam_site", "gunship", a0, 29, 6f, "SAM site");
-            Lane("laser_tower", "heavy_tank", a0, 32, 6f, "Laser tower");
+            TurretLane(a0 + 13, 24); // out on its own, clear of the bomber's runs and the lanes either side
+            // The SAM site tracks a gunship flying to and fro across its front, from 5.7 tiles out to 2.5 (the rack climbs
+            // from about 23 to 44 degrees as it closes), and launches at it.
+            {
+                var sam = Bldg(Blue, "sam_site", a0, 29);
+                var gs = Unit(Red, "gunship", a0 + 5.6f, 28f, AlongLeft, pin: false);
+                var near = P(a0 + 2f, 30.5f); var far = P(a0 + 5.6f, 28f);
+                void Fly() { w.SetOrder(gs, Order.Move, near); gs.Waypoints.Clear(); gs.Waypoints.Add(far); gs.WaypointLoop = true; }
+                Fly();
+                holds.Add(() => { if (sam.Dead || gs.Dead) return; if (gs.Order != Order.Move) Fly(); w.FireFor(sam, gs); });
+                Item("SAM site", "SAM site tracking a gunship that flies to and fro, launching at it", a0 + 3f, 29);
+            }
+            // The laser tower tracks a heavy tank driving back and forth across its field of fire (3.8 to 6.8 tiles out,
+            // a 60 degree sweep), so its head turns with it and dips as it comes closer.
+            {
+                var tower = Bldg(Blue, "laser_tower", a0, 32);
+                var tank = Unit(Red, "heavy_tank", a0 + 3.5f, 30.5f, AlongLeft, pin: false);
+                var near = P(a0 + 3.5f, 30.5f); var far = P(a0 + 5.5f, 36f);
+                void Drive() { w.SetOrder(tank, Order.Move, far); tank.Waypoints.Add(near); tank.WaypointLoop = true; }
+                Drive();
+                holds.Add(() =>
+                {
+                    if (tower.Dead || tank.Dead) return;
+                    if (tank.Order != Order.Move) Drive();
+                    w.FireFor(tower, tank);
+                });
+                Item("Laser tower", "Laser tower tracking a heavy tank across its field of fire: the head turns with it and dips as it closes, the coils charge bottom to top before each beam, their cyan light on the pylon, pad and ground swelling with the charge and flashing with the shot", a0 + 3, 33, 8);
+            }
             Lane("reaper_drone", "light_tank", a0 + 14, 2, 5.5f, "Reaper hellfire (flies high)");
         }
 
@@ -596,6 +686,24 @@ namespace Pez.Sim
                     if (shooter.Order != Order.Attack || shooter.TargetId != target.Id) w.SetOrder(shooter, Order.Attack, target.Center, target.Id);
                 });
             Item(name, $"{Pretty(shooterKey)} firing at a {Pretty(targetKey)}", a + dist / 2, b, zoom);
+        }
+
+        /// <summary>The gun turret at (a, b) tracking a Cherry light tank that drives back and forth across its front, 4 to 4.7
+        /// tiles out (in range the whole way, its bearing swinging about 64 deg), and firing at it forever.</summary>
+        void TurretLane(float a, float b)
+        {
+            var turret = Bldg(Blue, "gun_turret", a, b);
+            var tank = Unit(Red, "light_tank", a + 4f, b - 2.5f, Toward, pin: false);
+            var from = P(a + 4f, b - 2.5f); var to = P(a + 4f, b + 2.5f);
+            void Go() { w.SetOrder(tank, Order.Move, to); tank.Waypoints.Add(from); tank.WaypointLoop = true; }
+            Go();
+            holds.Add(() =>
+            {
+                if (turret.Dead || tank.Dead) return;
+                if (tank.Order != Order.Move) Go();
+                w.FireFor(turret, tank);
+            });
+            Item("Gun turret", "tracking a Light Tank driving back and forth across its front: the drum turns a round up per shot, the recoil spring takes the kick", a + 2.5f, b);
         }
 
         void Motion()
@@ -630,10 +738,15 @@ namespace Pez.Sim
             Deposit(4, 10.5f, Map.Iron, 0.62f);
             Deposit(10, 10.5f, Map.Iron, 0.3f);
             Item("Deposits running down", "two rings left, then one (a ring fades per third of the reserve)", 7, 10.5f);
-            DeepMineOn(Blue, 16, 10.5f, Map.Copper, 0.6f);
-            Item("Deep mine working", "sheave turning, ore tube tinted copper at 60%", 16, 10.5f);
+            // A copper mine whose deposit runs down from full to dry over 20 s (a brick popped out of the stem every 3.3 s,
+            // the lamp pulsing from 20% left), stands dry for 8 s, then is full again for 4 s.
+            var working = w.Map.DepositById(DeepMineOn(Blue, 16, 10.5f, Map.Copper, 1f).DepositId);
+            holds.Add(() => { float t = T % 32f; working.Amount = working.Initial * (t < 20f ? 1f - 0.98f * t / 20f : t < 28f ? 0f : 1f); });
+            Item("Deep mine working, running down", "the skip hauling copper up and tipping it into the bin, the sheave and drum turning with the rope; the deposit runs from full to dry over 20 s (a brick pops out of the stem every 3.3 s, the lamp pulses from 20% left), dry for 8 s (skip parked, stem empty, head hanging open, lamp blinking), then full again; loops every 32 s", 16, 10.5f);
             DeepMineOn(Blue, 22, 10.5f, Map.Uranium, 0f);
-            Item("Deep mine exhausted", "deposit dry: tube empty, sheave still, no veins", 22, 10.5f);
+            Item("Deep mine exhausted", "deposit dry: skip parked in the shaft, stem empty with the head hanging open, the amber lamp blinking, no veins", 22, 10.5f);
+            DeepMineOn(Green, 28, 10.5f, Map.Iron, 0.55f);
+            Item("Deep mine on low power (Lime)", "the hoist at half speed, the winder labouring (the skip crawls now and then on its way up); four bricks of iron left in the stem", 28, 10.5f);
 
             // The surveyor drives between two spots and surveys each (thumps and ground ripples) in turn.
             var sv = Unit(Blue, "geological_surveyor", 3, 3, AlongRight, pin: false);
@@ -701,6 +814,11 @@ namespace Pez.Sim
             });
             Item("Landing and refuelling", "the gunship flies a beat, lands on the airfield, refuels (fuel bar fills), lifts off; every 26 s", 31, 11, 9);
 
+            // A Cherry radar dome watching Blueberry's sky: each aircraft that comes into its 28 tiles (the circuit's far
+            // legs cross the edge, the gunship lifts off its pad) is a new contact it swings onto.
+            Bldg(Red, "radar_dome", 40, 18);
+            Item("Radar contacts", "a Cherry radar dome sweeps; on each new contact (an aircraft crossing into its range, the gunship lifting off) it swings onto it, follows it 1 s and sweeps on; its beacon double-flashes while it holds contacts", 40, 18, 8);
+
             Transport("apc", "rifleman", 4, 4, "APC loading");
             Transport("transport_chopper", "rocket_soldier", 18, 4, "Transport chopper loading");
 
@@ -741,7 +859,7 @@ namespace Pez.Sim
                         break;
                 }
             });
-            Item(name, "infantry walk up and board (shrinking into it), ride, get out and walk back; loops", a + 3, b - 1, 8);
+            Item(name, "infantry walk up and board (shrinking into it), ride, step back out of it and walk back; loops", a + 3, b - 1, 8);
         }
 
         void Wrecks()
@@ -870,6 +988,24 @@ namespace Pez.Sim
             });
             Item("Construction truck deploying", "drives up, stops and deploys into a command center (the truck sinks as the base rises); loops", 7, 4.5f, 9);
 
+            // An outpost truck (Cherry, whose trucks work far off in the economy loop, so none come here to unload) drives up
+            // and deploys: the bunker rises out of it and the lookout's mast telescopes up. 12 s later the outpost is cleared
+            // and a new truck drives up.
+            var opFrom = P(16.5f, 13); var opTo = P(22.5f, 10.5f);
+            Entity opTruck = null, op = null; float opAt = 0, opAgain = 0;
+            holds.Add(() =>
+            {
+                if (opTruck != null && opTruck.Dead) { opTruck = null; op = w.Entities.LastOrDefault(e => !e.Dead && e.Team == Red && e.Def.Key == "outpost" && Vec2.Dist(e.Center, opTo) < 3f); opAt = T; }
+                if (op != null && (op.Dead || T - opAt > 12f)) { if (!op.Dead) w.Remove(op); op = null; opAgain = T + 2f; }
+                if (opTruck == null && op == null && T >= opAgain)
+                {
+                    opTruck = w.PlaceUnit(Red, "outpost_truck", opFrom, AlongRight);
+                    w.SetOrder(opTruck, Order.Move, opTo);
+                }
+                else if (opTruck != null && !opTruck.Dead && opTruck.Order == Order.Idle && w.Deploy(opTruck) != null) { w.Remove(opTruck); opTruck = null; opAgain = T + 2f; }
+            });
+            Item("Outpost truck deploying", "drives up, stops and deploys: the bunker rises out of the sinking truck, then the lookout's mast telescopes up and the lookout starts its sweep; cleared after 12 s; loops", 21.5f, 11f, 9);
+
             // Decay (the match clock's last half hour): a barracks crumbling, grit falling off it, its health running down
             // from full to 45% over a minute (smoke starts below 50%) and back.
             var decaying = Bldg(Red, "barracks", 18, 4);
@@ -899,11 +1035,13 @@ namespace Pez.Sim
             });
             Item("Derrick captured", "an engineer walks up and takes the neutral derrick: it turns Cherry's; released again after 10 s; loops", 46, 5, 9);
 
-            // Defence upkeep: a turret whose upkeep isn't paid stands dark and still, beside one that's paid.
+            // Defence upkeep: a turret whose upkeep isn't paid stands dark and still, beside one that's paid; and one of
+            // Lime's on its team's low power (the Power district's Lime base draws more than its plant makes).
             var dark = Bldg(Red, "laser_tower", 51, 11);
             holds.Add(() => dark.Offline = true);
             Bldg(Red, "laser_tower", 54, 11);
-            Item("Defence offline (upkeep unpaid)", "left: dark and still, holding fire until its team has steel; right: paid and powered", 52.5f, 11);
+            Bldg(Green, "laser_tower", 48, 11);
+            Item("Defence offline (upkeep unpaid)", "left to right: Lime's on low power (its coils and their light at half); unpaid: dark and still, holding fire until its team has steel, its coils casting no light; paid and powered, the coils lighting the pylon, pad and ground cyan", 51f, 11);
         }
 
         static string Pretty(string key) => key.Contains(':') ? key : char.ToUpperInvariant(key[0]) + key.Substring(1).Replace('_', ' ');

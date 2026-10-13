@@ -127,7 +127,8 @@ namespace Pez.Headless
         static void LobbyAndCutoff()
         {
             var game = WaitingGame(2, () => DateTime.UtcNow);
-            var api = new ApiServer(7985);
+            int port = FreePort();
+            var api = new ApiServer(port);
             api.Start();
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
             // One thread, as in IdleOverHttp. The reply's HTTP status rides along as "_status".
@@ -138,7 +139,7 @@ namespace Pez.Headless
                 d["_status"] = (double)(int)req.Result.StatusCode;
                 return d;
             }
-            const string Url = "http://127.0.0.1:7985";
+            string Url = $"http://127.0.0.1:{port}";
             Dictionary<string, object> Lobby() => Call(http.GetAsync($"{Url}/api/lobby"));
             Dictionary<string, object> Register(string name) => Call(http.PostAsync($"{Url}/api/register", new StringContent($"{{\"name\":\"{name}\"}}")));
 

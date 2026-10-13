@@ -255,7 +255,7 @@ namespace Pez.View
             cs.SetFloat("_SimTime", Time.time);
             cs.SetFloat("_Seed", (seed % 97) * 1.37f);
             cs.SetVector("_Origin", Vox.Origin);
-            cs.SetVector("_Wind", FxSystems.Wind);
+            cs.SetVector("_Wind", FxSystems.FireWind);
             cs.SetFloat("_Fire", fireK);
             cs.SetFloat("_Smoulder", smokeK);
             cs.SetFloat("_Coverage", fireK > 0f ? 0.14f + 0.86f * Mathf.Pow(fireK, 0.75f) : 0f);

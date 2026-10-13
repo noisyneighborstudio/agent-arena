@@ -213,6 +213,27 @@ namespace Pez.Sim
         /// snapshot. A player's copy is fogged, so its own count of who's still standing would be wrong anyway.
         /// </summary>
         public bool Mirror;
+
+        /// <summary>
+        /// Orders players gave over the API, the last CommandLogTicks of them, numbered (CommandSeq is the last number, and
+        /// is saved). A view's copy of the game, which runs on between snapshots, gives them again at the same ticks
+        /// (Game.Replay). Without them it learns of an order only at the next snapshot, seconds later, and every unit
+        /// ordered meanwhile slides over to where it should be.
+        /// </summary>
+        public readonly List<LoggedCommand> CommandLog = new List<LoggedCommand>();
+        public long CommandSeq;
+        public const int CommandLogTicks = 30 * TickRate;
+
+        /// <summary>Logs a command that worked (ApiServer), unless it changes nothing a copy shows (chat, a tech proposal).</summary>
+        public void LogCommand(int team, Dictionary<string, object> cmd)
+        {
+            var type = cmd.Str("type", "").ToLowerInvariant();
+            if (type == "say" || type == "propose_tech" || type == "start_match") return;
+            CommandLog.Add(new LoggedCommand { Seq = ++CommandSeq, Tick = Tick, Team = team, Cmd = cmd });
+            int cut = 0;
+            while (cut < CommandLog.Count && (CommandLog[cut].Tick < Tick - CommandLogTicks || CommandLog.Count - cut > 400)) cut++;
+            if (cut > 0) CommandLog.RemoveRange(0, cut);
+        }
         public int MaxPlayers = 8;
         public int MaxMapSize = Map.MaxSize;
         public int GrowStep = 32;
@@ -293,6 +314,8 @@ namespace Pez.Sim
         public readonly List<GameEvent> Events = new List<GameEvent>();
         /// <summary>How many of each event type have happened (the event list itself is a rolling window).</summary>
         public readonly Dictionary<string, int> EventCounts = new Dictionary<string, int>();
+        /// <summary>Units the dance guard settled (WatchDances), by "unit_key order": a designed situation should never need it.</summary>
+        public readonly SortedDictionary<string, int> SettleCounts = new SortedDictionary<string, int>();
         public readonly AlertLog Alerts = new AlertLog();
         /// <summary>Agent-invented unit designs in this game, by key (t&lt;team&gt;:&lt;name&gt;). See Invention.cs.</summary>
         public readonly Dictionary<string, Invention> Inventions = new Dictionary<string, Invention>();
@@ -1127,7 +1150,7 @@ namespace Pez.Sim
             e.Path = null;
             e.RepathTimer = 0;
             e.Dock = DockStep.None; e.DockAt = 0;
-            if (o == Order.Idle) e.GuardPos = e.Pos;
+            if (o == Order.Idle) { e.GuardPos = e.Pos; e.Moving = false; } // stopped where it is (an idle truck left Moving parked in soldiers' way)
             e.Responding = false; // any new order (from a commander or the response itself) replaces the old one
             e.SpeedCap = 0; e.Group = 0;
             e.Waypoints.Clear(); e.WaypointLoop = false;
@@ -1192,6 +1215,7 @@ namespace Pez.Sim
             Guard("dodge", DodgeVehicles);
             Guard("separation", Separate);
             Guard("run over", RunOver);
+            Guard("dance guard", WatchDances);
             Guard("cleanup", Cleanup);
             if (Tick % 4 == 0) Guard("visibility", UpdateVisibility);
             if (!Mirror) Guard("victory", CheckVictory);
@@ -1569,9 +1593,17 @@ namespace Pez.Sim
                 return;
             }
             float d = t.DistFrom(e.Pos);
-            if (d <= e.Def.Weapon.Range) { e.Moving = false; FireAt(e, t); }
+            if (d <= FireBand(e)) { e.Moving = false; e.Path = null; FireAt(e, t); }
             else if (Vec2.Dist(e.Pos, e.GuardPos) < 6f) Chase(e, t); // path around obstacles, not straight into them
+            else e.Moving = false; // at the end of its leash: holds there (it used to stay "moving" on the spot)
         }
+
+        /// <summary>
+        /// How close a unit gets before it stops to fire, with a band: one closing in stops at 0.9x its range, one already
+        /// stopped keeps firing out to its full range. With a single threshold, a shove or a step of the target across it
+        /// flipped the unit between chasing and firing every tick (the attack-move firing line).
+        /// </summary>
+        static float FireBand(Entity e) => e.Def.Weapon.Range * (e.Moving ? 0.9f : 1f);
 
         /// <summary>Done with an order. Units that left their post to answer an attack head back to it.</summary>
         void FinishOrder(Entity e)
@@ -1621,7 +1653,7 @@ namespace Pez.Sim
                 Chase(e, t);
                 return;
             }
-            if (d <= e.Def.Weapon.Range * 0.95f)
+            if (d <= FireBand(e))
             {
                 e.Moving = false;
                 e.Path = null;
@@ -1871,7 +1903,7 @@ namespace Pez.Sim
             var dir = t.Center - e.Pos;
             float want = dir.Angle;
             e.TurretFacing = RotateToward(e.TurretFacing, want, 6f * Dt);
-            if (!e.IsStructure && !e.Moving && e.Def.Armor == Armor.Infantry) e.Facing = want;
+            if (!e.IsStructure && !e.Moving && e.Def.Armor == Armor.Infantry && Time >= e.DodgeUntil) e.Facing = RotateToward(e.Facing, want, TurnRate(e) * Dt); // dodging: running, not aiming
             if (e.Cooldown > 0) return;
             if (MathF.Abs(AngleDiff(e.TurretFacing, want)) > 0.35f) return;
             var w = e.Def.Weapon;
@@ -2036,9 +2068,14 @@ namespace Pez.Sim
                     bool Leashed(Int2 t) => (hasField && Vec2.DistSq(t.Center, from) <= 144f) || drops.Any(dp => Vec2.DistSq(dp, t.Center) <= LeashDist * LeashDist);
                     // Spread trucks out: avoid tiles another truck is already working.
                     bool Free(Int2 t) => !OreReserved(t, e.Team) && !NearBarredBase(t, barred) && Safe(t) && Leashed(t);
+                    bool Unclaimed(Int2 t) => !Entities.Any(o => o != e && !o.Dead && o.IsHarvester && o.HarvestTile.HasValue && o.HarvestTile.Value.Equals(t));
                     // (Equally near tiles: the one nearer its nearest drop-off, whichever corner it works from.)
                     Vec2? home = drops.Count > 0 ? drops.OrderBy(dp => Vec2.DistSq(dp, from)).First() : (Vec2?)null;
-                    e.HarvestTile = Map.NearestOre(from, 40, t => Free(t) && Wanted(t) && !Entities.Any(o => o != e && !o.Dead && o.IsHarvester && o.HarvestTile.HasValue && o.HarvestTile.Value.Equals(t)), want, home)
+                    // Ore within its reach first: it mines a patch from where it stands rather than hopping tile to tile
+                    // (drive a tile, stop, mine a few, drive a tile: a slide-pause rhythm on thin ore).
+                    e.HarvestTile = (e.Moving ? null : Map.NearestOre(e.Pos, 3, t => Vec2.Dist(t.Center, e.Pos) <= MineReach && Free(t) && Wanted(t) && Unclaimed(t), want, home))
+                                    ?? RichestNear(e.Pos, 8f, t => Free(t) && Wanted(t) && Unclaimed(t), want, home) // where a stop collects most
+                                    ?? Map.NearestOre(from, 40, t => Free(t) && Wanted(t) && Unclaimed(t), want, home)
                                     ?? Map.NearestOre(from, 80, t => Free(t) && Wanted(t), want, home)
                                     ?? Map.NearestOre(from, 80, Free, want, home);
                     e.Path = null;
@@ -2052,7 +2089,9 @@ namespace Pez.Sim
                     WarnIfFarAfield(e, e.HarvestTile.Value);
                 }
                 var tile = e.HarvestTile.Value;
-                if (Vec2.Dist(e.Pos, tile.Center) > 0.45f) { FollowPath(e, tile.Center, 0.4f); return; }
+                // It drives onto a tile until within 0.4; parked, it mines anything within MineReach without moving (and isn't
+                // made to re-centre by a nudge: trucks on neighbouring tiles used to push each other off and turn round).
+                if (Vec2.Dist(e.Pos, tile.Center) > (e.Moving ? 0.4f : MineReach)) { FollowPath(e, tile.Center, 0.3f); return; }
                 e.Moving = false;
                 e.WorkTimer += Dt;
                 if (e.WorkTimer >= 0.1f)
@@ -2099,32 +2138,36 @@ namespace Pez.Sim
                 case DockStep.None:
                 case DockStep.Approach:
                 case DockStep.Queue:
-                    if (BayTaken(refinery, e))
+                case DockStep.Enter:
                     {
-                        // Wait beside the lane, out of the way, until the bay is free.
-                        if (e.Dock == DockStep.Queue || Vec2.Dist(e.Pos, head) < 4f)
+                        // One truck at a time in the bay, the rest in a single-file queue of their own spots beside the lane,
+                        // in the order they joined: when the bay frees, only the front one goes, and the rest each move up a
+                        // spot. (Trucks used to pick spots by id, two to a spot, and all rush the lane when it freed.)
+                        bool queued = e.Dock == DockStep.Queue;
+                        int ahead = queued ? QueueAhead(refinery, e) : 0;
+                        bool near = Vec2.Dist(e.Pos, head) < QueueJoinDist;
+                        // Its turn: already pulling up, or at the front of the queue (or near the lane with no queue) and the
+                        // bay isn't spoken for. Only then does it claim the bay (Enter); a truck merely on its way doesn't.
+                        if (e.Dock == DockStep.Enter || (!BayClaimed(refinery, e) && (queued ? ahead == 0 : near && QueueAhead(refinery, null) == 0)))
                         {
-                            if (e.Dock != DockStep.Queue) e.Path = null;
-                            e.Dock = DockStep.Queue;
-                            // On the side of the lane it came from (an id's parity picked it, so a truck and its half-turned twin queued on opposite sides).
-                            float onLeft = (e.Pos.X - head.X) * across.X + (e.Pos.Y - head.Y) * across.Y >= 0f ? 1f : -1f;
-                            var spot = head + across * (1.7f * onLeft) + outward * 1.3f;
-                            if (!Map.Passable(Int2.Of(spot).X, Int2.Of(spot).Y)) spot = head + across * (-1.7f * onLeft) + outward * 1.3f;
-                            if (!Map.Passable(Int2.Of(spot).X, Int2.Of(spot).Y)) spot = head + outward * 2.5f;
-                            FollowPath(e, spot, 0.4f);
+                            if (e.Dock != DockStep.Enter) e.Path = null;
+                            e.Dock = DockStep.Enter;
+                            if (Vec2.Dist(e.Pos, head) > 0.35f) { FollowPath(e, head, 0.3f); return; }
+                            e.Dock = DockStep.Align;
+                            e.Moving = false;
+                            e.Path = null;
                             return;
                         }
-                        e.Dock = DockStep.Approach;
-                        FollowPath(e, head, 0.35f);
+                        // Still on its way: drive on toward the lane; near it, join the back of the queue.
+                        if (!queued && !near) { e.Dock = DockStep.Approach; FollowPath(e, head, 0.35f); return; }
+                        if (!queued) { e.Dock = DockStep.Queue; e.QueuedAt = Time; e.Path = null; ahead = QueueAhead(refinery, e); }
+                        var spot = QueueSpot(head, outward, across, ahead) ?? e.Pos; // nowhere to line up: wait where it is
+                        float off = Vec2.Dist(e.Pos, spot);
+                        // A band: once at its spot it stays, unless shoved well off it (it doesn't re-centre on every nudge).
+                        if (off > 0.9f || (e.Moving && off > 0.3f)) { FollowPath(e, spot, 0.3f); return; }
+                        e.Moving = false; e.Path = null;
                         return;
                     }
-                    if (e.Dock == DockStep.Queue) e.Path = null;
-                    e.Dock = DockStep.Approach;
-                    if (Vec2.Dist(e.Pos, head) > 0.35f) { FollowPath(e, head, 0.3f); return; }
-                    e.Dock = DockStep.Align;
-                    e.Moving = false;
-                    e.Path = null;
-                    return;
                 case DockStep.Align:
                     // Turn on the spot to face away from the building (the bin end toward it), settling onto the lane.
                     e.Moving = false;
@@ -2163,6 +2206,36 @@ namespace Pez.Sim
                         return;
                     }
             }
+        }
+
+        /// <summary>How far a parked mining truck's cutter reaches: its own tile and the eight around it.</summary>
+        public const float MineReach = 1.5f;
+        /// <summary>
+        /// The ore tile within `radius` of `from` where a parked truck collects the most: the ore within its reach there
+        /// (MineReach, the tile and the eight around it), less a little for the drive. On a thin or picked-over field a
+        /// truck used to drive to the nearest tile, take a unit or two, and drive a tile again: a slide-pause rhythm.
+        /// </summary>
+        Int2? RichestNear(Vec2 from, float radius, Func<Int2, bool> ok, int want, Vec2? home = null)
+        {
+            Int2? best = null; float bestScore = float.MinValue, bestHome = 0;
+            int r = (int)MathF.Ceiling(radius), cx = (int)from.X, cy = (int)from.Y;
+            bool Good(int x, int y) => Map.InBounds(x, y) && Map.OreAt(x, y) > 0 && (want < 0 || Map.OreType[Map.Idx(x, y)] == want) && ok(new Int2(x, y));
+            for (int y = cy - r; y <= cy + r; y++)
+                for (int x = cx - r; x <= cx + r; x++)
+                {
+                    if (!Good(x, y)) continue;
+                    float d = Vec2.Dist(new Int2(x, y).Center, from);
+                    if (d > radius) continue;
+                    int sum = 0;
+                    for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) if (Good(x + dx, y + dy)) sum += Map.OreAt(x + dx, y + dy);
+                    float score = sum - 4f * d;
+                    // (Equal scores: the tile nearer home, as NearestOre breaks its ties, not the scan order, which favours one seat.)
+                    float toHome = home.HasValue ? Vec2.DistSq(new Int2(x, y).Center, home.Value) : 0f;
+                    int cmp = best == null ? -1 : TieCmp(bestScore, score);
+                    if (cmp == 0) cmp = TieCmp(toHome, bestHome);
+                    if (cmp < 0) { bestScore = score; bestHome = toHome; best = new Int2(x, y); }
+                }
+            return best;
         }
 
         // The bay: trucks line up BayLength tiles out, turn to face away, reverse in, and unload. These timings are the
@@ -2211,9 +2284,67 @@ namespace Pez.Sim
                 int waiting = 0;
                 foreach (var o in Entities) if (o != e && !o.Dead && o.IsHarvester && o.DockAt == s.Id) waiting++;
                 float cost = Vec2.Dist(head, e.Pos) + 4f * waiting + (laneOk ? 0 : 30f);
+                if (s.Id == e.DockAt) cost = cost * 0.75f - 2f; // sticks with the one it has unless another is clearly better
                 if (cost < bestCost) { best = s; bestCost = cost; }
             }
             return best;
+        }
+
+        /// <summary>Debug: each drop-off's lane and queue (PEZ_QUEUEDBG).</summary>
+        public string QueueReport()
+        {
+            var sb = new System.Text.StringBuilder();
+            foreach (var s in Entities.Where(x => !x.Dead && x.IsStructure && x.Def.DropOff))
+            {
+                var (bay, head, _, ok) = Bay(s);
+                var outward = (head - bay).Normalized; var across = new Vec2(-outward.Y, outward.X);
+                sb.AppendLine($"#{s.Id} {s.Def.Key} t{s.Team} origin {s.Origin.X},{s.Origin.Y} size {s.Def.SizeX}x{s.Def.SizeY} bay {bay} head {head} lane {ok}");
+                for (int r = 0; r < 4; r++) { var sp = QueueSpot(head, outward, across, r) ?? new Vec2(-1, -1); var t = Int2.Of(sp); sb.AppendLine($"   spot {r} {sp} passable {Map.Passable(t.X, t.Y)} occupant {(Map.InBounds(t.X, t.Y) ? Map.Occupant[Map.Idx(t.X, t.Y)] : -9)}"); }
+                foreach (var o in Entities.Where(o => !o.Dead && o.IsHarvester && o.DockAt == s.Id))
+                    sb.AppendLine($"   truck #{o.Id} {o.Dock} at {o.Pos} rank {(o.Dock == DockStep.Queue ? QueueAhead(s, o) : -1)} path {(o.Path == null ? "-" : string.Join(" ", o.Path))}");
+            }
+            return sb.ToString();
+        }
+
+        /// <summary>How near the head of its lane a truck on its way joins a drop-off's queue (when it has to wait).</summary>
+        public const float QueueJoinDist = 5f;
+
+        /// <summary>Trucks queued for drop-off s ahead of e (joined earlier; ties by id). With e null: all of them.</summary>
+        int QueueAhead(Entity s, Entity e)
+        {
+            int n = 0;
+            foreach (var o in Entities)
+            {
+                if (o == e || o.Dead || !o.IsHarvester || o.DockAt != s.Id || o.Dock != DockStep.Queue) continue;
+                if (e == null || o.QueuedAt < e.QueuedAt || (o.QueuedAt == e.QueuedAt && o.Id < e.Id)) n++;
+            }
+            return n;
+        }
+
+        /// <summary>The bay is spoken for: another truck is pulling up to it (its turn), or in it (lining up, backing in, unloading or pulling out).</summary>
+        bool BayClaimed(Entity s, Entity e)
+        {
+            foreach (var o in Entities)
+                if (o != e && !o.Dead && o.IsHarvester && o.DockAt == s.Id && o.Dock >= DockStep.Enter) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// Queue spot `rank` (0 = next in): a single file beside the lane, 1.25 apart (trucks are 1 across), starting just
+        /// past where a truck pulling out stops, so the lane stays clear; the other side if that's blocked; a line across
+        /// the head of the lane if the lane runs into rock or off the map; straight back along it as a last resort. Null
+        /// if none of those is open ground (it waits where it is).
+        /// </summary>
+        Vec2? QueueSpot(Vec2 head, Vec2 outward, Vec2 across, int rank)
+        {
+            float along = PullOutPast + 0.2f + rank * 1.25f;
+            foreach (var spot in new[] { head + outward * along + across * 1.7f, head + outward * along - across * 1.7f,
+                                         head + across * (2.2f + rank * 1.25f), head - across * (2.2f + rank * 1.25f), head + outward * (along + 1.6f) })
+            {
+                var t = Int2.Of(spot);
+                if (Map.Passable(t.X, t.Y)) return spot;
+            }
+            return null;
         }
 
         /// <summary>Another truck is in this bay (lining up, backing in, unloading or pulling out).</summary>
@@ -2755,7 +2886,7 @@ namespace Pez.Sim
             {
                 e.Fuel = 0;
                 // Running dry over its own pad, an aircraft glides in rather than falling a tile short of home.
-                if (e.IsAir && Owned(e.Team).Any(s => IsFuelPoint(e, s) && s.DistFrom(e.Pos) <= 3f)) { e.Fuel = 0.01f; }
+                if (e.IsAir && Owned(e.Team).Any(s => IsFuelPoint(e, s) && s.DistFrom(e.Pos) <= 3f)) { e.Fuel = 0.01f; return; } // still flying: it gets to its slot
                 else if (e.IsAir) { Crash(e); return; }
                 if (!e.Stranded)
                 {
@@ -2843,7 +2974,11 @@ namespace Pez.Sim
             }
             if (e.IsAir)
             {
-                if (Vec2.Dist(e.Pos, p.Center) > 0.6f) { StepToward(e, p.Center); return; }
+                // Its own slot on the pad (PadSpot), not the pad's centre: every aircraft used to fly to the centre, where
+                // two can't both be, and they shoved each other over it until they ran dry. A full pad: it holds nearby.
+                if ((Tick + e.Id) % 20 == 0 || !IsPadSlot(p, e.OrderPos) && !IsHoldingSpot(e, p, e.OrderPos)) e.OrderPos = PadSpot(e, p);
+                if (Vec2.Dist(e.Pos, e.OrderPos) > 0.05f) { StepToward(e, e.OrderPos); return; }
+                if (!IsPadSlot(p, e.OrderPos)) { e.Moving = false; if (e.Fuel >= e.FuelMax * 0.99f) FinishRefuel(e); return; } // holding for a slot: hovering, re-asking each second
             }
             else if (!p.IsStructure)
             {
@@ -2862,6 +2997,84 @@ namespace Pez.Sim
             }
             e.Moving = false; e.Path = null;
             if (e.Fuel >= e.FuelMax * 0.99f) FinishRefuel(e);
+        }
+
+        /// <summary>Spacing of landing slots on a pad: the widest pair of aircraft (two bombers) needs 1.4.</summary>
+        public const float PadSlotSpacing = 1.5f;
+
+        /// <summary>Where aircraft land on pad p: a grid PadSlotSpacing apart that fits its footprint (one on a small pad).</summary>
+        List<Vec2> PadSlots(Entity p)
+        {
+            padSlots.Clear();
+            int nx = Math.Max(1, (int)((p.Def.SizeX - 0.5f) / PadSlotSpacing) + 1), ny = Math.Max(1, (int)((p.Def.SizeY - 0.5f) / PadSlotSpacing) + 1);
+            for (int iy = 0; iy < ny; iy++)
+                for (int ix = 0; ix < nx; ix++)
+                    padSlots.Add(p.Center + new Vec2((ix - (nx - 1) / 2f) * PadSlotSpacing, (iy - (ny - 1) / 2f) * PadSlotSpacing));
+            return padSlots;
+        }
+        readonly List<Vec2> padSlots = new List<Vec2>();
+
+        bool IsPadSlot(Entity p, Vec2 at)
+        {
+            foreach (var slot in PadSlots(p)) if (Vec2.DistSq(slot, at) < 0.0025f) return true;
+            return false;
+        }
+
+        /// <summary>Where aircraft e waits for a slot on full pad p: its own point on a ring just outside it.</summary>
+        Vec2 HoldingSpot(Entity e, Entity p)
+        {
+            float a = e.Id * 2.3999632f; // the golden angle: neighbours' spots spread round the ring
+            float r = MathF.Sqrt(p.Def.SizeX * p.Def.SizeX + p.Def.SizeY * p.Def.SizeY) / 2f + 1.8f; // clear of the pad (OnPad's 1.5) even off a corner
+            var at = p.Center + new Vec2(MathF.Cos(a), MathF.Sin(a)) * r;
+            return new Vec2(Math.Clamp(at.X, 0.5f, Map.W - 0.5f), Math.Clamp(at.Y, 0.5f, Map.H - 0.5f));
+        }
+
+        bool IsHoldingSpot(Entity e, Entity p, Vec2 at) => Vec2.DistSq(HoldingSpot(e, p), at) < 0.0025f;
+
+        /// <summary>A slot is taken by another of the team's aircraft bound for it, or parked on it.</summary>
+        bool SlotTaken(Entity e, Entity p, Vec2 slot)
+        {
+            foreach (var o in Entities)
+            {
+                if (o == e || o.Dead || !o.IsAir || o.Team != e.Team || o.IsCarried) continue;
+                if (o.Order == Order.Refuel && o.TargetId == p.Id && Vec2.DistSq(o.OrderPos, slot) < 0.0025f) return true;
+                if (!o.Moving && Vec2.DistSq(o.Pos, slot) < 0.49f) return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Aircraft e's landing slot on pad p: the one it has while it's still its own, else the nearest free one. The pad
+        /// full, it holds at its HoldingSpot; the thirstiest of those waiting gets the next free slot, and one under 40%
+        /// fuel has an idle, full aircraft parked on a slot move off to hold so it can land.
+        /// </summary>
+        Vec2 PadSpot(Entity e, Entity p)
+        {
+            var slots = new List<Vec2>(PadSlots(p));
+            int best = -1; float bd = float.MaxValue;
+            for (int i = 0; i < slots.Count; i++)
+            {
+                if (SlotTaken(e, p, slots[i])) continue;
+                if (Vec2.DistSq(slots[i], e.OrderPos) < 0.0025f) return slots[i]; // still its own
+                float d = Vec2.DistSq(slots[i], e.Pos);
+                if (d < bd) { bd = d; best = i; }
+            }
+            bool waitingTurn = Entities.Any(o => o != e && !o.Dead && o.IsAir && o.Team == e.Team && o.Order == Order.Refuel && o.TargetId == p.Id &&
+                                                 IsHoldingSpot(o, p, o.OrderPos) && o.Fuel < e.Fuel);
+            if (best >= 0 && !waitingTurn) return slots[best];
+            if (best < 0 && e.Fuel < e.FuelMax * 0.4f)
+                foreach (var slot in slots)
+                {
+                    var parked = Entities.FirstOrDefault(o => o != e && !o.Dead && o.IsAir && o.Team == e.Team && o.Order == Order.Idle && !o.Moving &&
+                                                             o.Fuel >= o.FuelMax * 0.95f && Vec2.DistSq(o.Pos, slot) < 0.49f);
+                    if (parked == null) continue;
+                    SetOrder(parked, Order.Move, HoldingSpot(parked, p));
+                    parked.NoAutoRefuelUntil = Time + 60f;
+                    Emit("made_room", e.Team, parked.Id, e.Id, p.Center, key: parked.Def.Key,
+                         text: $"{parked.Def.Key} #{parked.Id} lifted off {p.Def.Key} #{p.Id} to make room for {e.Def.Key} #{e.Id}, low on fuel; it holds nearby. More pads (an airfield lands {PadSlots(p).Count}) keep aircraft from waiting.");
+                    return slot;
+                }
+            return HoldingSpot(e, p);
         }
 
         /// <summary>Tiles of travel one unit of fuel buys (aircraft burn by the second, vehicles by the tile).</summary>
@@ -2930,7 +3143,8 @@ namespace Pez.Sim
         /// <summary>Moves along a path to dest. Returns true on arrival.</summary>
         bool FollowPath(Entity e, Vec2 dest, float tolerance)
         {
-            if (Vec2.Dist(e.Pos, dest) <= tolerance) { e.Moving = false; e.Path = null; return true; }
+            float dd = Vec2.Dist(e.Pos, dest);
+            if (dd <= tolerance || (dd <= e.Def.Radius * 2f + 0.6f && GoalTaken(e, dest))) { e.Moving = false; e.Path = null; return true; }
             if (e.IsAir) { StepToward(e, dest); return false; }
             if (e.Path == null)
             {
@@ -2950,6 +3164,32 @@ namespace Pez.Sim
             return false;
         }
 
+        /// <summary>Open ground all along the straight line from a to b (sampled every quarter tile).</summary>
+        bool LineClear(Vec2 a, Vec2 b)
+        {
+            float len = Vec2.Dist(a, b);
+            int n = Math.Max(1, (int)(len / 0.25f));
+            for (int i = 1; i <= n; i++)
+            {
+                var t = Int2.Of(a + (b - a) * (i / (float)n));
+                if (!Map.Passable(t.X, t.Y)) return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// Another unit stands still on the point e is going to: as close as e can get counts as there. (Pushing in to the
+        /// point and being shoved back off it, it rocked back and forth on the spot.)
+        /// </summary>
+        bool GoalTaken(Entity e, Vec2 dest)
+        {
+            if (e.IsAir) return false;
+            Near(dest, 1.5f, nearSpot);
+            foreach (var o in nearSpot)
+                if (o != e && !o.Dead && !o.IsAir && !o.IsStructure && !o.IsMine && !o.IsCarried && !o.Moving && Vec2.Dist(o.Pos, dest) < o.Def.Radius + e.Def.Radius) return true;
+            return false;
+        }
+
         /// <summary>Steps along the current path. Returns false when the path is exhausted.</summary>
         bool AdvancePath(Entity e)
         {
@@ -2965,6 +3205,7 @@ namespace Pez.Sim
         void StepToward(Entity e, Vec2 p)
         {
             if (e.Stranded) { e.Moving = false; return; } // out of fuel
+            if (Time < e.SettledUntil) { e.Moving = false; return; } // settled by the dance guard: it stands still a moment
             var d = p - e.Pos;
             float len = d.Length;
             if (len < 1e-4f) return;
@@ -2975,7 +3216,14 @@ namespace Pez.Sim
                 e.Facing = RotateToward(e.Facing, want, 5f * Dt);
                 if (MathF.Abs(AngleDiff(e.Facing, want)) > 0.6f) { e.Moving = true; return; }
             }
-            else e.Facing = want;
+            else
+            {
+                // A soldier getting out of a vehicle's way finishes doing so, and never walks deeper into one's path: it
+                // waits at the edge for the vehicle to pass (walking in to be dodged out again, it flipped round every tick).
+                if (Time < e.DodgeUntil) { e.Moving = true; return; }
+                if (!e.IsAir && Threats(e) > 0f && Threat(e.Pos + d / len * MathF.Min(len, e.Def.Speed * Dt)) > Threat(e.Pos) + 1e-4f) { e.Moving = true; return; }
+                e.Facing = RotateToward(e.Facing, want, TurnRate(e) * Dt);
+            }
             if (!e.IsArmed || e.Cooldown <= 0 || e.Order != Order.Attack) e.TurretFacing = RotateToward(e.TurretFacing, e.Facing, 4f * Dt);
             float speed = e.SpeedCap > 0 ? MathF.Min(e.Def.Speed, e.SpeedCap) : e.Def.Speed;
             if (e.Group != 0 && groupSpan.TryGetValue(e.Group, out var span))
@@ -2985,7 +3233,10 @@ namespace Pez.Sim
                 else if (span.rear - mine > GroupSlack) speed *= MathF.Max(0.1f, 1f - (span.rear - mine - GroupSlack) / 4f); // ahead: wait
             }
             float step = MathF.Min(len, speed * Dt);
-            var next = e.Pos + d / len * step;
+            // A vehicle goes where it's facing (a gentle curve as it comes round), never sideways toward the point: within
+            // 0.6 rad of it, it used to slide crabwise while it turned. Infantry and aircraft step straight to it.
+            var heading = e.Def.Armor == Armor.Vehicle ? new Vec2(MathF.Cos(e.Facing), MathF.Sin(e.Facing)) : d / len;
+            var next = e.Pos + heading * step;
             // Never roll onto its own infantry: wait for them to get clear (they dodge). Only a vehicle held up by its own for
             // OwnBlockLimit seconds forces its way through, and can catch one with nowhere to go.
             if (Crusher(e) && OntoOwnInfantry(e, next) is Entity inWay)
@@ -3001,7 +3252,7 @@ namespace Pez.Sim
             else e.OwnBlockedSince = 0f;
             var nt = Int2.Of(next);
             var ct = Int2.Of(e.Pos);
-            if (e.IsAir) { if (Map.InBounds(nt.X, nt.Y)) e.Pos = next; }
+            if (e.IsAir) { if (Map.InBounds(nt.X, nt.Y) || !Map.InBounds(ct.X, ct.Y)) e.Pos = next; } // off the map (pushed out), it may fly back in
             else if (Map.Passable(nt.X, nt.Y) || !Map.Passable(ct.X, ct.Y)) e.Pos = next;
             else
             {
@@ -3010,6 +3261,9 @@ namespace Pez.Sim
                 var tx = Int2.Of(sx); var ty = Int2.Of(sy);
                 if (Map.Passable(tx.X, tx.Y) && MathF.Abs(d.X) >= 0.01f) e.Pos = new Vec2(e.Pos.X + MathF.Sign(d.X) * step, e.Pos.Y);
                 else if (Map.Passable(ty.X, ty.Y) && MathF.Abs(d.Y) >= 0.01f) e.Pos = new Vec2(e.Pos.X, e.Pos.Y + MathF.Sign(d.Y) * step);
+                // Its way to the point runs through something built since its path was planned: plan again from here
+                // (sliding along the wall, it wiggled against it).
+                if (!e.IsAir && e.Path != null && !LineClear(e.Pos, p)) e.Path = null;
             }
             e.Moving = true;
         }
@@ -3039,7 +3293,7 @@ namespace Pez.Sim
         /// A unit that's stepping aside itself doesn't move anyone else on: two of them would take turns forever.</summary>
         void GiveWay(Entity idle, Entity mover)
         {
-            if (idle.Order != Order.Idle || idle.Moving || idle.Team != mover.Team || Time < idle.GhostUntil - 2.5f || mover.GivingWay) return;
+            if (idle.Order != Order.Idle || idle.Moving || idle.IsAir || Time < idle.SettledUntil || idle.Team != mover.Team || Time < idle.GhostUntil - 2.5f || mover.GivingWay) return;
             var dir = mover.Path != null && mover.PathIdx < mover.Path.Count ? mover.Path[mover.PathIdx] - mover.Pos : idle.Pos - mover.Pos;
             if (dir.LengthSq < 1e-4f) dir = new Vec2(1, 0);
             // To the side it already stands on (an id's parity decided it: left for one unit, right for the next, so a unit and its
@@ -3092,48 +3346,98 @@ namespace Pez.Sim
         }
 
         /// <summary>
-        /// Infantry get out of a vehicle's way, friend's or foe's: anyone in its path sprints sideways, the short way out, at
+        /// Infantry get out of a vehicle's way, friend's or foe's: anyone in its path sprints out of it, the short way, at
         /// 1.4x their pace, once they see it coming (about 0.45 s before it reaches them, 0.25 s if they're shooting). That's
         /// all a body can do: one near the middle of a tank's path, boxed in (rock, buildings, a crowd) or too slow is run over.
+        /// Every vehicle bearing down counts at once: a soldier takes the step (of eight directions) that leaves it least in
+        /// anyone's path, and only one that's better than standing, so between two tanks it never steps out of one's path
+        /// into the other's and back (it used to, every tick, spinning on the spot).
         /// </summary>
         void DodgeVehicles()
         {
             foreach (var s in Entities)
             {
-                if (s.Dead || s.Def.Armor != Armor.Infantry || s.IsCarried || s.IsAir || s.IsStructure || s.Stranded) continue;
-                Near(s.Pos, 3.2f, nearCrush);
-                foreach (var v in nearCrush)
+                if (s.Dead || s.Def.Armor != Armor.Infantry || s.IsCarried || s.IsAir || s.IsStructure || s.Stranded || Time < s.SettledUntil) continue;
+                float deepest = Threats(s, out var primary);
+                if (deepest <= 0f) continue;
+                float step = s.Def.Speed * 1.4f * Dt, here = Threat(s.Pos), best = here - 1e-4f;
+                Vec2 bestDir = default;
+                float a0 = primary.Angle;
+                for (int k = 0; k < 8; k++)
                 {
-                    if (v.Dead || !Crusher(v) || !v.Moving || v.Stranded || v.IsCarried) continue; // driving, or waiting for them to clear
-                    var heading = new Vec2(MathF.Cos(v.Facing), MathF.Sin(v.Facing));
-                    var rel = s.Pos - v.Pos;
-                    float ahead = rel.X * heading.X + rel.Y * heading.Y, lateral = rel.X * heading.Y - rel.Y * heading.X;
-                    float clear = v.Def.Radius + s.Def.Radius + 0.25f;
-                    // Its own side's soldiers clear its path in good time (a driver they know is coming). An enemy's get moving
-                    // about 0.45 s before it reaches them (0.25 s if they're busy shooting).
-                    float react = Time - s.LastFiredAt < 1f ? 0.25f : 0.45f;
-                    float reach = s.Team == v.Team ? v.Def.Radius + 1.5f : MathF.Max(0.3f, Vec2.Dist(v.Pos, v.PrevPos) / Dt * react);
-                    if (ahead < -0.2f || ahead > reach || MathF.Abs(lateral) >= clear) continue;
-                    float sign = MathF.Abs(lateral) > 0.02f ? MathF.Sign(lateral) : ((s.Id & 1) == 0 ? 1f : -1f);
-                    var away = new Vec2(heading.Y, -heading.X) * sign; // perpendicular, on the side it's already on
-                    float step = s.Def.Speed * 1.4f * Dt;
-                    if (TryStep(s, away * step)) s.Facing = away.Angle;
-                    else if (TryStep(s, away * -step)) s.Facing = (away * -1f).Angle;
-                    else continue; // boxed in
-                    break;
+                    float a = a0 + k * (MathF.PI / 4f);
+                    var dir = new Vec2(MathF.Cos(a), MathF.Sin(a));
+                    var to = s.Pos + dir * step;
+                    var t = Int2.Of(to);
+                    if (!Map.Passable(t.X, t.Y)) continue;
+                    float score = Threat(to) + 0.002f * k; // ties: straight out first
+                    if (score < best) { best = score; bestDir = dir; }
                 }
+                if (best >= here - 1e-4f) continue; // boxed in, or no way out that isn't into another's path
+                s.Pos += bestDir * step;
+                s.Facing = RotateToward(s.Facing, bestDir.Angle, TurnRate(s) * Dt);
+                s.DodgeUntil = Time + 0.25f;
+                if (s.Order == Order.Idle) s.GuardPos = s.Pos; // standing where vehicles drive: it doesn't stroll back into their way
             }
         }
 
-        /// <summary>Move e by delta if it lands on open ground and not inside a structure; whether it moved.</summary>
-        bool TryStep(Entity e, Vec2 delta)
+        /// <summary>
+        /// Gathers the vehicles bearing down on soldier s (nearThreat: driving, or held up waiting for their own to clear;
+        /// not parked or turning on the spot), and returns how deep it is in the deepest one's path, with the way straight
+        /// out of it (on the side it's already on).
+        /// </summary>
+        float Threats(Entity s, out Vec2 primary)
         {
-            var next = e.Pos + delta;
-            var t = Int2.Of(next);
-            if (!Map.Passable(t.X, t.Y)) return false;
-            e.Pos = next;
-            return true;
+            primary = default;
+            nearThreat.Clear();
+            Near(s.Pos, 3.2f, nearCrush);
+            float deepest = 0f;
+            foreach (var v in nearCrush)
+            {
+                if (v.Dead || !Crusher(v) || v.IsCarried) continue;
+                if (!Rolling(v) && !(v.Team == s.Team && v.Moving && v.OwnBlockedSince > 0f)) continue;
+                var heading = new Vec2(MathF.Cos(v.Facing), MathF.Sin(v.Facing));
+                float clear = v.Def.Radius + s.Def.Radius + 0.25f;
+                // Its own side's soldiers clear its path in good time (a driver they know is coming). An enemy's get moving
+                // about 0.45 s before it reaches them (0.25 s if they're busy shooting).
+                float react = Time - s.LastFiredAt < 1f ? 0.25f : 0.45f;
+                float reach = s.Team == v.Team ? v.Def.Radius + 1.5f : MathF.Max(0.3f, Vec2.Dist(v.Pos, v.PrevPos) / Dt * react);
+                nearThreat.Add((v.Pos, heading, clear, reach, v.Def.Radius + s.Def.Radius));
+                float depth = InPath(nearThreat[nearThreat.Count - 1], s.Pos);
+                if (depth > deepest)
+                {
+                    deepest = depth;
+                    var rel = s.Pos - v.Pos;
+                    float lateral = rel.X * heading.Y - rel.Y * heading.X;
+                    float sign = MathF.Abs(lateral) > 0.02f ? MathF.Sign(lateral) : ((s.Id & 1) == 0 ? 1f : -1f);
+                    primary = new Vec2(heading.Y, -heading.X) * sign;
+                }
+            }
+            return deepest;
         }
+
+        /// <summary>Gathers the vehicles bearing down on s (nearThreat); how many.</summary>
+        int Threats(Entity s) { Threats(s, out _); return nearThreat.Count; }
+
+        /// <summary>How deep p is in one vehicle's path (0 = clear of it); being under its hull counts double.</summary>
+        static float InPath((Vec2 pos, Vec2 heading, float clear, float reach, float touch) v, Vec2 p)
+        {
+            var rel = p - v.pos;
+            float ahead = rel.X * v.heading.X + rel.Y * v.heading.Y, lateral = MathF.Abs(rel.X * v.heading.Y - rel.Y * v.heading.X);
+            float depth = ahead >= -0.2f && ahead <= v.reach && lateral < v.clear ? v.clear - lateral : 0f;
+            float d = rel.Length;
+            return d < v.touch ? depth + 2f * (v.touch - d) : depth;
+        }
+
+        /// <summary>How deep p is in the paths of the vehicles bearing down on the soldier now (nearThreat).</summary>
+        float Threat(Vec2 p)
+        {
+            float sum = 0f;
+            foreach (var v in nearThreat) sum += InPath(v, p);
+            return sum;
+        }
+
+        readonly List<(Vec2 pos, Vec2 heading, float clear, float reach, float touch)> nearThreat = new List<(Vec2, Vec2, float, float, float)>();
 
         /// <summary>
         /// Infantry a vehicle drives over (moving at 30% of its speed or more, towards them) are crushed: an enemy's anywhere
@@ -3189,6 +3493,7 @@ namespace Pez.Sim
                 {
                     if (b.Id <= a.Id) continue; // each pair once
                     if (b.Dead || b.IsStructure || b.IsCarried || b.IsMine || a.IsAir != b.IsAir) continue;
+                    if (a.IsAir && (a.Landed || b.Landed)) continue; // a landed aircraft sits on its slot: pinned, and those flying over are above it
                     if (Time < a.GhostUntil && a.Moving || Time < b.GhostUntil && b.Moving) continue; // unjamming: pass through
                     if (Overruns(a, b) || Overruns(b, a)) continue; // a rolling vehicle isn't held off by enemy infantry: it goes over them
                     float min = a.Def.Radius + b.Def.Radius;
@@ -3212,12 +3517,83 @@ namespace Pez.Sim
             }
         }
 
+        /// <summary>Seconds a unit may be on the move without getting anywhere before the guard settles it.</summary>
+        public const float DanceLimit = 2f;
+        /// <summary>Seconds a settled unit stands still (and is held fixed against pushes) before it carries on.</summary>
+        public const float SettleSeconds = 3f;
+
+        /// <summary>
+        /// The dance guard (docs/MOVEMENT.md): no unit may dance, whatever new interaction of rules sets it off. Each unit
+        /// keeps two-second running averages of its per-tick step, as a velocity and as a speed. One on the move (above a
+        /// crawl) whose average velocity is under a quarter of its average speed for DanceLimit seconds is going back and
+        /// forth, round in circles or jittering in place; so is one that reverses direction four times in about two
+        /// seconds. Either way it settles: it stops where it is, is held fixed for SettleSeconds (others go round it, nobody
+        /// shoves it), and a move that has got it within 2.5 tiles of its point counts as arrived. The world counts every
+        /// settle (SettleCounts): in a designed situation it's a bug, and the movement gate fails on it.
+        /// </summary>
+        void WatchDances()
+        {
+            const float k = Dt / 2f;
+            float decay = MathF.Exp(-Dt / 2f);
+            foreach (var e in Entities)
+            {
+                if (e.Dead || e.IsStructure || e.IsMine || e.IsCarried) continue;
+                var step = e.Pos - e.PrevPos;
+                float len = step.Length;
+                // A jump (unloaded, evicted), a truck in its bay's choreography (swing round, back in, unload, pull out) or a
+                // landed aircraft: not walking anywhere, so nothing to judge. The averages start afresh after.
+                if (len > 1f || e.Stranded || e.Dock >= DockStep.Align || (e.IsAir && e.Landed)) { e.DanceVel = default; e.DanceSpeed = e.DanceFor = e.DanceFlips = 0f; e.DanceStep = e.DanceHeading = default; continue; }
+                e.DanceVel = e.DanceVel * (1f - k) + step * k;
+                e.DanceSpeed = e.DanceSpeed * (1f - k) + len * k;
+                // Reversals of its motion over about 0.3 s (DanceStep: a short running average of its step), against the last
+                // direction it was clearly going (DanceHeading): a shove inside a march doesn't count, going back and forth does.
+                e.DanceStep = e.DanceStep * (1f - Dt / 0.3f) + step * (Dt / 0.3f);
+                float sl = e.DanceStep.Length;
+                if (sl > 0.006f) // over 0.12 tiles a second, sustained
+                {
+                    var dir = e.DanceStep / sl;
+                    if (e.DanceHeading.LengthSq > 0.5f && dir.X * e.DanceHeading.X + dir.Y * e.DanceHeading.Y < -0.5f) e.DanceFlips += 1f;
+                    e.DanceHeading = dir;
+                }
+                e.DanceFlips *= decay;
+                if (Time < e.SettledUntil) continue;
+                // Judged only on ticks it moves: standing still (a truck that has just moved up the queue, waiting) drains the
+                // count rather than adding to it, however busy its last two seconds were.
+                bool going = e.DanceSpeed > 0.004f; // over 0.08 tiles a second, averaged
+                if (len <= 0.001f) e.DanceFor = MathF.Max(0f, e.DanceFor - Dt);
+                else e.DanceFor = going && e.DanceVel.Length < 0.25f * e.DanceSpeed ? e.DanceFor + Dt : 0f;
+                if (e.DanceFor >= DanceLimit) Settle(e, "nowhere");
+                else if (e.DanceFlips >= 4f) Settle(e, "reversing");
+            }
+        }
+
+        void Settle(Entity e, string why)
+        {
+            e.SettledUntil = Time + SettleSeconds;
+            e.DanceFor = e.DanceFlips = 0f; e.DanceVel = e.DanceStep = e.DanceHeading = default; e.DanceSpeed = 0f;
+            e.Moving = false; e.Path = null;
+            // Close enough counts as arrived (a move, or a survey, which reads the ground for tiles around it); a truck
+            // that can't get onto its ore tile gives it up and picks another.
+            if ((e.Order == Order.Move || e.Order == Order.AttackMove || e.Order == Order.Survey) && Vec2.Dist(e.Pos, e.OrderPos) <= 2.5f) e.OrderPos = e.Pos;
+            if (e.Order == Order.Harvest && e.IsHarvester) e.HarvestTile = null;
+            string key = $"{e.Def.Key} {e.OrderName} ({why})";
+            SettleCounts[key] = SettleCounts.TryGetValue(key, out var n) ? n + 1 : 1;
+        }
+
         void TryNudge(Entity e, Vec2 delta)
         {
+            if (Time < e.SettledUntil) return; // settled: fixed while it lasts, others go round
             var next = e.Pos + delta;
             var t = Int2.Of(next);
             if (e.IsAir ? Map.InBounds(t.X, t.Y) : Map.Passable(t.X, t.Y)) e.Pos = next;
         }
+
+        /// <summary>
+        /// How fast a unit turns (rad/s): nothing snaps round. A soldier turns about twice a second, an aircraft banks round
+        /// in under a second, vehicles at the rate StepToward drives them. Infantry and aircraft walk or fly where they're
+        /// going while they turn; vehicles turn first.
+        /// </summary>
+        public static float TurnRate(Entity e) => e.IsAir ? 4f : e.Def.Armor == Armor.Infantry ? 12f : 5f;
 
         static float AngleDiff(float a, float b)
         {
@@ -3522,5 +3898,14 @@ namespace Pez.Sim
                 Emit("game_over", Winner, text: Winner >= 0 ? $"{Teams[Winner].Name} ({Teams[Winner].PlayerName ?? Teams[Winner].Controller}) wins" : "draw");
             }
         }
+    }
+
+    /// <summary>An order a player gave, numbered, at the tick it was given (after that tick's step, before the next).</summary>
+    public class LoggedCommand
+    {
+        public long Seq;
+        public int Tick;
+        public int Team;
+        public Dictionary<string, object> Cmd;
     }
 }
