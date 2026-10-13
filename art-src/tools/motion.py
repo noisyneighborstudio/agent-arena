@@ -184,8 +184,14 @@ STRUCTURES = [
    "flattened as they pass under the foil crusher roll (the spinner), which turns with the belt. Both smokestacks puff pale smoke from "
    "their mouths (stack_0, stack_1), each about every 0.3 s. Out of ore, the belt runs on until it's empty and stops, the roll spins "
    "down and the stacks give a thin wisp every few seconds. Low power halves the belt, the roll and the smoke. "
-   "Dispenses one mining_truck through the dock when it finishes building.",
-   dict(door=dict(mode='rollup', open_s=.35, close_s=.5), spinner=dict(axis='Z', idle_rpm=0, active_rpm=32, spinup_s=.5)), "Dock lights blink alternately at 1 Hz while a truck is docking.", ['mining_truck (free)']),
+   "Dispenses one mining_truck through the dock when it finishes building. "
+   "The truck bay is on the south, through the dock door; when terrain blocks that lane it moves to the first clear side (east, west or north), "
+   "and the dock's kraft chute then comes out of that wall. Each of those walls has a hatch (hatch_0, hatch_1, hatch_2: a licorice frame round a dark opening "
+   "and a cream roll-up shutter with a team lip): the shutter facing the bay rolls up in 0.3 s when a truck lines up, the chute waits for it, slides out through "
+   "the opening to the truck and back, and the shutter rolls down in 0.4 s once the chute is inside. The shutter stays up while the chute is out, so it never passes through a closed one. "
+   "Drop-offs the game places for you face south, so this is for terrain-blocked bays and the player's own placements; if the sim moves a bay to another wall mid-match "
+   "(the building that blocked the south lane is destroyed, or one is put on it), the chute draws back, the old hatch shuts, the chute shrinks away and comes up on the new side.",
+   dict(door=dict(mode='rollup', open_s=.35, close_s=.5), hatch=dict(mode='rollup', open_s=.3, close_s=.4, with_chute=True), spinner=dict(axis='Z', idle_rpm=0, active_rpm=32, spinup_s=.5)), "Dock lights blink alternately at 1 Hz while a truck is docking.", ['mining_truck (free)']),
  S('barracks', 'Trains infantry.', "A soldier dispenser, driven by the sim's training queue (BarracksWorks). The clear case under the flip-top head holds four soldiers stacked like candy: "
    "raw dough at the bottom, primed in the middle, finished with a team helmet at the top. While a soldier trains the stack (stack_lo to stack_hi) rises with its progress, "
    "each figure baking as it climbs, a fresh lump of dough swells in at the bottom, and the amber oven strip (oven) at the case's foot glows. "

@@ -774,6 +774,7 @@ namespace Pez.View
             v.Works.Show(SeesState(e, PovTeam));
             v.Works.Tick(e.Working, t.Amount("iron_ore") > t.Reserved("iron_ore"), t.Amount("copper_ore") > t.Reserved("copper_ore"),
                 t.LowPower ? 0.5f : 1f, Time.deltaTime);
+            v.Works.Hatches(v.Dock, Time.deltaTime);
             if (v.FireK >= 0.15f || v.Works.Stacks == 0) return;
             float now = Time.time;
             if (v.SteamNext == null)
@@ -894,6 +895,8 @@ namespace Pez.View
                 if (v.Dock != null)
                 {
                     var phase = v.DockFrame >= Time.frameCount - 1 ? v.DockBest : DockView.Phase.Idle;
+                    // The bay can change side mid-match (a building that blocked the south lane is destroyed): the dock follows.
+                    if ((Time.frameCount + e.Id) % 6 == 0) { var (bayNow, _, facingNow, _) = World.Bay(e); v.Dock.Rebay(facingNow, bayNow); }
                     v.Dock.Tick(phase, Time.deltaTime);
                     // The door is up from Align until the truck has pulled out, and rolls down 0.5 s after.
                     if (phase != DockView.Phase.Idle && v.Dock.DoorSide) { rig.Motion.SetDoorOpen(true); v.DoorTimer = Mathf.Max(v.DoorTimer, 0.5f); }

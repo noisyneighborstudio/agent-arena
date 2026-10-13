@@ -21,7 +21,9 @@ namespace Pez.Headless
             GateAirfieldRush();
             GateCrowd(budget: 3);
             GateEconomy();
-            GateAiGame(minutes: 8, budget: 8);
+            // 9, not 8: Rules 41 puts drop-offs where their south lane is clear, so this seed's base is laid out differently and
+            // settles 9 (it was 6). Over seeds 1-12 the AI's settles went from 10.9 to 9.1 on average: the budget fits one seed.
+            GateAiGame(minutes: 8, budget: 9);
             foreach (var (file, seconds, budget) in new[]
             {
                 // Budgets: just above what's left after phase 2's queues, bands and slots (a few trucks at the outpost, a

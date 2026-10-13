@@ -15,6 +15,9 @@ namespace Pez.View
     /// each lamp on the refinery and the command center (they chase upward, "come in"), a row between them on the
     /// outpost's low drop pad. The chute is built here too (the pack has no chute node): a kraft trough on the refinery
     /// and the command center, which have a door; the outpost's pad takes ore without one. Off, the lamps are unlit.
+    /// A bay that terrain moved to another wall (not the door's) sends the chute through that wall. A model with a hatch
+    /// there (hatch_N nodes: the refinery's roll-up shutters) has the chute rest just inside the wall, and it only comes
+    /// out once the hatch's owner reports it open (Opening); ChuteBusy tells that owner to hold it open until the chute is back.
     /// </summary>
     public class DockView
     {
@@ -23,16 +26,29 @@ namespace Pez.View
         readonly Renderer lamps;               // the model's own pair
         readonly Renderer[] pips;
         readonly Transform chute;
-        readonly Vector3 chuteIn, chuteOut;
+        readonly Transform model, door;
+        readonly float halfX, halfY;
+        Vector3 chuteIn, chuteOut, wantDir;
+        float swapK = 1f;                      // 0..1: how much of the chute shows while it changes sides
         readonly Material amber, cream, lampAmber, lampCream;
         float chuteK, clearT = -1f;
+        bool hatched;
         Phase shown = (Phase)(-1);
         bool creamShown;
 
         static Material pipAmber, pipCream, kraft, licorice;
 
         /// <summary>True when the bay is on the door side (south): the door rolls up for the truck.</summary>
-        public readonly bool DoorSide;
+        public bool DoorSide { get; private set; }
+        /// <summary>The bay's direction out of the building, in the model's space.</summary>
+        public Vector3 Dir { get; private set; }
+        /// <summary>The chute is changing sides (the sim moved the bay): it draws back, the old wall's hatch shuts, then it
+        /// comes up on the new side.</summary>
+        public bool Switching => chute != null && wantDir != Dir;
+        /// <summary>How open the wall's hatch is toward Dir, 0 to 1 (the hatch's owner sets it). The chute waits for it to be open.</summary>
+        public System.Func<Vector3, float> Opening;
+        /// <summary>The chute is out, on its way, or wanted out: a hatch in its wall has to stay open.</summary>
+        public bool ChuteBusy { get; private set; }
         /// <summary>The bay point (sim coordinates), for trucks unloading beside a drop-off whose lane is built over.</summary>
         public Vec2 BayPoint;
 
@@ -52,6 +68,8 @@ namespace Pez.View
         DockView(Transform model, Transform stage, Renderer lampR, Transform door, float halfX, float halfY, Vector3 dir)
         {
             lamps = lampR;
+            this.model = model; this.door = door; this.halfX = halfX; this.halfY = halfY;
+            Dir = wantDir = dir;
             amber = lampR.sharedMaterial;
             if (pipAmber == null)
             {
@@ -96,16 +114,11 @@ namespace Pez.View
             // tail (the bay point is half a tile outside the footprint; the bin's rear edge 0.4 in from the truck's
             // centre); in, it's 0.5 back: parked in the refinery's bay, or behind the command center's door. Doors face
             // -Z; when terrain moved the bay to another side, the chute comes out of that wall instead.
-            DoorSide = dir.z < -0.7f;
             if (door != null)
             {
-                float reach = (Mathf.Abs(dir.x) > 0.7f ? halfX : halfY) + 0.15f;
                 var c = new GameObject("chute").transform;
                 c.SetParent(stage, false);
-                chuteOut = dir * reach + (DoorSide ? new Vector3(model.InverseTransformPoint(door.position).x, 0f, 0f) : Vector3.zero);
-                chuteIn = chuteOut - dir * 0.5f;
-                c.localPosition = chuteIn;
-                c.localRotation = Quaternion.LookRotation(-dir, Vector3.up); // the trough runs along local +Z, into the building
+                chute = c;
                 const float len = 0.62f, w = 0.42f, slope = 12f;
                 var tray = new GameObject("tray").transform;
                 tray.SetParent(c, false);
@@ -114,9 +127,49 @@ namespace Pez.View
                 Part(tray, new Vector3(0f, 0f, 0f), new Vector3(w, 0.025f, len), kraft);
                 Part(tray, new Vector3(-w * 0.5f, 0.035f, 0f), new Vector3(0.03f, 0.07f, len), licorice);
                 Part(tray, new Vector3(w * 0.5f, 0.035f, 0f), new Vector3(0.03f, 0.07f, len), licorice);
-                chute = c;
             }
+            SetSide(dir);
             Apply(Phase.Idle, 0f);
+        }
+
+        /// <summary>
+        /// Puts the chute on the bay's side. Out, its lip is just over the backed-in truck's tail (the bay point is half a
+        /// tile outside the footprint; the bin's rear edge 0.4 in from the truck's centre); in, it's 0.5 back: parked in the
+        /// refinery's bay, or behind the command center's door. Doors face -Z; when terrain or a building moved the bay to
+        /// another side, the chute comes out of that wall instead, through its hatch when the model has one: then it rests
+        /// just inside the wall rather than 0.5 back (which can poke out of a wall).
+        /// </summary>
+        void SetSide(Vector3 dir)
+        {
+            Dir = wantDir = dir;
+            DoorSide = dir.z < -0.7f;
+            hatched = false;
+            if (chute == null) return;
+            float reach = (Mathf.Abs(dir.x) > 0.7f ? halfX : halfY) + 0.15f;
+            chuteOut = dir * reach + (DoorSide ? new Vector3(model.InverseTransformPoint(door.position).x, 0f, 0f) : Vector3.zero);
+            chuteIn = chuteOut - dir * 0.5f;
+            for (int i = 0; ; i++)
+            {
+                var h = PezMotion.FindDeep(model, "hatch_" + i);
+                if (h == null) break;
+                var hp = model.InverseTransformPoint(h.position); hp.y = 0f;
+                if (hp.sqrMagnitude < 0.01f || Vector3.Dot(hp.normalized, dir) < 0.9f) continue;
+                chuteIn = dir * (Vector3.Dot(hp, dir) - 0.12f);
+                hatched = true;
+                break;
+            }
+            chuteK = 0f;
+            chute.localPosition = chuteIn;
+            chute.localRotation = Quaternion.LookRotation(-dir, Vector3.up); // the trough runs along local +Z, into the building
+        }
+
+        /// <summary>The sim's bay now (World.Bay): the point trucks use at once; the chute and hatch follow in Tick when its
+        /// side has changed (a building that blocked the south lane was destroyed, or one now stands on it).</summary>
+        public void Rebay(float facing, Vec2 bayPoint)
+        {
+            BayPoint = bayPoint;
+            var d = new Vector3(Mathf.Cos(facing), 0f, Mathf.Sin(facing));
+            if (Vector3.Dot(d, wantDir) < 0.9f) wantDir = d;
         }
 
         static Renderer Pip(Transform parent, Vector3 pos, float size)
@@ -141,7 +194,19 @@ namespace Pez.View
             // Chute: out while the truck lines up, backs in and unloads; in once it pulls out.
             if (chute != null)
             {
-                float goal = phase == Phase.Active ? 1f : 0f;
+                // Changing sides: the chute draws back first, the old wall's hatch shuts (its owner, once ChuteBusy is false),
+                // then the chute shrinks away, appears on the new side and the new hatch opens for the next truck.
+                bool switching = wantDir != Dir;
+                bool want = phase == Phase.Active && !switching;
+                ChuteBusy = want || chuteK > 0f;
+                if (switching && chuteK <= 0f && (!hatched || Opening == null || Opening(Dir) <= 0.02f))
+                {
+                    swapK = Mathf.MoveTowards(swapK, 0f, dt / 0.2f);
+                    if (swapK <= 0f) SetSide(wantDir);
+                }
+                else if (!switching) swapK = Mathf.MoveTowards(swapK, 1f, dt / 0.2f);
+                chute.localScale = Vector3.one * Mathf.Max(0.001f, swapK * swapK * (3f - 2f * swapK));
+                float goal = want && swapK >= 1f && (!hatched || Opening == null || Opening(Dir) >= 0.97f) ? 1f : 0f;
                 if (chuteK != goal)
                 {
                     chuteK = Mathf.MoveTowards(chuteK, goal, dt / 0.5f);

@@ -518,9 +518,39 @@ def S_power_plant():
     a.box('steel', .07, .07, .5, x=tx, y=.12, z=.75)
     return a
 
+def scoop_bay_hatch(a, idx, nx, nz, wall, w=.6, h=.38, y0=.12):
+    """A scoop hatch in a refinery wall: the dock's chute (DockView's kraft trough) comes out of the wall facing the truck when
+    terrain keeps the south lane from being used. A licorice frame (one ring: it stays a single piece through rounding) round a
+    dark opening, and a cream roll-up shutter with a team lip (node hatch_<idx>, pivot at the opening's top edge, local +z out
+    of the wall; RefineryWorks scales its y to roll it up and show the opening). (nx, nz) is the wall's outward normal, `wall`
+    its distance from the centre."""
+    top, mid = y0 + h, y0 + h / 2
+    ro = np.array([(-1, -1), (1, -1), (1, 1), (-1, 1)], float)
+    fo, fi, d = ro * [w / 2 + .07, h / 2 + .05], ro * [w / 2 + .005, h / 2 + .005], .06   # frame ring: outer, inner, depth
+    v = np.array([(x, y, z) for z in (d / 2, -d / 2) for (x, y) in np.vstack([fo, fi])], float)
+    f = []
+    for k in range(4):
+        k1 = (k + 1) % 4
+        for z0, rev in ((0, False), (8, True)):                      # front ring, back ring
+            q = [z0 + k, z0 + k1, z0 + 4 + k1, z0 + 4 + k]
+            f += [[q[0], q[2], q[1]], [q[0], q[3], q[2]]] if not rev else [[q[0], q[1], q[2]], [q[0], q[2], q[3]]]
+        for off in (0, 4):                                           # outer sides, inner sides
+            q = [k + off, k1 + off, 8 + k1 + off, 8 + k + off]
+            f += [[q[0], q[1], q[2]], [q[0], q[2], q[3]]] if off == 0 else [[q[0], q[2], q[1]], [q[0], q[3], q[2]]]
+    ring = trimesh.Trimesh(v, np.array(f), process=False); ring.fix_normals()
+    rot = ry(90 * nx) if nx else np.eye(4)
+    ring.apply_transform(T((wall * nx, mid, wall * nz)) @ rot @ T((0, 0, .02)))
+    a.add(None, 'licorice', ring)
+    dk = trimesh.creation.box(extents=(w, h, .03)); dk.apply_transform(T((wall * nx, mid, wall * nz)) @ rot); a.add(None, 'dark', dk)
+    sh = a.node(f'hatch_{idx}', 'stage_1', (wall * nx, top, wall * nz), rot=rot if nx else None)
+    a.box('cream', w - .02, h - .02, .03, y=-h / 2, z=.03, node=sh)         # the shutter, hanging from the top edge
+    a.box('team', w - .02, .05, .05, y=-h + .035, z=.035, node=sh)          # its lip
+
 def S_mining_refinery():
     a = Asset('mining_refinery', 'structures', 3); pad(a, 3)
     a.box('cream', 2.7, .75, 1.6, y=.455, z=.3)
+    a.node('stage_1', a.key)
+    for i, (nx, nz, wall) in enumerate(((1, 0, 1.35), (-1, 0, 1.35), (0, 1, 1.1))): scoop_bay_hatch(a, i, nx, nz, wall)
     a.box('cream', .9, .75, .9, x=-.9, y=.455, z=-.95)
     a.box('cream', .9, .75, .9, x=.9, y=.455, z=-.95)
     door(a, .9, .6, -.48, lights=False, anim=True)              # dock (south)

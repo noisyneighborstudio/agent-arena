@@ -70,6 +70,7 @@ namespace Pez.Headless
             NoSpinBesideParkedTruck();
             NoSpinBetweenTanks();
             MovementGate();
+            DropOffsFaceSouth();
             ViewCopyReplaysOrders();
             GroupMove();
             ResignWhenStalled();
@@ -375,6 +376,54 @@ namespace Pez.Headless
                 was = soldier.Facing;
             }
             Check(!soldier.Dead && flips <= 3 && !w.Events.Any(e => e.Type == "crushed"), $"a soldier between two tanks driving past gets out of both ways without spinning ({flips} snap turns, at {soldier.Pos})");
+        }
+
+        static bool SouthBay(World w, Entity s)
+        {
+            var (_, _, facing, laneOk) = w.Bay(s);
+            return laneOk && MathF.Abs(facing - -MathF.PI / 2) < 0.001f;
+        }
+
+        static void DropOffsFaceSouth()
+        {
+            // Placing by itself (the AI, a build command without x,y, a suggested spot), a drop-off goes where its south lane is
+            // clear, so trucks back into the door side. The 1-tile walkway alone isn't enough: the lane is 3 tiles deep, and a
+            // spot with a building 2 tiles south passed CanPlace with a side bay. A player's own x,y is still accepted.
+            var w = new World(2, 7, 80);
+            var def = Defs.Get("mining_refinery");
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            Int2? sideSpot = null;
+            for (int y = hq.Origin.Y - 6; y <= hq.Origin.Y + 12 && sideSpot == null; y++)
+                for (int x = hq.Origin.X - 6; x <= hq.Origin.X + 12 && sideSpot == null; x++)
+                {
+                    if (w.CanPlace(0, "mining_refinery", x, y) != null) continue;
+                    var (_, _, f, ok) = w.Bay(new Int2(x, y), def);
+                    if (ok && MathF.Abs(f - -MathF.PI / 2) > 0.001f) sideSpot = new Int2(x, y);
+                }
+            Check(sideSpot.HasValue, $"CanPlace still accepts a refinery whose bay would be on a side (at {sideSpot}): a player's x,y is unchanged");
+            for (int i = 0; i < 4; i++)
+            {
+                var spot = w.FindPlacement(0, "mining_refinery");
+                if (!spot.HasValue) { Check(false, $"FindPlacement finds a spot for refinery #{i + 1}"); break; }
+                var r = w.SpawnStructure(0, "mining_refinery", spot.Value, 1f);
+                Check(SouthBay(w, r), $"auto-placed refinery #{i + 1} at {spot.Value} has its bay on the south (door) side");
+            }
+
+            // House AIs on several maps: every refinery and command center they build ends up with a south bay (before, about a
+            // third of the refineries had a side bay, put right below another building).
+            int refineries = 0, side = 0;
+            for (int seed = 1; seed <= 4; seed++)
+            {
+                var game = new Game(new GameConfig { Seed = seed, MapSize = 80, Controllers = new[] { "ai", "ai" }, Orders = new[] { "", "" } });
+                for (int i = 0; i < 8 * 60 * World.TickRate; i++) game.Advance(World.Dt);
+                foreach (var s in game.World.Entities)
+                {
+                    if (s.Dead || !s.IsStructure || (s.Def.Key != "mining_refinery" && s.Def.Key != "command_center")) continue;
+                    if (s.Def.Key == "mining_refinery") refineries++;
+                    if (!SouthBay(game.World, s)) { side++; Console.WriteLine($"  side bay: {s.Def.Key} #{s.Id} team {s.Team} at {s.Origin} (seed {seed})"); }
+                }
+            }
+            Check(refineries >= 8 && side == 0, $"house-AI refineries and command centers all have a south bay ({refineries} refineries over 4 matches, {side} with a side bay)");
         }
 
         static void ViewCopyReplaysOrders()

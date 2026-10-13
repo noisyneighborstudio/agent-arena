@@ -579,8 +579,12 @@ namespace Pez.Sim
         ///     truck sticks with its drop-off unless another is clearly better; firing and harvesting have bands (stop at
         ///     0.9x range, keep firing to 1x; re-centre on ore only 0.8 off); an idle unit at its leash holds; a soldier
         ///     that dodges keeps its new spot; a group's slots face its way, sit on open ground and go by where units stand.
+        /// 41: a drop-off placed for you (the scripted AI, or a build command without x,y, or the "nearest valid spot" an
+        ///     error suggests) goes where its south lane is clear, so trucks back into its door side; a spot with a building
+        ///     2 tiles south (the 1-tile walkway leaves only the first tile of the 3-tile lane free) used to be taken and
+        ///     gave a side bay, about a third of the AI's refineries. Your own x,y is checked as before.
         /// </summary>
-        public const int RulesVersion = 40;
+        public const int RulesVersion = 41;
 
         public static JObj Rules()
         {
@@ -592,7 +596,7 @@ namespace Pez.Sim
                 "Drones, by mission (fuel is measured in map widths, sized to the map): recon_drone (factory; cheap; 1.5 widths: across and halfway back, so a far-side run is one-way unless it lands on the way), long_range_drone (airfield; 2 widths: across and back), reaper_drone (airfield; very expensive; flies high so only sam_site, flak_track and laser_tower can hit it; about 24 widths, around half an hour on a big map, so it can watch a spot all game; fires hellfire missiles at ground targets). All have sight 12.",
                 "Fire: a finished building below 30% health is on fire and loses health on its own (faster as it weakens; about a minute to collapse). Repair it above 30% with a repair truck to put it out; a BUILDING ON FIRE alert tells you when one catches. Damaging an enemy building below 30% and keeping its repair trucks away finishes it for you. Capturing a burning building puts the fire out (the engineer patches it up to 50%).",
                 "Assign trucks to the ore you need with harvest + ore. Crystal and uranium sit in the contested middle.",
-                "Deliveries take time: a mining truck lines up 2 tiles out from a drop-off's bay (command_center, mining_refinery or outpost; the bay is on the south side unless terrain blocks it), turns, backs in and unloads, one truck per bay at a time; the others wait beside the lane (my_units shows each truck's dock status). A full cycle in the bay is about 5 s, so a big truck fleet needs more drop-offs. Nothing can be built on a truck lane.",
+                "Deliveries take time: a mining truck lines up 2 tiles out from a drop-off's bay (command_center, mining_refinery or outpost; the bay is on the south side unless terrain or a building blocks it: a drop-off placed for you, without x,y, goes where its south lane is clear, and with your own x,y it is on the first clear side), turns, backs in and unloads, one truck per bay at a time; the others wait beside the lane (my_units shows each truck's dock status). A full cycle in the bay is about 5 s, so a big truck fleet needs more drop-offs. Nothing can be built on a truck lane.",
                 "Expand: build an outpost_truck at the factory, drive it to a remote ore field and deploy it. Outposts are drop-off points and let you build defenses there.",
                 "Specialists: engineers capture enemy buildings below 50% HP; snipers delete infantry from range 9; commandos C4 buildings. APCs and transport choppers carry infantry (load/unload). Mine layers plant hidden mines. Flak tracks are mobile anti-air. Mammoth tanks are super-heavy and self-repair to 50%. Recon drones are cheap flying scouts.",
                 "Repair trucks (factory) fix vehicles, aircraft and structures for steel; medics (barracks) heal infantry for free. Both auto-tend anything damaged within 6 tiles when idle, so park them behind your army.",

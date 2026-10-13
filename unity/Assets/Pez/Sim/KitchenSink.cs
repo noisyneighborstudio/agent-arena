@@ -456,7 +456,8 @@ namespace Pez.Sim
         {
             Begin("economy", "Economy loop", "Trucks harvest each ore and dock at each kind of drop-off: queue, line up, reverse, tip, pull out.", 0, 80, 60, 18);
             Loop(Blue, "mining_refinery", Map.Iron, 6, "Iron ore into a refinery");
-            Loop(Red, "mining_refinery", Map.Copper, 20, "Copper ore into a refinery");
+            Loop(Red, "mining_refinery", Map.Copper, 20, "Copper ore into a refinery, its south and east lanes blocked by rock",
+                "the bay moves to the west wall: the wall's hatch opens, the chute slides out of it to the truck, and the hatch shuts once it has drawn back in; otherwise as the iron refinery", blockSouth: true);
             Loop(Blue, "outpost", Map.Crystal, 34, "Crystal into an outpost",
                 "harvest, queue, align (the hopper's trapdoors swing open), reverse, unload with an ore-coloured pour into the hopper; the crystal rides the belt up into the stem, whose head lifts to take it, and stacks behind its window; the trapdoors slam shut as the truck pulls out, and the stack is fed away between deliveries");
             Loop(Red, "command_center", Map.Uranium, 48, "Uranium into a command center");
@@ -467,9 +468,16 @@ namespace Pez.Sim
         }
 
         /// <summary>A drop-off, an ore field below it on screen and three trucks working it.</summary>
-        void Loop(int team, string dropOff, int ore, float a, string name, string states = null)
+        void Loop(int team, string dropOff, int ore, float a, string name, string states = null, bool blockSouth = false)
         {
             var d = Bldg(team, dropOff, a, 13);
+            if (blockSouth)
+            {
+                // Rock across the south and east lanes: the bay moves to the first clear side (west, the wall that faces the
+                // camera), so the dock's chute comes out of a side wall.
+                foreach (var (x, y) in new[] { (d.Origin.X + d.Def.SizeX / 2, d.Origin.Y - 2), (d.Origin.X + d.Def.SizeX + 1, d.Origin.Y + d.Def.SizeY / 2) })
+                    if (w.Map.InBounds(x, y)) w.Map.Tiles[w.Map.Idx(x, y)] = Terrain.Rock;
+            }
             var field = OreField(a + 3.5f, 4, ore, 2.3f, 420);
             for (int i = 0; i < 3; i++)
             {

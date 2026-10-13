@@ -859,10 +859,30 @@ namespace Pez.Sim
             return null;
         }
 
-        /// <summary>Finds a valid spot near the team's base, leaving a 1-tile walkway around it.</summary>
+        /// <summary>
+        /// Finds a valid spot near the team's base, leaving a 1-tile walkway around it. A drop-off (command center, refinery,
+        /// outpost) is put where its SOUTH lane is clear, so its trucks back into the door side: the walkway alone leaves the
+        /// lane (the bay's row and the 2 tiles beyond it) blocked by whatever stands just south of the spot, and CanPlace
+        /// then accepts a side bay. Only when no spot in reach has a clear south lane does it settle for one with a side
+        /// lane. CanPlace, and so a player's or agent's own x,y, is unchanged.
+        /// </summary>
         public Int2? FindPlacement(int team, string key, Vec2? near = null, bool requireNear = true)
         {
             var def = Defs.Get(key);
+            if (def.DropOff && FindPlacementIn(team, def, near, requireNear, southLane: true) is Int2 south) return south;
+            return FindPlacementIn(team, def, near, requireNear, southLane: false);
+        }
+
+        /// <summary>The south bay lane of a drop-off at this footprint is clear (the bay is on the door side).</summary>
+        bool SouthLaneClear(Int2 origin, EntityDef def)
+        {
+            var (_, _, facing, laneOk) = Bay(origin, def);
+            return laneOk && MathF.Abs(facing - BaySides[0].Angle) < 0.001f;
+        }
+
+        Int2? FindPlacementIn(int team, EntityDef def, Vec2? near, bool requireNear, bool southLane)
+        {
+            var key = def.Key;
             var anchor = near ?? Teams[team].StartPos;
             var centre = new Vec2(Map.W / 2f, Map.H / 2f);
             Int2? best = null; float bestScore = float.MaxValue;
@@ -872,6 +892,7 @@ namespace Pez.Sim
                     for (int x = (int)anchor.X - r; x <= (int)anchor.X + r; x++)
                     {
                         if (CanPlace(team, key, x, y, padding: 1, requireNear: requireNear) != null) continue;
+                        if (southLane && !SouthLaneClear(new Int2(x, y), def)) continue;
                         var c = new Vec2(x + def.SizeX / 2f, y + def.SizeY / 2f);
                         // Turrets lean toward the map centre; everything else stays compact.
                         float score = Vec2.Dist(c, anchor) + (key == "gun_turret" ? Vec2.Dist(c, centre) * 0.6f : 0);
