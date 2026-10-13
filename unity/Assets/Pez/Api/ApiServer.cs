@@ -785,7 +785,7 @@ namespace Pez.Api
                     if (id == team) continue;
                     t.Remove("standing_orders"); // a commander's orders are the team's plan
                     if (team < 0) continue;
-                    foreach (var k in new[] { "stock", "rates", "power_produced", "power_used", "visible", "explored", "detected", "revealed",
+                    foreach (var k in new[] { "stock", "granted", "rates", "power_produced", "power_used", "visible", "explored", "detected", "revealed",
                                               "structure_queue", "unit_queues", "known_enemy_structures", "surveyed", "survey_sites", "reserve",
                                               "save_for", "save_for_cost", "zones", "stalled_since", "surface_warned_at", "home_ore_warned", "last_active_at", "orders_version", "plasma_owed" })
                         t.Remove(k);
@@ -824,7 +824,7 @@ namespace Pez.Api
                     }
                     else eo.Remove("order_pos");
                     foreach (var k in new[] { "rally", "waypoints", "waypoint_loop", "resume_order", "resume_pos", "resume_guard", "resume_target", "resume_waypoints",
-                                              "mine_queue", "home_pos", "harvest_tile", "prospect_center", "prospect_radius", "skip_sites", "passengers", "retreat_below", "fuel", "fuel_cap", "until_capturable", "engage_derricks", "output" })
+                                              "mine_queue", "home_pos", "harvest_tile", "prospect_center", "prospect_radius", "skip_sites", "passengers", "retreat_below", "fuel", "fuel_cap", "until_capturable", "engage_derricks", "output", "granted_share", "cargo_salvage" })
                         eo.Remove(k);
                     eo["guard_pos"] = eo["pos"];
                     keep.Add(eo);

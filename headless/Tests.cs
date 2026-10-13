@@ -1258,7 +1258,7 @@ namespace Pez.Headless
             long before = OreOnMap(w);
             var sold = Commands.Execute(w, 1, Cmd("type", "sell", "structure_id", hq.Id, "confirm", true));
             long gained = OreOnMap(w) - before;
-            Check(Ok(sold) && hq.Dead && Said(sold).Contains("stockpile spilled"), $"the sale says so: {Said(sold)}");
+            Check(Ok(sold) && hq.Dead && Said(sold).Contains("stockpile is gone") && Said(sold).Contains("spilled out as salvage"), $"the sale says so: {Said(sold)}");
             Check(w.Teams[1].Stock.Count == 0 && gained >= 6400 && gained <= 6500, $"selling the last command center spills the stockpile as salvage ({gained} ore on the map, {w.Teams[1].Stock.Count} items left)");
             Check(w.Events.Any(e => e.Type == "chat" && e.Text.Contains("last command center was sold") && e.Text.Contains("spilled")), "the arena chat says it was sold, not that it fell");
             var lostAlert = w.Alerts.Active(w, 1).FirstOrDefault(a => a.Kind == "stockpile_lost");
@@ -1803,6 +1803,7 @@ namespace Pez.Headless
 
             // Leaving turns the base into salvage ore that anyone can mine.
             var hqTiles = Enumerable.Range(0, 9).Select(k => new Int2(hq2.Origin.X + k % 3, hq2.Origin.Y + k / 3)).ToList();
+            t2.Add("steel", 2000); // mined, not given: the starting base and stock are gifts and leave no salvage
             var msg = w.Leave(t2.Id);
             Check(w.Teams[t2.Id].Left && !w.Owned(t2.Id).Any(), $"leaving removes the player's forces: {msg}");
             Check(hqTiles.All(p => w.Map.Ore[w.Map.Idx(p.X, p.Y)] > 0), "their old HQ footprint is now salvage ore");

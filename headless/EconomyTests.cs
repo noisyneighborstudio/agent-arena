@@ -21,6 +21,7 @@ namespace Pez.Headless
         {
             SalvageFromKills();
             OneValuation();
+            GrantedValue();
             OreRegrowth();
             ParallelProduction();
             ConstructionTruck();
@@ -1442,6 +1443,252 @@ namespace Pez.Headless
             Check(spill[Map.Iron] >= 316 && spill[Map.Iron] <= 320 && spill[Map.Copper] >= 226 && spill[Map.Copper] <= 230 && spill[Map.Crystal] >= 198 && spill[Map.Crystal] <= 200 && spill[Map.Uranium] == 20,
                   $"a stockpile spills as its raw ores: iron {spill[0]}/320, copper {spill[1]}/230, crystal {spill[2]}/200, uranium {spill[3]}/20");
             Check(wh.Errors == 0 && wu.Errors == 0 && wv.Errors == 0 && ws.Errors == 0, "no sim errors");
+        }
+
+        /// <summary>What the arena gives a team (starting stock and base, a late joiner's kit) can't be cashed out or farmed for score.</summary>
+        static void GrantedValue()
+        {
+            Console.WriteLine("\n-- granted value: starting and catch-up gifts are worth nothing as salvage, kill value or score");
+            long[] OreByType(World x) { var n = new long[4]; for (int i = 0; i < x.Map.Ore.Length; i++) if (x.Map.Ore[i] > 0) n[x.Map.OreType[i]] += x.Map.Ore[i]; return n; }
+            float OreWorth(string item) => World.OreMix[item].Sum();
+            float OwnWorth(Team t) => t.Stock.Keys.Sum(k => t.Own(k) * OreWorth(k));
+
+            // Join and leave straight away, at arena ages 0, 5 and 30 minutes: nothing from the grant is left as salvage
+            // (it was 1,990, 3,103 and 6,255 ore before: everything the newcomer was given).
+            foreach (int minutes in new[] { 0, 5, 30 })
+            {
+                var w = new World(2, 7, 96) { Open = true };
+                w.Tick = minutes * 60 * World.TickRate;
+                var alt = w.AddTeam("llm", "Alt", out var err);
+                int granted = w.Owned(alt.Id).Count(e => e.GrantedShare >= 1f), all = w.Owned(alt.Id).Count();
+                float given = alt.Stock.Keys.Sum(k => alt.Stock[k] * OreWorth(k));
+                long before = OreByType(w).Sum();
+                w.Leave(alt.Id);
+                long left = OreByType(w).Sum() - before;
+                Check(alt != null && granted == all && all >= 4 && left == 0, $"joining at {minutes} min and leaving at once leaves no salvage though the newcomer was given {(int)given} ore of stock and {all} gifted things ({left} ore)");
+            }
+
+            // Only what the team made or mined itself comes out of its base: 500 steel it mined, and a tank it built.
+            var w2 = new World(2, 7, 96) { Open = true };
+            w2.Tick = 30 * 60 * World.TickRate;
+            var alt2 = w2.AddTeam("llm", "Alt", out _);
+            alt2.Add("steel", 500);
+            w2.SpawnUnit(alt2.Id, "light_tank", w2.Owned(alt2.Id).First(e => e.Def.Key == "command_center"));
+            long before2 = OreByType(w2).Sum();
+            w2.Leave(alt2.Id);
+            long left2 = OreByType(w2).Sum() - before2;
+            Check(left2 >= 600 && left2 <= 620, $"a leaver's own 500 steel and a light tank it built (half of 240) are salvage, its gift is not ({left2} ore of 620)");
+
+            // Losing the last command center: the same rule for the spill, and a team holding only its gift is told so.
+            var w3 = new World(2, 7, 96) { Open = true };
+            w3.Tick = 5 * 60 * World.TickRate;
+            var alt3 = w3.AddTeam("llm", "Alt", out _);
+            alt3.ProtectedUntil = 0;
+            w3.SpawnStructure(alt3.Id, "barracks", w3.FindPlacement(alt3.Id, "barracks").Value, 1f); // something else to stand on
+            var cc3 = w3.Owned(alt3.Id).First(e => e.Def.Key == "command_center");
+            long before3 = OreByType(w3).Sum();
+            Commands.Execute(w3, alt3.Id, Cmd("type", "sell", "structure_id", cc3.Id, "confirm", true));
+            Check(OreByType(w3).Sum() == before3 && alt3.Stock.Count == 0 && w3.Alerts.Active(w3, alt3.Id).Any(a => a.Kind == "stockpile_lost" && a.Lost.Any(l => l.Contains("only what you were given"))),
+                  "selling the last command center with only the gift in the stockpile spills nothing, and says the stockpile is gone");
+            var w4 = new World(2, 7, 96) { Open = true };
+            w4.Tick = 5 * 60 * World.TickRate;
+            var alt4 = w4.AddTeam("llm", "Alt", out _);
+            alt4.ProtectedUntil = 0;
+            w4.SpawnStructure(alt4.Id, "barracks", w4.FindPlacement(alt4.Id, "barracks").Value, 1f);
+            alt4.Add("iron_ore", 300); // mined on top of the gift
+            long before4 = OreByType(w4).Sum();
+            Commands.Execute(w4, alt4.Id, Cmd("type", "sell", "structure_id", w4.Owned(alt4.Id).First(e => e.Def.Key == "command_center").Id, "confirm", true));
+            long spilled4 = OreByType(w4).Sum() - before4;
+            Check(spilled4 >= 296 && spilled4 <= 300, $"and with 300 ore mined on top of the gift, those 300 spill and the gift doesn't ({spilled4})");
+
+            // Selling a gifted building refunds the gift as gift: more to spend, nothing that could spill.
+            var w5 = new World(2, 7, 96) { Open = true };
+            w5.Tick = 5 * 60 * World.TickRate;
+            var alt5 = w5.AddTeam("llm", "Alt", out _);
+            alt5.ProtectedUntil = 0;
+            var gift5 = w5.Owned(alt5.Id).First(e => e.Def.Key == "power_plant" && e.GrantedShare >= 1f);
+            int iron5 = alt5.Amount("iron_ore"); float giftIron5 = alt5.Gift("iron_ore"), ownIron5 = alt5.Own("iron_ore");
+            var sold5 = Commands.Execute(w5, alt5.Id, Cmd("type", "sell", "structure_id", gift5.Id, "confirm", true));
+            Check(Ok(sold5) && alt5.Amount("iron_ore") == iron5 + 125 && alt5.Gift("iron_ore") == giftIron5 + 125 && alt5.Own("iron_ore") == ownIron5,
+                  $"selling the gifted power plant refunds 125 iron ore, all of it as gift, none as the team's own: {Said(sold5)}");
+
+            // Killing a fresh team's starting units earns nothing: no kill value, no salvage. A unit it built itself still does.
+            var w6 = new World(2, 7, 96);
+            w6.Teams[0].ProtectedUntil = 0; w6.Teams[1].ProtectedUntil = 0;
+            var shooter = w6.SpawnUnit(0, "heavy_tank", w6.Owned(0).First(e => e.Def.Key == "command_center"));
+            long ore6 = OreByType(w6).Sum();
+            foreach (var victim in w6.Owned(1).Where(e => e.GrantedShare >= 1f).ToList()) w6.Hurt(victim, 1e6f, shooter);
+            Check(!w6.Owned(1).Any() && w6.Teams[0].Stats.KillValue == 0 && w6.Teams[0].Stats.SalvageLeft == 0 && OreByType(w6).Sum() == ore6,
+                  $"destroying a fresh team's starting command center, truck and riflemen gives no kill value and no salvage ({w6.Teams[0].Stats.KillValue}, {OreByType(w6).Sum() - ore6} ore)");
+            var built6 = w6.SpawnUnit(1, "light_tank", w6.SpawnStructure(1, "barracks", Int2.Of(OpenGround(w6)), 1f));
+            w6.Hurt(built6, 1e6f, shooter);
+            Check(w6.Teams[0].Stats.KillValue == 240, $"but a tank it trained is worth its 240 ({w6.Teams[0].Stats.KillValue})");
+
+            // A gifted structure stays a gift in an enemy's hands.
+            var w7 = new World(2, 7, 80);
+            w7.Teams[0].ProtectedUntil = 0; w7.Teams[1].ProtectedUntil = 0;
+            var hq7 = w7.Owned(1).First(e => e.Def.Key == "command_center");
+            w7.SpawnStructure(1, "power_plant", w7.FindPlacement(1, "power_plant").Value, 1f);
+            foreach (var u in w7.Entities.Where(e => !e.IsStructure).ToList()) w7.Remove(u);
+            hq7.Hp = hq7.Def.MaxHp * 0.3f;
+            var eng7 = At(w7.SpawnUnit(0, "engineer", w7.Owned(0).First(e => e.Def.Key == "command_center")), hq7.Center + new Vec2(2.5f, 0));
+            w7.UpdateVisibility();
+            Commands.Execute(w7, 0, Cmd("type", "capture", "units", new[] { eng7.Id }, "target", hq7.Id));
+            Run(w7, 20);
+            var raider7 = w7.SpawnUnit(1, "heavy_tank", w7.Owned(1).First(e => e.IsStructure));
+            w7.Hurt(hq7, 1e6f, raider7);
+            Check(hq7.Team == 0 && hq7.GrantedShare == 1f && hq7.Dead && w7.Teams[1].Stats.KillValue == 0, $"a captured gifted command center is still worth nothing when its old owner destroys it ({w7.Teams[1].Stats.KillValue})");
+
+            // Refining the gift doesn't make it the team's own: converters pass the granted share on to what they make.
+            var w8 = new World(2, 7, 96);
+            w8.Teams[0].ProtectedUntil = 0; w8.Teams[1].ProtectedUntil = 0;
+            foreach (var u in w8.Entities.Where(e => !e.IsStructure).ToList()) w8.Remove(u); // no trucks mining
+            w8.SpawnStructure(1, "power_plant", w8.FindPlacement(1, "power_plant").Value, 1f);
+            var refinery = w8.SpawnStructure(1, "mining_refinery", w8.FindPlacement(1, "mining_refinery").Value, 1f);
+            foreach (var u in w8.Entities.Where(e => !e.IsStructure).ToList()) w8.Remove(u); // and not the refinery's free one
+            var t8 = w8.Teams[1];
+            Run(w8, 60);
+            // Only the command center's trickle (1 iron ore a second) is the team's own; the rest is the starting 500 iron and 150 copper, however refined.
+            Check(t8.Amount("steel") > 100 && OwnWorth(t8) <= 70f, $"after refining {t8.Amount("steel")} steel from the starting ore, only the trickle ({OwnWorth(t8):0} ore) counts as the team's own");
+            long before8 = OreByType(w8).Sum();
+            w8.Leave(1);
+            long left8 = OreByType(w8).Sum() - before8;
+            Check(left8 >= 430 && left8 <= 460, $"so leaving dismantles only that trickle (60) and the power plant and refinery it built (60% of 250 + 400: about 450; {left8} ore)");
+
+            // Spending takes from the gift first: two power plants paid with the whole starting 500 iron ore use it up, and the
+            // next 500 the team mines is its own (it spills, and isn't taken for gift when refined).
+            var w10 = new World(2, 7, 96);
+            w10.Teams[0].ProtectedUntil = 0; w10.Teams[1].ProtectedUntil = 0;
+            var t10 = w10.Teams[1];
+            var p1 = Commands.Execute(w10, 1, Cmd("type", "build", "structure", "power_plant"));
+            var p2 = Commands.Execute(w10, 1, Cmd("type", "build", "structure", "power_plant"));
+            var plants10 = w10.Owned(1).Where(e => e.Def.Key == "power_plant").ToList();
+            Check(Ok(p1) && Ok(p2) && plants10.Count == 2 && plants10.All(e => e.GrantedShare == 1f) && t10.Gift("iron_ore") == 0 && t10.Amount("iron_ore") == 0,
+                  $"two power plants paid wholly from the starting iron ore use the gift up and carry its whole share ({string.Join(", ", plants10.Select(e => e.GrantedShare))}; gift left {t10.Gift("iron_ore")})");
+            t10.Add("iron_ore", 500); // mined
+            Check(t10.Own("iron_ore") == 500 && OwnWorth(t10) >= 500f, $"the 500 iron ore it mines next is its own, not taken for the spent gift ({t10.Own("iron_ore")})");
+            long before10 = OreByType(w10).Sum();
+            foreach (var e in w10.Owned(1).Where(e => e.Def.Key == "power_plant").ToList()) w10.Hurt(e, 1e6f, w10.SpawnUnit(0, "heavy_tank", w10.Owned(0).First(x => x.Def.Key == "command_center")));
+            Check(w10.Teams[0].Stats.KillValue == 0, $"the plants it paid for with the gift are worth nothing as kills ({w10.Teams[0].Stats.KillValue})");
+            w10.Leave(1);
+            long left10 = OreByType(w10).Sum() - before10;
+            Check(left10 >= 490 && left10 <= 500, $"and a leave then spills just that mined 500 ({left10})");
+
+            // A purchase part-paid from the gift carries that share: 100 of the 250 iron ore for a power plant.
+            var w11 = new World(2, 7, 96);
+            w11.Teams[0].ProtectedUntil = 0; w11.Teams[1].ProtectedUntil = 0;
+            var t11 = w11.Teams[1];
+            t11.Granted["iron_ore"] = 100; // (stock is the starting 500)
+            Commands.Execute(w11, 1, Cmd("type", "build", "structure", "power_plant"));
+            var plant11 = w11.Owned(1).First(e => e.Def.Key == "power_plant");
+            w11.Hurt(plant11, 1e6f, w11.SpawnUnit(0, "heavy_tank", w11.Owned(0).First(x => x.Def.Key == "command_center")));
+            Check(Math.Abs(plant11.GrantedShare - 0.4f) < 0.001f && t11.Gift("iron_ore") == 0 && w11.Teams[0].Stats.KillValue >= 149 && w11.Teams[0].Stats.KillValue <= 150,
+                  $"a 250-ore plant paid 100 from the gift carries 0.4 of it and is worth the other 150 as a kill ({plant11.GrantedShare}; {w11.Teams[0].Stats.KillValue})");
+
+            // Refunds give the gift back as gift; a unit trained wholly from catch-up steel gives no kill value.
+            var w12 = new World(2, 7, 96) { Open = true };
+            w12.Tick = 30 * 60 * World.TickRate;
+            var alt12 = w12.AddTeam("llm", "Alt", out _);
+            alt12.ProtectedUntil = 0; w12.Teams[0].ProtectedUntil = 0;
+            w12.SpawnStructure(alt12.Id, "barracks", w12.FindPlacement(alt12.Id, "barracks").Value, 1f);
+            float giftSteel = alt12.Gift("steel"), ownSteel = alt12.Own("steel");
+            Commands.Execute(w12, alt12.Id, Cmd("type", "train", "unit", "rifleman"));
+            var queued12 = alt12.UnitQueues[Producer.Barracks].FirstOrDefault();
+            Check(queued12 != null && queued12.GrantedShare == 1f && alt12.Gift("steel") == giftSteel - 40, $"a rifleman paid from the catch-up steel is queued with its whole share ({queued12?.GrantedShare}) and takes 40 from the gift");
+            Commands.Execute(w12, alt12.Id, Cmd("type", "cancel", "unit", "rifleman"));
+            Check(alt12.Gift("steel") == giftSteel && alt12.Own("steel") == ownSteel, $"cancelling it gives the 40 steel back as gift, not as the team's own ({alt12.Gift("steel")} of {giftSteel}; own {alt12.Own("steel")})");
+            float giftIron12 = alt12.Gift("iron_ore"), ownIron12 = alt12.Own("iron_ore");
+            Commands.Execute(w12, alt12.Id, Cmd("type", "build", "structure", "power_plant"));
+            var bought12 = w12.Owned(alt12.Id).Where(e => e.Def.Key == "power_plant").OrderByDescending(e => e.Id).First();
+            Commands.Execute(w12, alt12.Id, Cmd("type", "sell", "structure_id", bought12.Id, "confirm", true));
+            Check(bought12.GrantedShare == 1f && alt12.Gift("iron_ore") == giftIron12 && alt12.Own("iron_ore") == ownIron12, $"selling a plant bought from the gift gives its iron ore back as gift ({alt12.Gift("iron_ore")} of {giftIron12}; own {alt12.Own("iron_ore")})");
+            Commands.Execute(w12, alt12.Id, Cmd("type", "train", "unit", "rifleman"));
+            Run(w12, 20);
+            var trained12 = w12.Owned(alt12.Id).Where(e => e.Def.Key == "rifleman").OrderByDescending(e => e.Id).FirstOrDefault(); // (the newest: the starting two are older)
+            var killer12 = At(w12.SpawnUnit(0, "heavy_tank", w12.Owned(0).First(x => x.Def.Key == "command_center")), alt12.StartPos + new Vec2(6, 0));
+            if (trained12 != null) w12.Hurt(trained12, 1e6f, killer12);
+            Check(trained12 != null && trained12.GrantedShare == 1f && w12.Teams[0].Stats.KillValue == 0 && w12.Teams[0].Stats.SalvageLeft == 0,
+                  $"a unit trained wholly from catch-up steel gives its killer no kill value and no salvage, like the starting units ({trained12?.GrantedShare}; {w12.Teams[0].Stats.KillValue})");
+
+            // Salvage picked up is real ore, delivered or not: it counts against the economy score only once it's delivered.
+            var w9 = new World(2, 7, 96);
+            var spot = OpenGround(w9);
+            var tile = Int2.Of(spot);
+            int ti = w9.Map.Idx(tile.X, tile.Y);
+            w9.Map.Ore[ti] = 300; w9.Map.OreType[ti] = Map.Iron; w9.Map.Salvage[ti] = 300; // a pile on ground that was never a field
+            var truck9 = w9.Owned(0).First(e => e.IsHarvester);
+            w9.SetOrder(truck9, Order.Harvest, tile.Center);
+            Run(w9, 150);
+            var s9 = w9.Teams[0].Stats;
+            var score9 = w9.Scores().First(s => s.Team == 0);
+            int picked9 = 300 - w9.Map.SalvageOn(ti);
+            Check(s9.SalvageMined >= 100 && s9.SalvageMined == picked9 - truck9.CargoSalvage && score9.OreMined == Math.Max(0, s9.OreMined - s9.SalvageMined) && score9.OreMined < s9.OreMined,
+                  $"a truck picked up {picked9} ore of salvage and delivered {s9.SalvageMined} (the rest is still in its load): ore_mined {s9.OreMined} includes it, the economy score counts {score9.OreMined}");
+            Check(World.HowScored.Contains("salvage you pick up doesn't count"), "and the points text says so");
+
+            // A truck lost with salvage aboard never delivered it: the score loses nothing for it.
+            var w13 = new World(2, 7, 96);
+            var spot13 = OpenGround(w13);
+            var tile13 = Int2.Of(spot13);
+            int ti13 = w13.Map.Idx(tile13.X, tile13.Y);
+            w13.Map.Ore[ti13] = 300; w13.Map.OreType[ti13] = Map.Iron; w13.Map.Salvage[ti13] = 300;
+            w13.Teams[1].ProtectedUntil = 0; w13.Teams[0].ProtectedUntil = 0;
+            var truck13 = w13.Owned(0).First(e => e.IsHarvester);
+            w13.SetOrder(truck13, Order.Harvest, tile13.Center);
+            for (int i = 0; i < 120 * World.TickRate && truck13.CargoSalvage < 100; i++) w13.Step();
+            w13.Teams[0].Stats.OreMined = 1000; // delivered field ore
+            int carried13 = truck13.CargoSalvage;
+            w13.Hurt(truck13, 1e6f, w13.SpawnUnit(1, "heavy_tank", w13.Owned(1).First(e => e.Def.Key == "command_center")));
+            var score13 = w13.Scores().First(s => s.Team == 0);
+            Check(carried13 >= 100 && truck13.Dead && w13.Teams[0].Stats.SalvageMined == 0 && score13.OreMined == 1000,
+                  $"1000 delivered field ore and a truck lost with {carried13} salvage aboard still score 1000 ({score13.OreMined})");
+
+            // Salvage on a field tile is salvage: taken first, counted when delivered, and the field still grows back around it.
+            var w14 = new World(2, 7, 96);
+            foreach (var u in w14.Entities.Where(e => e.IsHarvester).ToList()) w14.Remove(u); // no trucks mining the tiles under test
+            w14.Map.FieldIndex(out var fieldTiles, out _);
+            var centre = new Vec2(w14.Map.W / 2f, w14.Map.H / 2f);
+            int ft = fieldTiles.Where(i => w14.Map.OreBase[i] >= 150 && w14.Map.OreBase[i] <= 600).OrderBy(i => Vec2.Dist(new Int2(i % w14.Map.W, i / w14.Map.W).Center, centre)).First();
+            int baseOre = w14.Map.OreBase[ft];
+            w14.Map.OreType[ft] = w14.Map.OreBaseType[ft];
+            w14.Map.Ore[ft] = 100 + baseOre; w14.Map.Salvage[ft] = baseOre; // the field mined down to 100, with a pile of salvage as big as the field on top
+            var wasField = w14.Map.FieldOre(ft);
+            Run(w14, 900);
+            Check(wasField == 100 && w14.Map.FieldOre(ft) > 100 && w14.Map.FieldOre(ft) <= baseOre && w14.Map.SalvageOn(ft) == baseOre,
+                  $"salvage on a field tile doesn't stop it growing back, and the field never passes its original {baseOre} because of it (field ore {wasField} -> {w14.Map.FieldOre(ft)}, salvage {w14.Map.SalvageOn(ft)})");
+            int ft2 = fieldTiles.First(i => i != ft && w14.Map.OreBase[i] > 0 && w14.Map.OreBase[i] <= 700);
+            w14.Map.OreType[ft2] = w14.Map.OreBaseType[ft2]; w14.Map.Ore[ft2] = w14.Map.OreBase[ft2] + 200; w14.Map.Salvage[ft2] = 200; // a full field with salvage on it
+            Run(w14, 300);
+            Check(w14.Map.FieldOre(ft2) == w14.Map.OreBase[ft2] && w14.Map.Ore[ft2] == w14.Map.OreBase[ft2] + 200, $"a full field with salvage on it isn't topped up past its original ({w14.Map.FieldOre(ft2)} of {w14.Map.OreBase[ft2]}, {w14.Map.Ore[ft2]} in all)");
+            var w15 = new World(2, 7, 96);
+            var tile15 = Int2.Of(OpenGround(w15));
+            int ti15 = w15.Map.Idx(tile15.X, tile15.Y);
+            w15.Map.OreBase[ti15] = 400; w15.Map.OreBaseType[ti15] = Map.Iron; w15.Map.OreType[ti15] = Map.Iron; w15.Map.Ore[ti15] = 460; w15.Map.Salvage[ti15] = 60; // a field tile, 400 of its own and 60 salvage
+            var truck15 = w15.Owned(0).First(e => e.IsHarvester);
+            w15.SetOrder(truck15, Order.Harvest, tile15.Center);
+            for (int i = 0; i < 200 * World.TickRate && truck15.Cargo < 150; i++) w15.Step();
+            Check(truck15.Cargo == 150 && truck15.CargoSalvage == 60 && w15.Map.Salvage[ti15] == 0 && w15.Map.Ore[ti15] == 310,
+                  $"a truck takes the salvage on a field tile first: of its load of {truck15.Cargo}, {truck15.CargoSalvage} is salvage ({w15.Map.Ore[ti15]} ore left on the tile)");
+            // Plasma the reactors owe is charged to the gift first, like any spending: stock 30 with 27.5 of it gift and 0.03 owed
+            // leaves 2.5 of the team's own, not 2.47.
+            var tp = new Team();
+            tp.Stock["plasma"] = 30f; tp.Granted["plasma"] = 27.5f; tp.PlasmaOwed = 0.03f;
+            Check(Math.Abs(tp.Own("plasma") - 2.5f) < 0.001f, $"owed plasma comes off the gift first: of 30 plasma, 27.5 gift and 0.03 owed, {tp.Own("plasma"):0.000} is the team's own");
+            var tq = new Team();
+            tq.Stock["plasma"] = 30f; tq.Granted["plasma"] = 5f; tq.PlasmaOwed = 4f; // only 1 of the gift is free of what's owed
+            float own0 = tq.Own("plasma");
+            float shareQ = tq.Pay(new Dictionary<string, int> { { "plasma", 10 } });
+            Check(Math.Abs(shareQ - 0.1f) < 0.001f && tq.Gift("plasma") == 4f, $"a purchase can only spend the gift that isn't already owed: 1 of its 10 plasma ({shareQ:0.00}), leaving the 4 that's owed");
+            float ownBefore = tq.Own("plasma");
+            tq.SettleOwed(4f);
+            Check(Math.Abs(tq.Own("plasma") - ownBefore) < 0.001f && tq.PlasmaOwed == 0f && tq.Gift("plasma") == 0f && Math.Abs(own0 - 25f) < 0.001f && Math.Abs(ownBefore - 16f) < 0.001f,
+                  $"and settling what's owed comes off the gift too, so the team's own plasma doesn't move ({ownBefore:0.0} -> {tq.Own("plasma"):0.0})");
+
+            // Structured state (format=json) has salvage_mined too.
+            w9.Teams[0].Stats.SalvageMined = 123;
+            var stats9 = (Dictionary<string, object>)D(StateData.Team(w9, 0))["stats"];
+            Check(stats9.ContainsKey("salvage_mined") && (double)stats9["salvage_mined"] == 123 && stats9.ContainsKey("ore_mined"), "format=json state carries salvage_mined next to ore_mined");
+            Check(w6.Errors == 0 && w7.Errors == 0 && w8.Errors == 0 && w9.Errors == 0 && w10.Errors == 0 && w11.Errors == 0 && w12.Errors == 0 && w13.Errors == 0 && w14.Errors == 0 && w15.Errors == 0, "no sim errors");
         }
 
         static void SalvageFromKills()

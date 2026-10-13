@@ -87,6 +87,7 @@ namespace Pez.Sim
                 .Set("start", SnapIO.V(t.StartPos)).Put("defeated", t.Defeated).Put("left", t.Left).Put("resigned", t.Resigned)
                 .Put("stalled_since", t.StalledSince, -1f).Put("house", t.House).Set("seat", t.Seat).Put("protected_until", t.ProtectedUntil)
                 .Put("surface_warned_at", t.SurfaceWarnedAt, -999f).Put("home_ore_warned", t.HomeOreWarned, 0).Set("last_active_at", t.LastActiveAt);
+            if (t.Granted.Count > 0) o.Set("granted", SnapIO.Floats(t.Granted));
             if (t.Visible != null) o.Set("visible", SnapIO.PackBits(t.Visible));
             if (t.Explored != null) o.Set("explored", SnapIO.PackBits(t.Explored));
             if (t.Detected.Count > 0) o.Set("detected", t.Detected.Cast<object>().ToList());
@@ -111,12 +112,12 @@ namespace Pez.Sim
             return o;
         }
 
-        static JObj WriteItem(ProdItem p) => new JObj().Set("key", p.Key).Put("progress", p.Progress).Put("structure_id", p.StructureId).Put("worker_id", p.WorkerId);
+        static JObj WriteItem(ProdItem p) => new JObj().Set("key", p.Key).Put("progress", p.Progress).Put("structure_id", p.StructureId).Put("worker_id", p.WorkerId).Put("granted_share", p.GrantedShare);
 
         static ProdItem ReadItem(D d)
         {
             var p = new ProdItem();
-            d.Load("key", ref p.Key); d.Load("progress", ref p.Progress); d.Load("structure_id", ref p.StructureId); d.Load("worker_id", ref p.WorkerId);
+            d.Load("key", ref p.Key); d.Load("progress", ref p.Progress); d.Load("structure_id", ref p.StructureId); d.Load("worker_id", ref p.WorkerId); d.Load("granted_share", ref p.GrantedShare);
             return Defs.Get(p.Key) == null ? null : p;
         }
 
@@ -127,6 +128,7 @@ namespace Pez.Sim
             d.Load("name", ref t.Name); d.Load("controller", ref t.Controller); d.Load("player", ref t.PlayerName);
             d.Load("standing_orders", ref t.StandingOrders); d.Load("orders_version", ref t.OrdersVersion);
             SnapIO.LoadFloats(d.Obj("stock"), t.Stock); SnapIO.LoadFloats(d.Obj("rates"), t.Rates);
+            SnapIO.LoadFloats(d.Obj("granted"), t.Granted); // a save from before gifts counted: nothing is a gift, as before
             d.Load("power_produced", ref t.PowerProduced); d.Load("power_used", ref t.PowerUsed); d.Load("plasma_owed", ref t.PlasmaOwed);
             d.Load("start", ref t.StartPos); d.Load("defeated", ref t.Defeated); d.Load("left", ref t.Left); d.Load("resigned", ref t.Resigned);
             d.Load("stalled_since", ref t.StalledSince); d.Load("house", ref t.House); d.Load("seat", ref t.Seat);
@@ -189,9 +191,9 @@ namespace Pez.Sim
              .Put("repath_timer", e.RepathTimer).Put("moving", e.Moving).Put("last_attacker", e.LastAttackerId).Put("last_attacker_team", e.LastAttackerTeam, -1)
              .Put("last_hit_time", e.LastHitTime, -999f).Put("last_call_for_help", e.LastCallForHelp, -999f)
              .Put("responding", e.Responding).PutV("home_pos", e.HomePos)
-             .Put("cargo", e.Cargo).Put("cargo_type", e.CargoType, -1).Put("harvest_type", e.HarvestType, -1);
+             .Put("cargo", e.Cargo).Put("cargo_salvage", e.CargoSalvage).Put("cargo_type", e.CargoType, -1).Put("harvest_type", e.HarvestType, -1);
             if (e.HarvestTile.HasValue) o.Set("harvest_tile", new List<object> { e.HarvestTile.Value.X, e.HarvestTile.Value.Y });
-            o.PutEnum("dock", e.Dock, DockStep.None).Put("dock_at", e.DockAt).Put("bay", e.BaySide).Put("burning", e.Burning);
+            o.PutEnum("dock", e.Dock, DockStep.None).Put("dock_at", e.DockAt).Put("bay", e.BaySide).Put("burning", e.Burning).Put("granted_share", e.GrantedShare);
             o.Put("work_timer", e.WorkTimer).Put("deposit", e.DepositId).Put("working", e.Working).Put("output", e.Output).Put("carrier", e.CarrierId).Put("offline", e.Offline);
             if (e.Passengers.Count > 0) o.Set("passengers", e.Passengers.Cast<object>().ToList());
             o.Put("fuel", e.Fuel).Put("fuel_cap", e.FuelCap).Put("landed", e.Landed).Put("stranded", e.Stranded).Put("at_depot", e.AtDepot).Put("fuel_warned", e.FuelWarned)
@@ -229,9 +231,9 @@ namespace Pez.Sim
             d.Load("repath_timer", ref e.RepathTimer); d.Load("moving", ref e.Moving); d.Load("last_attacker", ref e.LastAttackerId); d.Load("last_attacker_team", ref e.LastAttackerTeam);
             d.Load("last_hit_time", ref e.LastHitTime); d.Load("last_call_for_help", ref e.LastCallForHelp);
             d.Load("responding", ref e.Responding); d.Load("home_pos", ref e.HomePos);
-            d.Load("cargo", ref e.Cargo); d.Load("cargo_type", ref e.CargoType); d.Load("harvest_type", ref e.HarvestType);
+            d.Load("cargo", ref e.Cargo); d.Load("cargo_salvage", ref e.CargoSalvage); d.Load("cargo_type", ref e.CargoType); d.Load("harvest_type", ref e.HarvestType);
             if (d.Has("harvest_tile", out var ht) && ht is List<object> hl && hl.Count >= 2) e.HarvestTile = new Int2(SnapIO.ToI(hl[0]), SnapIO.ToI(hl[1]));
-            d.LoadEnum("dock", ref e.Dock); d.Load("dock_at", ref e.DockAt); d.Load("bay", ref e.BaySide); d.Load("burning", ref e.Burning);
+            d.LoadEnum("dock", ref e.Dock); d.Load("dock_at", ref e.DockAt); d.Load("bay", ref e.BaySide); d.Load("burning", ref e.Burning); d.Load("granted_share", ref e.GrantedShare);
             e.BaySide = Math.Clamp(e.BaySide, 0, World.BaySides.Length - 1); // a save from before bays turned has none: south
             d.Load("work_timer", ref e.WorkTimer); d.Load("deposit", ref e.DepositId); d.Load("working", ref e.Working); d.Load("carrier", ref e.CarrierId); d.Load("offline", ref e.Offline);
             // A reactor saved before partial output made all of its power or none.
@@ -379,6 +381,7 @@ namespace Pez.Sim
                 foreach (var t in world.Teams.Where(t => t.Controller == "ai" && !t.Left && !t.Defeated)) ais.Add(new SimpleAI(t.Id, passive: cfg.Open));
             ResumedFrom = root.Str("saved_at");
             if (world.Map.BaseMissing) world.Map.RebuildBase(cfg.Seed, cfg.MapSize, cfg.OreScale);
+            if (world.Map.SalvageMissing) { world.Map.DeriveSalvage(); world.MigrateSalvageCount(); }
             // From before the match clock: it starts now. Sudden death comes at the configured hour, or (a game already
             // past it, or nearly) half an hour from now, so the players get their warnings and time to act on them.
             if (!root.Obj("world").ContainsKey("sudden_death_at") && cfg.MatchHours > 0 && !cfg.KitchenSink)
@@ -449,7 +452,7 @@ namespace Pez.Sim
             .Set("w", W).Set("h", H).Set("ore_scale", SnapIO.X(OreScale)).Set("next_deposit_id", nextDepositId)
             .Set("tiles", SnapIO.Pack(Tiles.Select(t => (byte)t).ToArray()))
             .Set("ore", SnapIO.PackInts(Ore)).Set("ore_type", SnapIO.Pack(OreType)).Set("occupant", SnapIO.PackInts(Occupant))
-            .Set("ore_base", SnapIO.PackInts(OreBase)).Set("ore_base_type", SnapIO.Pack(OreBaseType))
+            .Set("ore_base", SnapIO.PackInts(OreBase)).Set("ore_base_type", SnapIO.Pack(OreBaseType)).Set("salvage", SnapIO.PackInts(Salvage))
             .Set("spawns", SnapIO.Vs(Spawns))
             .Set("deep", Deep.Select(d => (object)new JObj().Set("id", d.Id).Set("pos", SnapIO.V(d.Pos)).Set("type", d.Type)
                 .Set("amount", SnapIO.X(d.Amount)).Set("initial", SnapIO.X(d.Initial)).Put("mine", d.MineId)).ToList());
@@ -475,6 +478,8 @@ namespace Pez.Sim
                 Array.Copy(bt, m.OreBaseType, Math.Min(bt.Length, m.OreBaseType.Length));
             }
             else m.BaseMissing = true;
+            if (d.Has("salvage", out _)) SnapIO.UnpackInts(d.Str("salvage"), m.Salvage);
+            else m.SalvageMissing = true; // worked out once the fields' original amounts are known (Game.Restore)
             m.Spawns.AddRange(SnapIO.ToVecs(d.Arr("spawns")));
             foreach (var x in d.Objs("deep"))
             {
