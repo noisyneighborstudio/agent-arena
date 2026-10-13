@@ -38,6 +38,7 @@ MATS = {
  'bone':     mat('M_Bone', '#F6F2E8', 0, .3),
  'grape':    mat('M_GrapeVent', '#3A2440', 0, .5),
  'glass':    mat('M_FrostGlass', '#CFE3E6', 0, .1, alpha=110),
+ 'clear':    mat('M_ClearGlass', '#E6F2F4', 0, .05, alpha=40),  # see-through: for what's meant to be watched
  'cyan':     mat('M_E_Cyan', '#3FE6FF', emissive=True),
  'magenta':  mat('M_E_Magenta', '#FF3EC8', emissive=True),
  'acid':     mat('M_E_Acid', '#B6FF3B', emissive=True),
@@ -406,11 +407,44 @@ def S_mining_refinery():
 
 def S_barracks():
     a = Asset('barracks', 'structures', 2); pad(a, 2)
-    a.box('cream', 1.7, .6, 1.4, y=.38, z=.15)
-    for x in (-.55, 0, .55): a.box('team', .38, .22, .38, x=x, y=.79, z=.2)
-    door(a, .4, .42, -.57, anim=True)
-    a.cyl('steel', .025, 1.3, x=.78, y=.73, z=-.75)
-    a.box('team', .34, .2, .02, x=.62, y=1.25, z=-.75)
+    # A soldier dispenser. A cream foot with a team band and two little toes; a smoke-plastic stem with grip slats; on
+    # its front a clear display case where the next soldiers wait, stacked under the head like candy in a Pez (BarracksWorks
+    # builds four: raw dough at the bottom, primed, then finished with a team helmet at the top, rising a slot per soldier
+    # trained), with an oven strip at its foot that glows while one bakes; and the team flip-top head (head node, hinged at
+    # its back edge) that the top one rises into and is spat out of, tucked, to land in front and roll to its feet
+    # (pop: the mouth; land, exit: where it lands and where it stands up, and the unit appears).
+    a.node('stage_2', a.key)
+    cz = .12                                                       # the stem's axis is (0, cz)
+    a.box('cream', 1.15, .4, .95, y=.28, z=.08)                   # the foot
+    a.box('team', 1.19, .07, .99, y=.42, z=.08)
+    for sx in (-1, 1): a.box('cream', .3, .09, .22, x=sx * .36, y=.125, z=-.44)   # toes
+    a.box('smoke', .6, 1.1, .5, y=1.03, z=cz)                     # the stem
+    for i in range(3): a.box('team', .03, .06, .34, x=.31, y=1.2 + i * .12, z=cz)   # grip slats, on the side
+    # The display case on the front (-z) face: a cream frame, glass on three sides (the dark stem behind, so the figures
+    # stand out), the oven strip below.
+    zb, zf, xw, y0, y1 = cz - .25, cz - .47, .42, .62, 1.5
+    for yy in (y0, y1): a.box('cream', xw + .08, .05, zb - zf + .02, y=yy, z=(zb + zf) / 2)
+    for xx in (-xw / 2 - .02, xw / 2 + .02):
+        for zz in (zb - .01, zf):                                  # corner posts; glass on three sides
+            a.box('cream', .04, y1 - y0 + .05, .04, x=xx, y=(y0 + y1) / 2, z=zz)
+        a.box('clear', .012, y1 - y0, zb - zf, x=xx, y=(y0 + y1) / 2, z=(zb + zf) / 2)
+    a.box('clear', xw, y1 - y0, .012, y=(y0 + y1) / 2, z=zf)
+    ov = a.node('oven', 'stage_2', (0, y0 + .035, (zb + zf) / 2))
+    a.box('amber', xw - .04, .02, zb - zf - .06, node=ov)
+    a.node('stack_lo', a.key, (0, y0 + .05, (zb + zf) / 2))
+    a.node('stack_hi', a.key, (0, y1 - .25, (zb + zf) / 2))
+    # The head: deep enough to roof the case, so the top soldier rises out of sight into it.
+    hd = a.node('head', 'stage_2', (0, 1.58, cz + .27), rot=rx(6))
+    a.box('team', .68, .34, .76, y=.17, z=-.38, node=hd)
+    a.box('team', .6, .1, .1, y=.05, z=-.77, node=hd)              # the snout
+    a.cyl('steel', .04, .7, axis='x', node=hd)
+    a.node('pop', a.key, (0, 1.78, cz - .62))                      # just out of the mouth, clear of the case
+    a.node('land', a.key, (0, 0, cz - 1.15))
+    a.node('exit', a.key, (0, 0, cz - 1.5))
+    # The flag: a pole at the back corner (left on screen); BarracksWorks hangs a cloth flag on the flag node that waves downwind.
+    a.cyl('steel', .022, 1.5, x=.66, y=.83, z=.7)
+    a.sphere('steel', .035, x=.66, y=1.59, z=.7)
+    a.node('flag', 'stage_2', (.66, 1.54, .7))
     return a
 
 def S_factory():

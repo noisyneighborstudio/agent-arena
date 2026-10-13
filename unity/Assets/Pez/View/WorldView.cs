@@ -52,6 +52,7 @@ namespace Pez.View
             public SamWorks Sam;         // SAM site: the rack's elevation, the search radar, the rounds in their tubes
             public GunWorks Gun;         // gun turret: the revolver drum, the recoil spring and the spent wrappers
             public RadarWorks Radar;     // radar dome: the search antenna's sweep and the beacon
+            public BarracksWorks Bunks;  // barracks: the soldier dispenser (case, head, spit-out) and the flag
             public bool GlowHidden;
             public Sheen Sheen;          // newcomer protection: the sheen over its parts (null when its team isn't protected)
             public Renderer[] Halos;     // power plant: the light rising out of its open stacks      // the neutral "last seen" glow is applied (a stream render of fogged enemy state)
@@ -865,6 +866,14 @@ namespace Pez.View
                 if (e.Def.Key == "sam_site" && e.IsComplete && e.Team >= 0) { Fx.Audience = AudienceFor(e); (v.Sam ??= SamWorks.For(v)).Tick(this, v, Time.deltaTime); Fx.Audience = null; }
                 if (e.Def.Key == "gun_turret" && e.IsComplete && rig.HasModel) (v.Gun ??= GunWorks.For(v.Rig.Model)).Tick(v.LastFire, AudienceFor(e), Time.deltaTime);
                 if (e.Def.Key == "radar_dome" && e.Team >= 0) v.Blink = (v.Radar ??= RadarWorks.For(v.Rig.Model, e.Id)).Tick(World, e, SeesState(e, PovTeam), Time.deltaTime);
+                if (e.Def.Key == "barracks" && e.IsComplete && e.Team >= 0)
+                {
+                    bool next = QueueHead(e, out float tp, out float tT);
+                    var unit = next ? World.Teams[e.Team].UnitQueues[e.Def.Produces][0].Key : null;
+                    Fx.Audience = AudienceFor(e);
+                    (v.Bunks ??= BarracksWorks.For(rig.Model, e.Team, e.Id)).Tick(next, tp, tT, unit, Time.deltaTime);
+                    Fx.Audience = null;
+                }
                 if (World.Decaying(e) && Time.time >= v.DustNext)
                 {
                     // The match's decay stage: grit crumbles off the roof every few seconds.
@@ -996,7 +1005,7 @@ namespace Pez.View
         /// A vehicle (or soldier) rolls out with anticipation (production review 4a; fix 9). From the queue the view knows
         /// the seconds left to `trained`: T = (BuildTime - Progress) / rate (half on low power). On the team's first producer:
         ///  - T &lt; 1.5 s: its amber lamps blink at 2 Hz;
-        ///  - T &lt; 0.8 s: three steam puffs vent from the roof, 0.2 s apart;
+        ///  - T &lt; 0.8 s: three steam puffs vent from the roof, 0.2 s apart (a barracks: out of its head's mouth);
         ///  - the door starts up so it's fully open 0.1 s before the unit appears (earlier on low power, when the door
         ///    itself runs at half speed), and closes 1.4 s after;
         ///  - the unit then eases out of a dark bay: it starts 0.6 inside the door and leaves from rest (smoothstep, 0.9 s).
@@ -1033,11 +1042,27 @@ namespace Pez.View
             else if (v.Vents < 3 && T < 0.8f - v.Vents * 0.2f)
             {
                 v.Vents++;
-                var top = rig.Model.transform.TransformPoint(new Vector3(0f, RoofTop(v), 0.4f));
+                // A barracks puffs out of its head's mouth; anything else from the middle of its roof.
+                var top = v.Bunks != null && v.Bunks.Heads > 0 ? v.Bunks.Head(v.Vents - 1)
+                        : rig.Model.transform.TransformPoint(new Vector3(0f, RoofTop(v), 0.4f));
                 Fx.Steam(top, 0.4f);
             }
             float lead = 0.1f + 0.35f / rate;
             if (T < lead && v.Door != null) { rig.Motion.SetDoorOpen(true); v.DoorTimer = Mathf.Max(v.DoorTimer, T + 1.4f); }
+        }
+
+        /// <summary>Is this the producer making the team's next unit of its kind, and if so how far along it is (0..1) and
+        /// how many seconds until it's out (half speed on low power)?</summary>
+        bool QueueHead(Entity e, out float p, out float T)
+        {
+            p = 0f; T = float.MaxValue;
+            var t = World.Teams[e.Team];
+            if (!t.UnitQueues.TryGetValue(e.Def.Produces, out var q) || q.Count == 0 || !IsFirstProducer(e)) return false;
+            var def = Defs.Get(q[0].Key);
+            if (def == null || def.BuildTime <= 0f) return false;
+            p = Mathf.Clamp01(q[0].Progress / def.BuildTime);
+            T = (def.BuildTime - q[0].Progress) / (t.LowPower ? 0.5f : 1f);
+            return true;
         }
 
         static float DoorH(Transform door)
@@ -1443,9 +1468,11 @@ namespace Pez.View
                                 // From 0.6 inside the door (hidden in the dark bay) when the model has one.
                                 var door = producer.Rig.HasModel ? PezMotion.FindDeep(producer.Rig.Model.transform, "door") : null;
                                 tv2.SpawnFrom = def2.IsAir ? W(c, 0.2f)
+                                              : producer.Bunks is { HasExit: true } ? producer.Bunks.Exit // where it stood up after its tuck and roll
                                               : door != null ? new Vector3(door.position.x, 0f, door.position.z + 0.6f)
                                               : W(new Vec2(c.X, producer.E.Origin.Y + 0.3f));
                                 tv2.SpawnT = 0;
+                                tv2.Rig.Root.position = tv2.SpawnFrom.Value; // this frame too: it was already drawn where the sim put it
                             }
                         }
                         break;

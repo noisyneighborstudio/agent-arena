@@ -158,8 +158,15 @@ STRUCTURES = [
    "down and the stacks give a thin wisp every few seconds. Low power halves the belt, the roll and the smoke. "
    "Dispenses one mining_truck through the dock when it finishes building.",
    dict(door=dict(mode='rollup', open_s=.35, close_s=.5), spinner=dict(axis='Z', idle_rpm=0, active_rpm=32, spinup_s=.5)), "Dock lights blink alternately at 1 Hz while a truck is docking.", ['mining_truck (free)']),
- S('barracks', 'Trains infantry.', "Each soldier comes out through the roll-up door (see each infantry unit's emerge entry). The roof heads flip up 15° in sequence while a soldier is training.",
-   dict(door=dict(mode='rollup', open_s=.25, close_s=.4)), "The flag sways ±6° on a 1.8 s sine.", ['rifleman', 'rocket_soldier', 'laser_trooper', 'medic']),
+ S('barracks', 'Trains infantry.', "A soldier dispenser, driven by the sim's training queue (BarracksWorks). The clear case under the flip-top head holds four soldiers stacked like candy: "
+   "raw dough at the bottom, primed in the middle, finished with a team helmet at the top. While a soldier trains the stack (stack_lo to stack_hi) rises with its progress, "
+   "each figure baking as it climbs, a fresh lump of dough swells in at the bottom, and the amber oven strip (oven) at the case's foot glows. "
+   "1.5 s before the soldier is out, the top figure rises out of the case into the head; at 1.25 s the head snaps open, and at 1.1 s it spits the soldier out of its mouth (pop), "
+   "full size and tucked into a ball (0.65 of its height). It somersaults 540° on a ballistic arc to the ground in front (land) in 0.55 s, kicking up a puff of dust, "
+   "rolls on to its feet (exit) through another 180° with a squash, and stands up as the real unit appears there. The head drops shut. No door.",
+   dict(head=dict(mode='flip_top', open_s='1.25 s before the soldier is out', close_s='after the spit'),
+        stack=dict(mode='rise_with_progress', slots=4), soldier=dict(mode='spit_tuck_roll', spit_s=.55, roll_s=.35, spin_deg=720, tuck=.65)),
+   "The flag on the pole (flag) is cloth: it streams downwind and ripples, harder in a stronger wind.", ['rifleman', 'rocket_soldier', 'laser_trooper', 'medic']),
  S('factory', 'Builds vehicles.', "While building, the team wrapper band pulses brighter by 10%. Each finished vehicle comes out through the roll-up door. The door takes 0.35 s to open.",
    dict(door=dict(mode='rollup', open_s=.35, close_s=.5)), "Exhaust stack puffs every 3 s.", ['mining_truck', 'repair_truck', 'outpost_truck', 'scout_buggy', 'light_tank', 'heavy_tank', 'artillery', 'laser_tank']),
  S('electronics_plant', 'Turns copper and steel into circuits.', "A circuit-candy line, one cycle per circuit the sim makes (1 s; 2 s on low power, which halves production). "
