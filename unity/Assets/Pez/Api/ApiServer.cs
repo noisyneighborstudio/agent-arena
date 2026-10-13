@@ -893,9 +893,10 @@ namespace Pez.Api
                 bool known = team < 0 || w.IsVisibleTo(team, e) || (e.IsStructure && w.Teams[team].KnownEnemyStructures.ContainsKey(e.Id));
                 if (!known) continue;
                 var c = e.Center;
-                // An invention is drawn as its base unit (ModelKey); its player-chosen name rides along at index 10.
+                // An invention is drawn as its base unit (ModelKey); its player-chosen name rides along at index 10. A structure's
+                // facing (index 6) is where its door faces: its bay for a drop-off, else south, where the models' doors are.
                 var row = new List<object> { e.Id, e.Def.OwnerTeam >= 0 ? e.Def.ModelKey : e.Def.Key, e.Team, Math.Round(c.X, 2), Math.Round(c.Y, 2), (int)(100 * e.Hp / e.Def.MaxHp),
-                    Math.Round(e.Facing, 2), e.IsStructure ? StateView.Pct(e.BuildProgress) : -1, e.IsStructure ? e.Def.SizeX : 0,
+                    Math.Round(e.IsStructure ? w.DoorFacing(e) : e.Facing, 2), e.IsStructure ? StateView.Pct(e.BuildProgress) : -1, e.IsStructure ? e.Def.SizeX : 0,
                     // fuel %: your own units only (spectators see all); -1 = not shown
                     e.Def.UsesFuel && (team < 0 || e.Team == team) ? StateView.Pct(e.FuelFraction) : -1 };
                 if (e.Def.OwnerTeam >= 0) row.Add(e.Def.Name);

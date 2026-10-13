@@ -80,6 +80,11 @@ namespace Pez.Sim
         public bool Burning;         // a building on fire (below World.BurnBelow): it burns down unless repaired
         public DockStep Dock;        // where it is in backing into a drop-off's bay
         public int DockAt;           // the drop-off structure it's delivering to
+        /// <summary>
+        /// A drop-off's truck bay side (an index into World.BaySides: 0 south, 1 east, 2 west, 3 north): the side facing its nearest
+        /// ore, chosen when it was placed, deployed or spawned and kept, so lanes don't move under the trucks. Old saves have 0.
+        /// </summary>
+        public int BaySide;
 
         // Deep mines: the deposit underneath
         public int DepositId;

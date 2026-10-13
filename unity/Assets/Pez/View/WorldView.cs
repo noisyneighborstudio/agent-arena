@@ -64,6 +64,7 @@ namespace Pez.View
             public Bounds? Roof;
             // Drop-offs: the dock lamps and chute, and what the bay's truck reported this frame or last.
             public DockView Dock;
+            public float BayYaw;         // degrees: how far its model is turned so the door faces the bay (a quarter turn each; 0 = south)
             public int DockFrame = -10;
             public DockView.Phase DockBest;
             // Construction: the staked site, the last progress seen (stage landings) and the crane's beam cadence.
@@ -824,14 +825,30 @@ namespace Pez.View
             ring.localScale = new Vector3(r, 1f, r);
             ring.gameObject.SetActive(false);
             var v = new EV { E = e, Rig = rig, Ring = ring, Born = Time.frameCount, Bars = e.IsMine ? null : new Bars(rig.Root, e, 0f), TeamShown = e.Team };
-            if (e.IsStructure) { rig.Root.position = W(e.Center); Plinths.Register(e.Id, rig.Root.position, rig.Plinth); }
+            if (e.IsStructure) { rig.Root.position = W(e.Center); TurnToBay(v); Plinths.Register(e.Id, rig.Root.position, rig.Plinth, v.BayYaw); }
             if (e.IsStructure && !e.IsComplete && rig.HasModel) v.Site = new SiteView(rig.Root, e.Def.SizeX, e.Def.SizeY);
             if (e.IsStructure && e.Def.DropOff && rig.HasModel)
             {
-                var (bay, _, facing, _) = World.Bay(e);
-                v.Dock = DockView.For(rig, e.Def.SizeX * 0.5f, e.Def.SizeY * 0.5f, facing, bay);
+                // The model is turned so its door faces the bay, so in the model's own frame the bay is always on its -Z (south) side.
+                var (bay, _, _, _) = World.Bay(e);
+                v.Dock = DockView.For(rig, e.Def.SizeX * 0.5f, e.Def.SizeY * 0.5f, -Mathf.PI / 2f, bay);
             }
             return v;
+        }
+
+        /// <summary>
+        /// A drop-off's model faces its bay: the pack's doors face -Z (south), so the model (and the plinth ramp that goes with
+        /// the door) turns a quarter turn per side about its centre. Footprints are square, so it still fits. Everything built on
+        /// the model (door, lamps, crane, stacks) turns with it; the sim's bay side is fixed when the building is made, so this
+        /// is done once.
+        /// </summary>
+        void TurnToBay(EV v)
+        {
+            var e = v.E;
+            if (!e.Def.DropOff) return;
+            float yaw = -90f - World.Bay(e).facing * Mathf.Rad2Deg; // the door (-Z) turns from south to the bay's direction
+            v.BayYaw = Mathf.Round(yaw / 90f) * 90f;
+            v.Rig.Body.localRotation = Quaternion.Euler(0f, v.BayYaw, 0f);
         }
 
         void UpdateView(EV v, float alpha)
@@ -1426,7 +1443,7 @@ namespace Pez.View
                                 // From 0.6 inside the door (hidden in the dark bay) when the model has one.
                                 var door = producer.Rig.HasModel ? PezMotion.FindDeep(producer.Rig.Model.transform, "door") : null;
                                 tv2.SpawnFrom = def2.IsAir ? W(c, 0.2f)
-                                              : door != null ? new Vector3(door.position.x, 0f, door.position.z + 0.6f)
+                                              : door != null ? new Vector3(door.position.x, 0f, door.position.z) + producer.Rig.Model.transform.forward * 0.6f
                                               : W(new Vec2(c.X, producer.E.Origin.Y + 0.3f));
                                 tv2.SpawnT = 0;
                             }

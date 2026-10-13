@@ -23,6 +23,7 @@ namespace Pez.Headless
             ParallelProduction();
             ConstructionTruck();
             SymmetricPlacement();
+            BaysFaceTheOre();
             MatchClock();
             Derricks();
             AttackUntilCapturable();
@@ -272,6 +273,14 @@ namespace Pez.Headless
             }
             Field(15, 15, 3.4f, Map.Iron);
             Field(7, 17, 2.4f, Map.Copper);
+            // Each command center picked its bay side from the ore the map had before: put it up again where it stood.
+            for (int t = 0; t < 2; t++)
+            {
+                var hq = w.Owned(t).First(e => e.Def.Key == "command_center");
+                var at = hq.Origin;
+                w.Remove(hq);
+                w.SpawnStructure(t, "command_center", at, 1f);
+            }
             return w;
         }
 
@@ -290,14 +299,61 @@ namespace Pez.Headless
             return best;
         }
 
-        /// <summary>Where the trucks go: the head of a drop-off's lane (they line up there before backing in), else the building itself.</summary>
-        static Vec2 TruckSpot(World w, Entity e) => e.Def.DropOff ? w.Bay(e).head : e.Center;
+        /// <summary>A drop-off's truck bay opens on the side that faces its ore, the side is saved, and an old save has south bays (#64).</summary>
+        static void BaysFaceTheOre()
+        {
+            // Mirrored bases: the bottom-left base's bay faces its ore (it opened south, away from it), and the top-right base's faces
+            // its own, the same distance and the opposite way round.
+            var w = MirroredBases();
+            var hq = new[] { 0, 1 }.Select(t => w.Owned(t).First(e => e.Def.Key == "command_center")).ToArray();
+            float near0 = ToHomeIron(w, 0, w.Bay(hq[0]).head), near1 = ToHomeIron(w, 1, w.Bay(hq[1]).head);
+            float south0 = ToHomeIron(w, 0, w.Bay(hq[0].Origin, hq[0].Def, 0).head);
+            Check(hq[0].BaySide != 0 && near0 < south0 - 2f, $"a bottom-corner command center's bay faces its ore (side {hq[0].BaySide}, {near0:0.0} tiles from the iron where south would be {south0:0.0})");
+            Check(MathF.Abs(near0 - near1) < 0.01f && MathF.Cos(w.Bay(hq[0]).facing + MathF.PI - w.Bay(hq[1]).facing) > 0.99f,
+                  $"and the opposite corner's mirrors it (sides {hq[0].BaySide} and {hq[1].BaySide}, {near0:0.0} and {near1:0.0} tiles)");
+
+            // Generated maps: no command center opens further from its iron than south would, and the bottom-left one (south was always
+            // away from its ore) is well nearer.
+            var bad = new List<string>();
+            foreach (var (seed, size, ore) in new[] { (1, 80, 1f), (2, 80, 1f), (3, 96, 1f), (4, 128, 0.3f), (5, 112, 1f), (6, 80, 0.3f) })
+            {
+                var g = new World(2, seed, size, ore);
+                for (int t = 0; t < 2; t++)
+                {
+                    var h = g.Owned(t).First(e => e.Def.Key == "command_center");
+                    float chosen = ToHomeIron(g, t, g.Bay(h).head), south = ToHomeIron(g, t, g.Bay(h.Origin, h.Def, 0).head);
+                    if (chosen > south + 0.5f || (t == 0 && chosen > south - 3f)) bad.Add($"seed {seed} size {size} seat {t}: {chosen:0.0} against {south:0.0} for south");
+                }
+            }
+            Check(bad.Count == 0, "on generated maps every command center's bay faces its ore" + (bad.Count > 0 ? $" (not: {string.Join("; ", bad)})" : ""));
+
+            // The side is saved with the game; a save from before bays turned has none, and its bays are south as they were.
+            var game = new Game(new GameConfig { Seed = 2, MapSize = 80, Controllers = new[] { "llm", "llm" } });
+            var gw = game.World;
+            for (int t = 0; t < 2; t++)
+            {
+                gw.SpawnStructure(t, "power_plant", gw.FindPlacement(t, "power_plant").Value, 1f);
+                gw.SpawnStructure(t, "mining_refinery", gw.FindPlacement(t, "mining_refinery").Value, 1f);
+            }
+            var sides = gw.Entities.Where(e => !e.Dead && e.Def.DropOff).ToDictionary(e => e.Id, e => e.BaySide);
+            string saved = Snap(game);
+            var back = Resume(saved).World;
+            Check(sides.Count == 4 && sides.Values.Any(s => s != 0) && sides.All(kv => back.Get(kv.Key)?.BaySide == kv.Value),
+                  $"a snapshot round-trips every drop-off's bay side (sides {string.Join(", ", sides.Values)})");
+            var old = (Dictionary<string, object>)Json.Parse(saved);
+            foreach (Dictionary<string, object> e in (List<object>)((Dictionary<string, object>)old["world"])["entities"]) e.Remove("bay");
+            var oldGame = new Game(new GameConfig { Seed = 1, MapSize = 48, Controllers = new[] { "llm", "llm" } });
+            oldGame.Restore(old);
+            var oldDropOffs = oldGame.World.Entities.Where(e => !e.Dead && e.Def.DropOff).ToList();
+            Step(oldGame, 10);
+            Check(oldDropOffs.Count == 4 && oldDropOffs.All(e => e.BaySide == 0) && oldGame.World.Errors == 0,
+                  $"a snapshot from before bays turned loads with every bay south, and plays on ({oldDropOffs.Count} drop-offs, sides {string.Join(", ", oldDropOffs.Select(e => e.BaySide))}, {oldGame.World.Errors} errors: {oldGame.World.LastError})");
+        }
 
         static void SymmetricPlacement()
         {
             var w = MirroredBases();
             var keys = new[] { "power_plant", "mining_refinery", "barracks", "factory" };
-            var hq = new[] { 0, 1 }.Select(t => w.Owned(t).First(e => e.Def.Key == "command_center")).ToArray();
             var placed = new Dictionary<string, Entity>[2] { new Dictionary<string, Entity>(), new Dictionary<string, Entity>() };
             foreach (var key in keys)
                 for (int t = 0; t < 2; t++)
@@ -311,19 +367,14 @@ namespace Pez.Headless
             foreach (var key in keys)
             {
                 var a = placed[0][key]; var b = placed[1][key];
-                float hqA = Vec2.Dist(a.Center, hq[0].Center), hqB = Vec2.Dist(b.Center, hq[1].Center);
-                float oreA = ToHomeIron(w, 0, TruckSpot(w, a)), oreB = ToHomeIron(w, 1, TruckSpot(w, b));
                 var turned = new Vec2(81 - a.Center.X, 81 - a.Center.Y); // seat 0's spot turned about the middle of the two bases
                 bool mirrored = Vec2.Dist(turned, b.Center) < 0.01f;
+                // A drop-off's bay mirrors too: it opens the opposite way.
+                bool bayMirrored = !a.Def.DropOff || MathF.Cos(w.Bay(a).facing + MathF.PI - w.Bay(b).facing) > 0.99f;
                 line.Add($"{key} {a.Origin}/{b.Origin}");
-                // A refinery is placed for its trucks' trips, the rest for staying compact. (A truck lane opens south unless something
-                // is in the way, so the seats' lanes can't mirror, and nor can what the lanes keep clear.)
-                bool fair = mirrored || (key == "mining_refinery" ? MathF.Abs(oreA - oreB) <= 1f : MathF.Abs(hqA - hqB) <= 1f);
-                Check(fair, $"on a mirrored map both seats' {key} are mirror images" + (key == "mining_refinery" ? $", or as far from their ore ({oreA:0.0} and {oreB:0.0}) within a tile" : $", or as far from their command center ({hqA:0.0} and {hqB:0.0}) within a tile"));
+                Check(mirrored && bayMirrored, $"on a mirrored map both seats' {key} are mirror images (seat 0 at {a.Origin}, seat 1 at {b.Origin}{(a.Def.DropOff ? $", bays {a.BaySide} and {b.BaySide}" : "")})");
             }
             Console.WriteLine($"      seat 0 / seat 1 origins: {string.Join(", ", line)}");
-            Check(Vec2.Dist(new Vec2(81 - placed[0]["power_plant"].Center.X, 81 - placed[0]["power_plant"].Center.Y), placed[1]["power_plant"].Center) < 0.01f,
-                  "the first power plants are exact mirror images");
             Check(new[] { 0, 1 }.All(t => ToHomeIron(w, t, w.Bay(placed[t]["mining_refinery"]).head) <= 1f),
                   $"each refinery's lane opens right at the iron field, for trucks' short trips ({ToHomeIron(w, 0, w.Bay(placed[0]["mining_refinery"]).head):0.0} and {ToHomeIron(w, 1, w.Bay(placed[1]["mining_refinery"]).head):0.0} tiles)");
 

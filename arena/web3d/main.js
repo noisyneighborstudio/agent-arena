@@ -230,7 +230,7 @@ function upsert(e, now) {
   const [id, key, team, x, y, hp, facing, build, size] = e;
   let s = ents.get(id);
   if (!s) {
-    s = { key, team, obj: new THREE.Group(), a: { x, y, f: facing, t: now }, b: { x, y, f: facing, t: now }, build };
+    s = { key, team, obj: new THREE.Group(), a: { x, y, f: facing, t: now }, b: { x, y, f: facing, t: now }, build, size };
     s.obj.userData.id = id;
     world.add(s.obj);
     ents.set(id, s);
@@ -369,7 +369,8 @@ function tick() {
     const alt = AIR.has(s.key) ? 2.2 : 0;
     s.obj.position.set(x, alt, y);
     // Unity: Euler(0, 90° − facing) in its own (left-handed) coordinates: the world group carries that over.
-    s.obj.rotation.y = s.size > 0 ? 0 : Math.PI / 2 - f; // structures never turn in Unity
+    // Unity: Euler(0, 90° − facing). A structure's "facing" is where its door faces (south unless it is a drop-off turned to its bay), and the model's door is on -Z: yaw −90° − facing.
+    s.obj.rotation.y = s.size > 0 ? -Math.PI / 2 - f : Math.PI / 2 - f;
     if (s.stages) emerge(s, s.build < 0 ? 1 : s.build / 100, dt);
     if (id === view.followId) { view.x += (x - view.x) * Math.min(1, dt * 6); view.y += (y - view.y) * Math.min(1, dt * 6); }
   }
