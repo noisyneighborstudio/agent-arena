@@ -56,9 +56,10 @@ class Asset:
         self.key, self.kind, self.size = key, kind, size
         self.nodes = {key: (None, np.eye(4))}
         self.parts = []
-    def node(self, name, parent, pos=(0, 0, 0), rot=None):
+    def node(self, name, parent, pos=(0, 0, 0), rot=None, scale=None):
         M = T(pos)
         if rot is not None: M = M @ rot
+        if scale is not None: M = M @ np.diag([*scale, 1.0])
         self.nodes[name] = (parent, M); return name
     def add(self, node, m, mesh): self.parts.append((node or '__auto__', m, mesh))
     # primitives (centre coords in node-local space)
@@ -545,12 +546,31 @@ def scoop_bay_hatch(a, idx, nx, nz, wall, w=.6, h=.38, y0=.12):
     sh = a.node(f'hatch_{idx}', 'stage_1', (wall * nx, top, wall * nz), rot=rot if nx else None)
     a.box('cream', w - .02, h - .02, .03, y=-h / 2, z=.03, node=sh)         # the shutter, hanging from the top edge
     a.box('team', w - .02, .05, .05, y=-h + .035, z=.035, node=sh)          # its lip
+    # The dock lamp above the frame (node dock_lens_<idx>, lit by DockView's chase with a row of pips either side of it): the
+    # truck is waved into this wall the way the south lamps wave it into the dock. A licorice bezel (a plain part, so it stays out
+    # of the amber the south lamps share) behind an amber lens.
+    ly, ld = top + .05 + .11, .03
+    lens = a.node(f'dock_lens_{idx}', 'stage_1', (wall * nx + ld * nx, ly, wall * nz + ld * nz))
+    sz = (.05, .07, .09) if nx else (.09, .07, .05)                          # (x, y, z): the lens is thin across its wall
+    a.box('amber', *sz, node=lens)
+    bz = (.03, .105, .135) if nx else (.135, .105, .03)
+    a.box('licorice', *bz, x=wall * nx + .005 * nx, y=ly, z=wall * nz + .005 * nz)
+
+def bay_shutter(a, w=.88, h=.67, top=.8, z=-1.4):
+    """A cream roll-up shutter across the refinery's south bay (node bay_shutter, pivot at the top edge, local +z out of the wall,
+    in the same style as scoop_bay_hatch's): RefineryWorks keeps it down whenever the truck bay is on a side wall, so the dock
+    that nobody is using reads as shut rather than an open dark doorway. The model rests with it rolled up (scale ~0, a point: the
+    south bay as it was; the icon and the pack show that) and the view scales it down from there."""
+    sh = a.node('bay_shutter', 'stage_1', (0, top, z), scale=(.001, .001, .001))
+    a.box('cream', w, h, .03, y=-h / 2, z=.0, node=sh)
+    a.box('team', w, .05, .05, y=-h + .035, z=.005, node=sh)
 
 def S_mining_refinery():
     a = Asset('mining_refinery', 'structures', 3); pad(a, 3)
     a.box('cream', 2.7, .75, 1.6, y=.455, z=.3)
     a.node('stage_1', a.key)
     for i, (nx, nz, wall) in enumerate(((1, 0, 1.35), (-1, 0, 1.35), (0, 1, 1.1))): scoop_bay_hatch(a, i, nx, nz, wall)
+    bay_shutter(a)
     a.box('cream', .9, .75, .9, x=-.9, y=.455, z=-.95)
     a.box('cream', .9, .75, .9, x=.9, y=.455, z=-.95)
     door(a, .9, .6, -.48, lights=False, anim=True)              # dock (south)

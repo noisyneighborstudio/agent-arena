@@ -270,7 +270,13 @@ STRUCTURES = [
    "and a cream roll-up shutter with a team lip): the shutter facing the bay rolls up in 0.3 s when a truck lines up, the chute waits for it, slides out through "
    "the opening to the truck and back, and the shutter rolls down in 0.4 s once the chute is inside. The shutter stays up while the chute is out, so it never passes through a closed one. "
    "Drop-offs the game places for you face south, so this is for terrain-blocked bays and the player's own placements; if the sim moves a bay to another wall mid-match "
-   "(the building that blocked the south lane is destroyed, or one is put on it), the chute draws back, the old hatch shuts, the chute shrinks away and comes up on the new side.",
+   "(the building that blocked the south lane is destroyed, or one is put on it), the chute draws back, the old hatch shuts, the chute shrinks away and comes up on the new side. "
+   "The dock lamps follow the bay: the two south lamps and their pips run the amber come-in chase and the steady cream clear only while the bay is south, and are dark otherwise. "
+   "The south bay then reads as shut, behind a cream roll-up shutter with a team lip (bay_shutter) that is rolled up, out of sight, while the bay is south and rolls down in 0.4 s "
+   "(once the chute is back inside) when the bay is on a side wall; it rolls up in 0.3 s, ahead of the chute, when the bay returns south. "
+   "Each side hatch has its own amber lamp lens above its frame (dock_lens_0, dock_lens_1, dock_lens_2) with two pips either side, which run the same 2 Hz chase in toward the lens "
+   "and the same cream clear and dark sequence for the wall the truck is using, so the truck is waved into the wall it docks at. "
+   "When the bay changes side the old wall's signal fades out and the new one in over 0.2 s.",
    dict(door=dict(mode='rollup', open_s=.35, close_s=.5), hatch=dict(mode='rollup', open_s=.3, close_s=.4, with_chute=True), spinner=dict(axis='Z', idle_rpm=0, active_rpm=32, spinup_s=.5)), "Dock lights blink alternately at 1 Hz while a truck is docking.", ['mining_truck (free)']),
  S('barracks', 'Trains infantry.', "A soldier dispenser, driven by the sim's training queue (BarracksWorks). The clear case under the flip-top head holds four soldiers stacked like candy: "
    "raw dough at the bottom, primed in the middle, finished at the top. Each is a figurine of the soldier it becomes (its own model, a case figure tall): "
