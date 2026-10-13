@@ -2575,6 +2575,21 @@ namespace Pez.Headless
             int rigs6 = w6.Owned(0).Count(e => e.Def.Key == "drill_rig"), mines6 = w6.Owned(0).Count(e => e.Def.Key == "deep_mine"), queued6 = t6.UnitQueues[Producer.Factory].Count(q => q.Key == "drill_rig");
             Check(GoesTo(w6, d6[0]) && rigs6 + mines6 + queued6 == 1 && !w6.Owned(0).Any(e => e.Def.Key == "drill_rig" && e.Order == Order.Idle),
                   $"with two copper zones and steel for two rigs it buys one, and none is left idle ({rigs6} rigs, {mines6} mines, {queued6} queued, {t6.Amount("steel")} steel)");
+            // The surface copper is gone, there is no refined copper, and the next step is a refinery the base has no room for (an iron mine is pumping,
+            // so the build order is on): the 100 copper ore it costs is held back (reserved) and the refineries can't touch it, so copper ore in the
+            // stockpile is not copper it can use. It is starved all the same, and the rig goes to the copper zone (the reserve once counted as copper
+            // on hand, and the gate on copper zones stayed shut for good).
+            var (w7, ai7, t7, d7) = Dry(0);
+            d7[0].Type = Map.Copper; d7[1].Type = Map.Iron;
+            var hq7 = w7.Owned(0).First(e => e.Def.Key == "command_center");
+            var ironRig = At(w7.SpawnUnit(0, "drill_rig", hq7), d7[1].Pos + new Vec2(1, 0));
+            Check(Ok(Commands.Execute(w7, 0, Cmd("type", "deploy", "units", new[] { ironRig.Id }))), "(an iron mine pumping)");
+            while (w7.FindPlacement(0, "mining_refinery") is Int2 spot7) w7.SpawnStructure(0, "power_plant", spot7, 1f);
+            t7.Add("copper", -t7.Amount("copper")); t7.Add("copper_ore", 100 - t7.Amount("copper_ore")); t7.Add("iron_ore", 1000); t7.Add("steel", 1000);
+            bool wentCopper7 = false;
+            AiRun(w7, ai7, 90, () => wentCopper7 |= GoesTo(w7, d7[0]));
+            Check(Have(w7, "mining_refinery") == 1 && t7.Reserved("copper_ore") >= 100 && wentCopper7,
+                  $"with its refinery held back for want of room, 100 copper ore reserved for it and no copper to use, a rig goes to the copper zone ({w7.Owned(0).Count(e => e.Def.Key == "drill_rig")} rigs, {w7.Owned(0).Count(e => e.Def.Key == "deep_mine")} mines, reserve {t7.Reserved("copper_ore")} copper ore)");
 
             // A crystal rig that was stopped keeps its old zone but isn't drilling: its ore is free again, and the rig gets a zone.
             var (w2, ai2, t2, d2) = Dry(0);

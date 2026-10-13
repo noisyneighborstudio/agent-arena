@@ -208,6 +208,9 @@ namespace Pez.Sim
             // something to refine them). Each switches on below a low mark and off above a higher one, so trucks don't flap. (Copper's
             // marks are low: little but circuits use it, and steel is what limits them.)
             int copperOnHand = t.Amount("copper") + t.Amount("copper_ore"), ironOnHand = t.Amount("steel") + t.Amount("iron_ore");
+            // (Copper it can use: copper ore held back for a purchase isn't, since the converters can't touch it; if the purchase can't be made, a
+            // refinery with no room, it is held for good.)
+            int copperSpendable = t.Amount("copper") + System.Math.Max(0, t.Amount("copper_ore") - t.Reserved("copper_ore"));
             // Trucks queueing for the bays (each bay takes one truck at a time), or iron ore piling up unrefined: another refinery. Not more
             // than the ore coming in could keep busy (all of it may be iron, and a refinery converts RefineryRate of it a second), and only
             // where there is room for one.
@@ -236,7 +239,7 @@ namespace Pez.Sim
             var has = new int[4];
             foreach (var m in deepMines.Where(Pumping)) has[w.Map.DepositById(m.DepositId).Type]++;
             foreach (var r in rigs.Where(Bound)) { var z = w.Map.DepositById(r.ZoneId); if (z != null) has[z.Type]++; }
-            int OnHand(int ore) => ore == Map.Iron ? ironOnHand : ore == Map.Copper ? copperOnHand : t.Amount(Defs.Ores[ore]);
+            int OnHand(int ore) => ore == Map.Iron ? ironOnHand : ore == Map.Copper ? copperSpendable : t.Amount(Defs.Ores[ore]);
             bool Short(int type) => type == Map.Iron ? ironOnHand < 400 || RawShort("iron_ore") : type == Map.Copper && (copperOnHand < 300 || copperOnHand * 4 < ironOnHand || RawShort("copper_ore"));
             // A basic ore it wants, has no mine on and next to none of (or is short of as the raw ore something is waiting on) gets one
             // whatever the cap says; crystal / uranium it has a plant for and none of go ahead of the ordinary iron and copper (a deep mine
