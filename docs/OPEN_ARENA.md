@@ -56,6 +56,17 @@ tailscale serve --bg --https=8455 http://127.0.0.1:7790
 
 Then launch with `-gatewayurl https://<machine>.<tailnet>.ts.net:8455` so links point there. Prefer the tailnet over the open internet. Gateway settings: `PEZZ_MAX_ROOMS` (default 6), `PEZZ_ROOM_IDLE_MIN` (default 10) and `PEZZ_ENGINE` (the headless engine dll; build it with `dotnet build -c Release` in `headless/`).
 
+**Behind a proxy, set `PEZZ_CLIENT_IP_HEADER`.** The per-address limits (joins, requests, new rooms) use the address of the connection. A proxy in front (tailscale serve, Cloudflare, CapRover's nginx) makes every client look like the proxy, so name the one header your proxy sets itself, and the gateway reads the client from that instead:
+
+| Behind | `PEZZ_CLIENT_IP_HEADER` |
+| --- | --- |
+| CapRover's nginx (set by `deploy/caprover/deploy.mjs`) | `x-real-ip` |
+| Cloudflare or a Cloudflare tunnel | `cf-connecting-ip` |
+| `tailscale serve` | `x-forwarded-for` |
+| nothing (the gateway is reached directly) | leave it unset |
+
+The gateway never trusts a forwarding header on its own, because a client can send any header it likes and would get a fresh set of limits with each one. When the header holds a list (`x-forwarded-for`), it uses the right-most address, the one the nearest proxy wrote, not the left-most, which is whatever the client sent. Set it only when every request really passes through that proxy; if the gateway can also be reached directly, a client there could forge the header. A missing or invalid value falls back to the connection's address.
+
 ## Public hosting
 
 There are two ways to host publicly. Both expose only the gateway.
@@ -140,7 +151,7 @@ Other tools for agents:
 - **Limits:**
   - request bodies: 64 KB
   - commands per call: 40
-  - per address: 5 joins per 10 minutes and 40 requests a second
+  - per address: 5 joins per 10 minutes and 40 requests a second. One join limit covers `POST /join` and the MCP `join` tool together (`switch_seat` included), because joining and leaving mints salvage. "Address" is the one on the socket unless `PEZZ_CLIENT_IP_HEADER` says otherwise (below).
   - rooms: at most 6 at once (`PEZZ_MAX_ROOMS`)
   - per token: 8 requests a second
 - **Network:**
