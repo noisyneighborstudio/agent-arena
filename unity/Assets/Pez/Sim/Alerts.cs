@@ -53,10 +53,10 @@ namespace Pez.Sim
                 open.Add(a);
                 if (All.Count > 500)
                 {
-                    // Trimmed alerts stop merging too: one left open but out of All wasn't saved, so a resumed game raised afresh what the original merged.
-                    var cut = new HashSet<Alert>(All.GetRange(0, All.Count - 500));
-                    All.RemoveRange(0, All.Count - 500);
-                    open.RemoveAll(cut.Contains);
+                    // Trim the oldest alerts that have stopped merging: one still open is saved with the game, so a resumed game (which
+                    // starts with far fewer alerts and never reaches the cap at the same moment) keeps merging into it, and the original must too.
+                    var cut = new HashSet<Alert>(All.Where(x => !open.Contains(x)).Take(All.Count - 500));
+                    All.RemoveAll(cut.Contains);
                 }
             }
             else if (p > a.Priority) a.Priority = p;
