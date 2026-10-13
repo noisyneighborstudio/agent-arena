@@ -270,10 +270,34 @@
  {
   "key": "enrichment_plant",
   "kind": "structure",
-  "role": "Turns uranium into plasma feedstock.",
-  "mechanics": "Each centrifuge's acid bands chase upward (emission scrolls) while producing. Ambient centrifuge vibration is 0.003 at 25 Hz.",
-  "nodes": {},
-  "idle": "Bands breathe slowly.",
+  "role": "Turns uranium into plasma.",
+  "mechanics": "A centrifuge hall, one cycle per plasma the sim makes (2.5 s; 5 s on low power, which halves production). The cascade of six squat rotors (rotor_0..5, foil drums with team caps) spins under the skylight while the plant works: up to 450\u00b0/s in about 1.5 s, at half speed on low power, where it also sags to a third for half a second every 2.6 s as the supply browns out; starved, it coasts to a stop over about 3 s. Each cycle a slug of uranium runs out of the hopper: the heap (ore) slumps 0.015 and settles, and the sight glass on the hopper's pedestal (sight) flashes as it passes. At the end of the cycle a magenta plasma brick comes up into the dispenser stem from below and pushes the stack up a slot (mag_0..3, pitch 0.12), and the exhaust vent (vent) puffs. Every fourth brick the team flip-top head (head, hinged at its back edge) pops open 40\u00b0 in 0.1 s, the stack empties from the top, a brick (candy) flips out over the lip and away, and the head drops shut with a bounce. Starved (Working false: out of uranium), the cycle in hand finishes, the rotors coast down, the hopper's heap drains out of sight in 1.5 s and the amber lamp (lamp_wait) blinks at 0.9 Hz. Glow is state: the sight glass sits at 0.45 while ore runs (0.3 on low power) and flashes to full with each slug, dark while starved; the uranium itself is unlit ore. All dark until it's built; under fog, neutral and still.",
+  "nodes": {
+   "rotor_0": {
+    "axis": "Y",
+    "deg_per_s": "450 (225 on low power)",
+    "spinup_s": 1.5,
+    "coast_s": 3,
+    "note": "rotor_1..5 the same, each a few % faster"
+   },
+   "ore": {
+    "mode": "slump_drain",
+    "slump": 0.015,
+    "drain": 0.14
+   },
+   "mag_0": {
+    "mode": "push_up",
+    "pitch": 0.12,
+    "note": "mag_0..3: the stack in the stem"
+   },
+   "head": {
+    "mode": "hinge_pop",
+    "open_deg": 40,
+    "open_s": 0.1,
+    "every_bricks": 4
+   }
+  },
+  "idle": "Starved: the cascade still, the hopper empty, the amber lamp blinking.",
   "produces": [],
   "emerge": "Rises out of its pad in stages; nothing appears instantly. stage_0 (pad) lifts from y=-0.15 to 0 during build progress 0\u201310%. stage_1, stage_2 and stage_3 each start at local y = -(stage height) and rise to 0 with ease-out cubic over progress 10\u201345%, 45\u201375% and 75\u201395%. The opaque terrain and pad hide whatever is still below ground. stage_3 ends with a 4% Y-scale overshoot that settles in 0.15 s (spring-loaded). Functional nodes (turret, spinner, door, lift) come last, at 95\u2013100%: a turret rises 0.3 out of its housing, then a spinner spins up from 0 rpm.",
   "remove": "Destroyed: shake \u00b10.03 for 0.4 s, then poof: a soft cream cloud bursts out of the building while it swells 8% for 0.06 s and pops to nothing in 0.14 s. A rubble decal fades in under it. Sold: dust at the footprint corners, then the same poof. Nothing sinks into the ground."

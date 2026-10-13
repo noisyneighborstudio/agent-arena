@@ -47,6 +47,7 @@ MATS = {
  'copper':   mat('M_Ore_Copper', '#C8742F', .3, .5),
  'mint':     mat('M_Ore_Mint', '#6FC2A6', 0, .6),
  'crystal':  mat('M_Ore_Crystal', '#8FE4FF', 0, .25),     # crystal stock (not lit: glow means state)
+ 'uranium':  mat('M_Ore_Uranium', '#93BF3A', 0, .55),    # uranium stock (not lit: glow means state)
 }
 
 class Asset:
@@ -855,14 +856,111 @@ def S_optics_lab():
     return a
 
 def S_enrichment_plant():
+    # A centrifuge hall. Uranium comes in at the back: a cream hopper heaped with the ore feeds a chute through a sight
+    # glass into the hall, where a cascade of six squat rotors (rotor_0..5: foil drums with team caps) spins under a
+    # skylight, piped together along a header. The enriched product comes out at the far end as plasma candy: magenta
+    # bricks stacking up behind the window of the dispenser stem on the service block (mag_0..3), under the team flip-top
+    # head (head, hinged at its back edge), which pops every fourth brick and flicks one out (candy). EnrichWorks runs it
+    # from the sim: one brick per plasma (2.5 s; 5 s on low power), the rotors spinning up and down with the state, the
+    # hopper's ore (ore) draining when the uranium runs out.
+    # Build stages: the hall and the rotors stage_1, the skylight and the hopper stage_2, the stem and its head stage_3.
     a = Asset('enrichment_plant', 'structures', 2); pad(a, 2)
-    a.box('smoke', 1.7, .15, 1.7, y=.15)
-    for x in (-.42, .42):
-        for z in (-.42, .42):
-            a.cyl('cream', .26, 1.0, x=x, y=.72, z=z)
-            for k in (.45, .85): a.cyl('acid', .27, .05, x=x, y=k, z=z)
-            a.cyl('team', .27, .12, x=x, y=1.25, z=z)
-    a.box('steel', 1.0, .08, .08, y=1.0, z=-.42); a.box('steel', 1.0, .08, .08, y=1.0, z=.42)
+    S1, S2, S3 = a.node('stage_1', a.key), a.node('stage_2', a.key), a.node('stage_3', a.key)
+    X0, X1, Z0, Z1, H = -.84, .84, -.8, .56, .55      # the hall
+    XS, HS = -.3, .68                                  # the service block (-x of XS, a little taller) / the cascade bay
+    t, fl = .1, .2                                     # the bay's walls; its floor
+    bx0, bx1, bz0, bz1 = XS, X1 - t, Z0 + t, Z1 - t    # the bay's inside
+    # The service block: solid cream, its own team band, a door on the front.
+    a.box('cream', XS - X0, HS - .08, Z1 - Z0, x=(X0 + XS) / 2, y=.08 + (HS - .08) / 2, z=(Z0 + Z1) / 2, node=S1)
+    a.box('team', XS - X0 + .04, .09, Z1 - Z0 + .04, x=(X0 + XS) / 2 - .02, y=HS - .12, z=(Z0 + Z1) / 2, node=S1)
+    a.box('dark', .24, .28, .03, x=-.6, y=.22, z=Z0 - .005, node=S1)
+    a.box('licorice', .3, .04, .04, x=-.6, y=.375, z=Z0 - .005, node=S1)
+    # The bay: a smoke floor, cream walls with a row of windows on the two faces the camera sees, the team band.
+    a.box('smoke', bx1 - bx0, fl - .08, bz1 - bz0, x=(bx0 + bx1) / 2, y=.08 + (fl - .08) / 2, z=(bz0 + bz1) / 2, node=S1)
+    a.box('cream', X1 - XS, H - .08, t, x=(XS + X1) / 2, y=.08 + (H - .08) / 2, z=Z1 - t / 2, node=S1)        # back wall
+    w0, w1 = .26, .38                                                                                       # windows
+    for (y0, y1) in ((.08, w0), (w1, H)):
+        a.box('cream', X1 - XS, y1 - y0, t, x=(XS + X1) / 2, y=(y0 + y1) / 2, z=Z0 + t / 2, node=S1)       # front
+        a.box('cream', t, y1 - y0, bz1 - bz0, x=X1 - t / 2, y=(y0 + y1) / 2, z=(bz0 + bz1) / 2, node=S1)   # side
+    for x in (.07, .41):
+        a.box('cream', .08, w1 - w0, t, x=x, y=(w0 + w1) / 2, z=Z0 + t / 2, node=S1)
+    a.box('cream', t, w1 - w0, t, x=X1 - t / 2, y=(w0 + w1) / 2, z=Z0 + t / 2, node=S1)
+    a.box('cream', t, w1 - w0, .08, x=X1 - t / 2, y=(w0 + w1) / 2, z=-.12, node=S1)
+    a.box('cream', t, w1 - w0, t, x=X1 - t / 2, y=(w0 + w1) / 2, z=Z1 - t / 2, node=S1)
+    a.box('clear', X1 - XS - .1, w1 - w0, .01, x=(XS + X1) / 2 - .05, y=(w0 + w1) / 2, z=Z0 + t / 2, node=S1)
+    a.box('clear', .01, w1 - w0, bz1 - bz0, x=X1 - t / 2, y=(w0 + w1) / 2, z=(bz0 + bz1) / 2, node=S1)
+    for (sx, sz, x, z) in ((X1 - XS + .02, .03, (XS + X1) / 2 + .01, Z0 - .005), (.03, Z1 - Z0 + .02, X1 + .005, (Z0 + Z1) / 2),
+                           (X1 - XS + .02, .03, (XS + X1) / 2 + .01, Z1 + .005)):
+        a.box('team', sx, .09, sz, x=x, y=H - .1, z=z, node=S1)
+    # The skylight: a low glass roof pitched to a cream ridge over the header, on cream rafters.
+    rz_, rh = -.12, .1                                                   # the ridge's z and its rise
+    for (za, zb) in ((bz0, rz_), (rz_, bz1)):
+        run = zb - za; ang = math.degrees(math.atan2(rh, run)) * (1 if za == bz0 else -1)
+        L = math.hypot(run, rh)
+        a.box('clear', bx1 - bx0, .012, L, x=(bx0 + bx1) / 2, y=H - .01 + rh / 2, z=(za + zb) / 2, rot=rx(-ang), node=S2)
+        for x in (bx0 + .02, .24, bx1 - .02):
+            a.box('cream', .04, .035, L, x=x, y=H + rh / 2, z=(za + zb) / 2, rot=rx(-ang), node=S2)
+    a.box('cream', bx1 - bx0 + .04, .06, .06, x=(bx0 + bx1) / 2, y=H + rh, z=rz_, node=S2)
+    gab = trimesh.convex.convex_hull(np.array([[bx1 - .005, H - .01, bz0], [bx1 - .005, H - .01, bz1], [bx1 - .005, H + rh - .01, rz_],
+                                               [bx1 - .015, H - .01, bz0], [bx1 - .015, H - .01, bz1], [bx1 - .015, H + rh - .01, rz_]]))
+    a.add(S2, 'clear', gab)
+    # The cascade: six rotors in two rows, each in a dark collar on the floor, piped to the header between the rows that
+    # runs into the service block.
+    k = 0
+    for z in (-.44, .2):
+        for x in (.57, .24, -.1):
+            r = a.node(f'rotor_{k}', S1, (x, fl, z)); k += 1
+            a.cyl('foil', .12, .24, y=.12, node=r, sections=10)
+            a.box('licorice', .03, .2, .02, x=.117, y=.12, node=r)                   # a stripe, so its turning shows
+            a.cyl('team', .135, .07, y=.275, node=r, sections=10)
+            a.box('licorice', .22, .02, .045, y=.315, node=r)
+    hz = -.12
+    a.cyl('steel', .035, bx1 - bx0 + .02, x=(bx0 + bx1) / 2 - .01, y=fl + .06, z=hz, axis='x', node=S1, sections=8)
+    for x in (.57, .24, -.1): a.box('steel', .035, .035, .3, x=x, y=fl + .04, z=hz, node=S1)
+    # The service block's roof: the exhaust vent (vent: where it puffs) and the waiting lamp (lamp_wait) on a post.
+    a.cyl('steel', .07, .2, x=-.7, y=HS + .1, z=-.55, node=S2, sections=10)
+    a.cyl('team', .08, .05, x=-.7, y=HS + .14, z=-.55, node=S2, sections=10)
+    a.cyl('steel', .085, .03, x=-.7, y=HS + .2, z=-.55, node=S2, sections=10)
+    a.cyl('dark', .055, .01, x=-.7, y=HS + .215, z=-.55, node=S2, sections=12)
+    a.node('vent', a.key, (-.7, HS + .23, -.55))
+    a.cyl('steel', .02, .12, x=-.42, y=HS + .06, z=-.66, node=S2, sections=6)
+    ln = a.node('lamp_wait', S2, (-.42, HS + .165, -.66))
+    a.cyl('amber', .068, .09, node=ln, sections=12)
+    a.cyl('team', .072, .03, y=.058, node=ln, sections=12)
+    # The uranium hopper behind the bay: a cream funnel with a team rim, heaped with ore (ore node) on its dark bed, on
+    # a cream pedestal with a sight glass on its side (sight: lit while ore runs through) and a chute into the back wall.
+    hx, hzz = .42, .76
+    a.box('cream', .3, .44, .26, x=hx, y=.3, z=hzz + .02, node=S2)                      # its pedestal
+    a.box('team', .32, .06, .28, x=hx, y=.44, z=hzz + .02, node=S2)
+    a.rev('cream', [(0, .52), (.07, .52), (.24, .86), (.22, .88), (0, .8)], x=hx, z=hzz, node=S2, sections=16)
+    a.rev('team', [(.2, .78), (.215, .78), (.255, .88), (.235, .89)], x=hx, z=hzz, node=S2, sections=16)
+    a.cyl('dark', .2, .02, x=hx, y=.84, z=hzz, node=S2, sections=16)
+    orn = a.node('ore', S2, (hx, .85, hzz))
+    for (dx, dz, r) in ((.02, .01, .1), (.1, .07, .065), (-.09, .03, .06), (-.03, -.1, .055)):
+        a.sphere('uranium', r, x=dx, y=-.04 + r * .5, z=dz, node=orn, sub=1)
+    a.box('steel', .12, .1, .12, x=hx, y=.3, z=Z1 + .05, node=S2)                      # the chute into the hall
+    a.cyl('steel', .075, .03, x=hx + .155, y=.3, z=hzz + .02, axis='x', node=S2, sections=10)   # the sight glass's bezel
+    sg = a.node('sight', S2, (hx + .17, .3, hzz + .02))
+    a.cyl('acid', .05, .02, axis='x', node=sg, sections=10)
+    # The dispenser stem on the service block: smoke plastic round a window on its front where the plasma bricks stack,
+    # team grip slats on its side, a dark lip, and the team flip-top head hinged at its back edge.
+    sx_, sz_, s0, s1, w = -.57, .06, HS, 1.44, .38
+    a.box('smoke', w, s1 - s0, .05, x=sx_, y=(s0 + s1) / 2, z=sz_ + w / 2 - .025, node=S3)
+    for s in (-1, 1): a.box('smoke', .05, s1 - s0, w, x=sx_ + s * (w / 2 - .025), y=(s0 + s1) / 2, z=sz_, node=S3)
+    a.box('smoke', w, .14, .05, x=sx_, y=s0 + .07, z=sz_ - w / 2 + .025, node=S3)
+    a.box('smoke', w, .1, .05, x=sx_, y=s1 - .05, z=sz_ - w / 2 + .025, node=S3)
+    a.box('clear', w - .1, s1 - s0 - .24, .01, x=sx_, y=(s0 + .14 + s1 - .1) / 2, z=sz_ - w / 2 + .01, node=S3)
+    for i in range(3): a.box('team', .03, .06, .26, x=sx_ + w / 2 + .005, y=.92 + i * .13, z=sz_, node=S3)
+    a.box('dark', w - .06, .04, .06, x=sx_, y=s1 + .02, z=sz_ - w / 2 + .04, node=S3)
+    for i in range(4):
+        m = a.node(f'mag_{i}', S3, (sx_, s0 + .2 + i * .12, sz_ - .02))
+        a.box('magenta', .26, .09, .2, node=m)
+    hd = a.node('head', S3, (sx_, s1 + .02, sz_ + w / 2), rot=rx(8))
+    a.box('team', w + .06, .22, w + .04, y=.12, z=-(w + .04) / 2, node=hd)
+    a.box('team', w - .02, .08, .08, y=.03, z=-(w + .04) + .01, node=hd)
+    a.cyl('steel', .03, w + .04, axis='x', node=hd, sections=8)
+    cd = a.node('candy', S3, (sx_, s1 + .07, sz_ - w / 2 + .06))
+    a.box('magenta', .2, .07, .15, node=cd)
     return a
 
 def crystal(a, m, x, y, z, r, h, lean=0, turn=0, node=None):

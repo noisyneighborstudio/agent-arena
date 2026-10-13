@@ -351,7 +351,7 @@ namespace Pez.Sim
 
         void Works()
         {
-            Begin("works", "Works: construction and production", "Lemon's yard: the crane builds, factories roll units out on a loop.", 89, 120, 48, 22);
+            Begin("works", "Works: construction and production", "Lemon's yard: the crane builds, factories roll units out on a loop.", 89, 120, 60, 22);
             var cc = Bldg(Yellow, "command_center", 4, 15);
             Item("Command center crane", "slews to the site under construction; cream beam and welding sparks every 0.25 s", 4, 15);
 
@@ -414,6 +414,13 @@ namespace Pez.Sim
             Bldg(Yellow, "electronics_plant", 37, 4);
             holds.Add(() => { if (T % 20f >= 12f) team.Stock["copper"] = 0; });
             Item("Electronics plant line", "runs 12 s (pick-and-place, reflow fumes, boards stack, the head pops every 5), then out of copper 8 s (parks, empty reel, amber lamp); looping", 37, 4);
+
+            // The enrichment plant runs for 15 s, then Lemon is out of uranium for 8 s: the cascade coasts to a stop, the
+            // hopper drains and the amber lamp blinks.
+            Bldg(Yellow, "enrichment_plant", 49, 4);
+            Bldg(Yellow, "power_plant", 55, 4); // its draw: Lemon stays powered when the barracks site finishes
+            holds.Add(() => { if (T % 23f >= 15f) team.Stock["uranium"] = 0; });
+            Item("Enrichment plant cascade", "runs 15 s (the rotors spin, ore slugs flash through the sight glass, plasma bricks stack in the stem, the head pops every 4), then out of uranium 8 s (the cascade coasts down, the hopper drains, amber lamp); looping", 49, 4);
 
             // Units the works produce drive (or fly) to their rally point and are cleared away after a few seconds.
             var born = new Dictionary<int, float>();
@@ -480,7 +487,7 @@ namespace Pez.Sim
 
         void Power()
         {
-            Begin("power", "Power", "Blueberry is powered; Lime's base draws more than its plant makes.", 72, 80, 50, 16);
+            Begin("power", "Power", "Blueberry is powered; Lime's base draws more than its plant makes.", 72, 80, 54, 16);
             string[] row = { "power_plant", "barracks", "electronics_plant", "radar_dome", "optics_lab" };
             for (int i = 0; i < row.Length; i++)
             {
@@ -505,6 +512,9 @@ namespace Pez.Sim
                     if (!e.Dead && e.Team == Green && e.IsAir && !up.ContainsKey(e.Id) && Vec2.Dist(e.Pos, field.Center) < 6f) up[e.Id] = T;
                 foreach (var kv in up.Where(kv => T - kv.Value > 6f).ToList()) { var e = w.Get(kv.Key); if (e != null && !e.Dead) w.Remove(e); up.Remove(kv.Key); }
             });
+            // An enrichment plant on low power: the cascade at half speed, sagging as the supply browns out; a brick every 5 s.
+            Bldg(Green, "enrichment_plant", 52, 3);
+            Item("Low-power enrichment plant (Lime)", "the cascade at half speed, sagging every 2.6 s as the supply browns out; a plasma brick every 5 s, the sight glass at half", 52, 3);
             Item("Low-power airfield (Lime)", "an aircraft every ~5 s: the lift goes down and brings it up at half speed, the approach lights chase once a second at half glow", 40, 3);
             Item("Powered (Blueberry)", "power plant cores glow with the load, steady steam; consumers at full light and speed", 16, 10, 9);
             Item("Low power (Lime)", "plant cores flicker at 4 Hz with dropouts, steam sputters; consumers dimmed to half, machinery at half speed", 16, 3, 9);

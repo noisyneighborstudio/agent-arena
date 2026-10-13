@@ -220,8 +220,20 @@ STRUCTURES = [
         cap=dict(mode='hinge_pop', open_deg=40, open_s=.12, every_s=2),
         stack=dict(mode='push_up', step=.12)),
    "Dome home, telescope parked, light out, turntable still."),
- S('enrichment_plant', 'Turns uranium into plasma feedstock.', "Each centrifuge's acid bands chase upward (emission scrolls) while producing. Ambient centrifuge vibration is 0.003 at 25 Hz.",
-   {}, "Bands breathe slowly."),
+ S('enrichment_plant', 'Turns uranium into plasma.', "A centrifuge hall, one cycle per plasma the sim makes (2.5 s; 5 s on low power, which halves production). "
+   "The cascade of six squat rotors (rotor_0..5, foil drums with team caps) spins under the skylight while the plant works: up to 450°/s in about 1.5 s, at half speed on low power, "
+   "where it also sags to a third for half a second every 2.6 s as the supply browns out; starved, it coasts to a stop over about 3 s. "
+   "Each cycle a slug of uranium runs out of the hopper: the heap (ore) slumps 0.015 and settles, and the sight glass on the hopper's pedestal (sight) flashes as it passes. "
+   "At the end of the cycle a magenta plasma brick comes up into the dispenser stem from below and pushes the stack up a slot (mag_0..3, pitch 0.12), and the exhaust vent (vent) puffs. "
+   "Every fourth brick the team flip-top head (head, hinged at its back edge) pops open 40° in 0.1 s, the stack empties from the top, a brick (candy) flips out over the lip and away, "
+   "and the head drops shut with a bounce. Starved (Working false: out of uranium), the cycle in hand finishes, the rotors coast down, the hopper's heap drains out of sight in 1.5 s "
+   "and the amber lamp (lamp_wait) blinks at 0.9 Hz. Glow is state: the sight glass sits at 0.45 while ore runs (0.3 on low power) and flashes to full with each slug, "
+   "dark while starved; the uranium itself is unlit ore. All dark until it's built; under fog, neutral and still.",
+   dict(rotor_0=dict(axis='Y', deg_per_s='450 (225 on low power)', spinup_s=1.5, coast_s=3, note='rotor_1..5 the same, each a few % faster'),
+        ore=dict(mode='slump_drain', slump=.015, drain=.14),
+        mag_0=dict(mode='push_up', pitch=.12, note='mag_0..3: the stack in the stem'),
+        head=dict(mode='hinge_pop', open_deg=40, open_s=.1, every_bricks=4)),
+   "Starved: the cascade still, the hopper empty, the amber lamp blinking."),
  S('composite_foundry', 'Makes stealth composite.', "Steel and crystal in at the back, composite out at the front. One press cycle for every composite the sim makes: "
    "2 s at full power, 4 s on low power. Each cycle a steel blank (blank) slides out of the furnace house's feed slot (press_feed) onto the press bed "
    "(press_bed) in 0.32 s; the ram drops fast, slows for the last tenth of its 0.3 stroke and clamps it; its seam glows hot and steam hisses out at both "

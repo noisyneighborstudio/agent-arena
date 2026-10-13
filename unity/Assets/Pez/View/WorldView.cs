@@ -47,6 +47,7 @@ namespace Pez.View
             public float[] SteamNext;    // per tower or smokestack: when it next puffs (each on its own irregular rhythm)
             public RefineryWorks Works;  // refinery: the ore belt and the stacks' mouths
             public PowerWorks Plant;     // power plant: the springs under load and the flywheel
+            public EnrichWorks Enrich;   // enrichment plant: the centrifuge cascade, the hopper, the stem and its head
             public CircuitWorks Fab;     // electronics plant: the circuit-candy line, its dispenser and its state lamps
             public FoundryWorks Foundry; // composite foundry: the press, its blanks and the magazine, the vents and the furnace
             public SamWorks Sam;         // SAM site: the rack's elevation, the search radar, the rounds in their tubes
@@ -866,6 +867,7 @@ namespace Pez.View
                 Construction(v);
                 if (e.Def.Key == "deep_mine") DeepMine(v);
                 if (e.Def.Key == "mining_refinery" && e.IsComplete && e.Team >= 0) Refinery(v);
+                if (e.Def.Key == "enrichment_plant" && e.Team >= 0) { Fx.Audience = AudienceFor(e); (v.Enrich ??= EnrichWorks.For(rig.Model, e.Id, ref v.Glows)).Tick(World.Teams[e.Team], e.IsComplete, e.Working, SeesState(e, PovTeam), v.FireK < 0.15f, Time.deltaTime); Fx.Audience = null; }
                 if (e.Def.Key == "electronics_plant" && e.Team >= 0) { Fx.Audience = AudienceFor(e); (v.Fab ??= CircuitWorks.For(rig.Model, e.Id, ref v.Glows)).Tick(World.Teams[e.Team], e.IsComplete, e.Working, SeesState(e, PovTeam), v.FireK < 0.15f, Time.deltaTime); Fx.Audience = null; }
                 if (e.Def.Key == "composite_foundry" && e.IsComplete && e.Team >= 0) (v.Foundry ??= FoundryWorks.For(rig.Model, e.Id)).Tick(e.Working, World.Teams[e.Team].LowPower, v.FireK >= 0.15f, AudienceFor(e), Time.deltaTime);
                 if (e.Def.Key == "sam_site" && e.IsComplete && e.Team >= 0) { Fx.Audience = AudienceFor(e); (v.Sam ??= SamWorks.For(v)).Tick(this, v, Time.deltaTime); Fx.Audience = null; }
