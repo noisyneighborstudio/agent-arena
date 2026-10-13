@@ -236,6 +236,7 @@ namespace Pez.Headless
             BusyGame();
             DerrickHintsSurvive();
             FoggedSnapshots();
+            FoggedDerrickHints();
             FoggedFusion();
             FoggedOwnerEvents();
             OlderSnapshotsLoad(json);
@@ -244,6 +245,30 @@ namespace Pez.Headless
 
         /// <summary>Four scripted AIs fighting on a big map for 20 minutes: how big is the save, and does it resume exactly?</summary>
         /// <summary>A player's browser copy (ViewSnapshot with a team): what fog hides stays out, and it still runs.</summary>
+        /// <summary>Which derricks a team's units have stopped beside is that team's to know: a player's copy of the game carries only its own.</summary>
+        static void FoggedDerrickHints()
+        {
+            var g = new Game(new GameConfig { Seed = 7, MapSize = 96, Controllers = new[] { "llm", "llm" } });
+            var w = g.World;
+            foreach (var t in w.Teams) t.ProtectedUntil = 0;
+            foreach (var u in w.Entities.Where(e => !e.IsStructure).ToList()) w.Remove(u);
+            var ds = w.Derricks.ToList();
+            ds[0].Team = 1; ds[1].Team = 0; // each side holds one
+            var hq0 = w.Owned(0).First(e => e.Def.Key == "command_center"); var hq1 = w.Owned(1).First(e => e.Def.Key == "command_center");
+            var tank0 = At(w.SpawnUnit(0, "light_tank", hq0), ds[0].Center + new Vec2(-12, 0)); // ours stops by theirs
+            var tank1 = At(w.SpawnUnit(1, "light_tank", hq1), ds[1].Center + new Vec2(-12, 0)); // theirs stops by ours
+            Commands.Execute(w, 0, Cmd("type", "attack_move", "units", new[] { tank0.Id }, "x", ds[0].Center.X - 3, "y", ds[0].Center.Y));
+            Commands.Execute(w, 1, Cmd("type", "attack_move", "units", new[] { tank1.Id }, "x", ds[1].Center.X - 3, "y", ds[1].Center.Y));
+            Step(g, 15);
+            List<Dictionary<string, object>> Hinted(string json) => Snapshot.Parse(json).Obj("world").Arr("derrick_hinted").OfType<List<object>>().Select(l => new Dictionary<string, object> { ["team"] = l[0], ["id"] = l[1] }).ToList();
+            var whole = Hinted(Snap(g));
+            Check(w.Events.Count(e => e.Type == "derrick_skipped" && e.Team == 0) == 1 && w.Events.Count(e => e.Type == "derrick_skipped" && e.Team == 1) == 1 && whole.Count == 2,
+                  $"set up: each side's tank was told about the other's derrick ({whole.Count} hints in the whole save)");
+            var mine = Hinted(Json.Write(ApiServer.ViewSnapshot(g, 0)));
+            Check(mine.Count == 1 && (double)mine[0]["team"] == 0 && (double)mine[0]["id"] == ds[0].Id, $"a player's copy carries only its own hint, not the rival's ({mine.Count} entries)");
+            Check(Hinted(Json.Write(ApiServer.ViewSnapshot(g, -1))).Count == 2, "and the spectator's copy keeps both");
+        }
+
         static void FoggedSnapshots()
         {
             var g = new Game(new GameConfig { Seed = 3, MapSize = 64, Controllers = new[] { "llm", "ai" } });
