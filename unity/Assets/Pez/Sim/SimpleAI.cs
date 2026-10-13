@@ -73,8 +73,9 @@ namespace Pez.Sim
         }
 
         /// <summary>
-        /// The surface fields in ground the team has explored, one per field (found at its root tile, as regrowth knows them): where, which
-        /// ore (an index into Defs.Ores), and the field's own ore left now (salvage on it doesn't count).
+        /// The surface fields the team has seen any of, one per field (found from its root tile, as regrowth knows them): where, which ore
+        /// (an index into Defs.Ores), and the field's own ore left in the tiles it has explored (salvage on it doesn't count). A field seen
+        /// only at its edges is known, with the ore showing there, at its root if that has been seen and at the middle of what has if not.
         /// </summary>
         static List<(Vec2 at, int type, int ore)> KnownFields(World w, Team t)
         {
@@ -83,16 +84,20 @@ namespace Pez.Sim
             var list = new List<(Vec2, int, int)>();
             foreach (int i in tiles)
             {
-                if (!roots[i] || !t.Explored[i]) continue;
-                int x = i % m.W, y = i / m.W, type = m.OreBaseType[i], ore = 0;
+                if (!roots[i]) continue;
+                int x = i % m.W, y = i / m.W, type = m.OreBaseType[i], ore = 0, seen = 0;
+                float sx = 0, sy = 0;
                 for (int dy = -4; dy <= 4; dy++)
                     for (int dx = -4; dx <= 4; dx++)
                     {
                         if (!m.InBounds(x + dx, y + dy)) continue;
                         int j = m.Idx(x + dx, y + dy);
-                        if (m.OreBase[j] > 0 && m.OreBaseType[j] == type && m.OreType[j] == type) ore += m.FieldOre(j);
+                        if (m.OreBase[j] <= 0 || m.OreBaseType[j] != type || !t.Explored[j]) continue;
+                        seen++; sx += x + dx + 0.5f; sy += y + dy + 0.5f;
+                        if (m.OreType[j] == type) ore += m.FieldOre(j);
                     }
-                list.Add((new Vec2(x + 0.5f, y + 0.5f), type, ore));
+                if (seen == 0) continue;
+                list.Add((t.Explored[i] ? new Vec2(x + 0.5f, y + 0.5f) : new Vec2(sx / seen, sy / seen), type, ore));
             }
             return list;
         }
@@ -276,6 +281,14 @@ namespace Pez.Sim
             bool Reached(Vec2 p) => drops.Any(dp => Vec2.Dist(dp, p) <= World.LeashDist);
             var foes = t.KnownEnemyStructures.Values.Where(k => k.team >= 0 && k.key != "derrick").Select(k => k.origin.Center).ToList();
             bool NearFoe(Vec2 p) => foes.Any(f => Vec2.Dist(f, p) < EnemyBerth);
+            // The ore tile a truck sent to a field would really mine: `harvest x,y` takes the nearest live ore of the kind within 12 tiles of the
+            // point, which need not be at the field's root. One that is not by an enemy base it knows of (a truck choosing for itself keeps
+            // HostileOreRadius from those, World.UpdateHarvester's Safe, and a coordinate harvest would not); null if there is none.
+            Vec2? SafeOreNear(Vec2 at, int ore)
+            {
+                var tile = w.Map.NearestOre(at, 12, tt => !foes.Any(h => Vec2.Dist(h, tt.Center) < World.HostileOreRadius), ore, t.StartPos); // (equally near tiles: as this base's own trucks choose them)
+                return tile.HasValue ? tile.Value.Center : (Vec2?)null;
+            }
             var fields = KnownFields(w, t);
             bool homeThin = fields.Where(f => OreWanted(f.type) && Reached(f.at)).Sum(f => f.ore) < ThinOre;
             // In an open arena the base sites nobody holds are kept for the players who join later (a newcomer takes a free site, and an
@@ -317,9 +330,11 @@ namespace Pez.Sim
                 return null;
             }
             // (A truck standing about with nowhere to go isn't on its way anywhere: it must not hold back the scouting that finds a place.)
-            Vec2? spotNow = w.HasComplete(team, "electronics_plant") && Count("outpost") < (homeThin ? MaxOutposts : 2) ? ExpansionSpot() : null;
+            // (The electronics plant is needed to buy a truck, not to send one it has paid for: Deploy doesn't need it.)
+            bool canBuyTruck = w.HasComplete(team, "electronics_plant");
+            Vec2? spotNow = (canBuyTruck || mine.Any(e => e.Def.Key == "outpost_truck") || Queued("outpost_truck")) && Count("outpost") < (homeThin ? MaxOutposts : 2) ? ExpansionSpot() : null;
             bool outpostOnItsWay = Queued("outpost_truck") || mine.Any(e => e.Def.Key == "outpost_truck" && (outpostTargets.ContainsKey(e.Id) || spotNow.HasValue));
-            bool wantOutpost = spotNow.HasValue && !outpostOnItsWay;
+            bool wantOutpost = canBuyTruck && spotNow.HasValue && !outpostOnItsWay;
             // What it saves up for, so the army and the build order don't spend it as it arrives and the converters leave it alone:
             // the first two mines' rigs, or the surveyor that finds them. With the command center gone, the construction truck that
             // puts one back comes before any of that (1500 steel is never there if the army spends it as it comes in). With the ore
@@ -417,10 +432,10 @@ namespace Pez.Sim
                 bool retry = tr.Order == Order.Idle && (int)w.Time % 20 == 0;
                 if ((tr.HarvestType != type || retry) && tr.Cargo == 0 && tr.Order != Order.ReturnOre)
                 {
-                    // None of its ore within 80 tiles: it goes to the nearest field of that ore its drop-offs reach, an outpost's perhaps (not one by
-                    // an enemy base it knows of: a truck choosing for itself keeps HostileOreRadius from those, and a coordinate harvest would not).
+                    // None of its ore within 80 tiles: it goes to the nearest field of that ore its drop-offs reach, an outpost's perhaps, to a tile of
+                    // it that is safe (the first field that has one).
                     var farField = tr.Order == Order.Idle && w.Map.NearestOre(tr.Pos, 80, null, type) == null
-                        ? fields.Where(f => f.type == type && f.ore >= 100 && Reached(f.at) && !foes.Any(h => Vec2.Dist(h, f.at) < World.HostileOreRadius)).OrderBy(f => System.MathF.Round(Vec2.Dist(f.at, tr.Pos), 2)).ThenByDescending(f => Rightward(f.at)).Select(f => (Vec2?)f.at).FirstOrDefault() : null;
+                        ? fields.Where(f => f.type == type && f.ore >= 100 && Reached(f.at)).OrderBy(f => System.MathF.Round(Vec2.Dist(f.at, tr.Pos), 2)).ThenByDescending(f => Rightward(f.at)).Select(f => SafeOreNear(f.at, type)).FirstOrDefault(p => p.HasValue) : null;
                     if (farField.HasValue) Do(w, "type", "harvest", "units", new[] { tr.Id }, "ore", Defs.Ores[type], "x", farField.Value.X, "y", farField.Value.Y);
                     else Do(w, "type", "harvest", "units", new[] { tr.Id }, "ore", Defs.Ores[type]);
                 }
