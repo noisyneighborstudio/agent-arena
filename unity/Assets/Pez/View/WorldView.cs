@@ -1100,17 +1100,18 @@ namespace Pez.View
             if (T < lead && v.Door != null) { rig.Motion.SetDoorOpen(true); v.DoorTimer = Mathf.Max(v.DoorTimer, T + 1.4f); }
         }
 
-        /// <summary>Is this the producer making the team's next unit of its kind, and if so how far along it is (0..1) and
-        /// how many seconds until it's out (half speed on low power)?</summary>
+        /// <summary>Is this producer making a unit (each building works its own item of the shared queue), and if so how far along
+        /// it is (0..1) and how many seconds until it's out (half speed on low power)?</summary>
         bool QueueHead(Entity e, out float p, out float T)
         {
             p = 0f; T = float.MaxValue;
             var t = World.Teams[e.Team];
-            if (!t.UnitQueues.TryGetValue(e.Def.Produces, out var q) || q.Count == 0 || !IsFirstProducer(e)) return false;
-            var def = Defs.Get(q[0].Key);
+            var item = t.UnitQueues.TryGetValue(e.Def.Produces, out var q) ? q.Find(x => x.WorkerId == e.Id) : null;
+            if (item == null) return false;
+            var def = Defs.Get(item.Key);
             if (def == null || def.BuildTime <= 0f) return false;
-            p = Mathf.Clamp01(q[0].Progress / def.BuildTime);
-            T = (def.BuildTime - q[0].Progress) / (t.LowPower ? 0.5f : 1f);
+            p = Mathf.Clamp01(item.Progress / def.BuildTime);
+            T = (def.BuildTime - item.Progress) / (t.LowPower ? 0.5f : 1f);
             return true;
         }
 
