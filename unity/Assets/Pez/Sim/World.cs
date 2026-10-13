@@ -214,6 +214,8 @@ namespace Pez.Sim
         public readonly List<GameEvent> Events = new List<GameEvent>();
         /// <summary>How many of each event type have happened (the event list itself is a rolling window).</summary>
         public readonly Dictionary<string, int> EventCounts = new Dictionary<string, int>();
+        /// <summary>Units the dance guard settled (WatchDances), by "unit_key order": a designed situation should never need it.</summary>
+        public readonly SortedDictionary<string, int> SettleCounts = new SortedDictionary<string, int>();
         public readonly AlertLog Alerts = new AlertLog();
         /// <summary>Agent-invented unit designs in this game, by key (t&lt;team&gt;:&lt;name&gt;). See Invention.cs.</summary>
         public readonly Dictionary<string, Invention> Inventions = new Dictionary<string, Invention>();
@@ -953,6 +955,7 @@ namespace Pez.Sim
             Guard("dodge", DodgeVehicles);
             Guard("separation", Separate);
             Guard("run over", RunOver);
+            Guard("dance guard", WatchDances);
             Guard("cleanup", Cleanup);
             if (Tick % 4 == 0) Guard("visibility", UpdateVisibility);
             if (!Mirror) Guard("victory", CheckVictory);
@@ -1592,7 +1595,7 @@ namespace Pez.Sim
             var dir = t.Center - e.Pos;
             float want = dir.Angle;
             e.TurretFacing = RotateToward(e.TurretFacing, want, 6f * Dt);
-            if (!e.IsStructure && !e.Moving && e.Def.Armor == Armor.Infantry && Time >= e.DodgeUntil) e.Facing = want; // dodging: running, not aiming
+            if (!e.IsStructure && !e.Moving && e.Def.Armor == Armor.Infantry && Time >= e.DodgeUntil) e.Facing = RotateToward(e.Facing, want, TurnRate(e) * Dt); // dodging: running, not aiming
             if (e.Cooldown > 0) return;
             if (MathF.Abs(AngleDiff(e.TurretFacing, want)) > 0.35f) return;
             var w = e.Def.Weapon;
@@ -2395,7 +2398,7 @@ namespace Pez.Sim
             {
                 e.Fuel = 0;
                 // Running dry over its own pad, an aircraft glides in rather than falling a tile short of home.
-                if (e.IsAir && Owned(e.Team).Any(s => IsFuelPoint(e, s) && s.DistFrom(e.Pos) <= 3f)) { e.Fuel = 0.01f; }
+                if (e.IsAir && Owned(e.Team).Any(s => IsFuelPoint(e, s) && s.DistFrom(e.Pos) <= 3f)) { e.Fuel = 0.01f; return; } // still flying: it gets to its slot
                 else if (e.IsAir) { Crash(e); return; }
                 if (!e.Stranded)
                 {
@@ -2483,7 +2486,11 @@ namespace Pez.Sim
             }
             if (e.IsAir)
             {
-                if (Vec2.Dist(e.Pos, p.Center) > 0.6f) { StepToward(e, p.Center); return; }
+                // Its own slot on the pad (PadSpot), not the pad's centre: every aircraft used to fly to the centre, where
+                // two can't both be, and they shoved each other over it until they ran dry. A full pad: it holds nearby.
+                if ((Tick + e.Id) % 20 == 0 || !IsPadSlot(p, e.OrderPos) && !IsHoldingSpot(e, p, e.OrderPos)) e.OrderPos = PadSpot(e, p);
+                if (Vec2.Dist(e.Pos, e.OrderPos) > 0.05f) { StepToward(e, e.OrderPos); return; }
+                if (!IsPadSlot(p, e.OrderPos)) { e.Moving = false; if (e.Fuel >= e.FuelMax * 0.99f) FinishRefuel(e); return; } // holding for a slot: hovering, re-asking each second
             }
             else if (!p.IsStructure)
             {
@@ -2502,6 +2509,84 @@ namespace Pez.Sim
             }
             e.Moving = false; e.Path = null;
             if (e.Fuel >= e.FuelMax * 0.99f) FinishRefuel(e);
+        }
+
+        /// <summary>Spacing of landing slots on a pad: the widest pair of aircraft (two bombers) needs 1.4.</summary>
+        public const float PadSlotSpacing = 1.5f;
+
+        /// <summary>Where aircraft land on pad p: a grid PadSlotSpacing apart that fits its footprint (one on a small pad).</summary>
+        List<Vec2> PadSlots(Entity p)
+        {
+            padSlots.Clear();
+            int nx = Math.Max(1, (int)((p.Def.SizeX - 0.5f) / PadSlotSpacing) + 1), ny = Math.Max(1, (int)((p.Def.SizeY - 0.5f) / PadSlotSpacing) + 1);
+            for (int iy = 0; iy < ny; iy++)
+                for (int ix = 0; ix < nx; ix++)
+                    padSlots.Add(p.Center + new Vec2((ix - (nx - 1) / 2f) * PadSlotSpacing, (iy - (ny - 1) / 2f) * PadSlotSpacing));
+            return padSlots;
+        }
+        readonly List<Vec2> padSlots = new List<Vec2>();
+
+        bool IsPadSlot(Entity p, Vec2 at)
+        {
+            foreach (var slot in PadSlots(p)) if (Vec2.DistSq(slot, at) < 0.0025f) return true;
+            return false;
+        }
+
+        /// <summary>Where aircraft e waits for a slot on full pad p: its own point on a ring just outside it.</summary>
+        Vec2 HoldingSpot(Entity e, Entity p)
+        {
+            float a = e.Id * 2.3999632f; // the golden angle: neighbours' spots spread round the ring
+            float r = MathF.Sqrt(p.Def.SizeX * p.Def.SizeX + p.Def.SizeY * p.Def.SizeY) / 2f + 1.8f; // clear of the pad (OnPad's 1.5) even off a corner
+            var at = p.Center + new Vec2(MathF.Cos(a), MathF.Sin(a)) * r;
+            return new Vec2(Math.Clamp(at.X, 0.5f, Map.W - 0.5f), Math.Clamp(at.Y, 0.5f, Map.H - 0.5f));
+        }
+
+        bool IsHoldingSpot(Entity e, Entity p, Vec2 at) => Vec2.DistSq(HoldingSpot(e, p), at) < 0.0025f;
+
+        /// <summary>A slot is taken by another of the team's aircraft bound for it, or parked on it.</summary>
+        bool SlotTaken(Entity e, Entity p, Vec2 slot)
+        {
+            foreach (var o in Entities)
+            {
+                if (o == e || o.Dead || !o.IsAir || o.Team != e.Team || o.IsCarried) continue;
+                if (o.Order == Order.Refuel && o.TargetId == p.Id && Vec2.DistSq(o.OrderPos, slot) < 0.0025f) return true;
+                if (!o.Moving && Vec2.DistSq(o.Pos, slot) < 0.49f) return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Aircraft e's landing slot on pad p: the one it has while it's still its own, else the nearest free one. The pad
+        /// full, it holds at its HoldingSpot; the thirstiest of those waiting gets the next free slot, and one under 40%
+        /// fuel has an idle, full aircraft parked on a slot move off to hold so it can land.
+        /// </summary>
+        Vec2 PadSpot(Entity e, Entity p)
+        {
+            var slots = new List<Vec2>(PadSlots(p));
+            int best = -1; float bd = float.MaxValue;
+            for (int i = 0; i < slots.Count; i++)
+            {
+                if (SlotTaken(e, p, slots[i])) continue;
+                if (Vec2.DistSq(slots[i], e.OrderPos) < 0.0025f) return slots[i]; // still its own
+                float d = Vec2.DistSq(slots[i], e.Pos);
+                if (d < bd) { bd = d; best = i; }
+            }
+            bool waitingTurn = Entities.Any(o => o != e && !o.Dead && o.IsAir && o.Team == e.Team && o.Order == Order.Refuel && o.TargetId == p.Id &&
+                                                 IsHoldingSpot(o, p, o.OrderPos) && o.Fuel < e.Fuel);
+            if (best >= 0 && !waitingTurn) return slots[best];
+            if (best < 0 && e.Fuel < e.FuelMax * 0.4f)
+                foreach (var slot in slots)
+                {
+                    var parked = Entities.FirstOrDefault(o => o != e && !o.Dead && o.IsAir && o.Team == e.Team && o.Order == Order.Idle && !o.Moving &&
+                                                             o.Fuel >= o.FuelMax * 0.95f && Vec2.DistSq(o.Pos, slot) < 0.49f);
+                    if (parked == null) continue;
+                    SetOrder(parked, Order.Move, HoldingSpot(parked, p));
+                    parked.NoAutoRefuelUntil = Time + 60f;
+                    Emit("made_room", e.Team, parked.Id, e.Id, p.Center, key: parked.Def.Key,
+                         text: $"{parked.Def.Key} #{parked.Id} lifted off {p.Def.Key} #{p.Id} to make room for {e.Def.Key} #{e.Id}, low on fuel; it holds nearby. More pads (an airfield lands {PadSlots(p).Count}) keep aircraft from waiting.");
+                    return slot;
+                }
+            return HoldingSpot(e, p);
         }
 
         /// <summary>Tiles of travel one unit of fuel buys (aircraft burn by the second, vehicles by the tile).</summary>
@@ -2605,6 +2690,7 @@ namespace Pez.Sim
         void StepToward(Entity e, Vec2 p)
         {
             if (e.Stranded) { e.Moving = false; return; } // out of fuel
+            if (Time < e.SettledUntil) { e.Moving = false; return; } // settled by the dance guard: it stands still a moment
             var d = p - e.Pos;
             float len = d.Length;
             if (len < 1e-4f) return;
@@ -2621,7 +2707,7 @@ namespace Pez.Sim
                 // waits at the edge for the vehicle to pass (walking in to be dodged out again, it flipped round every tick).
                 if (Time < e.DodgeUntil) { e.Moving = true; return; }
                 if (!e.IsAir && Threats(e) > 0f && Threat(e.Pos + d / len * MathF.Min(len, e.Def.Speed * Dt)) > Threat(e.Pos) + 1e-4f) { e.Moving = true; return; }
-                e.Facing = want;
+                e.Facing = RotateToward(e.Facing, want, TurnRate(e) * Dt);
             }
             if (!e.IsArmed || e.Cooldown <= 0 || e.Order != Order.Attack) e.TurretFacing = RotateToward(e.TurretFacing, e.Facing, 4f * Dt);
             float speed = e.SpeedCap > 0 ? MathF.Min(e.Def.Speed, e.SpeedCap) : e.Def.Speed;
@@ -2648,7 +2734,7 @@ namespace Pez.Sim
             else e.OwnBlockedSince = 0f;
             var nt = Int2.Of(next);
             var ct = Int2.Of(e.Pos);
-            if (e.IsAir) { if (Map.InBounds(nt.X, nt.Y)) e.Pos = next; }
+            if (e.IsAir) { if (Map.InBounds(nt.X, nt.Y) || !Map.InBounds(ct.X, ct.Y)) e.Pos = next; } // off the map (pushed out), it may fly back in
             else if (Map.Passable(nt.X, nt.Y) || !Map.Passable(ct.X, ct.Y)) e.Pos = next;
             else
             {
@@ -2686,7 +2772,7 @@ namespace Pez.Sim
         /// A unit that's stepping aside itself doesn't move anyone else on: two of them would take turns forever.</summary>
         void GiveWay(Entity idle, Entity mover)
         {
-            if (idle.Order != Order.Idle || idle.Moving || idle.Team != mover.Team || Time < idle.GhostUntil - 2.5f || mover.GivingWay) return;
+            if (idle.Order != Order.Idle || idle.Moving || idle.IsAir || Time < idle.SettledUntil || idle.Team != mover.Team || Time < idle.GhostUntil - 2.5f || mover.GivingWay) return;
             var dir = mover.Path != null && mover.PathIdx < mover.Path.Count ? mover.Path[mover.PathIdx] - mover.Pos : idle.Pos - mover.Pos;
             if (dir.LengthSq < 1e-4f) dir = new Vec2(1, 0);
             var side = new Vec2(-dir.Y, dir.X).Normalized * (((idle.Id & 1) == 0) ? 1.6f : -1.6f);
@@ -2746,7 +2832,7 @@ namespace Pez.Sim
         {
             foreach (var s in Entities)
             {
-                if (s.Dead || s.Def.Armor != Armor.Infantry || s.IsCarried || s.IsAir || s.IsStructure || s.Stranded) continue;
+                if (s.Dead || s.Def.Armor != Armor.Infantry || s.IsCarried || s.IsAir || s.IsStructure || s.Stranded || Time < s.SettledUntil) continue;
                 float deepest = Threats(s, out var primary);
                 if (deepest <= 0f) continue;
                 float step = s.Def.Speed * 1.4f * Dt, here = Threat(s.Pos), best = here - 1e-4f;
@@ -2764,7 +2850,7 @@ namespace Pez.Sim
                 }
                 if (best >= here - 1e-4f) continue; // boxed in, or no way out that isn't into another's path
                 s.Pos += bestDir * step;
-                s.Facing = bestDir.Angle;
+                s.Facing = RotateToward(s.Facing, bestDir.Angle, TurnRate(s) * Dt);
                 s.DodgeUntil = Time + 0.25f;
             }
         }
@@ -2881,6 +2967,7 @@ namespace Pez.Sim
                 {
                     if (b.Id <= a.Id) continue; // each pair once
                     if (b.Dead || b.IsStructure || b.IsCarried || b.IsMine || a.IsAir != b.IsAir) continue;
+                    if (a.IsAir && (a.Landed || b.Landed)) continue; // a landed aircraft sits on its slot: pinned, and those flying over are above it
                     if (Time < a.GhostUntil && a.Moving || Time < b.GhostUntil && b.Moving) continue; // unjamming: pass through
                     if (Overruns(a, b) || Overruns(b, a)) continue; // a rolling vehicle isn't held off by enemy infantry: it goes over them
                     float min = a.Def.Radius + b.Def.Radius;
@@ -2904,12 +2991,75 @@ namespace Pez.Sim
             }
         }
 
+        /// <summary>Seconds a unit may be on the move without getting anywhere before the guard settles it.</summary>
+        public const float DanceLimit = 2f;
+        /// <summary>Seconds a settled unit stands still (and is held fixed against pushes) before it carries on.</summary>
+        public const float SettleSeconds = 3f;
+
+        /// <summary>
+        /// The dance guard (docs/MOVEMENT.md): no unit may dance, whatever new interaction of rules sets it off. Each unit
+        /// keeps two-second running averages of its per-tick step, as a velocity and as a speed. One on the move (above a
+        /// crawl) whose average velocity is under a quarter of its average speed for DanceLimit seconds is going back and
+        /// forth, round in circles or jittering in place; so is one that reverses direction four times in about two
+        /// seconds. Either way it settles: it stops where it is, is held fixed for SettleSeconds (others go round it, nobody
+        /// shoves it), and a move that has got it within 2.5 tiles of its point counts as arrived. The world counts every
+        /// settle (SettleCounts): in a designed situation it's a bug, and the movement gate fails on it.
+        /// </summary>
+        void WatchDances()
+        {
+            const float k = Dt / 2f;
+            float decay = MathF.Exp(-Dt / 2f);
+            foreach (var e in Entities)
+            {
+                if (e.Dead || e.IsStructure || e.IsMine || e.IsCarried) continue;
+                var step = e.Pos - e.PrevPos;
+                float len = step.Length;
+                if (len > 1f || e.Stranded) { e.DanceVel = default; e.DanceSpeed = e.DanceFor = e.DanceFlips = 0f; e.DanceStep = e.DanceHeading = default; continue; } // a jump (unloaded, evicted), not a step
+                e.DanceVel = e.DanceVel * (1f - k) + step * k;
+                e.DanceSpeed = e.DanceSpeed * (1f - k) + len * k;
+                // Reversals of its motion over about 0.3 s (DanceStep: a short running average of its step), against the last
+                // direction it was clearly going (DanceHeading): a shove inside a march doesn't count, going back and forth does.
+                e.DanceStep = e.DanceStep * (1f - Dt / 0.3f) + step * (Dt / 0.3f);
+                float sl = e.DanceStep.Length;
+                if (sl > 0.006f) // over 0.12 tiles a second, sustained
+                {
+                    var dir = e.DanceStep / sl;
+                    if (e.DanceHeading.LengthSq > 0.5f && dir.X * e.DanceHeading.X + dir.Y * e.DanceHeading.Y < -0.5f) e.DanceFlips += 1f;
+                    e.DanceHeading = dir;
+                }
+                e.DanceFlips *= decay;
+                if (Time < e.SettledUntil) continue;
+                bool going = e.DanceSpeed > 0.004f; // over 0.08 tiles a second, averaged
+                e.DanceFor = going && e.DanceVel.Length < 0.25f * e.DanceSpeed ? e.DanceFor + Dt : 0f;
+                if (e.DanceFor >= DanceLimit) Settle(e, "nowhere");
+                else if (e.DanceFlips >= 4f) Settle(e, "reversing");
+            }
+        }
+
+        void Settle(Entity e, string why)
+        {
+            e.SettledUntil = Time + SettleSeconds;
+            e.DanceFor = e.DanceFlips = 0f; e.DanceVel = e.DanceStep = e.DanceHeading = default; e.DanceSpeed = 0f;
+            e.Moving = false; e.Path = null;
+            if ((e.Order == Order.Move || e.Order == Order.AttackMove) && Vec2.Dist(e.Pos, e.OrderPos) <= 2.5f) e.OrderPos = e.Pos; // close enough: arrived
+            string key = $"{e.Def.Key} {e.OrderName} ({why})";
+            SettleCounts[key] = SettleCounts.TryGetValue(key, out var n) ? n + 1 : 1;
+        }
+
         void TryNudge(Entity e, Vec2 delta)
         {
+            if (Time < e.SettledUntil) return; // settled: fixed while it lasts, others go round
             var next = e.Pos + delta;
             var t = Int2.Of(next);
             if (e.IsAir ? Map.InBounds(t.X, t.Y) : Map.Passable(t.X, t.Y)) e.Pos = next;
         }
+
+        /// <summary>
+        /// How fast a unit turns (rad/s): nothing snaps round. A soldier turns about twice a second, an aircraft banks round
+        /// in under a second, vehicles at the rate StepToward drives them. Infantry and aircraft walk or fly where they're
+        /// going while they turn; vehicles turn first.
+        /// </summary>
+        public static float TurnRate(Entity e) => e.IsAir ? 4f : e.Def.Armor == Armor.Infantry ? 12f : 5f;
 
         static float AngleDiff(float a, float b)
         {

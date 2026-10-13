@@ -48,6 +48,12 @@ namespace Pez.Headless
         {
             Game game;
             if (file == "crowd") game = Crowd();
+            else if (file == "trucks" || file == "truck")
+            {
+                // The starting economy alone (1 team): its trucks mining and delivering, nobody in the way but each other.
+                game = new Game(new GameConfig { Seed = 4, MapSize = 80, Controllers = new[] { "llm", "llm" } });
+                if (file == "truck") foreach (var t in game.World.Entities.Where(e => e.IsHarvester && (e.Team != 0 || e != game.World.Owned(0).First(x => x.IsHarvester))).ToList()) game.World.Remove(t);
+            }
             else if (file.StartsWith("ai"))
             {
                 // "ai" or "aiMINUTES": two scripted AIs play that long first (default 20 minutes).
@@ -71,6 +77,7 @@ namespace Pez.Headless
             var w = game.World;
             // Settle in first (orders in flight finish), then measure.
             for (int i = 0; i < 10 * World.TickRate; i++) game.Advance(World.Dt);
+            w.SettleCounts.Clear();
             var path = new Dictionary<int, float>(); var start = new Dictionary<int, Vec2>(); var last = new Dictionary<int, Vec2>();
             var orders = new Dictionary<int, Dictionary<string, int>>();
             var moving = new Dictionary<int, int>(); var facingTurn = new Dictionary<int, float>(); var lastFacing = new Dictionary<int, float>(); var flips = new Dictionary<int, int>(); var slid = new Dictionary<int, float>(); var slidStill = new Dictionary<int, float>();
@@ -118,6 +125,7 @@ namespace Pez.Headless
             Console.WriteLine($"{spinners.Count} spin (a facing snap of over 0.8 rad at least every 5 s)");
             foreach (var r in spinners.Take(verbose ? 60 : 15))
                 Console.WriteLine($"  #{r.e.Id} t{r.e.Team} {r.e.Def.Key,-20} flips {r.flips,4} path {r.path,5:0.0} net {r.net,4:0.0} moving {r.mv:P0}  {r.top}");
+            Console.WriteLine($"settled by the dance guard: {w.SettleCounts.Values.Sum()}" + (w.SettleCounts.Count > 0 ? ": " + string.Join(", ", w.SettleCounts.OrderByDescending(kv => kv.Value).Select(kv => $"{kv.Key} x{kv.Value}")) : ""));
             var sliders = rows.Where(r => r.slid + r.still > 1f).OrderByDescending(r => r.slid + r.still).ToList();
             Console.WriteLine($"{sliders.Count} slide over a tile ({sliders.Sum(r => r.slid):0} tiles crabwise while moving, {sliders.Sum(r => r.still):0} while standing)");
             foreach (var g in sliders.GroupBy(r => r.e.Def.Key).OrderByDescending(g => g.Sum(r => r.slid + r.still)))

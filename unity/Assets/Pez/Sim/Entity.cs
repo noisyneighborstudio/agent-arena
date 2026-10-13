@@ -59,7 +59,11 @@ namespace Pez.Sim
         public bool GivingWay;
         // A crusher held up by its own soldiers in its path: since when (0 = it isn't). It forces its way through after World.OwnBlockLimit.
         public float OwnBlockedSince;
-        public float DodgeUntil;      // soldier: getting out of a vehicle's way until then (its walk and aim wait)
+        public float DodgeUntil;
+        // The dance guard (World.WatchDances): two-second running averages of its per-tick step (velocity and speed), its
+        // last step, how long it's been on the move without getting anywhere, recent reversals, and until when it's settled.
+        public Vec2 DanceVel, DanceStep, DanceHeading;
+        public float DanceSpeed, DanceFor, DanceFlips, SettledUntil;      // soldier: getting out of a vehicle's way until then (its walk and aim wait)
         public float RepathTimer;
         public bool Moving;
         public int LastAttackerId;

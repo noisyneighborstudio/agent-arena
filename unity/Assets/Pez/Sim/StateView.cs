@@ -300,7 +300,7 @@ namespace Pez.Sim
                     case "arena_cleared": s = e.Text; break;
                     case "captured": if (e.Team == team || (e.Text != null && e.Text.Contains(w.Teams[team].Name + "'s"))) s = e.Text; break;
                     case "low_fuel": case "stranded": case "refuelled": case "retreating": case "unstalled": case "surveyed": case "depleted": case "drilled": case "drill_failed": case "survey_failed": case "capture_stopped": case "out_of_range": case "low_power": case "power_restored": case "derrick_skipped":
-                    case "defences_offline": case "defences_online": case "crushed":
+                    case "defences_offline": case "defences_online": case "crushed": case "made_room":
                     case "research_started": case "researched":
                         if (e.Team == team) s = e.Text; break;
                     case "defeated": case "game_over": s = e.Text; break;
@@ -571,8 +571,12 @@ namespace Pez.Sim
         /// 38: a soldier dodges every vehicle bearing down at once (between two it no longer steps from one's path into the
         ///     other's and back), finishes a dodge before walking or aiming again, and waits rather than walk into a moving
         ///     vehicle's path.
+        /// 39: movement phase 1 (docs/MOVEMENT.md): the dance guard settles any unit on the move without getting anywhere (or
+        ///     reversing over and over) for 3 s; infantry and aircraft turn at a rate instead of snapping round; aircraft
+        ///     land in their own slots on a pad (4 on an airfield) and hold nearby when it's full, a thirsty one has a full,
+        ///     idle one lift off for it, and landed aircraft aren't shoved; an aircraft gliding in on empty still reaches its slot.
         /// </summary>
-        public const int RulesVersion = 38;
+        public const int RulesVersion = 39;
 
         public static JObj Rules()
         {

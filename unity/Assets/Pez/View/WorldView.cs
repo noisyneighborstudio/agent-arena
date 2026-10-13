@@ -997,7 +997,7 @@ namespace Pez.View
                 }
                 // Aircraft bank into turns; drones tilt toward where they're accelerating, as quadcopters do.
                 if (e.Def.ModelKey == "recon_drone") DroneTilt(v);
-                else if (e.IsAir) rig.Body.localRotation = Quaternion.Euler(e.Moving ? 6f : 0, 0, Mathf.Clamp(Mathf.DeltaAngle(rig.Root.eulerAngles.y, Yaw(e.Facing)) * 0.6f, -25f, 25f));
+                else if (e.IsAir) rig.Body.localRotation = Quaternion.Slerp(rig.Body.localRotation, Quaternion.Euler(e.Moving ? 6f : 0, 0, Mathf.Clamp(Mathf.DeltaAngle(rig.Root.eulerAngles.y, Yaw(e.Facing)) * 0.6f, -25f, 25f)), 1f - Mathf.Exp(-Time.deltaTime * 5f)); // eased: a stop or a turn tips it over a fifth of a second, never in one frame
                 // Infantry walk: the stride follows the ground actually covered this frame, and they settle when they stop.
                 if (rig.Gait != null) rig.Gait.Tick(rig.Root, Time.deltaTime);
                 if (rig.Gait != null && rig.HasModel) (v.Troop ??= SoldierWorks.For(rig.Model, e.Id)).Tick(e, World.Time, v.LastFire, Time.deltaTime);

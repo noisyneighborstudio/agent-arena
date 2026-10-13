@@ -58,6 +58,7 @@ namespace Pez.Headless
             RunOver();
             NoSpinBesideParkedTruck();
             NoSpinBetweenTanks();
+            MovementGate();
             ViewCopyReplaysOrders();
             GroupMove();
             ResignWhenStalled();
