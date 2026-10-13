@@ -28,6 +28,7 @@ namespace Pez.Sim
         const float EnemyBerth = 30f; // an outpost site keeps this far from every enemy structure it knows of
         const float MaxExpansion = 170f; // and is no more than this far from its nearest drop-off
         const int MaxOutposts = 4; // outposts at once while the ore within reach is thin (two otherwise)
+        const float SiteBerth = 24f; // in an open arena an outpost keeps this far from any base site but its own: the 18 tiles the derricks keep, and 6 for where it lands beside a field
 
         static readonly string[] BuildOrder =
         {
@@ -273,9 +274,13 @@ namespace Pez.Sim
             Vec2? ExpansionSite()
             {
                 Vec2? best = null; float bestScore = float.MaxValue;
+                // In an open arena the base sites nobody holds are kept for the players who join later (a newcomer takes a free site, and an
+                // outpost by it would pin them or use up the seat), and so is the ore there while they are protected: only neutral fields, then.
+                // (Every site but its own counts: it can't tell which of them a player holds.)
+                bool OnOthersGround(Vec2 p) => w.Open && w.Map.Spawns.Any(s => Vec2.Dist(s, t.StartPos) >= 20f && Vec2.Dist(s, p) < SiteBerth);
                 void Consider(Vec2 at, float bonus)
                 {
-                    if (Reached(at) || NearFoe(at)) return;
+                    if (Reached(at) || NearFoe(at) || OnOthersGround(at)) return;
                     float score = (drops.Count == 0 ? Vec2.Dist(at, t.StartPos) : drops.Min(dp => Vec2.Dist(dp, at))) - bonus; // a known field beats a guess
                     if (score < bestScore && score + bonus <= MaxExpansion) { bestScore = score; best = at; }
                 }

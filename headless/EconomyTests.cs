@@ -1816,9 +1816,11 @@ namespace Pez.Headless
         {
             // The ground round its base is mined out (the fields are still there to regrow, but there is nothing in them): the AI saves up for an
             // outpost truck, sends it to a base site nobody holds (not the enemy's corner), and its idle trucks follow once the outpost stands.
+            bool openArena = false;
             (World w, SimpleAI ai, Team t, Entity hq) Thin(params int[] hostileSites)
             {
-                var (w0, ai0) = AiWorld();
+                var w0 = new World(2, 3, 80) { Open = openArena };
+                var ai0 = new SimpleAI(0, passive: true);
                 var t0 = w0.Teams[0];
                 AiBase(w0, "power_plant", "mining_refinery", "barracks", "factory", "power_plant", "electronics_plant");
                 var hq0 = w0.Owned(0).First(e => e.Def.Key == "command_center");
@@ -1858,6 +1860,42 @@ namespace Pez.Headless
             for (int s = 0; s < 90 && (drone == null || drone.Order != Order.Move); s++) { AiRun(w3, ai3, 1); drone = w3.Owned(0).FirstOrDefault(e => e.Def.Key == "recon_drone"); }
             Check(drone != null && !w3.Owned(0).Any(e => e.Def.Key == "outpost_truck") && drone.Order == Order.Move && Vec2.Dist(drone.OrderPos, new Vec2(36, 12)) < 3f,
                   $"with nowhere known to expand to it trains a recon drone and sends it to the ground it hasn't seen ({(drone != null ? drone.OrderName + " to " + drone.OrderPos : "no drone")})");
+
+            // In an open arena the free base sites are kept for the players who join later (a newcomer takes a free site, and an outpost by it
+            // would pin them or use up the seat; the ore there is theirs while they are protected). The house AI (passive, as here) still
+            // expands, but only onto neutral fields, 18 tiles or more from every site that isn't its own. With the same ground a closed
+            // match has it go to the free corner (above); here the nearest neutral field is the crystal ring's, in the middle.
+            openArena = true;
+            var (w5, ai5, t5, hq5) = Thin(1); // corner 1 is an enemy's, corners 2 and 3 are free sites
+            var free5 = new[] { w5.Map.Spawns[2], w5.Map.Spawns[3] };
+            float nearest5 = float.MaxValue; // the closest any outpost or any outpost truck's destination comes to a free site
+            AiRun(w5, ai5, 6 * 60, () =>
+            {
+                foreach (var e in w5.Owned(0).Where(e => e.Def.Key == "outpost" || e.Def.Key == "outpost_truck"))
+                    foreach (var s in free5) nearest5 = Math.Min(nearest5, Vec2.Dist(e.Def.Key == "outpost" ? e.Center : e.OrderPos, s));
+            });
+            var post5 = w5.Owned(0).FirstOrDefault(e => e.Def.Key == "outpost");
+            Check(post5 != null && nearest5 >= 18f, $"in an open arena the house AI's outpost goes to a neutral field and never within 18 tiles of a free base site ({(post5 != null ? post5.Center.ToString() : "no outpost")}; closest approach {nearest5:0} tiles; free sites {free5[0]} and {free5[1]})");
+            var (w6, ai6, t6, hq6) = Thin(1);
+            var fieldAt = new Vec2(57, 34); // out of reach of its drop-offs, 29 tiles from the free site at 71,9
+            for (int y = 32; y <= 35; y++)
+                for (int x = 55; x <= 58; x++)
+                {
+                    int i = w6.Map.Idx(x, y);
+                    w6.Map.Tiles[i] = Terrain.Dirt; w6.Map.Ore[i] = w6.Map.OreBase[i] = 200; w6.Map.OreType[i] = w6.Map.OreBaseType[i] = Map.Iron;
+                }
+            w6.Map.FieldsChanged();
+            for (int y = 24; y <= 44; y++) for (int x = 47; x <= 67; x++) t6.Explored[w6.Map.Idx(x, y)] = true;
+            float nearest6 = float.MaxValue;
+            AiRun(w6, ai6, 6 * 60, () =>
+            {
+                foreach (var e in w6.Owned(0).Where(e => e.Def.Key == "outpost" || e.Def.Key == "outpost_truck"))
+                    foreach (var s in free5) nearest6 = Math.Min(nearest6, Vec2.Dist(e.Def.Key == "outpost" ? e.Center : e.OrderPos, s));
+            });
+            var post6 = w6.Owned(0).FirstOrDefault(e => e.Def.Key == "outpost");
+            Check(post6 != null && Vec2.Dist(post6.Center, fieldAt) < 12f && nearest6 >= 18f,
+                  $"and given a neutral iron field out in the open it puts its outpost there ({(post6 != null ? post6.Center.ToString() : "no outpost")}, field at {fieldAt}; closest approach to a free site {nearest6:0} tiles)");
+            openArena = false;
 
             // The factory is missing and iron ore piles up past 1500: an extra refinery is wanted, but holding back the 100 copper ore it
             // costs would keep the copper (100 for the factory) from ever being refined from what little copper ore there is.
