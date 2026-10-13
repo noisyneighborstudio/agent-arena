@@ -63,6 +63,17 @@ namespace Pez.Sim
 
         public int Amount(string item) => Stock.TryGetValue(item, out var v) ? (int)v : 0;
         public void Add(string item, float n) => Stock[item] = (Stock.TryGetValue(item, out var v) ? v : 0) + n;
+        /// <summary>
+        /// What the arena gave this team, per item (the starting ore, a late joiner's catch-up materials). It isn't the team's
+        /// own value, so a stockpile spill leaves it out (Own) and joining and leaving cashes nothing out. Converters pass the
+        /// granted share of what they use on to what they make (World.CarryGrant). Saved with the game.
+        /// </summary>
+        public readonly Dictionary<string, float> Granted = new Dictionary<string, float>();
+        /// <summary>Stock handed to the team by the arena: in the stockpile like any other, and counted in Granted.</summary>
+        public void Give(string item, float n) { Add(item, n); Granted[item] = Gift(item) + n; }
+        public float Gift(string item) => Granted.TryGetValue(item, out var g) ? g : 0f;
+        /// <summary>What of an item the team holds above its grant: the part it mined, made or won itself, which a spill gives up.</summary>
+        public float Own(string item) => Stock.TryGetValue(item, out var v) ? MathF.Max(0f, v - Gift(item)) : 0f;
         public string Missing(Dictionary<string, int> cost)
         {
             var lacking = cost.Where(kv => Amount(kv.Key) < kv.Value).Select(kv => $"{kv.Key} {Amount(kv.Key)}/{kv.Value}").ToList();
@@ -345,12 +356,13 @@ namespace Pez.Sim
             }
             else Teams.Add(team);
             // Enough raw ore for a power plant; everything after that has to be mined.
-            team.Add("iron_ore", 500);
-            team.Add("copper_ore", 150);
+            // All of it is a gift: it isn't the team's own value to cash out or to be farmed for (Team.Granted, Entity.Granted).
+            team.Give("iron_ore", 500);
+            team.Give("copper_ore", 150);
             var s = Int2.Of(spawn);
-            var hq = SpawnStructure(t, "command_center", new Int2(s.X - 1, s.Y - 1), 1f);
-            SpawnUnit(t, "mining_truck", hq);
-            for (int i = 0; i < 2; i++) SpawnUnit(t, "rifleman", hq);
+            var hq = SpawnStructure(t, "command_center", new Int2(s.X - 1, s.Y - 1), 1f, granted: true);
+            SpawnUnit(t, "mining_truck", hq).Granted = true;
+            for (int i = 0; i < 2; i++) SpawnUnit(t, "rifleman", hq).Granted = true;
             return team;
         }
 
@@ -435,15 +447,15 @@ namespace Pez.Sim
         {
             float minutes = MathF.Min(Time / 60f, 30f);
             if (minutes < 0.5f) return;
-            team.Add("steel", 60 * minutes);
-            team.Add("copper", 30 * minutes);
-            team.Add("circuits", 8 * minutes);
-            team.Add("iron_ore", 20 * minutes);
+            team.Give("steel", 60 * minutes);
+            team.Give("copper", 30 * minutes);
+            team.Give("circuits", 8 * minutes);
+            team.Give("iron_ore", 20 * minutes);
             if (minutes < 3f) return;
             foreach (var key in new[] { "power_plant", "mining_refinery" })
             {
                 var spot = FindPlacement(team.Id, key);
-                if (spot.HasValue) { SpawnStructure(team.Id, key, spot.Value, 1f); team.Stats.Count(key); }
+                if (spot.HasValue) { SpawnStructure(team.Id, key, spot.Value, 1f, granted: true); team.Stats.Count(key); }
             }
         }
 
@@ -585,17 +597,23 @@ namespace Pez.Sim
             var t = Teams[owner];
             // A team that's already out is taken apart whole, stockpile and all (Dismantle).
             if (t.Left || t.Defeated || Entities.Any(o => !o.Dead && o.Team == owner && o.Def.Key == "command_center")) return;
+            bool had = t.Stock.Values.Any(v => v > 0);
             var value = TakeStockpile(t);
             var tiles = new List<Int2>();
             for (int y = 0; y < cc.Def.SizeY; y++) for (int x = 0; x < cc.Def.SizeX; x++) tiles.Add(new Int2(cc.Origin.X + x, cc.Origin.Y + y));
             float total = SpillSalvage(value, tiles);
-            if (total <= 0) return;
             var where = StateView.Sector(cc.Center);
-            string msg = $"{t.Name}'s last command center {how} at sector {where}: its stockpile spilled out as about {(int)total} units of salvage ore. First come, first served.";
-            Emit("chat", -1, text: msg);
             var truck = Entities.FirstOrDefault(e => !e.Dead && e.Team == t.Id && e.Def.DeploysInto == "command_center");
-            Alerts.Raise(this, t.Id, "stockpile_lost", Priority.Critical, cc.Center, hit: false).Lost.Add($"your last command center {how}, so your whole stockpile ({(int)total} units) spilled out as salvage at {where}; anyone can mine it, so get your trucks there first" +
-                (truck != null ? $". Deploy your construction_truck #{truck.Id} into a new command center somewhere safe to rebuild" : ""));
+            string rebuild = truck != null ? $". Deploy your construction_truck #{truck.Id} into a new command center somewhere safe to rebuild" : "";
+            if (total <= 0)
+            {
+                // Nothing above what the arena gave it, so nothing to scavenge: the owner still hears that its stockpile is gone.
+                if (had) Alerts.Raise(this, t.Id, "stockpile_lost", Priority.Critical, cc.Center, hit: false).Lost.Add($"your last command center {how}, so your stockpile is gone (it was only what you were given at the start, so there is nothing to scavenge){rebuild}");
+                return;
+            }
+            string msg = $"{t.Name}'s last command center {how} at sector {where}: its stockpile is gone, and about {(int)total} units of it spilled out as salvage ore. First come, first served.";
+            Emit("chat", -1, text: msg);
+            Alerts.Raise(this, t.Id, "stockpile_lost", Priority.Critical, cc.Center, hit: false).Lost.Add($"your last command center {how}, so your stockpile is gone: the {(int)total} units of it above what you were given at the start spilled out as salvage at {where}; anyone can mine it, so get your trucks there first{rebuild}");
             foreach (var other in Teams.Where(o => o.Id != t.Id && !o.Left && !o.Defeated))
                 Alerts.Raise(this, other.Id, "salvage_available", Priority.High, cc.Center, hit: false).Lost.Add($"{(int)total} units of salvage ore at {where}");
         }
@@ -672,10 +690,11 @@ namespace Pez.Sim
             return e;
         }
 
-        public Entity SpawnStructure(int team, string key, Int2 origin, float progress)
+        public Entity SpawnStructure(int team, string key, Int2 origin, float progress, bool granted = false)
         {
             var def = Def(key);
             var e = NewEntity(team, def);
+            e.Granted = granted;
             e.Origin = origin;
             e.BuildProgress = progress;
             e.Pos = e.PrevPos = e.Center;
@@ -735,7 +754,7 @@ namespace Pez.Sim
         void OnStructureComplete(Entity e)
         {
             UpdatePower();
-            if (e.Def.Key == "mining_refinery") SpawnUnit(e.Team, "mining_truck", e);
+            if (e.Def.Key == "mining_refinery") SpawnUnit(e.Team, "mining_truck", e).Granted = e.Granted; // a gifted refinery's truck is a gift too
         }
 
         /// <summary>Turn a deployable unit (Outpost Truck) into its structure where it stands.</summary>
@@ -1172,6 +1191,7 @@ namespace Pez.Sim
                     frac = MathF.Min(1f, frac);
                     foreach (var kv in r.Inputs) team.Add(kv.Key, -kv.Value * cycles * frac);
                     foreach (var kv in r.Outputs) team.Add(kv.Key, kv.Value * cycles * frac);
+                    CarryGrant(team, r, cycles * frac);
                     any = true;
                 }
                 e.Working = any;

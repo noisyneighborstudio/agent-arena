@@ -349,17 +349,45 @@ namespace Pez.Sim
         /// <summary>
         /// Add `share` of what an entity is worth as ore: the one place a unit or structure is priced, for kill value, kill
         /// salvage and a dismantled base alike. A structure counts at its full price however far it got: its owner paid all of
-        /// it when placing it.
+        /// it when placing it. Something the arena gave its team (Entity.Granted) is worth nothing: not paid for, so there's no
+        /// kill value and no salvage in it, whoever holds it by then.
         /// </summary>
-        void AddWorth(float[] into, Entity e, float share) => AddValue(into, ValueOf(e.Def), share);
+        void AddWorth(float[] into, Entity e, float share)
+        {
+            if (!e.Granted) AddValue(into, ValueOf(e.Def), share);
+        }
 
-        /// <summary>A team's whole stockpile as ore, emptying it: what a spill or a dismantled base gives up.</summary>
+        /// <summary>
+        /// A team's stockpile as ore, emptying it: what a spill or a dismantled base gives up. Only what the team holds above
+        /// what it was given (Team.Own) counts; the gift goes with the rest of the stockpile, and nothing is left owing.
+        /// </summary>
         float[] TakeStockpile(Team t)
         {
             var value = new float[4];
-            foreach (var kv in t.Stock) if (kv.Value > 0) AddOre(value, kv.Key, kv.Value);
+            foreach (var kv in t.Stock) if (kv.Value > 0) AddOre(value, kv.Key, t.Own(kv.Key));
             t.Stock.Clear();
+            t.Granted.Clear();
             return value;
+        }
+
+        /// <summary>
+        /// A converter just used `used` of each input of a recipe and made `made` of each output. The gift stays a gift when it's
+        /// converted: the share of the inputs (in raw ore) that came out of the granted stock makes the same share of the
+        /// outputs granted, so refining the starting ore into steel doesn't turn it into the team's own.
+        /// </summary>
+        void CarryGrant(Team t, Recipe r, float cycles)
+        {
+            float usedOre = 0, grantedOre = 0;
+            foreach (var kv in r.Inputs)
+            {
+                float used = kv.Value * cycles, left = t.Stock.TryGetValue(kv.Key, out var v) ? v : 0f;
+                float fromGift = MathF.Min(used, MathF.Max(0f, t.Gift(kv.Key) - left)); // the part that cut into the granted stock
+                float ore = OreMix.TryGetValue(kv.Key, out var mix) ? mix[0] + mix[1] + mix[2] + mix[3] : 0f;
+                usedOre += used * ore; grantedOre += fromGift * ore;
+                if (fromGift > 0) t.Granted[kv.Key] = t.Gift(kv.Key) - fromGift;
+            }
+            if (grantedOre <= 0) return;
+            foreach (var kv in r.Outputs) t.Granted[kv.Key] = t.Gift(kv.Key) + kv.Value * cycles * (grantedOre / usedOre);
         }
 
         /// <summary>

@@ -16,14 +16,15 @@ namespace Pez.Headless
         static string Snap(Game g) => Json.Write(Snapshot.Write(g, SnapTime));
 
         /// <summary>
-        /// A snapshot without its events, plus the last 300 events: the saved events are a window (old ones are dropped),
-        /// so after a resume the two games' windows differ in how far back they reach, not in what happened.
+        /// A snapshot without its events, plus the events from tick `fromTick` on (the tick the copy was resumed at): the saved
+        /// events are a window (old ones are dropped), so after a resume the two games' windows differ in how far back they
+        /// reach, not in what happened.
         /// </summary>
-        static string SnapForCompare(Game g)
+        static string SnapForCompare(Game g, int fromTick)
         {
             var s = Snap(g);
             int cut = s.LastIndexOf(",\"events\":[", StringComparison.Ordinal);
-            return s.Substring(0, cut) + string.Join("|", g.World.Events.Skip(Math.Max(0, g.World.Events.Count - 300)).Select(e => $"{e.Seq} {e.Tick} {e.Type} {e.Team} {e.A} {e.B} {e.Text}"));
+            return s.Substring(0, cut) + string.Join("|", g.World.Events.Where(e => e.Tick >= fromTick).Select(e => $"{e.Seq} {e.Tick} {e.Type} {e.Team} {e.A} {e.B} {e.Text}"));
         }
 
         static Game Resume(string json)
@@ -55,11 +56,11 @@ namespace Pez.Headless
             [typeof(Entity)] = "Id Team Def Pos PrevPos Facing TurretFacing Hp Dead Origin BuildProgress Rally Order OrderPos GuardPos TargetId UntilCapturable EngageDerricks Path PathIdx Cooldown " +
                 "SpeedCap Group ProgressPos ProgressAt GhostUntil ProgressDist Waypoints WaypointLoop RetreatBelow Retreating RetreatSpent GivingWay OwnBlockedSince RepathTimer Moving LastAttackerId LastHitTime " +
                 "LastCallForHelp LastAttackerTeam Responding HomePos Cargo CargoType HarvestType HarvestTile WorkTimer Burning Dock DockAt DepositId Working Offline CarrierId Passengers Fuel Landed Stranded " +
-                "FuelCap AtDepot FuelWarned NoAutoRefuelUntil ResumeOrder ResumePos ResumeGuard ResumeTarget ResumeWaypoints ResumeSpeedCap MineQueue LastFiredAt " +
+                "Granted FuelCap AtDepot FuelWarned NoAutoRefuelUntil ResumeOrder ResumePos ResumeGuard ResumeTarget ResumeWaypoints ResumeSpeedCap MineQueue LastFiredAt " +
                 "Prospecting ProspectCenter ProspectRadius SkipSites SurveyFailure SurveyFailedAt ZoneId | CmdId", // CmdId: the observation feed's command tracking, which restarts (as a new stream) with the process
             [typeof(Team)] = "Id Name Controller PlayerName StandingOrders OrdersVersion Stock Rates PowerProduced PowerUsed Detected Revealed Defeated StartPos " +
                 "Visible Explored Left Resigned StalledSince House Seat ProtectedUntil StructureQueue UnitQueues KnownEnemyStructures Surveyed SurveySites Zones " +
-                "SurfaceWarnedAt HomeOreWarned LastActiveAt Reserve SaveFor SaveForCost Stats",
+                "SurfaceWarnedAt HomeOreWarned LastActiveAt Reserve SaveFor SaveForCost Stats Granted",
             [typeof(World)] = "Map Paths MapVersion Open MaxPlayers MaxMapSize GrowStep SafeJoinDistance ProtectionSeconds Teams ById Entities Projectiles Events " +
                 "EventCounts Alerts Tick GameOver Winner Errors LastError nextId nextSeq seatCounter rng rateSnapshot airWarned StallGrace ArenaChampion contested Inventions GameId Regrown SuddenDeathAt DerrickRespawns " +
                 "| barredBases ErrorLog loggedErrors cells cellsW cellsH nearTarget nearHelp nearMine nearSep nearSpot nearCrush nearVis Showcase OreVersion oreDirty beingMined regrowNow scoreCache scoreCacheTick NextMatchIn derricksChecked groupSpan Mirror MirrorScores Feed Touched", // Feed: the observation feed starts a new stream on resume (readers get a gap and a snapshot); Showcase: the kitchen sink room is never saved (rebuilt from code); Mirror: set by the browser client on its copy
@@ -176,6 +177,8 @@ namespace Pez.Headless
             var tb = b.Teams[2];
             Check(tb.Amount("steel") == t2.Amount("steel") && tb.StandingOrders == t2.StandingOrders && tb.OrdersVersion == t2.OrdersVersion && tb.Seat == t2.Seat,
                   "stockpile, standing orders and seat survive");
+            Check(t2.Granted.Count > 0 && tb.Granted.Count == t2.Granted.Count && t2.Granted.All(kv => tb.Granted.TryGetValue(kv.Key, out var gv) && gv == kv.Value) && hq.Granted && b.Get(hq.Id)?.Granted == true && !tank.Granted && b.Get(tank.Id)?.Granted == false,
+                  "what a team was given (its granted stock and its gifted base) survives, and what it built or trained itself isn't flagged");
             Check(tb.Explored.Count(x => x) == t2.Explored.Count(x => x) && tb.Explored.Length == t2.Explored.Length && tb.Visible.SequenceEqual(t2.Visible), "explored and visible tiles survive");
             var tank2 = b.Get(tank.Id);
             Check(tank2 != null && tank2.Waypoints.Count == tank.Waypoints.Count && tank2.WaypointLoop && tank2.RetreatBelow == tank.RetreatBelow && tank2.Order == tank.Order &&
@@ -217,7 +220,8 @@ namespace Pez.Headless
             // Determinism: the original and the restored game, run on, stay in lockstep.
             Step(game, 120);
             Step(back, 120);
-            var ja = SnapForCompare(game); var jb = SnapForCompare(back);
+            int shared = back.World.Tick - 120 * World.TickRate; // the events since the save: both games hold all of those
+            var ja = SnapForCompare(game, shared); var jb = SnapForCompare(back, shared);
             Check(ja == jb, $"two more minutes later the original and the resumed game are identical: {FirstDiff(ja, jb)}");
             if (ja != jb)
                 Check(Math.Abs(w.Entities.Count - b.Entities.Count) <= w.Entities.Count / 10, $"(or at least close: {w.Entities.Count} vs {b.Entities.Count} entities)");
@@ -244,6 +248,7 @@ namespace Pez.Headless
             Commands.Execute(w, 1, Cmd("type", "move", "units", new[] { seen.Id }, "x", hq1.Center.X, "y", hq1.Center.Y));
             w.SetOrders(1, "Secret: rush their refinery at minute five.");
             w.Teams[1].Stock["steel"] = 4321;
+            seen.Granted = mine.Granted = true; // flagged as gifts, to see whose flag the copy carries
             Step(g, 0.5f);
             Check(w.IsVisibleTo(0, seen) && !w.IsVisibleTo(0, hidden), "set up: one enemy in sight, one hidden at its base");
             var json = Json.Write(ApiServer.ViewSnapshot(g, 0));
@@ -257,6 +262,15 @@ namespace Pez.Headless
                   !(Snapshot.Parse(json).Obj("world").Arr("teams")[1] as Dictionary<string, object>).ContainsKey("visible"),
                   "a rival's orders, stockpile and vision aren't in the copy (the copy works out what the rival's units it has can see)");
             Check(cw.Teams[0].Amount("steel") == w.Teams[0].Amount("steel") && cw.Teams[0].Visible.SequenceEqual(w.Teams[0].Visible), "the player's own stockpile and vision are");
+            // What the arena gave a team is private economy data too: the player's own gifts are in its copy, a rival's are not.
+            var jt = Snapshot.Parse(json).Obj("world").Arr("teams");
+            var jents = Snapshot.Parse(json).Obj("world").Arr("entities").OfType<Dictionary<string, object>>().ToList();
+            Check(w.Teams[1].Granted.Count > 0 && !(jt[1] as Dictionary<string, object>).ContainsKey("granted") && cw.Teams[1].Granted.Count == 0 &&
+                  (jt[0] as Dictionary<string, object>).ContainsKey("granted") && cw.Teams[0].Granted.Count == w.Teams[0].Granted.Count && cw.Teams[0].Gift("iron_ore") == w.Teams[0].Gift("iron_ore"),
+                  "a rival's granted amounts stay out of the copy, the player's own are in it");
+            var seenJson = jents.First(e => (int)(double)e["id"] == seen.Id); var mineJson = jents.First(e => (int)(double)e["id"] == mine.Id);
+            Check(!seenJson.ContainsKey("granted") && !cw.Get(seen.Id).Granted && mineJson.ContainsKey("granted") && cw.Get(mine.Id).Granted,
+                  "and a visible rival's granted flag is stripped while the player's own entity keeps its flag");
             Check(cw.Teams[1].Name == w.Teams[1].Name && cw.Teams[1].Stats.Kills == w.Teams[1].Stats.Kills, "rivals keep their public face: name and kills");
             Check(cw.Teams[1].StartPos.X == ApiServer.HiddenStart && cw.Teams[1].StartPos.Y == ApiServer.HiddenStart && cw.Teams[0].StartPos.X == w.Teams[0].StartPos.X && cw.Teams[0].StartPos.Y == w.Teams[0].StartPos.Y,
                   $"where a rival's base is stays out of the copy (it's for scouting); the player's own start is there ({cw.Teams[1].StartPos})");
@@ -284,7 +298,8 @@ namespace Pez.Headless
             Console.WriteLine($"      busy game ({w.Map.W}x{w.Map.H}, {w.Teams.Count} AIs, {w.Entities.Count(e => !e.Dead)} entities, {w.Projectiles.Count} shells in flight, {w.Time / 60:0} min): snapshot {json.Length / 1024} KB in {ms} ms");
             Check(Snap(back) == json && json.Length < 3_000_000, $"a 20-minute four-AI game saves in {json.Length / 1024} KB and round-trips exactly");
             Step(game, 60); Step(back, 60);
-            var ja = SnapForCompare(game); var jb = SnapForCompare(back);
+            int shared = back.World.Tick - 60 * World.TickRate; // the events since the save: both games hold all of those
+            var ja = SnapForCompare(game, shared); var jb = SnapForCompare(back, shared);
             Check(ja == jb, $"and the resumed copy plays on identically: {FirstDiff(ja, jb)}");
             if (ja != jb && Environment.GetEnvironmentVariable("PEZ_ALERTDBG") != null)
             {

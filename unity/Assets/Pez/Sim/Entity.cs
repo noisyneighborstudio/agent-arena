@@ -21,6 +21,11 @@ namespace Pez.Sim
         public float TurretFacing;    // radians, weapon
         public float Hp;
         public bool Dead;
+        /// <summary>
+        /// Given to its team by the arena (the starting base and units, a late joiner's catch-up buildings), not paid for: it is worth
+        /// nothing as kill value or salvage, whoever holds it later (World.AddWorth). Saved with the game.
+        /// </summary>
+        public bool Granted;
 
         // Structures
         public Int2 Origin;
