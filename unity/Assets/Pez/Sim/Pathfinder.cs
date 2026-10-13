@@ -7,18 +7,20 @@ namespace Pez.Sim
     public class Pathfinder
     {
         readonly Map map;
-        readonly float[] g;
+        readonly int[] g;
         readonly int[] parent;
         readonly int[] stamp;
         int curStamp;
         static readonly int[] DX = { 1, -1, 0, 0, 1, 1, -1, -1 };
         static readonly int[] DY = { 0, 0, 1, -1, 1, -1, 1, -1 };
-        const float Diag = 1.41421356f;
+        // Costs are whole numbers (a step, and a diagonal step: the square root of 2 to a thousandth), so two routes of the same shape cost
+        // exactly the same however they were added up, and equally good ones can be told apart by rules that don't depend on the scan.
+        const int Straight = 1000, Diag = 1414;
 
         public Pathfinder(Map map)
         {
             this.map = map;
-            g = new float[map.W * map.H];
+            g = new int[map.W * map.H];
             parent = new int[map.W * map.H];
             stamp = new int[map.W * map.H];
         }
@@ -61,9 +63,17 @@ namespace Pez.Sim
             curStamp++;
             int si = map.Idx(s.X, s.Y), gi = map.Idx(goal.X, goal.Y);
             var open = new PriorityQueue();
+            // Equally good nodes are told apart by where they lie against the straight line from the start to the goal (see Node.Before),
+            // which turns with the problem: a route turned half a circle is searched in the same order, and found the same, turned.
+            int ux = goal.X - s.X, uy = goal.Y - s.Y;
+            Node Make(int idx, int cost)
+            {
+                int x = idx % map.W, y = idx / map.W, h = H(new Int2(x, y), goal), cross = ux * (y - s.Y) - uy * (x - s.X), along = ux * (x - s.X) + uy * (y - s.Y);
+                return new Node { item = idx, f = cost + h, h = h, absCross = Math.Abs(cross), cross = cross, along = along };
+            }
             g[si] = 0; parent[si] = -1; stamp[si] = curStamp;
-            open.Push(si, H(s, goal));
-            int expanded = 0, bestIdx = si; float bestH = H(s, goal);
+            open.Push(Make(si, 0));
+            int expanded = 0, bestIdx = si, bestH = H(s, goal);
             var closed = new HashSet<int>();
             while (open.Count > 0 && expanded < maxExpand)
             {
@@ -72,7 +82,7 @@ namespace Pez.Sim
                 if (!closed.Add(cur)) continue;
                 expanded++;
                 int cx = cur % map.W, cy = cur / map.W;
-                float h = H(new Int2(cx, cy), goal);
+                int h = H(new Int2(cx, cy), goal);
                 if (h < bestH) { bestH = h; bestIdx = cur; }
                 for (int d = 0; d < 8; d++)
                 {
@@ -80,10 +90,10 @@ namespace Pez.Sim
                     if (!map.Passable(nx, ny)) continue;
                     if (d >= 4 && (!map.Passable(cx + DX[d], cy) || !map.Passable(cx, cy + DY[d]))) continue; // no corner cutting
                     int ni = map.Idx(nx, ny);
-                    float ng = g[cur] + (d >= 4 ? Diag : 1f);
+                    int ng = g[cur] + (d >= 4 ? Diag : Straight);
                     if (stamp[ni] == curStamp && ng >= g[ni]) continue;
                     stamp[ni] = curStamp; g[ni] = ng; parent[ni] = cur;
-                    open.Push(ni, ng + H(new Int2(nx, ny), goal));
+                    open.Push(Make(ni, ng));
                 }
             }
             // Reconstruct to goal, or to the closest point reached if unreachable.
@@ -133,25 +143,48 @@ namespace Pez.Sim
             return true;
         }
 
-        static float H(Int2 a, Int2 b)
+        static int H(Int2 a, Int2 b)
         {
             int dx = Math.Abs(a.X - b.X), dy = Math.Abs(a.Y - b.Y);
-            return Math.Max(dx, dy) + (Diag - 1f) * Math.Min(dx, dy);
+            return Straight * Math.Max(dx, dy) + (Diag - Straight) * Math.Min(dx, dy);
         }
 
-        /// <summary>Binary min-heap keyed by float priority.</summary>
+        /// <summary>An open node: its tile, its estimated cost f, and what orders equally costly ones (see Before).</summary>
+        struct Node
+        {
+            public int item, f, h, absCross, cross, along;
+
+            /// <summary>
+            /// Cheaper first. Equal in cost: the one nearer the goal, then the one nearer the straight line from the start to the goal, then
+            /// the one to the right of that line as the way goes (cross is negative there), then the one farther along it, then the lower
+            /// tile number (which only a tile lying on the same spot could still tie on). All but the last are the same for a problem
+            /// turned round, so the first routes found are too; the scan order (the tile number) alone isn't, and sent the seat at one end
+            /// of the map down the left of a gap and the seat at the other down the right.
+            /// </summary>
+            public bool Before(Node o)
+            {
+                if (f != o.f) return f < o.f;
+                if (h != o.h) return h < o.h;
+                if (absCross != o.absCross) return absCross < o.absCross;
+                if (cross != o.cross) return cross < o.cross;
+                if (along != o.along) return along > o.along;
+                return item < o.item;
+            }
+        }
+
+        /// <summary>Binary min-heap of open nodes.</summary>
         class PriorityQueue
         {
-            readonly List<(int item, float pri)> heap = new List<(int, float)>();
+            readonly List<Node> heap = new List<Node>();
             public int Count => heap.Count;
-            public void Push(int item, float pri)
+            public void Push(Node n)
             {
-                heap.Add((item, pri));
+                heap.Add(n);
                 int i = heap.Count - 1;
                 while (i > 0)
                 {
                     int p = (i - 1) / 2;
-                    if (heap[p].pri <= heap[i].pri) break;
+                    if (!heap[i].Before(heap[p])) break;
                     (heap[p], heap[i]) = (heap[i], heap[p]);
                     i = p;
                 }
@@ -165,8 +198,8 @@ namespace Pez.Sim
                 while (true)
                 {
                     int l = i * 2 + 1, r = l + 1, m = i;
-                    if (l < heap.Count && heap[l].pri < heap[m].pri) m = l;
-                    if (r < heap.Count && heap[r].pri < heap[m].pri) m = r;
+                    if (l < heap.Count && heap[l].Before(heap[m])) m = l;
+                    if (r < heap.Count && heap[r].Before(heap[m])) m = r;
                     if (m == i) break;
                     (heap[m], heap[i]) = (heap[i], heap[m]);
                     i = m;

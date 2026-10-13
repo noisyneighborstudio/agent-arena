@@ -57,6 +57,13 @@ namespace Pez.Sim
         /// <summary>Net change per second of each item over the last second, for display.</summary>
         public readonly Dictionary<string, float> Rates = new Dictionary<string, float>();
         public int PowerProduced, PowerUsed;
+        /// <summary>
+        /// The numbers behind the little scatter its new units stand off their door by (World.SpawnUnit). Every team's begins at the same
+        /// place, so a team's n-th unit is scattered as every other team's n-th is; drawn from one stream shared by the teams, the scatter
+        /// went to whichever team's unit came first (seat 0's, in a tick), and the first truck reached its ore sooner or later than its twin.
+        /// </summary>
+        public readonly SimRng Scatter = new SimRng(ScatterStart);
+        public const ulong ScatterStart = 7;
         /// <summary>Enemy stealth units this team can currently see.</summary>
         public readonly HashSet<int> Detected = new HashSet<int>();
         /// <summary>Enemies briefly revealed by firing on this team (entity id -> game time the reveal ends).</summary>
@@ -411,12 +418,8 @@ namespace Pez.Sim
             team.Give("copper_ore", 150);
             var s = Int2.Of(spawn);
             var hq = SpawnStructure(t, "command_center", new Int2(s.X - 1, s.Y - 1), 1f, grantedShare: 1f);
-            // The opening units' scatter is drawn from the same numbers for every seat (and laid out relative to the door, so a
-            // half-turned base gets the half-turned scatter). Drawn from the shared stream instead, seat 0 would start with the
-            // same luck in every game, and the first truck would reach its ore a fixed dozen ticks before or after seat 1's.
-            var opening = new SimRng(OpeningScatter);
-            SpawnUnit(t, "mining_truck", hq, opening).GrantedShare = 1f;
-            for (int i = 0; i < 2; i++) SpawnUnit(t, "rifleman", hq, opening).GrantedShare = 1f;
+            SpawnUnit(t, "mining_truck", hq).GrantedShare = 1f;
+            for (int i = 0; i < 2; i++) SpawnUnit(t, "rifleman", hq).GrantedShare = 1f;
             return team;
         }
 
@@ -777,11 +780,11 @@ namespace Pez.Sim
             }
         }
 
-        public Entity SpawnUnit(int team, string key, Entity at, SimRng draws = null)
+        public Entity SpawnUnit(int team, string key, Entity at)
         {
             var def = Def(key);
             var e = NewEntity(team, def);
-            var r = draws ?? rng;
+            var r = team >= 0 && team < Teams.Count ? Teams[team].Scatter : rng; // (each team draws from its own: see Team.Scatter)
             // The doorway: south, where the models' doors are, except a drop-off's (its bay), a barracks' and a factory's (the side it was
             // built to face): their models are turned to match.
             var door = at.IsStructure ? BaySides[DoorSide(at)] : BaySides[0];
@@ -813,8 +816,7 @@ namespace Pez.Sim
             return e;
         }
 
-        SimRng rng = new SimRng(42); // serializable, so a resumed game draws the same numbers
-        const ulong OpeningScatter = 7;
+        SimRng rng = new SimRng(42); // serializable, so a resumed game draws the same numbers (for a unit that belongs to no team)
 
         void OnStructureComplete(Entity e)
         {
@@ -2102,8 +2104,10 @@ namespace Pez.Sim
                         {
                             if (e.Dock != DockStep.Queue) e.Path = null;
                             e.Dock = DockStep.Queue;
-                            var spot = head + across * (e.Id % 2 == 0 ? 1.7f : -1.7f) + outward * 1.3f;
-                            if (!Map.Passable(Int2.Of(spot).X, Int2.Of(spot).Y)) spot = head + across * (e.Id % 2 == 0 ? -1.7f : 1.7f) + outward * 1.3f;
+                            // On the side of the lane it came from (an id's parity picked it, so a truck and its half-turned twin queued on opposite sides).
+                            float onLeft = (e.Pos.X - head.X) * across.X + (e.Pos.Y - head.Y) * across.Y >= 0f ? 1f : -1f;
+                            var spot = head + across * (1.7f * onLeft) + outward * 1.3f;
+                            if (!Map.Passable(Int2.Of(spot).X, Int2.Of(spot).Y)) spot = head + across * (-1.7f * onLeft) + outward * 1.3f;
                             if (!Map.Passable(Int2.Of(spot).X, Int2.Of(spot).Y)) spot = head + outward * 2.5f;
                             FollowPath(e, spot, 0.4f);
                             return;
@@ -3036,7 +3040,11 @@ namespace Pez.Sim
             if (idle.Order != Order.Idle || idle.Moving || idle.Team != mover.Team || Time < idle.GhostUntil - 2.5f || mover.GivingWay) return;
             var dir = mover.Path != null && mover.PathIdx < mover.Path.Count ? mover.Path[mover.PathIdx] - mover.Pos : idle.Pos - mover.Pos;
             if (dir.LengthSq < 1e-4f) dir = new Vec2(1, 0);
-            var side = new Vec2(-dir.Y, dir.X).Normalized * (((idle.Id & 1) == 0) ? 1.6f : -1.6f);
+            // To the side it already stands on (an id's parity decided it: left for one unit, right for the next, so a unit and its
+            // half-turned twin stepped aside to opposite sides).
+            var perp = new Vec2(-dir.Y, dir.X).Normalized;
+            var from = idle.Pos - mover.Pos;
+            var side = perp * (from.X * perp.X + from.Y * perp.Y >= 0f ? 1.6f : -1.6f);
             foreach (var s in new[] { side, side * -1f, side + dir.Normalized * 1.2f })
             {
                 var spot = idle.Pos + s;

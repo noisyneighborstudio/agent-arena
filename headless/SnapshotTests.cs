@@ -60,7 +60,7 @@ namespace Pez.Headless
                 "Prospecting ProspectCenter ProspectRadius SkipSites SurveyFailure SurveyFailedAt ZoneId | CmdId", // CmdId: the observation feed's command tracking, which restarts (as a new stream) with the process
             [typeof(Team)] = "Id Name Controller PlayerName StandingOrders OrdersVersion Stock Rates PowerProduced PowerUsed PlasmaOwed Detected Revealed Defeated StartPos " +
                 "Visible Explored Left Resigned StalledSince House Seat ProtectedUntil StructureQueue UnitQueues KnownEnemyStructures Surveyed SurveySites Zones " +
-                "SurfaceWarnedAt HomeOreWarned LastActiveAt Reserve SaveFor SaveForCost Stats Granted",
+                "SurfaceWarnedAt HomeOreWarned LastActiveAt Reserve SaveFor SaveForCost Stats Granted Scatter",
             [typeof(World)] = "Map Paths MapVersion Open MaxPlayers MaxMapSize GrowStep SafeJoinDistance ProtectionSeconds Teams ById Entities Projectiles Events " +
                 "EventCounts Alerts Tick GameOver Winner Errors LastError nextId nextSeq seatCounter rng rateSnapshot airWarned derrickHinted StallGrace ArenaChampion contested Inventions GameId Regrown SuddenDeathAt DerrickRespawns " +
                 "| barredBases ErrorLog loggedErrors cells cellsW cellsH nearTarget nearHelp nearMine nearSep nearSpot nearCrush nearVis Showcase OreVersion oreDirty beingMined regrowNow scoreCache scoreCacheTick NextMatchIn derricksChecked groupSpan Mirror MirrorScores Feed Touched", // Feed: the observation feed starts a new stream on resume (readers get a gap and a snapshot); Showcase: the kitchen sink room is never saved (rebuilt from code); Mirror: set by the browser client on its copy
@@ -469,7 +469,7 @@ namespace Pez.Headless
             var wd = (Dictionary<string, object>)root["world"];
             foreach (var k in new[] { "rng", "rate_snapshot", "air_warned", "next_id", "next_seq", "seat_counter", "event_counts", "alerts", "projectiles" }) wd.Remove(k);
             foreach (Dictionary<string, object> t in (List<object>)wd["teams"])
-                foreach (var k in new[] { "visible", "explored", "power_produced", "power_used", "rates", "stats", "unit_queues", "revealed", "last_active_at" }) t.Remove(k);
+                foreach (var k in new[] { "visible", "explored", "power_produced", "power_used", "rates", "stats", "unit_queues", "revealed", "last_active_at", "scatter" }) t.Remove(k);
             foreach (Dictionary<string, object> e in (List<object>)wd["entities"])
             {
                 foreach (var k in new[] { "fuel", "prev_pos", "path", "path_idx", "resume_order", "waypoints", "progress_pos", "landed", "stranded" }) e.Remove(k);

@@ -903,6 +903,34 @@ namespace Pez.Headless
             var p0 = open.Paths.NearestPassable(new Int2(20, 20)); var p1 = open.Paths.NearestPassable(new Int2(59, 59));
             Check(p1.X == 79 - p0.X && p1.Y == 79 - p0.Y, $"the nearest open tile to a blocked spot is mirrored too ({p0} and {p1})");
 
+            // A route between two points and the route between their half-turned images: of equally short ways round the rock, one
+            // was taken by scan order (the first found), so the seat at one end of the map went round by the left and the other by the
+            // right, and the two arrived ticks apart. They are searched in an order that turns with the problem now.
+            var rocky = new World(2, 1, 80);
+            Array.Clear(rocky.Map.Tiles, 0, rocky.Map.Tiles.Length);
+            var layout = new Random(5);
+            for (int k = 0; k < 14; k++)
+            {
+                int rx = layout.Next(12, 60), ry = layout.Next(12, 60), len = layout.Next(2, 9); bool across = layout.Next(2) == 0;
+                for (int i = 0; i < len; i++)
+                {
+                    int tx = across ? rx + i : rx, ty = across ? ry : ry + i;
+                    rocky.Map.Tiles[rocky.Map.Idx(tx, ty)] = Terrain.Rock; rocky.Map.Tiles[rocky.Map.Idx(79 - tx, 79 - ty)] = Terrain.Rock;
+                }
+            }
+            int routes = 0, parted = 0;
+            for (int k = 0; k < 200; k++)
+            {
+                var from = new Vec2(layout.Next(4, 76) + 0.5f, layout.Next(4, 76) + 0.5f); var to = new Vec2(layout.Next(4, 76) + 0.5f, layout.Next(4, 76) + 0.5f);
+                Vec2 Turn(Vec2 v) => new Vec2(80f - v.X, 80f - v.Y);
+                if (!rocky.Map.Passable((int)from.X, (int)from.Y) || !rocky.Map.Passable((int)to.X, (int)to.Y)) continue;
+                var route = rocky.Paths.Find(from, to); var twin = rocky.Paths.Find(Turn(from), Turn(to));
+                if (route == null || twin == null) continue;
+                routes++;
+                if (route.Count != twin.Count || route.Zip(twin, (a, b) => Vec2.Dist(Turn(a), b)).Any(d => d > 1e-3f)) parted++;
+            }
+            Check(routes >= 150 && parted * 100 <= routes * 15, $"a route and its half-turned twin go the same way round the rock ({parted} of {routes} differ; it was a third)");
+
             var (mw, _) = (MirroredBases(), 0);
             foreach (var d in mw.Derricks.ToList()) mw.Remove(d);
             var da = mw.SpawnStructure(-1, "derrick", new Int2(32, 46), 1f); var db = mw.SpawnStructure(-1, "derrick", new Int2(46, 32), 1f); // equally far from both seats
@@ -923,37 +951,75 @@ namespace Pez.Headless
             Check(Vec2.Dist(goals[1], new Vec2(80f - goals[0].X, 80f - goals[0].Y)) < 0.5f && goals[0].X > 0 && Vec2.Dist(goals[0], goals[1]) > 5f,
                   $"and their first waves to different, mirrored corners ({goals[0]} and {goals[1]})");
 
+            // A friendly in a moving vehicle's way steps aside to the side it is on, not to the side its id's parity picks.
+            var (stepped, steppedTurned, stood) = SteppingAside();
+            Check(Vec2.Dist(stepped, stood) > 0.8f && stepped.Y > stood.Y - 0.01f && Vec2.Dist(stepped, steppedTurned) < 0.3f,
+                  $"a rifleman in a friendly tank's way steps to the side he is on, and so does his half-turned twin (to {stepped}, and {steppedTurned} turned back; he stood at {stood})");
+
             // Fights. Two equal laser troopers in range of each other trade volleys every 1.4 s, and the one that acts first in the tick
             // lands the killing shot before the other's turn, so which seat wins is whose turn comes first. The turns alternate with the
             // tick: start the same fight a tick apart and the other seat must win.
             int a0 = Stationary(8), a1 = Stationary(9);
             Check(a0 >= 0 && a1 >= 0 && a0 != a1, $"two equal troopers in a stand-off: seat {a0} wins when the first volley falls on tick 8 and seat {a1} on tick 9, not the same seat's every time");
 
-            // The opening units stand a little off the middle of their doorway, by a scatter. It was drawn from one shared stream
+            // New units stand a little off the middle of their doorway, by a scatter. It was drawn from one stream shared by the teams
             // that began from the same place every game, so seat 0 always got the same luck (its truck on the near side of the
-            // ore, say) and seat 1 the next; now both seats draw alike, measured along the door and across it.
+            // ore, say) and seat 1 the next, and later units went to whichever team's came first in the tick; now each team draws
+            // from its own stream, measured along the door and across it, so its n-th unit is scattered as every other team's n-th is.
             int apartGames = 0, scattered = 0; float widest = 0f;
             for (int seed = 1; seed <= 20; seed++)
             {
                 var w = new World(2, seed, 80);
-                var seen = new List<float>[2] { new List<float>(), new List<float>() };
-                for (int t = 0; t < 2; t++)
+                var hqs = new[] { 0, 1 }.Select(t => w.Owned(t).First(e => e.Def.Key == "command_center")).ToArray();
+                // How far off the middle of its tile each unit stands, along its door and across it.
+                List<float> Offsets(int t, IEnumerable<Entity> units)
                 {
-                    var hq = w.Owned(t).First(e => e.Def.Key == "command_center");
-                    var door = new Vec2(MathF.Round(MathF.Cos(w.DoorFacing(hq))), MathF.Round(MathF.Sin(w.DoorFacing(hq))));
-                    foreach (var u in w.Owned(t).Where(e => !e.IsStructure))
+                    var door = new Vec2(MathF.Round(MathF.Cos(w.DoorFacing(hqs[t]))), MathF.Round(MathF.Sin(w.DoorFacing(hqs[t]))));
+                    var list = new List<float>();
+                    foreach (var u in units)
                     {
-                        var v = u.Pos - hq.Center;
+                        var v = u.Pos - hqs[t].Center;
                         float along = v.X * door.X + v.Y * door.Y, abeam = v.X * -door.Y + v.Y * door.X;
-                        seen[t].Add(along - MathF.Round(along)); seen[t].Add(abeam - MathF.Round(abeam)); // off the middle of its tile, in tiles
+                        list.Add(along - MathF.Round(along)); list.Add(abeam - MathF.Round(abeam));
                     }
+                    return list;
                 }
+                var seen = new List<float>[2] { Offsets(0, w.Owned(0).Where(e => !e.IsStructure).ToList()), Offsets(1, w.Owned(1).Where(e => !e.IsStructure).ToList()) };
+                // ...and the units that come later, seat 1's first each round: each seat's n-th is scattered like the other's n-th.
+                var later = new List<Entity>[2] { new List<Entity>(), new List<Entity>() };
+                for (int round = 0; round < 3; round++)
+                    for (int t = 1; t >= 0; t--) later[t].Add(w.SpawnUnit(t, "rifleman", hqs[t]));
+                seen[0].AddRange(Offsets(0, later[0])); seen[1].AddRange(Offsets(1, later[1]));
                 float apart = seen[0].Zip(seen[1], (a, b) => MathF.Abs(a - b)).Max();
                 widest = MathF.Max(widest, apart);
                 if (apart > 1e-3f) apartGames++;
                 if (seen[0].Any(x => MathF.Abs(x) > 0.02f)) scattered++;
             }
-            Check(apartGames == 0 && scattered >= 19, $"both seats' opening units are scattered alike about their door ({apartGames} of 20 games differ, by up to {widest:0.000} tiles; {scattered} of 20 are scattered at all)");
+            Check(apartGames == 0 && scattered >= 19, $"both seats' units, the opening ones and later ones, are scattered alike about their door ({apartGames} of 20 games differ, by up to {widest:0.000} tiles; {scattered} of 20 are scattered at all)");
+        }
+
+        /// <summary>
+        /// A tank driving through a friendly rifleman standing a little to one side of its line, and the same thing turned half a circle
+        /// (the rifleman's id one apart in parity, which used to choose the side it stepped to): where each rifleman ends up.
+        /// </summary>
+        static (Vec2 made, Vec2 turned, Vec2 start) SteppingAside()
+        {
+            var w = new World(2, 1, 80);
+            var m = w.Map;
+            Array.Clear(m.Tiles, 0, m.Tiles.Length); Array.Clear(m.Ore, 0, m.Ore.Length); Array.Clear(m.OreBase, 0, m.OreBase.Length);
+            m.Deep.Clear(); m.FieldsChanged();
+            foreach (var u in w.Entities.Where(e => !e.IsStructure).ToList()) w.Remove(u);
+            var hq0 = w.Owned(0).First(e => e.IsStructure); var hq1 = w.Owned(1).First(e => e.IsStructure);
+            Entity At(Entity e, Vec2 p) { e.Pos = e.PrevPos = e.GuardPos = p; return e; }
+            var tank0 = At(w.SpawnUnit(0, "heavy_tank", hq0), new Vec2(30f, 40f));
+            var foot0 = At(w.SpawnUnit(0, "rifleman", hq0), new Vec2(34f, 40.25f));
+            w.Remove(w.SpawnUnit(0, "rifleman", hq0)); // (so the two riflemen's ids differ in parity)
+            var tank1 = At(w.SpawnUnit(1, "heavy_tank", hq1), new Vec2(50f, 40f));
+            var foot1 = At(w.SpawnUnit(1, "rifleman", hq1), new Vec2(46f, 39.75f));
+            w.SetOrder(tank0, Order.Move, new Vec2(50f, 40f)); w.SetOrder(tank1, Order.Move, new Vec2(30f, 40f));
+            w.SetOrder(foot0, Order.Idle, foot0.Pos); w.SetOrder(foot1, Order.Idle, foot1.Pos);
+            for (int i = 0; i < 6 * World.TickRate; i++) w.Step();
+            return (foot0.Pos, new Vec2(80f - foot1.Pos.X, 80f - foot1.Pos.Y), new Vec2(34f, 40.25f));
         }
 
         /// <summary>
