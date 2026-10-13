@@ -1722,6 +1722,23 @@ namespace Pez.Headless
             foreach (var u in tanksA.Skip(3)) { u.Pos = u.PrevPos = u.GuardPos = new Vec2(hqA.Center.X + 50f, hqA.Center.Y + 50f); }
             Sent(wa, tanksA, new SimpleAI(0));
             Check(tanksA.All(u => u.Order == Order.AttackMove), "the attacking AI still sends everyone");
+
+            // A threat at a remote outpost with no army near it doesn't hide one at the base: the tanks there answer that one.
+            var wt = new World(2, 3, 80);
+            var hqT = wt.Owned(0).First(e => e.Def.Key == "command_center");
+            var post = wt.SpawnStructure(0, "outpost", new Int2(40, 40), 1f);
+            var farFoe = wt.SpawnUnit(1, "rifleman", post); // (first in the entity list, so the first threat found)
+            farFoe.Pos = farFoe.PrevPos = farFoe.GuardPos = new Vec2(post.Center.X + 5f, post.Center.Y);
+            var tanksT = Enumerable.Range(0, 6).Select(_ => wt.SpawnUnit(0, "light_tank", hqT)).ToList();
+            var nearFoe = wt.SpawnUnit(1, "rifleman", hqT);
+            nearFoe.Pos = nearFoe.PrevPos = nearFoe.GuardPos = new Vec2(hqT.Center.X + 9f, hqT.Center.Y);
+            foreach (var u in wt.Owned(0).Where(e => !e.IsStructure)) { wt.SetOrder(u, Order.Idle, u.Pos); u.GuardPos = u.Pos; }
+            for (int i = 0; i < 2 * World.TickRate; i++) wt.Step(); // (both foes in sight before the AI first looks)
+            foreach (var u in tanksT) { wt.SetOrder(u, Order.Idle, u.Pos); u.GuardPos = u.Pos; }
+            var aiT = new SimpleAI(0, passive: true);
+            for (int i = 0; i < 3 * World.TickRate && !tanksT.Any(u => u.Order == Order.AttackMove); i++) { aiT.Update(wt); if (!tanksT.Any(u => u.Order == Order.AttackMove)) wt.Step(); } // (looked at the moment the AI answers, before the tanks move)
+            Check(Vec2.Dist(post.Center, hqT.Center) > 30f && tanksT.All(u => u.Order == Order.AttackMove && Vec2.Dist(u.OrderPos, nearFoe.Pos) < 3f),
+                  $"an enemy at a remote outpost with no army near it doesn't stop the tanks answering the one by the base ({tanksT.Count(u => u.Order == Order.AttackMove && Vec2.Dist(u.OrderPos, nearFoe.Pos) < 3f)} of {tanksT.Count} sent to it; outpost {Vec2.Dist(post.Center, hqT.Center):0} tiles off)");
         }
 
         /// <summary>
@@ -1799,6 +1816,31 @@ namespace Pez.Headless
             float farthest = 0;
             AiRun(w5, ai5, 60, () => { foreach (var e in trucks5.Where(e => e.Order == Order.Harvest)) farthest = Math.Max(farthest, Vec2.Dist(e.OrderPos, hq5.Center)); });
             Check(farthest <= World.LeashDist, $"and none of its idle trucks is sent to it (the farthest harvest order was {farthest:0} tiles from the base)");
+
+            // A field that straddles the reach boundary is still worked at its fair tiles, by a truck more than 80 tiles away: the ore nearest
+            // the root is out of reach by the free corner, the ore 4 tiles the other way is in reach.
+            var w6 = new World(2, 3, 128);
+            var ai6 = new SimpleAI(0, passive: true);
+            var hq6 = w6.Owned(0).First(e => e.Def.Key == "command_center");
+            for (int i = 0; i < w6.Map.Ore.Length; i++) w6.Map.Ore[i] = 0;
+            for (int i = 0; i < 5; i++) w6.SpawnUnit(0, "mining_truck", hq6);
+            var site6 = w6.Map.Spawns[2];
+            int ox = (int)(site6.X - 39.5f), row = (int)site6.Y;
+            var outpost6 = w6.SpawnStructure(0, "outpost", new Int2(ox, row - 1), 1f); // 38.5 tiles from the corner's site
+            for (int x = ox + 30; x <= ox + 36; x++)
+            {
+                int i = w6.Map.Idx(x, row);
+                w6.Map.Tiles[i] = Terrain.Dirt; w6.Map.OreBase[i] = x == ox + 34 ? 300 : 100; w6.Map.OreBaseType[i] = Map.Iron;
+                if (x == ox + 30 || x == ox + 36) { w6.Map.Ore[i] = 100; w6.Map.OreType[i] = Map.Iron; } // (the root, ox+34, and the tiles by it are mined out)
+            }
+            w6.Map.FieldsChanged();
+            Array.Fill(w6.Teams[0].Explored, true);
+            var fairTile = new Vec2(ox + 30.5f, row + 0.5f); var farTile = new Vec2(ox + 36.5f, row + 0.5f);
+            Check(Vec2.Dist(new Vec2(ox + 34.5f, row + 0.5f), outpost6.Center) <= World.LeashDist && Vec2.Dist(farTile, outpost6.Center) > World.LeashDist && Vec2.Dist(farTile, site6) < 24f && Vec2.Dist(fairTile, hq6.Center) > 80f,
+                  "(set up: a field whose root is in reach of an outpost; its ore at one end is out of reach by the corner's site, at the other in reach; 80 tiles from the trucks)");
+            Vec2? sentTo = null;
+            AiRun(w6, ai6, 30, () => { foreach (var e in w6.Owned(0).Where(e => e.IsHarvester && e.Order == Order.Harvest && Vec2.Dist(e.OrderPos, hq6.Center) > 30f)) sentTo = e.OrderPos; });
+            Check(sentTo.HasValue && Vec2.Dist(sentTo.Value, fairTile) < 1.5f, $"the truck is sent to the tile in reach ({(sentTo.HasValue ? sentTo.Value.ToString() : "none")}; the tile in reach is at {fairTile})");
         }
 
         static void AiRefineries()

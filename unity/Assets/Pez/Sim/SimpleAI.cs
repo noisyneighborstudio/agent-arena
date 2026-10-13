@@ -308,9 +308,9 @@ namespace Pez.Sim
             // The ore tile a truck sent to a field would really mine: `harvest x,y` takes the nearest live ore of the kind within 12 tiles of the
             // point, which need not be at the field's root. One that is not by an enemy base it knows of (a truck choosing for itself keeps
             // HostileOreRadius from those, World.UpdateHarvester's Safe, and a coordinate harvest would not); null if there is none.
-            Vec2? SafeOreNear(Vec2 at, int ore)
+            Vec2? SafeOreNear(Vec2 at, int ore, System.Func<Vec2, bool> also = null) // (`also`: a further test of the tile's centre)
             {
-                var tile = w.Map.NearestOre(at, 12, tt => !foes.Any(h => Vec2.Dist(h, tt.Center) < World.HostileOreRadius), ore, t.StartPos); // (equally near tiles: as this base's own trucks choose them)
+                var tile = w.Map.NearestOre(at, 12, tt => !foes.Any(h => Vec2.Dist(h, tt.Center) < World.HostileOreRadius) && (also == null || also(tt.Center)), ore, t.StartPos); // (equally near tiles: as this base's own trucks choose them)
                 return tile.HasValue ? tile.Value.Center : (Vec2?)null;
             }
             var fields = KnownFields(w, t);
@@ -467,7 +467,7 @@ namespace Pez.Sim
                     var near = w.Map.NearestOre(tr.Pos, 80, !Passive ? null : (System.Func<Int2, bool>)(tt => Fair(tt.Center) && !foes.Any(h => Vec2.Dist(h, tt.Center) < World.HostileOreRadius)), type, t.StartPos);
                     Vec2? goal = Passive && near.HasValue ? near.Value.Center : (Vec2?)null;
                     if (!near.HasValue && tr.Order == Order.Idle)
-                        goal = fields.Where(f => f.type == type && f.ore >= 100 && Reached(f.at)).OrderBy(f => System.MathF.Round(Vec2.Dist(f.at, tr.Pos), 2)).ThenByDescending(f => Rightward(f.at)).Select(f => SafeOreNear(f.at, type)).FirstOrDefault(p => p.HasValue && Fair(p.Value));
+                        goal = fields.Where(f => f.type == type && f.ore >= 100 && Reached(f.at)).OrderBy(f => System.MathF.Round(Vec2.Dist(f.at, tr.Pos), 2)).ThenByDescending(f => Rightward(f.at)).Select(f => SafeOreNear(f.at, type, Fair)).FirstOrDefault(p => p.HasValue);
                     if (goal.HasValue) Do(w, "type", "harvest", "units", new[] { tr.Id }, "ore", Defs.Ores[type], "x", goal.Value.X, "y", goal.Value.Y);
                     else if (drifted || (Passive && tr.Order != Order.Idle && tr.HarvestType != type)) Do(w, "type", "stop", "units", new[] { tr.Id }); // (no fair ore of the new kind: not left on the old kind, and not sent to unfair ore either; it looks again every 20 s)
                     else if (!Passive) Do(w, "type", "harvest", "units", new[] { tr.Id }, "ore", Defs.Ores[type]);
@@ -672,13 +672,32 @@ namespace Pez.Sim
             // units within HouseDefenceReach of a threat answer it. Sending the whole army across the map after trucks left both armies parked in
             // the contested middle, shooting every truck sent to mine there: #87.)
             bool Harmless(Entity e) => Passive && !e.IsArmed && !e.Def.Engineer && !e.Def.LaysMines;
-            var threat = w.Entities.FirstOrDefault(e => !e.Dead && e.Team != team && e.Team >= 0 && !e.IsStructure && !Harmless(e) && w.IsVisibleTo(team, e) &&
-                                                        structures.Any(s => s.Def.Key != "derrick" && Vec2.Dist(e.Pos, s.Center) < 10));
-            if (threat != null)
+            bool IsThreat(Entity e) => !e.Dead && e.Team != team && e.Team >= 0 && !e.IsStructure && !Harmless(e) && w.IsVisibleTo(team, e) &&
+                                       structures.Any(s => s.Def.Key != "derrick" && Vec2.Dist(e.Pos, s.Center) < 10);
+            if (Passive)
             {
-                foreach (var u in army.Where(u => (u.Order == Order.Idle || u.Order == Order.Move) && u.Def.Weapon.CanHit(threat.Def) && (!Passive || Vec2.Dist(u.Pos, threat.Pos) <= HouseDefenceReach)))
-                    w.SetOrder(u, Order.AttackMove, threat.Pos);
-                return;
+                // Each defender within reach answers the nearest threat it can hit: a threat at an outpost with no army near it is left,
+                // and one at the base is still answered.
+                var threats = w.Entities.Where(IsThreat).ToList();
+                if (threats.Count > 0)
+                {
+                    foreach (var u in army.Where(u => u.Order == Order.Idle || u.Order == Order.Move))
+                    {
+                        var target = threats.Where(x => u.Def.Weapon.CanHit(x.Def) && Vec2.Dist(u.Pos, x.Pos) <= HouseDefenceReach).OrderBy(x => Vec2.Dist(u.Pos, x.Pos)).FirstOrDefault();
+                        if (target != null) w.SetOrder(u, Order.AttackMove, target.Pos);
+                    }
+                    return;
+                }
+            }
+            else
+            {
+                var threat = w.Entities.FirstOrDefault(IsThreat);
+                if (threat != null)
+                {
+                    foreach (var u in army.Where(u => (u.Order == Order.Idle || u.Order == Order.Move) && u.Def.Weapon.CanHit(threat.Def)))
+                        w.SetOrder(u, Order.AttackMove, threat.Pos);
+                    return;
+                }
             }
 
             // ---- Offense: waves at known structures, else toward the nearest unexplored corner.
