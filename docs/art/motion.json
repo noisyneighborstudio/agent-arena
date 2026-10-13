@@ -270,17 +270,35 @@
   "key": "airfield",
   "kind": "structure",
   "role": "Builds and rearms aircraft.",
-  "mechanics": "The lift node starts at y=\u22120.6 and rises to 0 to present each new aircraft (1.2 s). Landing aircraft descend onto the lift, which lowers 0.6 for rearming (3 s) and rises again. The runway lights chase toward \u2212Z at 3 Hz during takeoff.",
+  "mechanics": "The lift (deck flush in a collar with the team landing ring, in the middle of the runway) is where new and landing aircraft are. While an aircraft is in this airfield's queue the approach lights (approach_0..4: four amber chevrons pointing \u2212Z and a threshold bar) glow a steady low amber and the tower radar (radar) turns at 120\u00b0/s (40\u00b0/s idle, eased between). 1.5 s before the aircraft is done the lift goes down its well (\u22120.6 in 1.2 s, eased); when it's done the aircraft stands on the deck and rides it up (0.7 s, eased), then lifts off with its usual spawn ease. If the lift wasn't sent down (another airfield's queue, a fogged view) the aircraft just lifts off the deck. From 2 s before until 1.5 s after a launch the approach lights chase toward \u2212Z (a sweep every 0.5 s) and the tower beacon blinks at 2 Hz. Low power: the lift and radar run at half speed, the chase sweeps once a second, every glow is halved and the beacon blinks every 3 s. The windsock (windsock) turns about its pole to point downwind and droops as the wind drops.",
   "nodes": {
    "lift": {
     "down_y": -0.6,
-    "rise_s": 1.2,
-    "lower_s": 0.8
+    "lower_s": 1.2,
+    "rise_s": 0.7,
+    "lead_s": 1.5,
+    "ease": "smoothstep"
+   },
+   "radar": {
+    "axis": "Y",
+    "idle_deg_s": 40,
+    "producing_deg_s": 120
+   },
+   "approach": {
+    "chase": "\u2212Z",
+    "sweep_s": 0.5,
+    "from_s": -2.0,
+    "to_s": 1.5
+   },
+   "windsock": {
+    "mode": "downwind",
+    "droop_deg": "65 calm to 10 in wind"
    }
   },
-  "idle": "Tower beacon blinks every 1.5 s.",
+  "idle": "The lights are dark, the radar turns at 40\u00b0/s, the tower beacon blinks once every 1.5 s and the windsock follows the wind.",
   "produces": [
    "gunship",
+   "transport_chopper",
    "stealth_bomber"
   ],
   "emerge": "Rises out of its pad in stages; nothing appears instantly. stage_0 (pad) lifts from y=-0.15 to 0 during build progress 0\u201310%. stage_1, stage_2 and stage_3 each start at local y = -(stage height) and rise to 0 with ease-out cubic over progress 10\u201345%, 45\u201375% and 75\u201395%. The opaque terrain and pad hide whatever is still below ground. stage_3 ends with a 4% Y-scale overshoot that settles in 0.15 s (spring-loaded). Functional nodes (turret, spinner, door, lift) come last, at 95\u2013100%: a turret rises 0.3 out of its housing, then a spinner spins up from 0 rpm.",

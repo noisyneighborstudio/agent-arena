@@ -397,8 +397,10 @@ namespace Pez.Sim
             Item("Factory roll-out", "lamps blink, vents puff, door rolls up, the unit eases out of the dark bay; looping", 4, 4);
             Produce(Bldg(Yellow, "barracks", 11, 4), Producer.Barracks, new[] { "rifleman", "rocket_soldier", "medic", "laser_trooper", "engineer", "sniper", "commando" });
             Item("Barracks roll-out", "lamps, vent and door as infantry march out; looping", 11, 4);
-            Produce(Bldg(Yellow, "airfield", 18, 4), Producer.Airfield, new[] { "gunship", "transport_chopper", "stealth_bomber", "long_range_drone", "reaper_drone" });
-            Item("Airfield launch", "the lift raises each new aircraft; looping", 18, 4);
+            var airfield = Bldg(Yellow, "airfield", 18, 4);
+            Produce(airfield, Producer.Airfield, new[] { "gunship", "transport_chopper", "stealth_bomber", "long_range_drone", "reaper_drone" });
+            airfield.Rally = airfield.Center + new Vec2(0f, -14f); // aircraft fly out of the shot before they're cleared away
+            Item("Airfield launch", "approach lights chase, the lift goes down and brings each new aircraft up, which lifts off; looping", 18, 4);
             Bldg(Yellow, "power_plant", 25, 4);
             Bldg(Yellow, "power_plant", 31, 4);
             Item("Lemon's power plants", "powered: steady cores and steam under load", 28, 4);
@@ -483,6 +485,19 @@ namespace Pez.Sim
             }
             Bldg(Blue, "fusion_reactor", 34, 10);
             Bldg(Green, "command_center", 34, 3);
+            // An airfield launching on low power: half-speed lift and radar, a stuttering chase. Its aircraft are cleared
+            // away a few seconds after they're up.
+            var field = Bldg(Green, "airfield", 40, 3);
+            Produce(field, Producer.Airfield, new[] { "gunship", "transport_chopper" });
+            field.Rally = field.Center + new Vec2(0f, -14f); // they fly off out of the shot before they're cleared
+            var up = new Dictionary<int, float>();
+            holds.Add(() =>
+            {
+                foreach (var e in w.Entities)
+                    if (!e.Dead && e.Team == Green && e.IsAir && !up.ContainsKey(e.Id) && Vec2.Dist(e.Pos, field.Center) < 6f) up[e.Id] = T;
+                foreach (var kv in up.Where(kv => T - kv.Value > 6f).ToList()) { var e = w.Get(kv.Key); if (e != null && !e.Dead) w.Remove(e); up.Remove(kv.Key); }
+            });
+            Item("Low-power airfield (Lime)", "an aircraft every ~5 s: the lift goes down and brings it up at half speed, the approach lights chase once a second at half glow", 40, 3);
             Item("Powered (Blueberry)", "power plant cores glow with the load, steady steam; consumers at full light and speed", 16, 10, 9);
             Item("Low power (Lime)", "plant cores flicker at 4 Hz with dropouts, steam sputters; consumers dimmed to half, machinery at half speed", 16, 3, 9);
         }

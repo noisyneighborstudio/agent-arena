@@ -53,6 +53,7 @@ namespace Pez.View
             public GunWorks Gun;         // gun turret: the revolver drum, the recoil spring and the spent wrappers
             public RadarWorks Radar;     // radar dome: the search antenna's sweep and the beacon
             public BarracksWorks Bunks;  // barracks: the soldier dispenser (case, head, spit-out) and the flag
+            public AirfieldWorks Field;  // airfield: the lift, the approach lights, the tower and the windsock
             public bool GlowHidden;
             public Sheen Sheen;          // newcomer protection: the sheen over its parts (null when its team isn't protected)
             public Renderer[] Halos;     // power plant: the light rising out of its open stacks      // the neutral "last seen" glow is applied (a stream render of fogged enemy state)
@@ -874,6 +875,7 @@ namespace Pez.View
                     (v.Bunks ??= BarracksWorks.For(rig.Model, e.Team, e.Id)).Tick(next, tp, tT, unit, Time.deltaTime);
                     Fx.Audience = null;
                 }
+                if (e.Def.Key == "airfield" && e.IsComplete && e.Team >= 0) (v.Field ??= AirfieldWorks.For(rig.Model, rig.Motion, e.Id)).Tick(World, e, SeesState(e, PovTeam), Time.deltaTime);
                 if (World.Decaying(e) && Time.time >= v.DustNext)
                 {
                     // The match's decay stage: grit crumbles off the roof every few seconds.
@@ -1462,12 +1464,15 @@ namespace Pez.View
                             var producer = OpenDoorNear(ev.Team, ev.Pos, 3f, 1.4f);
                             if (producer != null)
                             {
-                                if (def2.IsAir && producer.E.Def.Key == "airfield") { producer.Rig.Motion.SnapLiftDown(); producer.Rig.Motion.SetLiftUp(true); }
+                                // An aircraft rides the airfield's lift up and lifts off from its deck (AirfieldWorks).
+                                bool onLift = def2.IsAir && producer.E.Def.Key == "airfield";
+                                if (onLift && producer.Field == null) { producer.Rig.Motion.SnapLiftDown(); producer.Rig.Motion.SetLiftUp(true); }
                                 // Start at the door (south face) and roll out to where the sim placed it.
                                 var c = producer.E.Center;
                                 // From 0.6 inside the door (hidden in the dark bay) when the model has one.
                                 var door = producer.Rig.HasModel ? PezMotion.FindDeep(producer.Rig.Model.transform, "door") : null;
-                                tv2.SpawnFrom = def2.IsAir ? W(c, 0.2f)
+                                tv2.SpawnFrom = onLift && producer.Field != null ? producer.Field.Board(tv2)
+                                              : def2.IsAir ? W(c, 0.2f)
                                               : producer.Bunks is { HasExit: true } ? producer.Bunks.Exit // where it stood up after its tuck and roll
                                               : door != null ? new Vector3(door.position.x, 0f, door.position.z + 0.6f)
                                               : W(new Vec2(c.X, producer.E.Origin.Y + 0.3f));

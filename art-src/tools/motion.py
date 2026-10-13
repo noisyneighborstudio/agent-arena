@@ -203,9 +203,16 @@ STRUCTURES = [
  S('fusion_reactor', 'High-output power.', "The spinner (magenta core and its inner ring) spins at 45 rpm and tumbles slowly, rotating 10°/s on X. "
    "Under high load it spins up to 120 rpm and the ring emission rises. Destroyed: before collapsing, the core shrinks to 0 over 0.5 s and fires a large magenta shockwave effect.",
    dict(spinner=dict(axis='Y', idle_rpm=45, active_rpm=120, spinup_s=2.0, tumble_x_deg_s=10)), "Core spins and tumbles."),
- S('airfield', 'Builds and rearms aircraft.', "The lift node starts at y=−0.6 and rises to 0 to present each new aircraft (1.2 s). "
-   "Landing aircraft descend onto the lift, which lowers 0.6 for rearming (3 s) and rises again. The runway lights chase toward −Z at 3 Hz during takeoff.",
-   dict(lift=dict(down_y=-.6, rise_s=1.2, lower_s=.8)), "Tower beacon blinks every 1.5 s.", ['gunship', 'stealth_bomber']),
+ S('airfield', 'Builds and rearms aircraft.', "The lift (deck flush in a collar with the team landing ring, in the middle of the runway) is where new and landing aircraft are. "
+   "While an aircraft is in this airfield's queue the approach lights (approach_0..4: four amber chevrons pointing −Z and a threshold bar) glow a steady low amber "
+   "and the tower radar (radar) turns at 120°/s (40°/s idle, eased between). 1.5 s before the aircraft is done the lift goes down its well (−0.6 in 1.2 s, eased); "
+   "when it's done the aircraft stands on the deck and rides it up (0.7 s, eased), then lifts off with its usual spawn ease. If the lift wasn't sent down "
+   "(another airfield's queue, a fogged view) the aircraft just lifts off the deck. From 2 s before until 1.5 s after a launch the approach lights chase toward −Z "
+   "(a sweep every 0.5 s) and the tower beacon blinks at 2 Hz. Low power: the lift and radar run at half speed, the chase sweeps once a second, every glow is halved "
+   "and the beacon blinks every 3 s. The windsock (windsock) turns about its pole to point downwind and droops as the wind drops.",
+   dict(lift=dict(down_y=-.6, lower_s=1.2, rise_s=.7, lead_s=1.5, ease='smoothstep'), radar=dict(axis='Y', idle_deg_s=40, producing_deg_s=120),
+        approach=dict(chase='−Z', sweep_s=.5, from_s=-2.0, to_s=1.5), windsock=dict(mode='downwind', droop_deg='65 calm to 10 in wind')),
+   "The lights are dark, the radar turns at 40°/s, the tower beacon blinks once every 1.5 s and the windsock follows the wind.", ['gunship', 'transport_chopper', 'stealth_bomber']),
  S('radar_dome', 'Sees 16 tiles, finds stealth units in that range and warns of enemy aircraft out to 28.',
    "The search antenna on top of the dome (the spinner; its beam looks toward the feed marker on the horn) is driven by RadarWorks, not by its rpm: "
    "while the base has power it sweeps clockwise at 12 rpm. When a new contact comes into this dome's range (an enemy aircraft on radar within 28 tiles, "

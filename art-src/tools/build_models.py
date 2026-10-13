@@ -725,17 +725,97 @@ def S_fusion_reactor():
 
 def S_airfield():
     a = Asset('airfield', 'structures', 3)
-    a.box('pad', 2.92, .06, 2.92, y=.03)
-    a.box('dark', .9, .02, 2.8, x=-.6, y=.07)
-    for z in (-1.1, -.5, .1, .7, 1.2): a.box('bone', .1, .02, .3, x=-.6, y=.08, z=z)
-    lf = a.node('lift', a.key, (.75, 0, -.6))    # aircraft lift: rises from y=-0.6 when an aircraft is built
-    a.cyl('kraft', .42, .06, y=.04, node=lf)
-    a.torus('team', .45, .04, y=.08, node=lf)
-    a.cyl('cream', .25, 1.2, x=.9, y=.66, z=.85)
-    a.cyl('glass', .32, .25, x=.9, y=1.38, z=.85)
-    a.cyl('team', .34, .06, x=.9, y=1.53, z=.85)
+    a.box('pad', 2.92, .06, 2.92, y=.03)                          # flush pad: Plinths keeps its height (the lift sits in it)
+    # The runway runs along Z through the middle; aircraft leave toward -Z (south). Bone edge lines, piano keys at the
+    # north end, a centre dash; the south half carries the approach lights instead.
+    a.box('dark', 1.2, .02, 2.86, y=.07)
+    for sx in (-1, 1): a.box('bone', .035, .012, 2.72, x=sx * .53, y=.083)
     for sx in (-1, 1):
-        for z in (-1.38, 1.38): a.box('amber', .06, .06, .06, x=-.6 + sx * .48, y=.1, z=z)
+        for k in range(4): a.box('bone', .055, .012, .26, x=sx * (.12 + k * .1), y=.083, z=1.22)
+    a.box('bone', .04, .012, .18, y=.083, z=.84)
+    # The aircraft lift in the middle of the runway (where the sim puts new and landing aircraft): a cream collar with the
+    # team landing ring round a dark well, and the lift deck in it, flush. Before a launch the deck goes down the well
+    # (PezMotion's lift, -0.6) and comes back up with the new aircraft on it.
+    a.cyl('dark', .45, .01, y=.085, sections=32)
+    a.rev('cream', [(.45, .06), (.6, .06), (.6, .11), (.56, .15), (.45, .15)], sections=32)
+    a.torus('team', .525, .035, y=.15)
+    lf = a.node('lift', a.key, (0, 0, 0))
+    a.cyl('foil', .43, .05, y=.12, node=lf, sections=32)
+    for sx in (-1, 1): a.box('smoke', .06, .012, .3, x=sx * .1, y=.148, node=lf)       # the H
+    a.box('smoke', .14, .012, .06, y=.148, node=lf)
+    # Approach lights: four amber chevrons down the south half pointing the way out, and a threshold bar at the end. Each
+    # row is its own node (approach_N) so AirfieldWorks can chase them toward -Z when an aircraft is about to launch.
+    rows = (-.74, -.9, -1.06, -1.22)
+    for i, z in enumerate(rows):
+        n = a.node(f'approach_{i}', 'stage_0', (0, .085, z))
+        for sx in (-1, 1):
+            a.box('amber', .2, .016, .05, x=sx * .075, y=.008, z=.035, node=n, rot=ry(-sx * 32))
+    n = a.node(f'approach_{len(rows)}', 'stage_0', (0, .085, -1.37))
+    for k in range(5): a.box('amber', .14, .016, .035, x=-.4 + k * .2, y=.008, node=n)
+    # The control tower in the back corner: a cream ops block with a team band, a smoke stem with team grip slats, a glass
+    # cab and a team roof. On the roof a radar bar (radar) turns, with the amber beacon on its mast.
+    tx, tz = -1.0, .85
+    a.node('stage_3', a.key)
+    a.box('cream', .7, .32, .8, x=tx, y=.22, z=tz)
+    a.box('team', .74, .07, .84, x=tx, y=.33, z=tz)
+    a.box('dark', .03, .18, .22, x=tx + .355, y=.15, z=tz - .15)       # door to the runway
+    a.box('smoke', .32, .86, .32, x=tx, y=.8, z=tz)
+    for k in range(3): a.box('team', .22, .05, .03, x=tx, y=.62 + k * .14, z=tz - .165)
+    a.cyl('cream', .32, .05, x=tx, y=1.255, z=tz, sections=24)
+    a.cyl('glass', .28, .2, x=tx, y=1.38, z=tz, sections=8)
+    for k in range(8):
+        t = (k + .5) * math.pi / 4
+        a.box('smoke', .025, .2, .025, x=tx + .27 * math.cos(t), y=1.38, z=tz + .27 * math.sin(t))
+    a.cyl('cream', .31, .04, x=tx, y=1.5, z=tz, sections=24)
+    a.box('team', .62, .17, .66, x=tx, y=1.605, z=tz)                  # the roof
+    a.box('team', .5, .05, .08, x=tx, y=1.54, z=tz - .36)              # its visor
+    rd = a.node('radar', 'stage_3', (tx, 1.69, tz))
+    a.cyl('steel', .02, .14, y=.07, node=rd, sections=10)
+    a.box('smoke', .36, .035, .05, y=.13, node=rd)
+    a.box('team', .05, .06, .06, x=.18, y=.13, node=rd)
+    a.sphere('amber', .035, y=.18, node=rd, sub=1)
+    # A fuel tank in the front corner, styled as a Pez candy roll (cream, team wrapper, foil twists at both ends), on steel
+    # saddles.
+    fx, fz = -1.02, -.62
+    for z in (-.25, .25): a.box('steel', .3, .16, .06, x=fx, y=.14, z=fz + z)
+    a.cyl('cream', .19, .62, x=fx, y=.32, z=fz, axis='z', sections=24)
+    a.cyl('team', .195, .36, x=fx, y=.32, z=fz, axis='z', sections=24)
+    for s in (-1, 1):
+        c = trimesh.creation.revolve(np.array([(0, 0), (.185, 0), (.06, .09), (.1, .14), (0, .14)], float), sections=12)
+        c.apply_transform(axis_rot('y')); c.apply_transform(rx(90 * s)); c.apply_translation((fx, .32, fz + s * .31)); a.add(None, 'foil', c)
+    # A Quonset hangar down the +x side, its open end to the south: a foil arch with team ribs, a team frame round the dark
+    # doorway, and a cream back wall.
+    def half_cyl(m, r, L, x, y, z, n=16):
+        th = np.linspace(0, math.pi, n + 1)
+        ring = np.c_[r * np.cos(th), r * np.sin(th)]
+        v = np.vstack([np.c_[ring[:, 0], ring[:, 1], np.full(n + 1, -L / 2)], np.c_[ring[:, 0], ring[:, 1], np.full(n + 1, L / 2)]])
+        f = []
+        for i in range(n):
+            f += [[i, i + 1, n + 2 + i], [i, n + 2 + i, n + 1 + i]]
+        for i in range(1, n):
+            f += [[0, i + 1, i], [n + 1, n + 1 + i, n + 2 + i]]
+        f += [[0, n + 1, n], [n, n + 1, 2 * n + 1]]                    # the floor
+        h = trimesh.Trimesh(v, np.array(f)); h.fix_normals(); h.apply_translation((x, y, z)); a.add(None, m, h)
+    hx, hz0, hz1 = 1.02, -.3, 1.15
+    L = hz1 - hz0; hzc = (hz0 + hz1) / 2
+    half_cyl('foil', .33, L - .04, hx, .06, hzc)
+    for k in range(3): half_cyl('team', .345, .05, hx, .06, hz0 + .4 + k * (L - .55) / 2)
+    half_cyl('team', .35, .06, hx, .06, hz0 + .01)
+    half_cyl('dark', .26, .02, hx, .06, hz0 - .015)
+    half_cyl('cream', .32, .02, hx, .06, hz1 - .01)
+    # The windsock on the front corner in team and cream wrapper stripes (windsock, on its pole top): AirfieldWorks points
+    # it downwind and lets it droop when the wind drops.
+    wx, wz = 1.02, -1.02
+    a.cyl('cream', .09, .06, x=wx, y=.09, z=wz, sections=16)
+    a.cyl('steel', .018, .78, x=wx, y=.5, z=wz, sections=8)
+    ws = a.node('windsock', 'stage_1', (wx, .86, wz))
+    for k in range(4):
+        r0, r1 = .06 - k * .008, .06 - (k + 1) * .008
+        c = trimesh.creation.revolve(np.array([(r0 - .012, k * .09), (r0, k * .09), (r1, (k + 1) * .09), (r1 - .012, (k + 1) * .09)], float), sections=16)
+        c.apply_transform(axis_rot('y')); c.apply_transform(rz(-90)); c.apply_translation((.03, 0, 0)); a.add(ws, 'team' if k % 2 == 0 else 'bone', c)
+    t = trimesh.creation.torus(major_radius=.06, minor_radius=.01, major_sections=16, minor_sections=6)
+    t.apply_transform(ry(90)); t.apply_translation((.03, 0, 0)); a.add(ws, 'steel', t)
+    a.strut('steel', (0, 0, 0), (.03, 0, 0), .012, node=ws)
     return a
 
 def S_radar_dome():
