@@ -2755,6 +2755,36 @@ namespace Pez.Headless
             t1d.Add("copper", 3000); t1d.Add("iron_ore", 1000); t1d.Add("steel", 2000); t1d.Add("copper_ore", -t1d.Amount("copper_ore"));
             AiRun(w1d, ai1d, 60);
             Check(RigsOf(w1d) == 0, $"but with copper ore lying within reach of its drop-offs, the same wait is for the trucks to answer and no rig is bought yet ({RigsOf(w1d)} rigs)");
+            // Copper that lies in reach but only within a protected newcomer's reserved ore (World.OreReserved) is copper no truck may mine: the lack is
+            // starved at once. The same base with that field's seat protection over waits, as above.
+            (World w, SimpleAI ai, Team t) Reserved(bool protectedSeat)
+            {
+                var (x, xai) = AiWorld();
+                var xt = x.Teams[0];
+                AiBase(x, "power_plant", "mining_refinery", "barracks", "factory", "power_plant", "electronics_plant", "gun_turret");
+                foreach (var d in x.Map.Deep.OrderBy(d => Vec2.Dist(d.Pos, xt.StartPos)).Take(2)) { d.Type = Map.Copper; xt.Surveyed.Add(d.Id); xt.Zones[d.Id] = new ZoneFlag { ZoneId = d.Id, FlaggedBy = 0, FlaggedAt = x.Time }; }
+                var m = x.Map;
+                var copperTiles = Enumerable.Range(0, m.Ore.Length).Where(i => m.Ore[i] > 0 && m.OreType[i] == Map.Copper).ToList();
+                var near = copperTiles.OrderBy(i => Vec2.Dist(new Vec2(i % m.W + .5f, i / m.W + .5f), xt.StartPos)).First();
+                var seat = new Vec2(near % m.W + .5f, near / m.W + .5f);
+                foreach (int i in copperTiles) if (Vec2.Dist(new Vec2(i % m.W + .5f, i / m.W + .5f), seat) > World.ReservedOreRadius - 1f) m.Ore[i] = 0; // (this field is all the copper there is)
+                x.Teams[1].StartPos = seat; // (the newcomer's base is by it)
+                x.Teams[1].ProtectedUntil = protectedSeat ? x.Time + 100000f : 0f;
+                xt.Add("copper", 3000); xt.Add("iron_ore", 1000); xt.Add("steel", 2000); xt.Add("copper_ore", -xt.Amount("copper_ore"));
+                return (x, xai, xt);
+            }
+            var (w1e, ai1e, t1e) = Reserved(true);
+            Check(w1e.OreReserved(Int2.Of(w1e.Map.NearestOre(w1e.Teams[1].StartPos, 12, null, Map.Copper).Value.Center), 0), "(the only copper in reach is reserved for the protected newcomer)");
+            AiRun(w1e, ai1e, 60);
+            Check(RigsOf(w1e) >= 1, $"a refinery waiting on copper ore whose only copper in reach is a protected newcomer's reserved field is starved at once ({RigsOf(w1e)} rigs bought in 60 s)");
+            var (w1f, ai1f, t1f) = Reserved(false);
+            AiRun(w1f, ai1f, 60);
+            Check(RigsOf(w1f) == 0, $"but with that protection over the trucks can mine it and the wait stands ({RigsOf(w1f)} rigs)");
+            // The same for a field an enemy base it knows of stands by (its trucks keep World.HostileOreRadius from that).
+            var (w1g, ai1g, t1g) = Reserved(false);
+            t1g.KnownEnemyStructures[901] = ("command_center", Int2.Of(w1g.Teams[1].StartPos), 1);
+            AiRun(w1g, ai1g, 60);
+            Check(RigsOf(w1g) >= 1, $"and so is a lack whose only copper in reach lies by an enemy base it knows of ({RigsOf(w1g)} rigs bought in 60 s)");
             var (w1b, ai1b, t1b, d1b) = Dry(1);
             d1b[0].Type = Map.Copper; d1b[1].Type = Map.Copper;
             t1b.Add("copper", 3000); t1b.Add("iron_ore", 1000); t1b.Add("steel", 1000); t1b.Add("copper_ore", -t1b.Amount("copper_ore"));

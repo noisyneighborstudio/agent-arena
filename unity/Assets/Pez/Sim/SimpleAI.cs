@@ -259,10 +259,15 @@ namespace Pez.Sim
             var drops = structures.Where(s => s.IsComplete && s.Def.DropOff).Select(s => s.Center).ToList();
             bool Reached(Vec2 p) => drops.Any(dp => Vec2.Dist(dp, p) <= World.LeashDist);
             var fields = KnownFields(w, t);
-            bool surfaceCopper = fields.Any(f => f.type == Map.Copper && f.ore >= 100 && Reached(f.at));
+            var foes = t.KnownEnemyStructures.Values.Where(k => k.team >= 0 && k.key != "derrick").Select(k => k.origin.Center).ToList();
+            // (Copper the trucks may really mine: a field in reach with a live copper tile near its root that no newcomer's protection reserves
+            // (World.OreReserved) and no enemy base it knows of is within HostileOreRadius of, as a truck choosing for itself would pick.)
+            bool? surfaceCopperMemo = null;
+            bool SurfaceCopper() => surfaceCopperMemo ??= fields.Any(f => f.type == Map.Copper && f.ore >= 100 && Reached(f.at) &&
+                w.Map.NearestOre(f.at, 12, tt => !w.OreReserved(tt, team) && !foes.Any(h => Vec2.Dist(h, tt.Center) < World.HostileOreRadius), Map.Copper, t.StartPos).HasValue);
             bool lackOver = has[Map.Copper] > 0 || OnHand(Map.Copper) >= CopperLow;
             copperStarvedSince = Lacking(Map.Copper) ? (copperStarvedSince < 0f ? w.Time : copperStarvedSince) : lackOver ? -1f : copperStarvedSince;
-            bool Starved(int ore) => ore == Map.Copper ? Lacking(ore) && (RawShort("copper_ore") && !surfaceCopper || copperStarvedSince >= 0f && w.Time - copperStarvedSince >= CopperStarveHold) : Lacking(ore);
+            bool Starved(int ore) => ore == Map.Copper ? Lacking(ore) && (RawShort("copper_ore") && !SurfaceCopper() || copperStarvedSince >= 0f && w.Time - copperStarvedSince >= CopperStarveHold) : Lacking(ore);
             bool Needy(int type) => type >= Map.Crystal && OreWanted(type) && t.Amount(Defs.Ores[type]) < 100;
             // The flagged zones worth a rig, best first (iron and copper it's short of, then the rest, nearest first), and the ones no
             // rig of its own is heading for. (Copper zones only while starved of copper: a deep mine pumps 4 ore a second until its deposit
@@ -315,7 +320,6 @@ namespace Pez.Sim
             // Trucks work a field on their own only within a leash of a finished drop-off (World.LeashDist); past it they go where they
             // are sent. When the ore within the leash runs thin, the next outpost goes to the nearest field, or the nearest base site
             // nobody holds (the rules call empty corners expansion sites), beyond it; trucks then go there (see the trucks below).
-            var foes = t.KnownEnemyStructures.Values.Where(k => k.team >= 0 && k.key != "derrick").Select(k => k.origin.Center).ToList();
             bool NearFoe(Vec2 p) => foes.Any(f => Vec2.Dist(f, p) < EnemyBerth);
             // The ore tile a truck sent to a field would really mine: `harvest x,y` takes the nearest live ore of the kind within 12 tiles of the
             // point, which need not be at the field's root. One that is not by an enemy base it knows of (a truck choosing for itself keeps
