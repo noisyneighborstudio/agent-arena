@@ -166,15 +166,18 @@ namespace Pez.Sim
         /// <summary>Protection covers a newcomer's base, not the contested middle: a derrick it holds can be shot and captured like anyone's.</summary>
         public bool Shielded(Entity t) => t.Def.Key != "derrick" && IsProtected(t.Team);
 
-        /// <summary>The centres of other teams' structures (derricks aside), which a protected team's trucks keep HostileOreRadius from:
-        /// the mirror of OreReserved, so protection can't be used to mine an enemy's home field untouched. Empty when the team isn't protected.</summary>
+        /// <summary>The centres of the enemy structures a team knows of (derricks aside, as in the trucks' own Safe rule), which a protected
+        /// team's trucks keep HostileOreRadius from: the mirror of OreReserved, so protection can't be used to mine an enemy's home field
+        /// untouched. Only what the team has seen counts, so a refusal tells it nothing about fogged buildings. Empty when the team isn't
+        /// protected; built once a tick per team.</summary>
         static readonly List<Vec2> NoBases = new List<Vec2>();
+        readonly Dictionary<int, (int tick, List<Vec2> bases)> barredBases = new Dictionary<int, (int, List<Vec2>)>();
         public List<Vec2> BarredBases(int team)
         {
             if (!IsProtected(team)) return NoBases;
-            var bases = new List<Vec2>();
-            foreach (var s in Entities)
-                if (!s.Dead && s.IsStructure && s.Team >= 0 && s.Team != team && s.Def.Key != "derrick") bases.Add(s.Center);
+            if (barredBases.TryGetValue(team, out var c) && c.tick == Tick) return c.bases;
+            var bases = Teams[team].KnownEnemyStructures.Values.Where(k => k.team >= 0 && k.team != team && k.key != "derrick").Select(k => k.origin.Center).ToList();
+            barredBases[team] = (Tick, bases);
             return bases;
         }
 
@@ -1320,7 +1323,7 @@ namespace Pez.Sim
             Near(victim.Center, 10f, nearHelp);
             foreach (var u in nearHelp)
             {
-                if (u.Dead || u.Team != victim.Team || u.IsStructure || !u.IsArmed || u.IsCarried || u.Order != Order.Idle) continue;
+                if (u.Dead || u.Team != victim.Team || u.IsStructure || !u.IsArmed || u.IsCarried || u.Order != Order.Idle || IsProtected(u.Team)) continue; // protected units don't retaliate
                 if (!u.Def.Weapon.CanHit(attacker.Def)) continue;
                 if (Vec2.Dist(u.Pos, victim.Center) > 10f) continue;
                 var home = u.GuardPos;
@@ -1495,6 +1498,7 @@ namespace Pez.Sim
         /// <summary>An enemy ground unit on top of a mine sets it off: splash damage, then it's gone.</summary>
         void MineTick(Entity m)
         {
+            if (IsProtected(m.Team)) return; // a protected team's mines are inert until protection ends
             Entity trigger = null;
             Near(m.Pos, 1.5f, nearMine);
             foreach (var o in nearMine)
@@ -1588,6 +1592,7 @@ namespace Pez.Sim
 
         void FireAt(Entity e, Entity t)
         {
+            if (IsProtected(e.Team) && Showcase == null) return; // newcomer protection: a protected team can't attack, whatever order its units are on
             e.LastFiredAt = Time;
             var dir = t.Center - e.Pos;
             float want = dir.Angle;

@@ -1761,7 +1761,12 @@ namespace Pez.Headless
             // Mining: an enemy's home field, two tiles from its base, is off limits to a protected truck; its own is still its own.
             var theirs = w.Map.NearestOre(hq0.Center, 12).Value;
             var truck = At(w.SpawnUnit(t.Id, "mining_truck", hq), theirs.Center + new Vec2(0, 1));
+            // Only what the newcomer has seen counts: an unseen base tells it nothing (no refusal), a seen one bars the field.
             var r = Commands.Execute(w, t.Id, Cmd("type", "harvest", "units", new[] { truck.Id }, "x", theirs.Center.X, "y", theirs.Center.Y));
+            Check(Ok(r), $"ordered to mine by a base it hasn't seen, the truck isn't refused (the order leaks nothing): {Said(r)}");
+            Run(w, 1);
+            Check(w.Teams[t.Id].KnownEnemyStructures.Values.Any(k => k.team == 0), "the truck then sees the enemy base");
+            r = Commands.Execute(w, t.Id, Cmd("type", "harvest", "units", new[] { truck.Id }, "x", theirs.Center.X, "y", theirs.Center.Y));
             Check(!Ok(r) && r["error"].ToString().Contains("newcomer protection") && r["error"].ToString().Contains("another team's structures"),
                   $"a protected truck ordered to mine by an enemy base is refused, with why: {Said(r)}");
             int fieldBefore = w.Map.Ore[w.Map.Idx(theirs.X, theirs.Y)];
@@ -1799,6 +1804,18 @@ namespace Pez.Headless
             Check(d.Hp < hp, "and hurt");
             w.Hurt(hq, 50, raider);
             Check(hq.Hp == hq.Def.MaxHp, "while its base is still untouchable");
+            // Protected units never shoot back, however they got the order: not on the alarm, not on a direct attack order.
+            var guard = At(w.SpawnUnit(t.Id, "heavy_tank", hq), d.Center + new Vec2(-3, 0));
+            var guard2 = At(w.SpawnUnit(t.Id, "heavy_tank", hq), d.Center + new Vec2(-3, 2));
+            raider.Hp = raider.Def.MaxHp;
+            w.Hurt(d, 10, raider);
+            Check(guard.Order != Order.Attack && guard.Order != Order.AttackMove, $"protected units nearby don't answer the alarm for a hit derrick (order {guard.Order})");
+            w.SetOrder(raider, Order.Idle, raider.Pos); // the founder only stands there; the derrick keeps its health for the capture below
+            w.SetOrder(guard2, Order.Attack, raider.Center, raider.Id);
+            Run(w, 10);
+            Check(raider.Hp == raider.Def.MaxHp && guard.Hp == guard.Def.MaxHp && guard2.Hp == guard2.Def.MaxHp,
+                  $"and a protected unit with a direct attack order fires nothing (raider {raider.Hp:0}/{raider.Def.MaxHp})");
+            w.Remove(guard); w.Remove(guard2);
             d.Hp = d.Def.MaxHp * 0.3f;
             var eng = At(w.SpawnUnit(0, "engineer", hq0), d.Center + new Vec2(1, 1));
             r = Commands.Execute(w, 0, Cmd("type", "capture", "units", new[] { eng.Id }, "target", d.Id));
