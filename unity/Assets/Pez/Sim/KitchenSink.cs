@@ -404,6 +404,10 @@ namespace Pez.Sim
             Bldg(Yellow, "power_plant", 25, 4);
             Bldg(Yellow, "power_plant", 31, 4);
             Item("Lemon's power plants", "powered: steady cores and steam under load", 28, 4);
+            // An optics lab that runs out of crystal for 8 s in every 20 (the hold runs after the economy, so the view sees it idle).
+            var lab = Bldg(Yellow, "optics_lab", 43, 4);
+            holds.Add(() => { if (T % 20f >= 12f) lab.Working = false; });
+            Item("Optics lab at work and idle", "12 s grinding (the dome tracks and slews, light through the prism onto the turning lathe, a lens popped out of the dispenser every 2 s), then 8 s out of crystal (light out, dome home, telescope parked); loops every 20 s", 43, 4);
 
             // The electronics plant's line runs for 12 s, then Lemon is out of copper for 8 s: the line parks, the reel's
             // copper runs down and the amber lamp blinks.

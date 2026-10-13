@@ -54,6 +54,7 @@ namespace Pez.View
             public RadarWorks Radar;     // radar dome: the search antenna's sweep and the beacon
             public BarracksWorks Bunks;  // barracks: the soldier dispenser (case, head, spit-out) and the flag
             public AirfieldWorks Field;  // airfield: the lift, the approach lights, the tower and the windsock
+            public OpticsWorks Optics;   // optics lab: the dome and telescope, the light through the prism, the lens dispenser
             public bool GlowHidden;
             public Sheen Sheen;          // newcomer protection: the sheen over its parts (null when its team isn't protected)
             public Renderer[] Halos;     // power plant: the light rising out of its open stacks      // the neutral "last seen" glow is applied (a stream render of fogged enemy state)
@@ -876,6 +877,7 @@ namespace Pez.View
                     Fx.Audience = null;
                 }
                 if (e.Def.Key == "airfield" && e.IsComplete && e.Team >= 0) (v.Field ??= AirfieldWorks.For(rig.Model, rig.Motion, e.Id)).Tick(World, e, SeesState(e, PovTeam), Time.deltaTime);
+                if (e.Def.Key == "optics_lab" && e.IsComplete && e.Team >= 0) (v.Optics ??= OpticsWorks.For(v.Rig.Model, e.Id)).Tick(e.Working, World.Teams[e.Team].LowPower, SeesState(e, PovTeam), Time.deltaTime);
                 if (World.Decaying(e) && Time.time >= v.DustNext)
                 {
                     // The match's decay stage: grit crumbles off the roof every few seconds.

@@ -194,17 +194,46 @@
   "key": "optics_lab",
   "kind": "structure",
   "role": "Turns crystal into lenses.",
-  "mechanics": "The spinner (prism) floats and turns at 20 rpm, bobbing \u00b10.04 on a 2 s sine. While producing, it speeds up to 60 rpm and casts cyan caustics on the dome.",
+  "mechanics": "An observatory that grinds lenses, driven by OpticsWorks from the sim's Working (it had crystal to grind) and its team's power. While it works, the team dome (head) tracks the sky at 3\u00b0/s and every 9 to 14 s slews 40\u2013120\u00b0 to a new star at 25\u00b0/s, the telescope (scope) nodding to a new height (\u221212\u00b0 to +8\u00b0) at 12\u00b0/s. The dome turns only through the 260\u00b0 arc that keeps the telescope 50\u00b0 clear of the dispenser's bearing either side (it reaches the dispenser within 29\u00b0), reversing at the arc's ends, and the telescope looks down (parks) only at home, so the barrel never passes through the dispenser, the hopper or the bench. The light (light, a cyan rod from the collimator on the drum) reaches out to the glass prism in 0.2 s, then the prism lights and fans it into three rays (rays) onto the lens blanks on the turntable (lathe), which turns at 80 rpm. Each lens finished (0.5 a second, the recipe's rate) pops out of the dispenser on the left, a Pez stem of lens candies: its team head (cap, hinged at the back) snaps open 40\u00b0 in 0.12 s, the top lens (candy) rises 0.1 into the throat with a cyan glint and slips out over the lip, then the head drops shut with a bounce while the stack (stack) pushes the next lens up 0.12 into its place (1.1 s in all). Out of crystal, the rays and then the light go out, the turntable coasts to a stop, the dome turns home at 20\u00b0/s the way it came and the telescope parks, pointing down, its objective lens dim. On low power everything runs at half speed (a lens every 4 s), the dome turns in jerks, and the light and rays brown out: a 4 Hz flicker with a dropout every 2.5 s. A lab remembered under fog shows dark and still.",
   "nodes": {
-   "spinner": {
+   "head": {
     "axis": "Y",
-    "idle_rpm": 20,
-    "active_rpm": 60,
-    "spinup_s": 1.0,
-    "bob": 0.04
+    "track_deg_per_s": 3,
+    "slew_deg_per_s": 25,
+    "slew_every_s": "9\u201314",
+    "arc_deg": 260,
+    "clear_of_dispenser_deg": 50
+   },
+   "scope": {
+    "axis": "X",
+    "nod_deg": "\u221212 to +8",
+    "parked_deg": 40
+   },
+   "light": {
+    "mode": "scale_on_off",
+    "s": 0.2
+   },
+   "rays": {
+    "mode": "scale_on_off",
+    "s": 0.2
+   },
+   "lathe": {
+    "axis": "Y",
+    "active_rpm": 80,
+    "idle_rpm": 0
+   },
+   "cap": {
+    "mode": "hinge_pop",
+    "open_deg": 40,
+    "open_s": 0.12,
+    "every_s": 2
+   },
+   "stack": {
+    "mode": "push_up",
+    "step": 0.12
    }
   },
-  "idle": "Prism rotates and bobs.",
+  "idle": "Dome home, telescope parked, light out, turntable still.",
   "produces": [],
   "emerge": "Rises out of its pad in stages; nothing appears instantly. stage_0 (pad) lifts from y=-0.15 to 0 during build progress 0\u201310%. stage_1, stage_2 and stage_3 each start at local y = -(stage height) and rise to 0 with ease-out cubic over progress 10\u201345%, 45\u201375% and 75\u201395%. The opaque terrain and pad hide whatever is still below ground. stage_3 ends with a 4% Y-scale overshoot that settles in 0.15 s (spring-loaded). Functional nodes (turret, spinner, door, lift) come last, at 95\u2013100%: a turret rises 0.3 out of its housing, then a spinner spins up from 0 rpm.",
   "remove": "Destroyed: shake \u00b10.03 for 0.4 s, then poof: a soft cream cloud bursts out of the building while it swells 8% for 0.06 s and pops to nothing in 0.14 s. A rubble decal fades in under it. Sold: dust at the footprint corners, then the same poof. Nothing sinks into the ground."

@@ -185,8 +185,22 @@ STRUCTURES = [
         reel=dict(axis='Z', deg_per_s=40),
         fan=dict(axis='Y', rpm='90 (45 on low power)')),
    "Starved: parked, panes at standby, the amber lamp blinking; the fan still turns while it has power."),
- S('optics_lab', 'Turns crystal into lenses.', "The spinner (prism) floats and turns at 20 rpm, bobbing ±0.04 on a 2 s sine. While producing, it speeds up to 60 rpm and casts cyan caustics on the dome.",
-   dict(spinner=dict(axis='Y', idle_rpm=20, active_rpm=60, spinup_s=1.0, bob=.04)), "Prism rotates and bobs."),
+ S('optics_lab', 'Turns crystal into lenses.', "An observatory that grinds lenses, driven by OpticsWorks from the sim's Working (it had crystal to grind) and its team's power. "
+   "While it works, the team dome (head) tracks the sky at 3°/s and every 9 to 14 s slews 40–120° to a new star at 25°/s, the telescope (scope) nodding to a new height (−12° to +8°) at 12°/s. The dome turns only through the 260° arc that keeps the telescope 50° clear of the dispenser's bearing either side (it reaches the dispenser within 29°), reversing at the arc's ends, and the telescope looks down (parks) only at home, so the barrel never passes through the dispenser, the hopper or the bench. "
+   "The light (light, a cyan rod from the collimator on the drum) reaches out to the glass prism in 0.2 s, then the prism lights and fans it into three rays (rays) onto the lens blanks "
+   "on the turntable (lathe), which turns at 80 rpm. Each lens finished (0.5 a second, the recipe's rate) pops out of the dispenser on the left, a Pez stem of lens candies: "
+   "its team head (cap, hinged at the back) snaps open 40° in 0.12 s, the top lens (candy) rises 0.1 into the throat with a cyan glint and slips out over the lip, "
+   "then the head drops shut with a bounce while the stack (stack) pushes the next lens up 0.12 into its place (1.1 s in all). "
+   "Out of crystal, the rays and then the light go out, the turntable coasts to a stop, the dome turns home at 20°/s the way it came and the telescope parks, pointing down, its objective lens dim. "
+   "On low power everything runs at half speed (a lens every 4 s), the dome turns in jerks, and the light and rays brown out: a 4 Hz flicker with a dropout every 2.5 s. "
+   "A lab remembered under fog shows dark and still.",
+   dict(head=dict(axis='Y', track_deg_per_s=3, slew_deg_per_s=25, slew_every_s='9–14', arc_deg=260, clear_of_dispenser_deg=50),
+        scope=dict(axis='X', nod_deg='−12 to +8', parked_deg=40),
+        light=dict(mode='scale_on_off', s=.2), rays=dict(mode='scale_on_off', s=.2),
+        lathe=dict(axis='Y', active_rpm=80, idle_rpm=0),
+        cap=dict(mode='hinge_pop', open_deg=40, open_s=.12, every_s=2),
+        stack=dict(mode='push_up', step=.12)),
+   "Dome home, telescope parked, light out, turntable still."),
  S('enrichment_plant', 'Turns uranium into plasma feedstock.', "Each centrifuge's acid bands chase upward (emission scrolls) while producing. Ambient centrifuge vibration is 0.003 at 25 Hz.",
    {}, "Bands breathe slowly."),
  S('composite_foundry', 'Makes stealth composite.', "Steel and crystal in at the back, composite out at the front. One press cycle for every composite the sim makes: "

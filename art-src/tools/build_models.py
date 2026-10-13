@@ -129,6 +129,28 @@ class Asset:
             f += [[a, off + a, off + b], [a, off + b, b]]
         mesh = trimesh.Trimesh(v, np.array(f), process=False); mesh.fix_normals()
         self.add(node, m, mesh)
+    def tube(self, m, path, r, node=None, sides=8):
+        """A round pipe of radius r along a polyline (rails, pipes, cables), its rings mitred at the bends."""
+        path = np.asarray(path, float); n = len(path)
+        seg = np.diff(path, axis=0); seg /= np.linalg.norm(seg, axis=1)[:, None]
+        tan = np.vstack([seg[:1], seg[:-1] + seg[1:], seg[-1:]]); tan /= np.linalg.norm(tan, axis=1)[:, None]
+        ref = np.array([0, 1., 0]) if abs(tan[0][1]) < .9 else np.array([1., 0, 0])
+        out = [np.cross(tan[0], ref)]; out[0] /= np.linalg.norm(out[0])
+        for i in range(1, n):                                                   # carried along the path: no twist
+            o = out[-1] - tan[i] * np.dot(out[-1], tan[i]); out.append(o / np.linalg.norm(o))
+        out = np.array(out); up = np.cross(tan, out)
+        a = np.linspace(0, 2 * math.pi, sides, endpoint=False)
+        v = (path[:, None, :] + r * (np.cos(a)[None, :, None] * out[:, None, :] + np.sin(a)[None, :, None] * up[:, None, :])).reshape(-1, 3)
+        f = []
+        for i in range(n - 1):
+            for j in range(sides):
+                p0, p1 = i * sides + j, i * sides + (j + 1) % sides
+                f += [[p0, p1, p1 + sides], [p0, p1 + sides, p0 + sides]]
+        v = np.vstack([v, path[0], path[-1]]); c0, c1 = len(v) - 2, len(v) - 1
+        for j in range(sides):
+            f += [[c0, (j + 1) % sides, j], [c1, (n - 1) * sides + j, (n - 1) * sides + (j + 1) % sides]]
+        mesh = trimesh.Trimesh(v, np.array(f)); mesh.fix_normals()
+        self.add(node, m, mesh)
     def octa(self, m, r, h, x=0, y=0, z=0, node=None):
         v = np.array([[r,0,0],[-r,0,0],[0,0,r],[0,0,-r],[0,h,0],[0,-h,0]], float)
         f = [[4,0,2],[4,2,1],[4,1,3],[4,3,0],[5,2,0],[5,1,2],[5,3,1],[5,0,3]]
@@ -593,12 +615,117 @@ def S_electronics_plant():
 
 def S_optics_lab():
     a = Asset('optics_lab', 'structures', 2); pad(a, 2)
-    a.cyl('cream', .85, .3, y=.23)
-    a.cyl('team', .87, .08, y=.4)
-    a.sphere('glass', .78, y=.3, sub=3, scale=(1, .9, 1), clip=True)
-    sp = a.node('spinner', a.key, (0, .85, 0))
-    a.octa('cyan', .16, .32, node=sp)
-    door(a, .3, .3, -.86, lights=False)
+    # Grinds crystal into lenses (Defs: 2 crystal -> 1 lens, 0.5/s; -40 power). An observatory drum with a turning team
+    # dome and its telescope; the light it gathers comes down the drum and out of a collimator on the front, through a
+    # glass prism that splits it into three rays grinding lens blanks on a turntable (the lathe). Crystal waits in a
+    # hopper on the right; finished lenses stack up in the dispenser on the left, a Pez stem whose team head flips back
+    # to give one out. OpticsWorks drives the moving parts: head (yaw), scope (pitch), light and rays (lit while it
+    # works), lathe (turns), stack, candy and cap (a lens dispensed every 2 s at full power).
+    for s in ('stage_1', 'stage_2', 'stage_3'): a.node(s, a.key)
+    dx, dz = -.18, .2
+    a.cyl('cream', .55, .52, x=dx, y=.34, z=dz, sections=20)
+    a.cyl('steel', .575, .04, x=dx, y=.6, z=dz, sections=20)                   # the dome's rail
+    for ang in (15, -105, -150):                                                # portholes
+        r = math.radians(ang)
+        a.cyl('dark', .055, .04, axis='x', rot=ry(-ang), x=dx + .55 * math.cos(r), y=.3, z=dz + .55 * math.sin(r), sections=8)
+    # The dome: the lab's team head, turning on its rail, its observing slit open from the rail to 70 degrees up and the
+    # telescope looking out of it (local +z).
+    hd = a.node('head', 'stage_3', (dx, .62, dz), rot=ry(-165))
+    R0, n, gap = .54, 36, 3                                                    # 10-degree segments; the slit is 3 wide
+    V = [(R0 * math.cos(math.radians(e)) * math.sin(math.radians(10 * k - 5 * gap)), R0 * math.sin(math.radians(e)), R0 * math.cos(math.radians(e)) * math.cos(math.radians(10 * k - 5 * gap)))
+         for e in range(0, 81, 10) for k in range(n)] + [(0, R0, 0)]
+    F = []
+    for r in range(9):
+        for k in range(n):
+            k1 = (k + 1) % n
+            if r < 7 and k < gap: continue                                      # the slit, centred on +z
+            if r < 8: F += [[r * n + k, r * n + k1, (r + 1) * n + k1], [r * n + k, (r + 1) * n + k1, (r + 1) * n + k]]
+            else: F.append([r * n + k, r * n + k1, 9 * n])
+    dome = trimesh.Trimesh(np.array(V), np.array(F), process=False)
+    flip = np.einsum('ij,ij->i', dome.face_normals, dome.triangles_center) < 0
+    F = np.array(F); F[flip] = F[flip][:, ::-1]
+    a.add(hd, 'team', trimesh.Trimesh(np.array(V), F))
+    ri = R0 - .025
+    inner = trimesh.creation.revolve(np.array([(ri * math.cos(math.radians(t)), ri * math.sin(math.radians(t))) for t in range(0, 91, 15)]), sections=16)
+    inner.apply_transform(axis_rot('y')); a.add(hd, 'dark', inner)          # the dark inside, seen through the slit
+    for sx in (-1, 1):                                                          # the slit's shutter rails
+        g = math.radians(5 * gap + 3) * sx
+        a.tube('steel', [(R0 * math.cos(math.radians(t)) * math.sin(g), R0 * math.sin(math.radians(t)) + .01, R0 * math.cos(math.radians(t)) * math.cos(g))
+                         for t in range(0, 75, 7)], .02, node=hd)
+    sc = a.node('scope', hd, (0, .22, .1), rot=rx(-34))
+    a.cyl('steel', .035, .26, axis='x', node=sc, sections=6)                    # trunnion
+    a.cyl('cream', .1, .9, z=.2, axis='z', node=sc, sections=12)
+    for z in (.3, .52): a.cyl('team', .11, .05, z=z, axis='z', node=sc, sections=12)
+    a.cyl('steel', .115, .16, z=.7, axis='z', node=sc, sections=12)             # dew shield
+    a.cyl('cyan', .09, .02, z=.77, axis='z', node=sc, sections=12)             # objective: lit while it observes
+    a.cyl('foil', .032, .24, y=.13, z=.42, axis='z', node=sc, sections=6)      # finder
+    for z in (.34, .5): a.strut('steel', (0, .09, z), (0, .12, z), .012, node=sc)
+    # The bench in front: a collimator out of the drum, the prism, and the lathe's turntable.
+    u = np.array([math.cos(math.radians(-45)), 0, math.sin(math.radians(-45))])
+    w = np.array([-u[2], 0, u[0]])
+    P0 = np.array([dx, 0, dz]) + .55 * u
+    def at(k, y, side=0.): q = P0 + k * u + side * w; return (q[0], y, q[2])
+    a.strut('steel', at(-.06, .36), at(.1, .36), .055, sections=10)
+    a.cyl('foil', .065, .04, axis='x', rot=ry(45), x=at(.1, 0)[0], y=.36, z=at(.1, 0)[2], sections=8)
+    a.box('cream', .32, .05, .7, rot=ry(-45), x=at(.42, 0)[0], y=.24, z=at(.42, 0)[2])     # the bench top
+    a.box('team', .34, .03, .72, rot=ry(-45), x=at(.42, 0)[0], y=.205, z=at(.42, 0)[2])
+    for k in (.14, .7):
+        a.cyl('steel', .04, .14, x=at(k, 0)[0], y=.14, z=at(k, 0)[2], sections=6)
+    qx, _, qz = at(.36, 0)
+    a.cyl('dark', .14, .02, x=qx, y=.275, z=qz, sections=3, rot=ry(20))        # the prism in its frame
+    a.cyl('glass', .13, .2, x=qx, y=.385, z=qz, sections=3, rot=ry(20))
+    a.cyl('dark', .14, .02, x=qx, y=.495, z=qz, sections=3, rot=ry(20))
+    bm = a.node('light', 'stage_1', at(.11, .36))
+    a.strut('cyan', (0, 0, 0), tuple(np.array(at(.31, .37)) - np.array(at(.11, .36))), .024, node=bm, sections=6)
+    ry_ = a.node('rays', 'stage_1', (qx, .37, qz))
+    a.cyl('cyan', .095, .16, y=.015, node=ry_, sections=3, rot=ry(20))           # the prism lit from inside
+    C = at(.68, 0)
+    a.cyl('steel', .06, .08, x=C[0], y=.29, z=C[2], sections=8)
+    for s_ in (-.1, 0, .1):
+        e = np.array(at(.68, .37, s_)) - np.array([qx, .37, qz])
+        a.strut('cyan', tuple(.12 * e / np.linalg.norm(e)), tuple(e), .013, node=ry_, sections=6)
+    lt = a.node('lathe', 'stage_1', (C[0], .34, C[2]))
+    a.cyl('cream', .17, .04, node=lt, sections=12)
+    a.cyl('team', .18, .025, y=-.025, node=lt, sections=12)
+    for k in range(4):
+        t = math.radians(90 * k + 45)
+        a.cyl('glass', .045, .02, x=.11 * math.cos(t), y=.03, z=.11 * math.sin(t), node=lt, sections=8)
+    a.cyl('steel', .025, .04, y=.035, node=lt, sections=6)
+    # Crystal hopper on the right, its chute running to the lathe.
+    hx, hz = -.58, -.55
+    for sx in (-1, 1):
+        for sz in (-1, 1): a.cyl('steel', .022, .32, x=hx + sx * .13, y=.24, z=hz + sz * .13, sections=6)
+    a.rev('cream', [(.06, .3), (.25, .58), (.25, .62), (.21, .62), (.05, .36), (.0, .36), (0, .3)], x=hx, z=hz, sections=20)
+    a.torus('team', .24, .035, x=hx, y=.62, z=hz)
+    for ox, oz, h, tilt in ((0, 0, .26, 0), (.09, .05, .2, 14), (-.08, .07, .18, -12), (.04, -.1, .2, 10), (-.09, -.05, .16, -16), (.12, -.06, .14, 20)):
+        c = trimesh.Trimesh([[.05, 0, 0], [-.05, 0, 0], [0, 0, .05], [0, 0, -.05], [0, h, 0], [0, -h * .4, 0]],
+                            [[4, 0, 2], [4, 2, 1], [4, 1, 3], [4, 3, 0], [5, 2, 0], [5, 1, 2], [5, 3, 1], [5, 0, 3]])
+        c.fix_normals(); c.apply_transform(rx(tilt) @ rz(-tilt) @ ry(tilt * 3)); c.apply_translation((hx + ox, .5, hz + oz)); a.add(None, 'cyan', c)   # crystal shards
+    a.tube('steel', [(hx, .3, hz), (hx + .25, .28, hz - .12), at(.68, .3, -.19)], .03)
+    # The dispenser: a lens Pez. A cream foot, the spring, a smoke stem open at the front with the lens candies stacked
+    # in it, and the team head on a hinge at the back, with a loupe for an eye.
+    S = np.array([.6, 0, .56])
+    rot = ry(-45)
+    def L(x, y, z): q = S + rot[:3, :3] @ np.array([x, y, z]); return (q[0], q[1], q[2])
+    a.cyl('cream', .2, .12, x=S[0], y=.14, z=S[2], sections=12)
+    a.cyl('team', .205, .04, x=S[0], y=.18, z=S[2], sections=12)
+    a.box('smoke', .26, .9, .06, rot=rot, x=L(0, 0, .1)[0], y=.65, z=L(0, 0, .1)[2])        # back
+    for sx in (-1, 1):
+        a.box('smoke', .05, .9, .2, rot=rot, x=L(sx * .13, 0, 0)[0], y=.65, z=L(sx * .13, 0, 0)[2])  # side rails
+        for k in range(5): a.box('smoke', .02, .03, .14, rot=rot, x=L(sx * .16, 0, 0)[0], y=.42 + k * .1, z=L(sx * .16, 0, 0)[2])  # grip ribs
+    a.coil('steel', .07, .012, .2, .3, 3, x=S[0], z=S[2])
+    st = a.node('stack', 'stage_2', (S[0], 0, S[2]))
+    for k in range(5): a.cyl('cyan', .085, .07, y=.36 + k * .12, node=st, sections=6)
+    cd = a.node('candy', 'stage_2', (S[0], .96, S[2]))
+    a.cyl('cyan', .085, .07, node=cd, sections=6)
+    cp = a.node('cap', 'stage_2', L(0, 1.1, .12), rot=rot)
+    a.box('team', .3, .2, .3, y=.1, z=-.13, node=cp)
+    a.box('team', .26, .07, .1, y=-.01, z=-.3, node=cp)                         # the snout over the throat
+    a.cyl('steel', .035, .3, axis='x', node=cp, sections=6)                    # hinge pin
+    a.cyl('foil', .075, .03, axis='z', y=.12, z=-.285, node=cp, sections=12)    # the loupe
+    a.cyl('cyan', .055, .02, axis='z', y=.12, z=-.3, node=cp, sections=12)
+    # The lens line: from the lathe round the left side to the dispenser's foot.
+    a.tube('steel', [at(.68, .3, .19), (.82, .17, -.3), (.82, .17, .3), (S[0] + .16, .17, S[2] - .06)], .03)
     return a
 
 def S_enrichment_plant():
