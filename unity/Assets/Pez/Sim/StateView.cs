@@ -578,8 +578,13 @@ namespace Pez.Sim
         ///     leaves trimmed alerts open.
         /// 36: the observation feed (/api/observe, Observations.cs): a team's fogged view as an event log with cursors; commands
         ///     get ids (cmd), the units they affected, and tracked outcomes; optional command-controller leases (/api/controller).
+        /// 37: the economy audit (#42): the stockpile spills however the last command center is lost and knocked-out teams
+        ///     leave salvage; one valuation (raw-ore mix); gifts (start and catch-up) are worth nothing; economy score excludes
+        ///     salvage; selling can't dodge losses or delete derricks; protection covers the base only; parallel production per
+        ///     building; cheaper fusion with partial output; upkeep 4% of steel price; regrowth by ore; bays face the ore; fair
+        ///     deep kits and neutral fields; invention pricing fixes; seat-symmetric placement, doors and tie-breaks.
         /// </summary>
-        public const int RulesVersion = 36;
+        public const int RulesVersion = 37;
 
         public static JObj Rules()
         {
