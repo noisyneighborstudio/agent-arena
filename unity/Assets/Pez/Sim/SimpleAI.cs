@@ -28,6 +28,7 @@ namespace Pez.Sim
         const float EnemyBerth = 30f; // an outpost site keeps this far from every enemy structure it knows of
         const float MaxExpansion = 170f; // and is no more than this far from its nearest drop-off
         const int MaxOutposts = 4; // outposts at once while the ore within reach is thin (two otherwise)
+        const float SiteClear = 18f; // in an open arena the outpost itself stands at least this far from any base site but its own: the 18 tiles the derricks keep
         const float SiteBerth = 24f; // in an open arena an outpost keeps this far from any base site but its own: the 18 tiles the derricks keep, and 6 for where it lands beside a field
 
         static readonly string[] BuildOrder =
@@ -271,18 +272,27 @@ namespace Pez.Sim
             bool NearFoe(Vec2 p) => foes.Any(f => Vec2.Dist(f, p) < EnemyBerth);
             var fields = KnownFields(w, t);
             bool homeThin = fields.Where(f => OreWanted(f.type) && Reached(f.at)).Sum(f => f.ore) < ThinOre;
-            Vec2? ExpansionSite()
+            // In an open arena the base sites nobody holds are kept for the players who join later (a newcomer takes a free site, and an
+            // outpost by it would pin them or use up the seat), and so is the ore there while they are protected: only neutral fields, then.
+            // (Every site but its own counts: it can't tell which of them a player holds.)
+            bool OnOthersGround(Vec2 p, float berth) => w.Open && w.Map.Spawns.Any(s => Vec2.Dist(s, t.StartPos) >= 20f && Vec2.Dist(s, p) < berth);
+            // Where an outpost for a site would really stand (the centre of its footprint, wherever placement finds open ground near the
+            // site), or null if that is no place for one: by an enemy it knows of, or on ground kept for a newcomer, however far the site is.
+            Vec2? DeploySpot(Vec2 site)
             {
-                Vec2? best = null; float bestScore = float.MaxValue;
-                // In an open arena the base sites nobody holds are kept for the players who join later (a newcomer takes a free site, and an
-                // outpost by it would pin them or use up the seat), and so is the ore there while they are protected: only neutral fields, then.
-                // (Every site but its own counts: it can't tell which of them a player holds.)
-                bool OnOthersGround(Vec2 p) => w.Open && w.Map.Spawns.Any(s => Vec2.Dist(s, t.StartPos) >= 20f && Vec2.Dist(s, p) < SiteBerth);
+                var spot = w.FindPlacement(team, "outpost", site, requireNear: false) ?? Int2.Of(site);
+                var at = new Vec2(spot.X + 1, spot.Y + 1);
+                return NearFoe(at) || OnOthersGround(at, SiteClear) ? (Vec2?)null : at;
+            }
+            // The spot to send the next outpost truck: the first of the sites, nearest first, that has a place to deploy.
+            Vec2? ExpansionSpot()
+            {
+                var sites = new List<(float score, Vec2 at)>();
                 void Consider(Vec2 at, float bonus)
                 {
-                    if (Reached(at) || NearFoe(at) || OnOthersGround(at)) return;
-                    float score = (drops.Count == 0 ? Vec2.Dist(at, t.StartPos) : drops.Min(dp => Vec2.Dist(dp, at))) - bonus; // a known field beats a guess
-                    if (score < bestScore && score + bonus <= MaxExpansion) { bestScore = score; best = at; }
+                    if (Reached(at) || NearFoe(at) || OnOthersGround(at, SiteBerth)) return;
+                    float d = drops.Count == 0 ? Vec2.Dist(at, t.StartPos) : drops.Min(dp => Vec2.Dist(dp, at));
+                    if (d <= MaxExpansion) sites.Add((d - bonus, at)); // (a known field beats a guess)
                 }
                 foreach (var f in fields) if (f.ore >= 400 && OreWanted(f.type)) Consider(f.at, 25f);
                 var middle = new Vec2(w.Map.W / 2f, w.Map.H / 2f);
@@ -296,11 +306,14 @@ namespace Pez.Sim
                     if (t.Explored[w.Map.Idx((int)at.X, (int)at.Y)] && !fields.Any(f => f.ore >= 200 && Vec2.Dist(f.at, at) < 14f)) continue; // seen, and nothing there
                     Consider(at, 0f);
                 }
-                return best;
+                foreach (var c in sites.OrderBy(x => x.score))
+                    if (DeploySpot(c.at) is Vec2 spot) return spot;
+                return null;
             }
-            bool outpostOnItsWay = mine.Any(e => e.Def.Key == "outpost_truck") || Queued("outpost_truck");
-            Vec2? expandTo = w.HasComplete(team, "electronics_plant") && !outpostOnItsWay && Count("outpost") < (homeThin ? MaxOutposts : 2) ? ExpansionSite() : null;
-            bool wantOutpost = expandTo.HasValue;
+            // (A truck standing about with nowhere to go isn't on its way anywhere: it must not hold back the scouting that finds a place.)
+            Vec2? spotNow = w.HasComplete(team, "electronics_plant") && Count("outpost") < (homeThin ? MaxOutposts : 2) ? ExpansionSpot() : null;
+            bool outpostOnItsWay = Queued("outpost_truck") || mine.Any(e => e.Def.Key == "outpost_truck" && (outpostTargets.ContainsKey(e.Id) || spotNow.HasValue));
+            bool wantOutpost = spotNow.HasValue && !outpostOnItsWay;
             // What it saves up for, so the army and the build order don't spend it as it arrives and the converters leave it alone:
             // the first two mines' rigs, or the surveyor that finds them. With the command center gone, the construction truck that
             // puts one back comes before any of that (1500 steel is never there if the army spends it as it comes in). With the ore
@@ -409,21 +422,29 @@ namespace Pez.Sim
             // ---- Expansion: claim remote ore fields with outposts (the plan is above: where, and whether the ore within reach is thin)
             if (wantOutpost && (saving == "outpost_truck" ? t.Missing(savingCost) == null : Affordable("outpost_truck")))
                 Do(w, "type", "train", "unit", "outpost_truck");
+            // A truck that gives up its destination goes home (to the nearest drop-off), not on towards what it was avoiding.
+            void SendHome(Entity truck)
+            {
+                if (drops.Count == 0) { w.SetOrder(truck, Order.Idle, truck.Pos); return; }
+                var home = drops.OrderBy(dp => Vec2.Dist(dp, truck.Pos)).First();
+                Do(w, "type", "move", "units", new[] { truck.Id }, "x", home.X, "y", home.Y);
+            }
             foreach (var ot in mine.Where(e => e.Def.Key == "outpost_truck"))
             {
-                // (A site that turns out to have an enemy base by it is given up: it looks again.)
-                if (outpostTargets.TryGetValue(ot.Id, out var was) && NearFoe(was)) outpostTargets.Remove(ot.Id);
+                // (A destination that has turned out to be no place for an outpost, an enemy base seen by it, is given up.)
+                bool gaveUp = false;
+                if (outpostTargets.TryGetValue(ot.Id, out var was) && (NearFoe(was) || OnOthersGround(was, SiteClear))) { outpostTargets.Remove(ot.Id); gaveUp = true; }
                 if (!outpostTargets.TryGetValue(ot.Id, out var goal))
                 {
-                    if (!(ExpansionSite() is Vec2 site)) continue;
-                    // Park beside the field, not on the ore.
-                    var spot = w.FindPlacement(team, "outpost", site, requireNear: false) ?? Int2.Of(site);
-                    goal = new Vec2(spot.X + 1, spot.Y + 1);
+                    if (!spotNow.HasValue) { if (gaveUp) SendHome(ot); continue; }
+                    goal = spotNow.Value;
                     outpostTargets[ot.Id] = goal;
                     Do(w, "type", "move", "units", new[] { ot.Id }, "x", goal.X, "y", goal.Y);
                 }
                 else if (ot.Order == Order.Idle)
                 {
+                    // (Not where it has stopped if that is by an enemy or on ground kept for a newcomer: it is not where it was heading.)
+                    if (NearFoe(ot.Pos) || OnOthersGround(ot.Pos, SiteClear)) { outpostTargets.Remove(ot.Id); SendHome(ot); continue; }
                     var r = Do(w, "type", "deploy", "units", new[] { ot.Id });
                     if (!(r["ok"] is bool ok && ok))
                     {
@@ -444,12 +465,16 @@ namespace Pez.Sim
                 foreach (var drone in drones.Where(e => e.Order == Order.Idle))
                 {
                     Vec2? unseen = null; float nearest = float.MaxValue, range = 0.7f * w.Map.W; // (a drone's tank is 1.5 map widths: there and back)
-                    for (int y = 12; y < w.Map.H; y += 24)
-                        for (int x = 12; x < w.Map.W; x += 24)
-                        {
-                            var p = new Vec2(x, y); float d = Vec2.Dist(p, drone.Pos);
-                            if (d < nearest && d <= range && d >= 6f && !t.Explored[w.Map.Idx(x, y)] && !NearFoe(p)) { nearest = d; unseen = p; }
-                        }
+                    foreach (int grid in new[] { 24, 4 }) // the coarse grid first, then every 4th tile, so no patch is missed between the samples
+                    {
+                        for (int y = grid / 2; y < w.Map.H; y += grid)
+                            for (int x = grid / 2; x < w.Map.W; x += grid)
+                            {
+                                var p = new Vec2(x, y); float d = Vec2.Dist(p, drone.Pos);
+                                if (d < nearest && d <= range && d >= 6f && !t.Explored[w.Map.Idx(x, y)] && !NearFoe(p)) { nearest = d; unseen = p; }
+                            }
+                        if (unseen.HasValue) break;
+                    }
                     if (unseen.HasValue) Do(w, "type", "move", "units", new[] { drone.Id }, "x", unseen.Value.X, "y", unseen.Value.Y);
                 }
             }

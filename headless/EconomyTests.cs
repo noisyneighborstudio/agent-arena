@@ -1861,6 +1861,33 @@ namespace Pez.Headless
             Check(drone != null && !w3.Owned(0).Any(e => e.Def.Key == "outpost_truck") && drone.Order == Order.Move && Vec2.Dist(drone.OrderPos, new Vec2(36, 12)) < 3f,
                   $"with nowhere known to expand to it trains a recon drone and sends it to the ground it hasn't seen ({(drone != null ? drone.OrderName + " to " + drone.OrderPos : "no drone")})");
 
+            // A truck under way learns of enemy structures at the only places it could go: it turns back, instead of driving on at them, and
+            // having nowhere to go doesn't stop the scouting that would find somewhere.
+            var (w8, ai8, t8, hq8) = Thin(1);
+            Entity truck8 = null;
+            for (int s = 0; s < 120 && (truck8 == null || truck8.Order != Order.Move || Vec2.Dist(truck8.OrderPos, t8.StartPos) < 30f); s++) { AiRun(w8, ai8, 1); truck8 = w8.Owned(0).FirstOrDefault(e => e.Def.Key == "outpost_truck"); }
+            Check(truck8 != null && truck8.Order == Order.Move && Vec2.Dist(truck8.OrderPos, t8.StartPos) >= 30f, $"(set up: an outpost truck is on its way to a free corner: {(truck8 != null ? truck8.OrderPos.ToString() : "none")})");
+            foreach (var c in new[] { 2, 3 }) t8.KnownEnemyStructures[950 + c] = ("command_center", Int2.Of(w8.Map.Spawns[c]), 1);
+            Array.Fill(t8.Explored, true); // (the patch it hasn't seen is well off the truck's way home)
+            for (int y = 26; y <= 34; y++) for (int x = 42; x <= 50; x++) t8.Explored[w8.Map.Idx(x, y)] = false;
+            AiRun(w8, ai8, 3);
+            var homes8 = w8.Owned(0).Where(e => e.IsStructure && e.Def.DropOff).Select(e => e.Center).ToList();
+            Check(truck8 != null && (truck8.Order == Order.Idle || (truck8.Order == Order.Move && homes8.Any(h => Vec2.Dist(h, truck8.OrderPos) < 6f))),
+                  $"it turns back towards its own drop-offs once its destination is by an enemy ({(truck8 != null ? truck8.OrderName + " to " + truck8.OrderPos : "no truck")})");
+            Entity drone8 = null;
+            for (int s = 0; s < 90 && (drone8 == null || drone8.Order != Order.Move); s++) { AiRun(w8, ai8, 1); drone8 = w8.Owned(0).FirstOrDefault(e => e.Def.Key == "recon_drone"); }
+            Check(drone8 != null && drone8.Order == Order.Move && Vec2.Dist(drone8.OrderPos, new Vec2(46, 30)) < 8f,
+                  $"and with that truck standing about at home, the scouting goes ahead ({(drone8 != null ? drone8.OrderName + " to " + drone8.OrderPos : "no drone")})");
+
+            // Unseen ground that falls between the scouting samples (24 tiles apart) is found too.
+            var (w9, ai9, t9, hq9) = Thin(1, 2, 3);
+            Array.Fill(t9.Explored, true);
+            for (int y = 26; y <= 34; y++) for (int x = 42; x <= 50; x++) t9.Explored[w9.Map.Idx(x, y)] = false; // no sample point (12, 36, 60) lies in it
+            Entity drone9 = null;
+            for (int s = 0; s < 90 && (drone9 == null || drone9.Order != Order.Move); s++) { AiRun(w9, ai9, 1); drone9 = w9.Owned(0).FirstOrDefault(e => e.Def.Key == "recon_drone"); }
+            Check(drone9 != null && drone9.Order == Order.Move && Vec2.Dist(drone9.OrderPos, new Vec2(46, 30)) < 8f,
+                  $"an unseen patch between the sample points is found: the drone is sent to {(drone9 != null ? drone9.OrderPos.ToString() : "nowhere")}, the patch is around (46,30)");
+
             // In an open arena the free base sites are kept for the players who join later (a newcomer takes a free site, and an outpost by it
             // would pin them or use up the seat; the ore there is theirs while they are protected). The house AI (passive, as here) still
             // expands, but only onto neutral fields, 18 tiles or more from every site that isn't its own. With the same ground a closed
@@ -1895,6 +1922,46 @@ namespace Pez.Headless
             var post6 = w6.Owned(0).FirstOrDefault(e => e.Def.Key == "outpost");
             Check(post6 != null && Vec2.Dist(post6.Center, fieldAt) < 12f && nearest6 >= 18f,
                   $"and given a neutral iron field out in the open it puts its outpost there ({(post6 != null ? post6.Center.ToString() : "no outpost")}, field at {fieldAt}; closest approach to a free site {nearest6:0} tiles)");
+
+            // The 24-tile rule is about the field, but the outpost stands wherever placement finds open ground near it. A field 24.5 tiles from a
+            // free site, ringed by rock but for a clearing on the side towards the site, would put the outpost 14 tiles from it: the spot it will
+            // really stand on is what is checked, so that field is passed over for another.
+            var (w7, ai7, t7, hq7) = Thin(1);
+            var root7 = new Vec2(57.5f, 29.5f); var clearing7 = new Vec2(63.3f, 20.7f);
+            for (int y = 14; y <= 46; y++)
+                for (int x = 44; x <= 72; x++)
+                {
+                    var c = new Vec2(x + 0.5f, y + 0.5f); int i = w7.Map.Idx(x, y);
+                    if (Vec2.Dist(c, root7) <= 13.5f && Vec2.Dist(c, clearing7) > 3.5f && w7.Map.Occupant[i] == 0) w7.Map.Tiles[i] = Terrain.Rock;
+                }
+            for (int y = 29; y <= 32; y++)
+                for (int x = 57; x <= 60; x++)
+                {
+                    int i = w7.Map.Idx(x, y);
+                    w7.Map.Tiles[i] = Terrain.Dirt; w7.Map.Ore[i] = w7.Map.OreBase[i] = 200; w7.Map.OreType[i] = w7.Map.OreBaseType[i] = Map.Iron;
+                }
+            var other7 = new Vec2(30, 55); // and a field with clear ground round it, 26 tiles from the free site at 9,71
+            for (int y = 54; y <= 57; y++)
+                for (int x = 28; x <= 31; x++)
+                {
+                    int i = w7.Map.Idx(x, y);
+                    w7.Map.Tiles[i] = Terrain.Dirt; w7.Map.Ore[i] = w7.Map.OreBase[i] = 200; w7.Map.OreType[i] = w7.Map.OreBaseType[i] = Map.Iron;
+                }
+            w7.Map.FieldsChanged();
+            for (int y = 14; y <= 46; y++) for (int x = 44; x <= 72; x++) t7.Explored[w7.Map.Idx(x, y)] = true;
+            for (int y = 45; y <= 65; y++) for (int x = 20; x <= 40; x++) t7.Explored[w7.Map.Idx(x, y)] = true;
+            float nearest7 = float.MaxValue; Vec2? firstGoal7 = null;
+            AiRun(w7, ai7, 6 * 60, () =>
+            {
+                foreach (var e in w7.Owned(0).Where(e => e.Def.Key == "outpost" || e.Def.Key == "outpost_truck"))
+                {
+                    var at = e.Def.Key == "outpost" ? e.Center : e.OrderPos;
+                    if (e.Def.Key == "outpost_truck" && e.Order == Order.Move && Vec2.Dist(at, t7.StartPos) > 20f && firstGoal7 == null) firstGoal7 = at; // (its first Move is the factory's rally)
+                    foreach (var s in free5) nearest7 = Math.Min(nearest7, Vec2.Dist(at, s));
+                }
+            });
+            Check(firstGoal7.HasValue && Vec2.Dist(firstGoal7.Value, other7) < 12f && nearest7 >= 18f,
+                  $"a field that passes the 24-tile rule but whose only open ground is 14 tiles from a free site is passed over for the next: the truck's first destination is {(firstGoal7.HasValue ? firstGoal7.Value.ToString() : "none")}, the clear field at {other7} (the ringed one at {root7}); closest approach to a free site {nearest7:0} tiles");
             openArena = false;
 
             // The factory is missing and iron ore piles up past 1500: an extra refinery is wanted, but holding back the 100 copper ore it
