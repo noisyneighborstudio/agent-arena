@@ -118,22 +118,24 @@ namespace Pez.Headless
                   $"a fusion reactor beats power plants per ore and per tile: {Ore(fr.Cost)} ore for +{fr.Power} ({(float)Ore(fr.Cost) / fr.Power:0.00} each) in {fr.SizeX * fr.SizeY} tiles, against {5 * Ore(plant.Cost)} for five plants in {5 * plant.SizeX * plant.SizeY}; an hour of its fuel is {perHour:0} uranium");
 
             int baseMade = 0;
-            (World w, Team t, Entity r) Reactor()
+            (World w, Team t, Entity r) Reactor(float plasma = 0)
             {
                 var w = new World(2, 7, 96);
                 var t = w.Teams[0];
                 foreach (var u in w.Entities.Where(e => !e.IsStructure).ToList()) w.Remove(u);
                 baseMade = t.PowerProduced;
+                t.Stock["plasma"] = plasma;
                 var r = w.SpawnStructure(0, "fusion_reactor", w.FindPlacement(0, "fusion_reactor").Value, 1f);
                 return (w, t, r);
             }
+            // The reactor takes its burn off the stockpile in whole plasma (the part not yet taken is owed in WorkTimer).
+            float Left(Team t, Entity r) => t.Stock["plasma"] - r.WorkTimer;
             string ConverterLine(World w, Entity r) => ((List<string>)StateView.TeamState(w, 0)["converters"]).First(l => l.StartsWith($"#{r.Id} "));
 
             // Fuelled: it makes its full +500 and burns FusionBurn plasma a second.
-            var (w1, t1, r1) = Reactor();
-            t1.Stock["plasma"] = 100;
+            var (w1, t1, r1) = Reactor(100);
             Run(w1, 60);
-            float burned = 100 - t1.Stock["plasma"];
+            float burned = 100 - Left(t1, r1);
             Check(t1.PowerProduced == baseMade + 500 && r1.Working && Math.Abs(burned - World.FusionBurn * 60) < 0.05f && ConverterLine(w1, r1).EndsWith("working"),
                   $"a fuelled reactor makes +500 and burns {World.FusionBurn} plasma/s ({burned / 60:0.000}/s measured; power {t1.PowerProduced - baseMade})");
 
@@ -141,7 +143,7 @@ namespace Pez.Headless
             var (w2, t2, r2) = Reactor();
             t2.Stock["plasma"] = 0;
             for (int i = 0; i < 20 * World.TickRate; i++) { t2.Add("plasma", 0.5f * World.FusionBurn * World.Dt); w2.Step(); }
-            Check(Math.Abs(t2.PowerProduced - baseMade - 250) <= 2 && r2.Working && t2.Stock["plasma"] < 0.01f && ConverterLine(w2, r2).Contains("SHORT OF PLASMA") && ConverterLine(w2, r2).Contains("50%"),
+            Check(Math.Abs(t2.PowerProduced - baseMade - 250) <= 2 && r2.Working && Left(t2, r2) < 0.01f && ConverterLine(w2, r2).Contains("SHORT OF PLASMA") && ConverterLine(w2, r2).Contains("50%"),
                   $"with half the plasma it needs it makes half the power ({t2.PowerProduced - baseMade} of 500): {ConverterLine(w2, r2)}");
             // And a tenth of what it needs: a tenth of the power.
             for (int i = 0; i < 20 * World.TickRate; i++) { t2.Add("plasma", 0.1f * World.FusionBurn * World.Dt); w2.Step(); }
@@ -166,13 +168,46 @@ namespace Pez.Headless
             Check(t4.Stock["plasma"] == 50 && t4.PowerProduced == baseMade && !r4.Working, $"plasma held back by 'reserve' is not burned ({t4.Stock["plasma"]:0.###} left, power {t4.PowerProduced - baseMade})");
             t4.Reserve["plasma"] = 40;
             Run(w4, 10);
-            Check(t4.Stock["plasma"] < 50 && t4.Stock["plasma"] >= 40 && t4.PowerProduced == baseMade + 500, $"it burns what's above the reserve ({t4.Stock["plasma"]:0.###} of 50, reserve 40)");
+            Check(Left(t4, r4) < 50 && Left(t4, r4) >= 40 && t4.PowerProduced == baseMade + 500, $"it burns what's above the reserve ({Left(t4, r4):0.###} of 50, reserve 40)");
             t4.Reserve.Clear();
             t4.Stock["plasma"] = 40;
             t4.SaveFor = "laser_tank";
             t4.SaveForCost["plasma"] = 40;
             Run(w4, 10);
             Check(t4.Stock["plasma"] == 40 && t4.PowerProduced == baseMade, $"plasma saved for a purchase ('save_for') is not burned either ({t4.Stock["plasma"]:0.###} left)");
+
+            // A big stockpile: a tick's burn (0.0015) is below what a float stock of 100,000 can add or take away, so the
+            // burn is owed and paid in whole plasma. 200 s at full output is 6 plasma.
+            var (w5, t5, r5) = Reactor(100000);
+            Run(w5, 200);
+            float burned5 = 100000 - Left(t5, r5);
+            Check(Math.Abs(burned5 - World.FusionBurn * 200) < 0.05f && t5.Stock["plasma"] <= 99996 && t5.PowerProduced == baseMade + 500,
+                  $"a reactor burns its fuel off a stockpile of 100,000 too ({burned5:0.000} of {World.FusionBurn * 200} plasma in 200 s, {100000 - t5.Stock["plasma"]:0} taken off the stock)");
+
+            // A reactor starts at the share its team can pay: finished with plasma in the stockpile it counts at once, without a tick.
+            var (w6, t6, r6) = Reactor(100);
+            Check(r6.Output == 1f && t6.PowerProduced == baseMade + 500, $"a newly finished reactor with plasma counts its full power in the first sum ({t6.PowerProduced - baseMade})");
+            var (w7, t7, r7) = Reactor(0);
+            Check(r7.Output == 0f && t7.PowerProduced == baseMade, $"and with none it counts nothing ({t7.PowerProduced - baseMade})");
+
+            // Captured, it is the new owner's to fuel: a team with no plasma gets none of the old owner's output, and doesn't
+            // flip into power and back out of it for a tick (no power_restored, no second low_power).
+            var w8 = new World(2, 7, 96);
+            foreach (var u in w8.Owned(0).Concat(w8.Owned(1)).Where(e => !e.IsStructure).ToList()) w8.Remove(u);
+            var t8a = w8.Teams[0]; var t8b = w8.Teams[1];
+            t8b.Stock["plasma"] = 100;
+            var r8 = w8.SpawnStructure(1, "fusion_reactor", w8.FindPlacement(1, "fusion_reactor").Value, 1f);
+            for (int i = 0; i < 2; i++) w8.SpawnStructure(0, "gun_turret", w8.FindPlacement(0, "gun_turret").Value, 1f); // 30 power drawn against the command center's 20
+            r8.Hp = r8.Def.MaxHp * 0.4f;
+            Run(w8, 2);
+            var eng8 = w8.SpawnUnit(0, "engineer", w8.Owned(0).First(e => e.IsStructure));
+            eng8.Pos = eng8.PrevPos = r8.Center + new Vec2(1.6f, 0);
+            w8.SetOrder(eng8, Order.Capture, r8.Center, r8.Id);
+            int power0 = t8a.PowerProduced, restored0 = w8.Events.Count(e => e.Type == "power_restored" && e.Team == 0), low0 = w8.Events.Count(e => e.Type == "low_power" && e.Team == 0);
+            Run(w8, 3);
+            Check(r8.Team == 0 && r8.Output == 0f && t8a.PowerProduced == power0 && t8a.LowPower
+                  && w8.Events.Count(e => e.Type == "power_restored" && e.Team == 0) == restored0 && w8.Events.Count(e => e.Type == "low_power" && e.Team == 0) == low0,
+                  $"a captured reactor makes only what its new team's plasma pays for ({r8.Output:0.00}), without the old owner's output flipping the team out of low power for a tick");
 
             // Saved and resumed, a half-fed reactor keeps its output.
             var game = new Game(new GameConfig { Seed = 5, MapSize = 64, Controllers = new[] { "llm", "llm" } });
@@ -186,6 +221,49 @@ namespace Pez.Headless
             var again = Snap(back);
             Check(gr.Output > 0.4f && gr.Output < 0.6f && br != null && Math.Abs(br.Output - gr.Output) < 1e-4f && br.Working && back.World.Teams[0].PowerProduced == gw.Teams[0].PowerProduced && again == json,
                   $"a half-fed reactor survives a save and resume ({gr.Output:0.00} -> {br?.Output:0.00}, power {back.World.Teams[0].PowerProduced} of {gw.Teams[0].PowerProduced}; identical {again == json}: {FirstDiff(json, again)})");
+            Check(Math.Abs(br.WorkTimer - gr.WorkTimer) < 1e-4f, $"and so does the plasma it owes the stockpile ({gr.WorkTimer:0.0000})");
+
+            // A save from before reactors had partial output (no "output" saved) loads sensibly: a working one at full, an idle one at none.
+            var fuelled = gw.SpawnStructure(0, "fusion_reactor", gw.FindPlacement(0, "fusion_reactor").Value, 1f);
+            gw.Teams[0].Stock["plasma"] = 1000;
+            for (int i = 0; i < 3 * World.TickRate; i++) gw.Step();
+            var root = (Dictionary<string, object>)Json.Parse(Snap(game));
+            int stripped = 0;
+            foreach (var en in (List<object>)((Dictionary<string, object>)root["world"])["entities"])
+                if (en is Dictionary<string, object> ed && (string)ed["def"] == "fusion_reactor") { ed.Remove("output"); stripped++; }
+            var old = Resume(Json.Write(root));
+            var ow = old.World;
+            Check(stripped == 2 && ow.Get(fuelled.Id).Output == 1f && ow.Get(fuelled.Id).Working && ow.Teams[0].PowerProduced == gw.Teams[0].PowerProduced,
+                  $"a save from before partial output loads a working reactor at full output ({ow.Get(fuelled.Id).Output:0.00}, power {ow.Teams[0].PowerProduced} of {gw.Teams[0].PowerProduced})");
+            gw.Teams[0].Stock["plasma"] = 0;
+            foreach (var re in gw.Entities.Where(e => e.Def.Key == "fusion_reactor")) re.WorkTimer = 0;
+            for (int i = 0; i < 2 * World.TickRate; i++) gw.Step();
+            root = (Dictionary<string, object>)Json.Parse(Snap(game));
+            foreach (var en in (List<object>)((Dictionary<string, object>)root["world"])["entities"])
+                if (en is Dictionary<string, object> ed && (string)ed["def"] == "fusion_reactor") ed.Remove("output");
+            old = Resume(Json.Write(root));
+            Check(old.World.Get(fuelled.Id).Output == 0f && !old.World.Get(fuelled.Id).Working && old.World.Teams[0].PowerProduced == gw.Teams[0].PowerProduced,
+                  $"and an idle one at none (power {old.World.Teams[0].PowerProduced} of {gw.Teams[0].PowerProduced})");
+
+            // A save from before offline defences stopped drawing power still holds the old power_used. Loading adds power
+            // up again, so a team that has enough under the new rules isn't left at half speed. Steel at zero means the
+            // defences' Offline flags never change, so nothing else would correct it.
+            var g9 = new Game(new GameConfig { Seed = 5, MapSize = 64, Controllers = new[] { "llm", "llm" } });
+            var w9 = g9.World;
+            foreach (var u in w9.Entities.Where(e => !e.IsStructure).ToList()) w9.Remove(u);
+            var t9 = w9.Teams[0];
+            w9.SpawnStructure(0, "power_plant", w9.FindPlacement(0, "power_plant").Value, 1f);
+            for (int i = 0; i < 9; i++) w9.SpawnStructure(0, "gun_turret", w9.FindPlacement(0, "gun_turret").Value, 1f);
+            t9.Stock["steel"] = 0;
+            for (int i = 0; i < 3 * World.TickRate; i++) w9.Step();
+            int offline9 = w9.Defences(0).Count(d => d.Offline), used9 = t9.PowerUsed;
+            var root9 = (Dictionary<string, object>)Json.Parse(Snap(g9));
+            var team9 = (Dictionary<string, object>)((List<object>)((Dictionary<string, object>)root9["world"])["teams"])[0];
+            team9["power_used"] = (double)(used9 + offline9 * 15); // what the old rules counted: the offline turrets too
+            var back9 = Resume(Json.Write(root9));
+            var bt9 = back9.World.Teams[0];
+            Check(offline9 == 5 && bt9.PowerUsed == used9 && !bt9.LowPower && back9.World.Events.Any(e => e.Type == "power_restored" && e.Team == 0),
+                  $"loading an older save adds power up again: {bt9.PowerUsed} used, not {used9 + offline9 * 15} ({offline9} offline turrets draw nothing), low power {bt9.LowPower}");
         }
 
         /// <summary>attack "until":"capturable": units hold fire at 50% so a commander with slow replies can still land the capture.</summary>

@@ -659,6 +659,7 @@ namespace Pez.Sim
 
         void OnStructureComplete(Entity e)
         {
+            StartReactor(e, false);
             UpdatePower();
             if (e.Def.Key == "mining_refinery") SpawnUnit(e.Team, "mining_truck", e);
         }
@@ -1471,6 +1472,7 @@ namespace Pez.Sim
                  text: $"{Teams[e.Team].Name}'s engineer captured {(old >= 0 ? $"{Teams[old].Name}'s" : "a neutral")} {t.Def.Key} #{t.Id} at {(int)t.Center.X},{(int)t.Center.Y}");
             if (old >= 0) Alerts.Raise(this, old, "structure_lost", Priority.Critical, t.Center, attacker: e).Lost.Add($"{t.Def.Key} #{t.Id} (captured by an engineer)");
             if (t.Def.Key == "derrick") DerrickCaptured(t, old);
+            StartReactor(t, true);
             Remove(e); // the engineer moves in for good
             UpdatePower();
         }

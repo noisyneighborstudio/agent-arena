@@ -76,7 +76,7 @@ namespace Pez.Sim
         public int CargoType = -1;   // index into Defs.Ores while carrying
         public int HarvestType = -1; // preferred ore type, -1 = nearest of any
         public Int2? HarvestTile;
-        public float WorkTimer;
+        public float WorkTimer;      // a work cycle's progress; for a fusion reactor, plasma burned but not yet taken from the stockpile (World.FusionTick)
         public bool Burning;         // a building on fire (below World.BurnBelow): it burns down unless repaired
         public DockStep Dock;        // where it is in backing into a drop-off's bay
         public int DockAt;           // the drop-off structure it's delivering to

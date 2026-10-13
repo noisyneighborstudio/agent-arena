@@ -541,12 +541,11 @@ namespace Pez.Sim
 
             foreach (var id in d.Objs("inventions")) { var inv = Snapshot.ReadInvention(id); if (inv != null) w.Inventions[inv.Key] = inv; }
 
-            bool rebuildPower = false, rebuildVision = false;
+            bool rebuildVision = false;
             int i = 0;
             foreach (var td in d.Objs("teams"))
             {
                 var t = Snapshot.ReadTeam(td, i++, w.Map, w.Time);
-                rebuildPower |= !td.ContainsKey("power_produced");
                 rebuildVision |= !td.ContainsKey("visible");
                 w.Teams.Add(t);
             }
@@ -587,7 +586,7 @@ namespace Pez.Sim
             d.Load("seat_counter", ref w.seatCounter);
             if (d.Str("rng") is string r && ulong.TryParse(r, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var state)) w.rng.State = state;
 
-            if (rebuildPower) w.UpdatePower();
+            w.UpdatePower(); // always: a save from before a power rule changed (offline defences, reactor output) still holds the old sums
             if (rebuildVision) w.UpdateVisibility();
         }
     }

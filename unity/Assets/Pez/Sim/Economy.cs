@@ -159,18 +159,36 @@ namespace Pez.Sim
         /// A reactor burns each tick's plasma from what the stockpile holds above 'reserve' and 'save_for' (they hold it
         /// back from reactors as from converters), and makes the share of its power that burn pays for: short of plasma
         /// it makes less power rather than none. Returns whether its power changed, so the team's power is added up again.
+        /// A tick's burn (0.0015) is less than half the gap between floats once a stockpile holds tens of thousands, so
+        /// taking it straight off the stock would change nothing there (free fuel). The reactor keeps what it has burned
+        /// in WorkTimer instead, and the stockpile pays it in whole plasma; the owed part counts as already spent.
         /// </summary>
         bool FusionTick(Entity e, Team team)
         {
             float burn = FusionBurn * Dt;
-            float free = (team.Stock.TryGetValue("plasma", out var pl) ? pl : 0) - team.Reserved("plasma");
+            float stock = team.Stock.TryGetValue("plasma", out var pl) ? pl : 0;
+            float free = stock - team.Reserved("plasma") - e.WorkTimer;
             float paid = MathF.Max(0f, MathF.Min(burn, free));
-            if (paid > 0f) team.Add("plasma", -paid);
+            e.WorkTimer += paid;
+            if (e.WorkTimer >= 1f)
+            {
+                float take = MathF.Min(MathF.Floor(e.WorkTimer), MathF.Max(0f, stock)); // never more than the stockpile holds
+                team.Add("plasma", -take);
+                e.WorkTimer -= take;
+            }
             float share = paid / burn;
             bool changed = ReactorPower(e, share) != ReactorPower(e, e.Output);
             e.Output = share;
             e.Working = ReactorPower(e, share) > 0;
             return changed;
+        }
+
+        /// <summary>A reactor that has just been finished or captured starts at the share its new team can pay now, so its power counts from the first sum (not the old owner's, and not none).</summary>
+        void StartReactor(Entity e, bool captured)
+        {
+            if (e.Def.Key != "fusion_reactor" || e.Team < 0) return;
+            if (captured) e.WorkTimer = 0; // the old owner's unpaid burn (under one plasma) goes with it
+            FusionTick(e, Teams[e.Team]);
         }
 
         /// <summary>For the low-power alert: when a fusion reactor is making less than its full power for want of plasma, say so and what to do.</summary>
