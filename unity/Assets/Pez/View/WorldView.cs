@@ -244,6 +244,7 @@ namespace Pez.View
                 if (v.Works != null && v.Rig.Root.gameObject.activeSelf) v.Works.Show(SeesState(v.E, team)); // no live belt under fog
             Deposits?.SetPov(team, PovTeam);
             FireSim.SetPovLayer(team == PovTeam ? TerrainView.MainFogLayer : TerrainView.TeamFogLayerBase + team);
+            GlowCasters.SetPovLayer(team == PovTeam ? TerrainView.MainFogLayer : team < 0 ? -1 : TerrainView.TeamFogLayerBase + team);
             foreach (var v in Views.Values)
             {
                 if (v.Shade == null || !v.Rig.Root.gameObject.activeSelf) continue;

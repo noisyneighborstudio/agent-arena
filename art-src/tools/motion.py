@@ -328,9 +328,10 @@ STRUCTURES = [
    "The shot charges in the last 0.4 s before it's due (the 1.1 s cooldown after the last shot, while it's engaged): the four pylon coils "
    "(coil_0 at the bottom .. coil_3) light one after another from the bottom, to 1.3, and the lens brightens. On the shot the cyan beam leaves the lens, "
    "the lens flashes and fades over 0.3 s, the coils drain from the top down in 0.25 s and the head's rear vent breathes out a wisp of heat. "
-   "A charge that isn't fired bleeds away over 0.4 s. No recoil. Low power halves every glow; an offline tower (upkeep unpaid) is dark and still.",
+   "A charge that isn't fired bleeds away over 0.4 s. No recoil. The coils cast light (GlowCaster): a cyan point light (no shadows) halfway up the coils on their near side lights the cream pylon, the pad and nearby units, and an additive pool splashes the pad and the ground round it (1.2 tiles); it follows the coils' glow, 0.53–0.59 on the idle breath, rising gently to about 0.6 as the coils fill and to about 0.66 in the flash of the shot (the brightest moment), then down with the drain. "
+   "Low power halves every glow and the light; an offline tower (upkeep unpaid) is dark and still and casts no light, and a tower remembered under fog casts none either. Only the 3 nearest the middle of the view get a real light (handed over with 0.35 s fades); every tower keeps its pool.",
    dict(**TURRET(180), barrel=dict(mode='trunnion_pitch', pitch_min_deg=-30, pitch_max_deg=40, deg_per_s=120, recoil=0),
-        coil=dict(mode='charge_glow', charge_s=.4, peak=1.3, drain_s=.25)),
+        coil=dict(mode='charge_glow', charge_s=.4, peak=1.3, drain_s=.25, light='GlowCaster cyan, 2.8 x glow, range 2.4, pool 1.2')),
    "The head faces forward and glances now and then (PezMotion's idle turret). The coils breathe on a 2.5 s sine (glow 0.25–0.45) and the lens glows at 0.5."),
  S('deep_mine', 'Pumps ore from the deep deposit under it straight into the stockpile.', "A headframe over a shaft, run by DeepMineWorks from the sim "
    "(Working: the deposit has ore and the mine is built; the deposit's Amount / Initial; the team's LowPower). One trip of the skip every 4 s while it works "

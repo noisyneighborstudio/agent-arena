@@ -13,6 +13,9 @@ namespace Pez.View
     ///    brightens. On the shot the lens flashes, the coils drain from the top down in 0.25 s, and the head's rear vent
     ///    breathes out a wisp of heat.
     ///  - Idle, the coils breathe on a 2.5 s sine and the lens glows softly.
+    ///  - The coils cast light (a <see cref="GlowCaster"/> in the middle of the pylon): cyan on the cream pylon, the pad
+    ///    and the ground around it, following the coils' glow (idle breath, the charge climbing, a flash on the shot, the
+    ///    drain), halved on low power, out when offline, and seen only by those who see the tower's live state.
     /// Every glow is scaled by the building's power glow (half on low power, nearly dark offline), and a render whose team
     /// only remembers the tower under fog keeps the neutral glow WorldView gives it. A model without those nodes gets the
     /// parts it has.
@@ -23,6 +26,7 @@ namespace Pez.View
         readonly Quaternion barrelRest;
         readonly Renderer[] coils;
         readonly Renderer lens;
+        readonly GlowCaster light;
         readonly float phase;
         float pitch, seenFire = -99f, shotAt = -99f, puffAt = -1f;
         int target;
@@ -41,6 +45,10 @@ namespace Pez.View
             var l = PezMotion.FindDeep(model, "barrel__M_E_Cyan");
             lens = l ? l.GetComponent<Renderer>() : null;
             phase = seed * 0.53f;
+            // Halfway up the coils (coil_0 .. coil_3 wind round the stem from 0.45 to 1.25 up, 0.18 out), on the near side
+            // of the ring: it lights the pad below, the collar above and the ground around.
+            light = GlowCaster.For(model.gameObject, new Vector3(0f, 0.8f, 0f), PezPalette.EmissiveCyanLaserOptics,
+                light: 2.8f, range: 2.4f, pool: 1.2f, deck: 0.37f, deckRadius: 0.5f, ring: 0.24f);
         }
 
         public static LaserWorks For(GameObject model, int seed) => new LaserWorks(model.transform, seed);
@@ -85,7 +93,7 @@ namespace Pez.View
                 if (vent && live) Fx.Steam(vent.position, 0.13f);
             }
 
-            if (!live) return; // a remembered tower under fog: WorldView's neutral glow stands
+            // The power glow: 1 powered, 0.5 on low power, easing down to 0.1 offline (WorldView.Power).
             float power = v.GlowK < 0f ? 1f : v.GlowK;
             // The charge for the next shot: 0..1 over the last 0.4 s before it's due; a charge that isn't fired (the
             // target died or left) bleeds away over 0.4 s.
@@ -97,6 +105,7 @@ namespace Pez.View
             }
             float since = now - shotAt;
             float breath = 0.35f + 0.1f * Mathf.Sin((now / 2.5f + phase) * 6.2831853f);
+            float flash = since < 0.3f ? 1f - since / 0.3f : 0f, sum = 0f;
             for (int i = 0; i < coils.Length; i++)
             {
                 // Charging: each coil lights a quarter of the way after the one below it.
@@ -104,15 +113,23 @@ namespace Pez.View
                 // Fired: the coils were full and drain from the top down.
                 float k = Mathf.Clamp01((since - (coils.Length - 1 - i) * 0.05f) / Drain);
                 float down = since >= 0f && since < Drain + 0.2f ? 1f - k : 0f;
-                float g = Mathf.Lerp(breath, 1.3f, Mathf.Max(up, down)) * power;
-                PezShade.Set(coils[i], Dim(g), g);
+                float g = Mathf.Lerp(breath, 1.3f, Mathf.Max(up, down));
+                sum += g;
+                if (live) PezShade.Set(coils[i], Dim(g * power), g * power); // a remembered tower keeps WorldView's neutral glow
             }
-            if (lens)
+            if (lens && live)
             {
-                float flash = since < 0.3f ? 1f - since / 0.3f : 0f;
                 float g = (Mathf.Lerp(0.5f + 0.1f * Mathf.Sin((now / 2.5f + phase) * 6.2831853f), 1.6f, charge) + 2.4f * flash) * power;
                 PezShade.Set(lens, Dim(g), g);
             }
+            // The coils' light: a steady 0.53 to 0.59 on the idle breath, rising gently with the charge as the coils fill (to
+            // about 0.6 when all four are lit, which is the moment of the shot) and a little more in the flash (to about 0.66,
+            // the brightest moment), then down with the drain: a tower firing shows it on its pad without flooding it. Its
+            // power is the coils' (half on low power), but it goes right out as an unpaid tower dims to its 0.1 rather than
+            // stopping there. Fx.Audience keeps it from the views that only remember the tower under fog.
+            float fill = coils.Length > 0 ? Mathf.Clamp01((sum / coils.Length - breath) / (1.3f - breath)) : 0f;
+            float lit = power >= 0.5f ? power : Mathf.InverseLerp(0.1f, 0.5f, power) * 0.5f;
+            light.Set((0.45f + 0.3f * breath + 0.05f * fill + 0.06f * flash) * lit, Fx.Audience);
         }
 
         // The lamp body darkens with its light (as WorldView.Power), but an idle coil still reads as cyan wire; an offline

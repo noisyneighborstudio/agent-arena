@@ -658,7 +658,7 @@ namespace Pez.Sim
                     if (tank.Order != Order.Move) Drive();
                     w.FireFor(tower, tank);
                 });
-                Item("Laser tower", "Laser tower tracking a heavy tank across its field of fire: the head turns with it and dips as it closes, the coils charge bottom to top before each beam", a0 + 3, 33, 8);
+                Item("Laser tower", "Laser tower tracking a heavy tank across its field of fire: the head turns with it and dips as it closes, the coils charge bottom to top before each beam, their cyan light on the pylon, pad and ground swelling with the charge and flashing with the shot", a0 + 3, 33, 8);
             }
             Lane("reaper_drone", "light_tank", a0 + 14, 2, 5.5f, "Reaper hellfire (flies high)");
         }
@@ -1027,11 +1027,13 @@ namespace Pez.Sim
             });
             Item("Derrick captured", "an engineer walks up and takes the neutral derrick: it turns Cherry's; released again after 10 s; loops", 46, 5, 9);
 
-            // Defence upkeep: a turret whose upkeep isn't paid stands dark and still, beside one that's paid.
+            // Defence upkeep: a turret whose upkeep isn't paid stands dark and still, beside one that's paid; and one of
+            // Lime's on its team's low power (the Power district's Lime base draws more than its plant makes).
             var dark = Bldg(Red, "laser_tower", 51, 11);
             holds.Add(() => dark.Offline = true);
             Bldg(Red, "laser_tower", 54, 11);
-            Item("Defence offline (upkeep unpaid)", "left: dark and still, holding fire until its team has steel; right: paid and powered", 52.5f, 11);
+            Bldg(Green, "laser_tower", 48, 11);
+            Item("Defence offline (upkeep unpaid)", "left to right: Lime's on low power (its coils and their light at half); unpaid: dark and still, holding fire until its team has steel, its coils casting no light; paid and powered, the coils lighting the pylon, pad and ground cyan", 51f, 11);
         }
 
         static string Pretty(string key) => key.Contains(':') ? key : char.ToUpperInvariant(key[0]) + key.Substring(1).Replace('_', ' ');
