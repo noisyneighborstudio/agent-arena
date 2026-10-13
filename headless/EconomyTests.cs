@@ -40,6 +40,7 @@ namespace Pez.Headless
             DeepDepositKits();
             DeepKitForJoiners();
             SurfaceOreScalesWithArea();
+            EconReportHarness();
         }
 
         /// <summary>Share of the map's open ground (sampled every 4th tile) that is more than `far` tiles from any surface ore.</summary>
@@ -2601,6 +2602,50 @@ namespace Pez.Headless
                 if (got > paid * 0.26f) { cheap = false; worst = $"{key}: {got}/{paid}"; }
             }
             Check(cheap, $"no kill leaves more than about a quarter of what the victim cost {worst}");
+        }
+
+        /// <summary>
+        /// The economy harness (EconReport.cs, --econ-report): every rate and cost it measures matches what the rules, the defs and
+        /// the docs say, a game it plays is the same whenever and wherever it runs, its income by source accounts for the
+        /// stockpile, and its report builds. (The full matrix is run by hand; see the flags in EconReport.)
+        /// </summary>
+        static void EconReportHarness()
+        {
+            var rates = EconReport.MeasureRates();
+            var off = rates.Where(r => !r.Ok).ToList();
+            Check(rates.Count >= 40 && off.Count == 0,
+                  $"the economy harness measures {rates.Count} rates and costs, and every one matches what the rules, defs and docs say" + (off.Count == 0 ? "" : ": " + string.Join("; ", off.Select(r => $"{r.Name} is {r.Measured:0.###}, said {r.Claimed}"))));
+
+            // A game is a pure function of its seed, size, richness and mode: played twice at once on two threads, and once alone.
+            EconReport.GameRun a = null, b = null;
+            System.Threading.Tasks.Parallel.Invoke(() => a = EconReport.PlayGame(3, 80, 1f, false, 6), () => b = EconReport.PlayGame(3, 80, 1f, false, 6));
+            var c = EconReport.PlayGame(3, 80, 1f, false, 6);
+            string Digest(EconReport.GameRun g) => string.Join("|", g.Teams.Select(t => string.Join(",", t.Rows.Select(r => $"{r.Mined}/{r.Deep}/{r.Salvage}/{r.Derrick:0.###}/{r.Trickle:0.###}/{r.Trucks}/{r.Stock.Sum():0.###}"))));
+            Check(a.Teams[0].Rows.Count == 6 && Digest(a) == Digest(b) && Digest(a) == Digest(c) && a.Errors == 0,
+                  $"a harness game is the same played twice at once and once alone ({a.Teams[0].Rows.Count} minutes, {a.Teams[0].Mined} and {a.Teams[1].Mined} ore mined, {a.Errors} sim errors)");
+
+            // Ore in = ore out: what a team started with (650) plus what it mined, its derricks paid and the command center trickled, less upkeep,
+            // is what it holds (as raw ore) plus what it has built, give or take what is still in a queue or was spilled.
+            double Mix(string item, double n) => World.OreMix[item].Sum() * n;
+            bool balanced = true; string worst = "";
+            foreach (var t in a.Teams)
+            {
+                var r = t.Rows.First(x => x.Min == 5);
+                double held = Defs.Items.Select((item, k) => Mix(item, r.Stock[k])).Sum(), income = 650 + r.Mined + r.Derrick + r.Trickle - r.Upkeep, diff = (held + r.Spent - income) / income;
+                if (Math.Abs(diff) > 0.12) { balanced = false; worst = $"team {t.Id} off by {diff:P0}"; }
+            }
+            Check(balanced, $"the harness's income by source accounts for each team's stock and spending at minute 5 {worst}");
+
+            // The seat win split's test, and the flag parser.
+            Check(Math.Abs(EconReport.BinomialP(18, 23) - 0.0106) < 0.0005 && EconReport.BinomialP(5, 10) > 0.999 && Math.Abs(EconReport.BinomialP(0, 10) - 2 * Math.Pow(0.5, 10)) < 1e-9 && EconReport.BinomialP(0, 0) == 1,
+                  $"the exact binomial test gives 18 of 23 decisive games to one seat p = {EconReport.BinomialP(18, 23):0.0000}");
+            Check(string.Join(",", EconReport.ParseInts("1-3,7,10")) == "1,2,3,7,10", "--econ-seeds reads ranges and lists");
+
+            // The report builds, with every table of the matrix section filled in and nothing missing or not a number.
+            var o = new EconReport.Options { Seeds = new[] { 2 }, Sizes = new[] { 80 }, Ores = new[] { 1f }, Modes = new[] { "war" }, Minutes = 4, Jobs = 1, Sections = new HashSet<string> { "matrix" } };
+            string report = EconReport.Build(o, _ => { }, out var games);
+            Check(games.Count == 1 && new[] { "seat win split", "Income by source", "Low power", "Unspent stock", "Deep ore used", "Surface ore" }.All(report.Contains) && !report.Contains("NaN") && !report.Contains("Infinity"),
+                  $"the economy report builds its matrix tables ({report.Length} characters)");
         }
     }
 }
