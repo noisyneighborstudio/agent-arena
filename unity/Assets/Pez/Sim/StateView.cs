@@ -624,7 +624,7 @@ namespace Pez.Sim
                 $"Power: a power_plant makes +100 for 250 iron_ore and burns nothing. A fusion_reactor (needs an enrichment_plant; costs 400 steel, 100 circuits and 25 plasma: about 750 ore, against 1,250 iron_ore for five power_plants) makes +500 in 9 tiles instead of 20, but burns {World.FusionBurn} plasma/s ({World.FusionBurn * 3600:0} plasma, {World.FusionBurn * 3600 * 2:0} uranium an hour) and puts all that power in one building. Short of plasma it makes proportionally less power instead of none ('converters' in state shows its output), and plasma you hold back with reserve or save_for is left alone, so keep power_plants behind it if you reserve plasma. Defences that are offline for unpaid upkeep draw no power.",
                 "Rockets beat vehicles, rifles beat infantry, tanks are all-round. Heavy tanks splash.",
                 "Use attack_move to send armies; units fight what they meet, except derricks someone holds (add \"derricks\":true for those). Use 'all' or 'idle' for units.",
-                "Omit x,y on build to auto-place near your base.",
+                "Omit x,y on build to auto-place near your base (a mining_refinery goes toward your nearest iron field, so trucks' trips are short; every seat is placed by the same rules).",
                 "The map starts shrouded. Your base reveals a radius around it; units and harvesters reveal what they pass. Scout to find the enemy (bases start near corners) and more ore: ore_fields lists only fields you've explored. A radar_dome reveals 16 tiles around it.",
             });
             o.Set("structures", Defs.All.Values.Where(d => d.IsStructure).Select(DefJson).ToList());
