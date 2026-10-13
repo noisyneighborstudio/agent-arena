@@ -25,6 +25,9 @@ namespace Pez.Sim
         };
         /// <summary>Reaches high-altitude aircraft (the Reaper): SAM sites, flak and laser towers only.</summary>
         public bool HitsHighAir;
+        /// <summary>A charge that has to be planted (C4): the shooter must stand in range of the same target, still, for this
+        /// many seconds before its first shot goes off (World.FireAt, Entity.Arming). 0 = fires as soon as it's ready.</summary>
+        public float ArmTime;
         public bool CanHit(EntityDef d) => (d.IsAir ? HitsAir && (!d.HighAltitude || HitsHighAir) : HitsGround) && Multiplier(d.Armor) > 0;
     }
 
@@ -129,7 +132,7 @@ namespace Pez.Sim
         static readonly WeaponDef Sam = new WeaponDef { Name = "sam", Damage = 90, Range = 8f, Cooldown = 1.6f, ProjectileSpeed = 16f, HitsGround = false, HitsAir = true, HitsHighAir = true, VsAir = 1f };
         static readonly WeaponDef Hellfire = new WeaponDef { Name = "hellfire", Damage = 140, Range = 7f, Cooldown = 5f, ProjectileSpeed = 14f, SplashRadius = 0.6f, VsInfantry = 0.8f, VsVehicle = 1.2f, VsStructure = 0.8f };
         static readonly WeaponDef SniperRifle = new WeaponDef { Name = "sniper", Damage = 150, Range = 9f, Cooldown = 3f, VsInfantry = 1f, VsVehicle = 0.08f, VsStructure = 0.03f };
-        static readonly WeaponDef C4 = new WeaponDef { Name = "c4", Damage = 900, Range = 1.0f, Cooldown = 5f, VsInfantry = 0f, VsVehicle = 0.6f, VsStructure = 1f };
+        static readonly WeaponDef C4 = new WeaponDef { Name = "c4", Damage = 900, Range = 1.0f, Cooldown = 5f, VsInfantry = 0f, VsVehicle = 0.6f, VsStructure = 1f, ArmTime = 1.5f };
         static readonly WeaponDef Flak = new WeaponDef { Name = "flak", Damage = 35, Range = 8f, Cooldown = 0.8f, ProjectileSpeed = 22f, SplashRadius = 1.0f, HitsGround = false, HitsAir = true, HitsHighAir = true, VsAir = 1f };
         static readonly WeaponDef MammothCannon = new WeaponDef { Name = "mammoth_cannon", Damage = 120, Range = 6f, Cooldown = 2.2f, ProjectileSpeed = 16f, SplashRadius = 1.0f, HitsAir = true, VsInfantry = 0.7f, VsVehicle = 1f, VsStructure = 1f, VsAir = 0.6f };
         static readonly WeaponDef TowerLaser = new WeaponDef { Name = "laser", Damage = 90, Range = 7.5f, Cooldown = 1.1f, HitsAir = true, HitsHighAir = true, VsInfantry = 1f, VsVehicle = 1.1f, VsStructure = 0.6f, VsAir = 1f };

@@ -204,7 +204,7 @@ namespace Pez.Sim
              .Put("resume_speed_cap", e.ResumeSpeedCap);
             if (e.ResumeWaypoints.Count > 0) o.Set("resume_waypoints", SnapIO.Vs(e.ResumeWaypoints));
             if (e.MineQueue.Count > 0) o.Set("mine_queue", SnapIO.Vs(e.MineQueue));
-            o.Put("last_fired_at", e.LastFiredAt, -999f)
+            o.Put("last_fired_at", e.LastFiredAt, -999f).Put("arming", e.Arming).Put("arming_target", e.ArmingTarget)
              .Put("prospecting", e.Prospecting).PutV("prospect_center", e.ProspectCenter).Put("prospect_radius", e.ProspectRadius)
              .Put("survey_failure", e.SurveyFailure).Put("survey_failed_at", e.SurveyFailedAt).Put("zone", e.ZoneId);
             if (e.SkipSites.Count > 0) o.Set("skip_sites", SnapIO.Vs(e.SkipSites));
@@ -250,7 +250,7 @@ namespace Pez.Sim
             d.Load("resume_speed_cap", ref e.ResumeSpeedCap);
             e.ResumeWaypoints.AddRange(SnapIO.ToVecs(d.Arr("resume_waypoints")));
             e.MineQueue.AddRange(SnapIO.ToVecs(d.Arr("mine_queue")));
-            d.Load("last_fired_at", ref e.LastFiredAt);
+            d.Load("last_fired_at", ref e.LastFiredAt); d.Load("arming", ref e.Arming); d.Load("arming_target", ref e.ArmingTarget);
             d.Load("prospecting", ref e.Prospecting); d.Load("prospect_center", ref e.ProspectCenter); d.Load("prospect_radius", ref e.ProspectRadius);
             d.Load("survey_failure", ref e.SurveyFailure); d.Load("survey_failed_at", ref e.SurveyFailedAt); d.Load("zone", ref e.ZoneId);
             e.SkipSites.AddRange(SnapIO.ToVecs(d.Arr("skip_sites")));

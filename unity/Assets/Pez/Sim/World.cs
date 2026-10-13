@@ -1851,6 +1851,7 @@ namespace Pez.Sim
             e.Moving = false;
             e.Path = null;
             e.TurretFacing = RotateToward(e.TurretFacing, (t.Center - e.Pos).Angle, 6f * Dt);
+            if (e.Def.Armor == Armor.Infantry) e.Facing = RotateToward(e.Facing, (t.Center - e.Pos).Angle, TurnRate(e) * Dt); // a medic turns to its patient, as infantry turn to fire
             var team = Teams[e.Team];
             if (topping) Refill(t, t.FuelMax / (EntityDef.RefuelSeconds * 1.2f) * Dt);
             float hp = MathF.Min(e.Def.RepairRate * Dt, t.Def.MaxHp - t.Hp);
@@ -1899,14 +1900,26 @@ namespace Pez.Sim
             // Newcomer protection: a protected team can't attack, whatever order its units are on. Not in the showcase, whose teams are
             // protected for good (ProtectedUntil = MaxValue, which a restored copy keeps though it has no Showcase) so nothing takes damage.
             if (IsProtected(e.Team) && Showcase == null && Teams[e.Team].ProtectedUntil < float.MaxValue) return;
+            var w = e.Def.Weapon;
+            if (w.ArmTime > 0f)
+            {
+                // A charge has to be planted (C4): in range of the same target and standing still, every tick without a
+                // break, for the weapon's ArmTime before the first goes off. Walking off, falling out of range or switching
+                // target starts it again; staying on it, the next ones follow on the cooldown.
+                float gap = Time - e.LastFiredAt;
+                bool working = !e.Moving && e.ArmingTarget == t.Id && gap <= Dt * 1.5f;
+                if (!working) e.Arming = 0f;
+                else if (gap > 0f) e.Arming = MathF.Min(e.Arming + gap, w.ArmTime);
+                e.ArmingTarget = t.Id;
+            }
             e.LastFiredAt = Time;
             var dir = t.Center - e.Pos;
             float want = dir.Angle;
             e.TurretFacing = RotateToward(e.TurretFacing, want, 6f * Dt);
             if (!e.IsStructure && !e.Moving && e.Def.Armor == Armor.Infantry && Time >= e.DodgeUntil) e.Facing = RotateToward(e.Facing, want, TurnRate(e) * Dt); // dodging: running, not aiming
             if (e.Cooldown > 0) return;
+            if (w.ArmTime > 0f && e.Arming < w.ArmTime - Dt * 0.5f) return; // still planting it
             if (MathF.Abs(AngleDiff(e.TurretFacing, want)) > 0.35f) return;
-            var w = e.Def.Weapon;
             e.Cooldown = w.Cooldown;
             if (w.ProjectileSpeed <= 0)
             {

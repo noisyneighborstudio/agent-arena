@@ -56,7 +56,7 @@ namespace Pez.Headless
             [typeof(Entity)] = "Id Team Def Pos PrevPos Facing TurretFacing Hp Dead Origin BuildProgress Rally Order OrderPos GuardPos TargetId UntilCapturable EngageDerricks Path PathIdx Cooldown " +
                 "SpeedCap Group ProgressPos ProgressAt GhostUntil ProgressDist Waypoints WaypointLoop RetreatBelow Retreating RetreatSpent GivingWay OwnBlockedSince DodgeUntil DanceVel DanceStep DanceHeading DanceSpeed DanceFor DanceFlips SettledUntil QueuedAt RepathTimer Moving LastAttackerId LastHitTime " +
                 "LastCallForHelp LastAttackerTeam Responding HomePos Cargo CargoType HarvestType HarvestTile WorkTimer Burning Dock DockAt BaySide DepositId Working Output Offline CarrierId Passengers Fuel Landed Stranded " +
-                "GrantedShare CargoSalvage FuelCap AtDepot FuelWarned NoAutoRefuelUntil ResumeOrder ResumePos ResumeGuard ResumeTarget ResumeWaypoints ResumeSpeedCap MineQueue LastFiredAt " +
+                "GrantedShare CargoSalvage FuelCap AtDepot FuelWarned NoAutoRefuelUntil ResumeOrder ResumePos ResumeGuard ResumeTarget ResumeWaypoints ResumeSpeedCap MineQueue LastFiredAt Arming ArmingTarget " +
                 "Prospecting ProspectCenter ProspectRadius SkipSites SurveyFailure SurveyFailedAt ZoneId | CmdId", // CmdId: the observation feed's command tracking, which restarts (as a new stream) with the process
             [typeof(Team)] = "Id Name Controller PlayerName StandingOrders OrdersVersion Stock Rates PowerProduced PowerUsed PlasmaOwed Detected Revealed Defeated StartPos " +
                 "Visible Explored Left Resigned StalledSince House Seat ProtectedUntil StructureQueue UnitQueues KnownEnemyStructures Surveyed SurveySites Zones " +

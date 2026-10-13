@@ -14,6 +14,10 @@ namespace Pez.View
     /// the bay rolls up (0.3 s) before the chute is let out and stays up while the chute is out or on its way, then rolls
     /// down (0.4 s) once it is back inside, so the chute never passes through a closed shutter. DockView holds the chute
     /// until Open says the hatch is up.
+    /// The south bay has a shutter of its own (bay_shutter, the same cream roll-up): it is rolled up (so the bay is as it always
+    /// was) while the truck bay is the south one and shut whenever the bay is on a side wall, so the dock nobody is using reads
+    /// as closed, not as an open dark doorway. It follows a bay that changes side the way the hatches do: it holds up while the
+    /// chute is still out, rolls down once it is back, and rolls up again before the chute uses the south bay.
     /// </summary>
     public class RefineryWorks
     {
@@ -33,6 +37,8 @@ namespace Pez.View
         readonly Transform[] hatches;
         readonly Vector3[] hatchOut, hatchRest;   // each hatch's outward direction (model space) and rest scale
         readonly float[] hatchK;                   // 0 shut .. 1 rolled up
+        readonly Transform bayShutter;             // the south bay's shutter: rolled up in the model (a point), scaled down to shut it
+        float bayK = 1f;                           // 0 shut .. 1 rolled up
         bool dockHooked;
 
         static Material iron, copper;
@@ -44,6 +50,7 @@ namespace Pez.View
         {
             this.stacks = stacks;
             this.hatches = hatches;
+            bayShutter = PezMotion.FindDeep(model, "bay_shutter");
             hatchK = new float[hatches.Length]; hatchOut = new Vector3[hatches.Length]; hatchRest = new Vector3[hatches.Length];
             for (int i = 0; i < hatches.Length; i++)
             {
@@ -83,6 +90,7 @@ namespace Pez.View
         /// <summary>How far the hatch in the wall toward `dir` (model space) is rolled up, 0 to 1; 1 when there is none.</summary>
         public float Open(Vector3 dir)
         {
+            if (bayShutter != null && Vector3.Dot(Vector3.back, dir) > 0.9f) return bayK;
             for (int i = 0; i < hatches.Length; i++)
                 if (Vector3.Dot(hatchOut[i], dir) > 0.9f) return hatchK[i];
             return 1f;
@@ -92,7 +100,7 @@ namespace Pez.View
         /// still out, and down again once it's back inside.</summary>
         public void Hatches(DockView dock, float dt)
         {
-            if (hatches.Length == 0) return;
+            if (hatches.Length == 0 && bayShutter == null) return;
             if (dock != null && !dockHooked) { dock.Opening = Open; dockHooked = true; }
             for (int i = 0; i < hatches.Length; i++)
             {
@@ -101,6 +109,15 @@ namespace Pez.View
                 float k = hatchK[i] * hatchK[i] * (3f - 2f * hatchK[i]);
                 var sc = hatchRest[i]; sc.y *= Mathf.Lerp(1f, 0.06f, k);   // rolls up into the lintel, from its top edge
                 hatches[i].localScale = sc;
+            }
+            if (bayShutter != null)
+            {
+                // Up while the bay is the south one (and while the chute is still out of it, if the bay is moving away), else down.
+                bool south = dock == null || Vector3.Dot(Vector3.back, dock.Dir) > 0.9f && (!dock.Switching || dock.ChuteBusy);
+                bayK = Mathf.MoveTowards(bayK, south ? 1f : 0f, dt / (south ? 0.3f : 0.4f));
+                float k = bayK * bayK * (3f - 2f * bayK);
+                // Rolls up into its top edge, then is a point (the model's rest pose): nothing of it is left in the south bay.
+                bayShutter.localScale = bayK >= 0.999f ? Vector3.one * 0.001f : new Vector3(1f, Mathf.Max(0.001f, Mathf.Lerp(1f, 0.04f, k)), 1f);
             }
         }
 
