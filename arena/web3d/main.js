@@ -25,7 +25,16 @@ const ORE = { i: C(138, 58, 36), c: C(200, 116, 47), x: C(143, 228, 255), u: C(1
 // Units without their own model yet share one (as the 2D viewer's icons do).
 const MODEL_AS = { long_range_drone: "gunship", reaper_drone: "stealth_bomber", recon_drone: "gunship", transport_chopper: "gunship", mammoth_tank: "heavy_tank",
   flak_track: "light_tank", apc: "light_tank", minelayer: "mining_truck", commando: "rifleman", sniper: "rifleman", engineer: "medic",
-  construction_truck: "outpost_truck", derrick: "deep_mine" };
+  construction_truck: "outpost_truck" };
+// A deep mine is drawn as the machine for the ore it pumps, found from the deposit under it in the frame's `deposits`
+// ([x, y, type, % left]; a player's frame has only the ones they surveyed). Unknown, or its model missing: the shared deep_mine.
+const MINE_MODELS = ["deep_mine_iron", "deep_mine_copper", "deep_mine_crystal", "deep_mine_uranium"];
+let deposits = [];
+function mineModel(x, y) {
+  let ore = -1, best = 2.5;
+  for (const [dx, dy, type] of deposits) { const d = Math.hypot(dx - x, dy - y); if (d < best) { best = d; ore = type; } }
+  return MINE_MODELS[ore] ?? null;
+}
 const AIR = new Set(["gunship", "stealth_bomber", "recon_drone", "long_range_drone", "reaper_drone", "transport_chopper"]);
 
 // ---------------------------------------------------------------- renderer, scene, light
@@ -217,6 +226,17 @@ function tint(obj, team) {
     if (o.material.length === 1) o.material = o.material[0];
   });
 }
+// The deep mine's reserve pieces (M_OreTint) in its ore's colour; crystal and uranium glow, as in the field.
+const oreMats = new Map();
+function tintOre(obj, ore) {
+  const c = [ORE.i, ORE.c, ORE.x, ORE.u][ore]; if (!c) return;
+  obj.traverse((o) => {
+    if (!o.isMesh || !o.material?.name?.startsWith("M_OreTint")) return;
+    const k = `${o.material.uuid}:${ore}`;
+    if (!oreMats.has(k)) { const m = o.material.clone(); m.color = c.clone(); if (ore >= 2) { m.emissive = c.clone(); m.emissiveIntensity = 0.8; } oreMats.set(k, m); }
+    o.material = oreMats.get(k);
+  });
+}
 function placeholder(team) {
   const m = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.4, 0.8), new THREE.MeshStandardMaterial({ color: team >= 0 ? TEAM[team % TEAM.length] : NEUTRAL }));
   m.position.y = 0.2; m.castShadow = true;
@@ -234,10 +254,12 @@ function upsert(e, now) {
     s.obj.userData.id = id;
     world.add(s.obj);
     ents.set(id, s);
-    model(key).then((proto) => {
+    const variant = key === "deep_mine" ? mineModel(x, y) : null;
+    (variant ? model(variant).then((p) => p ?? model(key)) : model(key)).then((proto) => {
       if (!ents.has(id)) return;
       const m = proto ? proto.clone(true) : placeholder(team);
       tint(m, team);
+      if (variant && proto) tintOre(m, MINE_MODELS.indexOf(variant));
       // glTF into Unity space the way glTFast imports it (x negated), so the world's mirror leaves the model the right way round.
       const holder = new THREE.Group(); holder.scale.set(-1, 1, 1); holder.add(m);
       s.body = m; s.obj.add(holder);
@@ -291,6 +313,7 @@ async function poll() {
       lastTick = f.tick;
       const now = performance.now();
       const live = new Set();
+      if (f.deposits) deposits = f.deposits;
       for (const e of f.entities) { upsert(e, now); live.add(e[0]); }
       for (const [id, s] of ents) if (!live.has(id)) { world.remove(s.obj); ents.delete(id); }
       for (const e of f.effects ?? []) effect(e);

@@ -505,6 +505,15 @@ namespace Pez.View
                     Random.Range(0.5f, 0.7f), Random.Range(1.2f, 1.8f), Vary(c, 0.06f, 220));
         }
 
+        /// <summary>Crystal shards land in a deep mine's tray: they ring. A thin cyan ring flashes out from the tray, two
+        /// glowing chips bounce off it, and a spark or two.</summary>
+        public static void ShardChime(Vector3 pos, Color32 shard)
+        {
+            Emit(S.Ring, pos + Up * 0.04f, Vector3.zero, 0.55f, 0.35f, Alpha(PezPalette.EmissiveCyanLaserOptics, 0.85f), Random.Range(0f, 360f));
+            for (int i = 0; i < 2; i++) S.EmitShard(pos + Up * 0.05f, Flat(0.5f) + Up * Random.Range(0.7f, 1.1f), Random.Range(0.04f, 0.06f), Random.Range(0.6f, 0.9f), Vary(shard, 0.08f, 255));
+            Emit(S.Sparks, pos + Up * 0.08f, (Random.onUnitSphere + Up) * 0.8f, 0.02f, 0.3f, White);
+        }
+
         static readonly Color32 SteamCol = new Color32(236, 228, 210, 175); // cream plastic, translucent
 
         /// <summary>A wisp of steam off a power plant tower: cream, cool (no glow), rising and spreading for about 2 s.</summary>

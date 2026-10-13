@@ -570,12 +570,26 @@ namespace Pez.View
             return made;
         }
 
-        public static Rig Build(string key, int team)
+        /// <summary>The deep mine's model for the ore it pumps (0 iron .. 3 uranium): each ore has its own machine. The
+        /// shared deep_mine model when the ore isn't known (a deposit this view hasn't surveyed) or its model is missing.</summary>
+        public static string DeepMineModel(int oreType)
+        {
+            if (oreType < 0 || oreType >= DeepMineModels.Length) return "deep_mine";
+            var k = DeepMineModels[oreType];
+            return ModelFor(k) != null ? k : "deep_mine";
+        }
+
+        /// <summary>Per ore, in Defs.Ores order (art-src/tools/build_mines.py).</summary>
+        public static readonly string[] DeepMineModels = { "deep_mine_iron", "deep_mine_copper", "deep_mine_crystal", "deep_mine_uranium" };
+
+        /// <summary>The rig for a key; `model` draws it with another model (a deep mine's per-ore machine) while everything
+        /// else (its motion profile, plinth, fallbacks) still goes by the key.</summary>
+        public static Rig Build(string key, int team, string model = null)
         {
             var root = new GameObject(key).transform;
             var rig = new Rig { Root = root };
             rig.Body = Empty(root, "body");
-            var prefab = ModelFor(key);
+            var prefab = ModelFor(model ?? key) ?? (model != null ? ModelFor(key) : null);
             if (prefab != null)
             {
                 var go = Object.Instantiate(prefab, rig.Body, false);
@@ -971,6 +985,7 @@ namespace Pez.View
                 case "geological_surveyor": Surveyor(rig, teamMat, steel, track); break;
                 case "drill_rig": DrillRig(rig, teamMat, steel, track); break;
                 case "deep_mine": DeepMine(rig, teamMat, steel, concrete); break;
+                case "derrick": Derrick(rig, teamMat, steel, concrete); break;
                 default:
                     Part(b, PrimitiveType.Cube, new Vector3(0, 0.25f, 0), Vector3.one * 0.5f, teamMat);
                     break;
@@ -1088,6 +1103,21 @@ namespace Pez.View
             Part(rig.Turret, PrimitiveType.Cylinder, Vector3.zero, new Vector3(0.34f, 0.025f, 0.34f), steel, new Vector3(0, 0, 90));
             Part(rig.Turret, PrimitiveType.Cube, Vector3.zero, new Vector3(0.03f, 0.3f, 0.04f), Amber(1.4f));
             Part(b, PrimitiveType.Cube, new Vector3(0.45f, 0.35f, 0.07f), new Vector3(0.5f, 0.05f, 0.02f), Amber(1.6f));
+        }
+
+        /// <summary>Derrick (2x2), while derrick.glb is missing: an old steel dispenser on a stepped plinth, its big head on
+        /// top in its holder's colours (grey when nobody holds it), the flywheel on its side (Turret) turning while held.</summary>
+        static void Derrick(Rig rig, Material team, Material steel, Material concrete)
+        {
+            var b = rig.Body;
+            Pad(b, 2, 2, concrete);
+            Part(b, PrimitiveType.Cube, new Vector3(0, 0.2f, 0), new Vector3(1.5f, 0.12f, 1.5f), concrete);
+            Part(b, PrimitiveType.Cube, new Vector3(0, 0.82f, 0.1f), new Vector3(0.9f, 1.1f, 0.78f), Smoke);
+            Part(b, PrimitiveType.Cube, new Vector3(0, 1.46f, 0.1f), new Vector3(1.0f, 0.36f, 0.88f), team);
+            Part(b, PrimitiveType.Cube, new Vector3(0.18f, 0.5f, -0.55f), new Vector3(0.26f, 0.03f, 0.6f), steel, new Vector3(-35f, 0, 0));
+            rig.Turret = Empty(b, "flywheel", new Vector3(-0.62f, 0.74f, 0.12f));
+            Part(rig.Turret, PrimitiveType.Cylinder, Vector3.zero, new Vector3(0.7f, 0.04f, 0.7f), steel, new Vector3(0, 0, 90));
+            Part(rig.Turret, PrimitiveType.Cube, Vector3.zero, new Vector3(0.06f, 0.66f, 0.06f), steel);
         }
 
         /// <summary>Concrete foundation covering a w x h footprint, centred on the structure origin.</summary>

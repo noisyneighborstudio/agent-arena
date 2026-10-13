@@ -104,6 +104,8 @@ namespace Pez.Sim
             ("Stages 0-3", "the structure rises out of its pad; dust kicks out at each stage landing"),
             ("Low power", "power plant cores flicker at 4 Hz and drop out; consumers' lamps at half, machinery at half speed"),
             ("Roll-out", "amber lamps blink in the last 1.5 s, three vent puffs, the door rolls up, the unit eases out of a dark bay"),
+            ("Deep mine reserve", "every deep mine's dispenser stem (back corner) holds one piece of its ore per sixth of the deposit; the team head pops one out as each sixth is used; the amber lamp pulses under 5 minutes left"),
+            ("Deep mine dry", "a last puff of dust from the shaft, three blinks of the lamp, then the whole mine darkens and stands still"),
             ("Docking", "approach, queue beside the lane, align, reverse in, tip the load (ore-coloured pour), pull out"),
             ("Invented badge", "the small amber badge at a bar's left end marks an agent-invented design"),
             ("Wreck", "a destroyed vehicle's hull darkens and lingers about 20 s"),
@@ -724,34 +726,44 @@ namespace Pez.Sim
         void Deep()
         {
             Begin("deep", "Deep mining", "Deep deposits with their zone stakes, the surveyor, the drill rig and deep mines.", 126, 34, 30, 24);
-            string[] ores = { "Iron", "Copper", "Crystal", "Uranium" };
-            for (int i = 0; i < 4; i++) Deposit(4 + 6 * i, 18, i, 1f);
-            Item("Deep deposits, one per ore", "x-ray veins, three richness rings, a flagged zone stake", 13, 18, 9);
-            Deposit(4, 10.5f, Map.Iron, 0.62f);
-            Deposit(10, 10.5f, Map.Iron, 0.3f);
-            Item("Deposits running down", "two rings left, then one (a ring fades per third of the reserve)", 7, 10.5f);
+            for (int i = 0; i < 4; i++) Deposit(3 + 5 * i, 18, i, 1f);
+            Item("Deep deposits, one per ore", "x-ray veins, three richness rings, a flagged zone stake", 10.5f, 18, 9);
+            Deposit(23, 18, Map.Iron, 0.62f);
+            Deposit(28, 18, Map.Iron, 0.3f);
+            Item("Deposits running down", "two rings left, then one (a ring fades per third of the reserve)", 25.5f, 18);
+            // One working mine per ore, each its own machine, full.
+            DeepMineOn(Blue, 3, 11, Map.Iron, 1f);
+            Item("Deep mine on iron: the pithead", "the skip runs up the tower's slot, tips at the dump door and the cinnamon bricks tumble down the chute into the hopper; the team sheave turns with the rope; the fan breathes", 3, 11);
+            DeepMineOn(Blue, 8, 11, Map.Copper, 1f);
+            Item("Deep mine on copper: the incline", "copper bricks ride the belt up from the shaft, one a second, and drop into the crusher (a puff of mint dust); the pulleys and the crusher turn", 8, 11);
+            DeepMineOn(Blue, 13, 11, Map.Crystal, 1f);
+            Item("Deep mine on crystal: the core drill", "the drill string turns; the core barrel lifts a glowing core out of the frosted collar, tips it, and the shards ring as they land in the tray", 13, 11);
+            DeepMineOn(Blue, 18, 11, Map.Uranium, 1f);
+            Item("Deep mine on uranium: the containment", "the jib lifts an acid rod out of the dome's port, swings it over the open cask and lowers it in; the carousel turns the next cask round; the rods and sight glasses always glow", 18, 11);
+            DeepMineOn(Blue, 23, 11, Map.Uranium, 0.15f);
+            Item("Deep mine running low", "under 5 minutes of ore left (the sim's warning): the amber lamp pulses; one rod left in the stem", 23, 11);
+            DeepMineOn(Blue, 28, 11, Map.Crystal, 0f);
+            Item("Deep mine exhausted", "deposit dry: dark and still, the core parked down in the collar, the stem empty with the head hanging open, the lamp out", 28, 11);
             // A copper mine whose deposit runs down from full to dry over 20 s (a brick popped out of the stem every 3.3 s,
             // the lamp pulsing from 20% left), stands dry for 8 s, then is full again for 4 s.
-            var working = w.Map.DepositById(DeepMineOn(Blue, 16, 10.5f, Map.Copper, 1f).DepositId);
+            var working = w.Map.DepositById(DeepMineOn(Blue, 22, 4, Map.Copper, 1f).DepositId);
             holds.Add(() => { float t = T % 32f; working.Amount = working.Initial * (t < 20f ? 1f - 0.98f * t / 20f : t < 28f ? 0f : 1f); });
-            Item("Deep mine working, running down", "the skip hauling copper up and tipping it into the bin, the sheave and drum turning with the rope; the deposit runs from full to dry over 20 s (a brick pops out of the stem every 3.3 s, the lamp pulses from 20% left), dry for 8 s (skip parked, stem empty, head hanging open, lamp blinking), then full again; loops every 32 s", 16, 10.5f);
-            DeepMineOn(Blue, 22, 10.5f, Map.Uranium, 0f);
-            Item("Deep mine exhausted", "deposit dry: skip parked in the shaft, stem empty with the head hanging open, the amber lamp blinking, no veins", 22, 10.5f);
-            DeepMineOn(Green, 28, 10.5f, Map.Iron, 0.55f);
-            Item("Deep mine on low power (Lime)", "the hoist at half speed, the winder labouring (the skip crawls now and then on its way up); four bricks of iron left in the stem", 28, 10.5f);
+            Item("Deep mine running down", "the deposit runs from full to dry over 20 s (a brick pops out of the stem every 3.3 s, the lamp pulses from 20% left), runs dry (the bricks on the belt run off, a last puff of dust, the lamp blinks three times and goes out), stays dry for 8 s, then full again; loops every 32 s", 22, 4);
+            DeepMineOn(Green, 28, 4, Map.Iron, 0.55f);
+            Item("Deep mine on low power (Lime)", "the hoist at half speed, the winder labouring (the skip crawls now and then on its way up), its glow at half; four bricks of iron left in the stem", 28, 4);
 
             // The surveyor drives between two spots and surveys each (thumps and ground ripples) in turn.
             var sv = Unit(Blue, "geological_surveyor", 3, 3, AlongRight, pin: false);
-            Vec2[] spots = { P(3, 3), P(9, 3) };
+            Vec2[] spots = { P(2, 3), P(7, 3) };
             int s = 1;
             holds.Add(() => { if (!sv.Dead && sv.Order != Order.Survey) w.SetOrder(sv, Order.Survey, spots[s++ % 2]); });
-            Item("Surveyor surveying", "drives to a spot, stops and thumps for 8 s (ripples), moves on", 6, 3);
+            Item("Surveyor surveying", "drives to a spot, stops and thumps for 8 s (ripples), moves on", 4.5f, 3);
 
             // The drill rig drives onto its zone and deploys into a deep mine; 14 s later the mine is cleared and a new rig rolls up.
-            var zone = Deposit(23, 3, Map.Crystal, 0.8f);
+            var zone = Deposit(16, 3, Map.Crystal, 0.8f);
             holds.Add(() => zone.Amount = zone.Initial * 0.8f);
             Entity rig = null, mine = null; float mineAt = 0, respawn = 0;
-            var rigFrom = P(16, 2);
+            var rigFrom = P(10, 2);
             holds.Add(() =>
             {
                 if (rig != null && rig.Dead) { rig = null; mine = w.Get(zone.MineId); mineAt = T; }
@@ -764,7 +776,7 @@ namespace Pez.Sim
                 }
                 else if (rig != null && rig.Order != Order.Drill && !rig.Dead) { w.SetOrder(rig, Order.Drill, zone.Pos); rig.ZoneId = zone.Id; }
             });
-            Item("Drill rig drilling", "drives onto its zone, the mast stands up and it deploys into a deep mine; loops", 19.5f, 3);
+            Item("Drill rig drilling", "drives onto its zone, the mast stands up and it deploys into a deep mine (the crystal core drill rising as the rig sinks); loops", 13, 3);
         }
 
         void Air()
@@ -1008,9 +1020,9 @@ namespace Pez.Sim
             // Derricks: one neutral (nobody's grey), one held by Blueberry (pumping, in team colours), and one an engineer
             // keeps capturing: it walks up, the derrick takes Cherry's colours, and 10 s later it's released to neutral again.
             Bldg(-1, "derrick", 28, 9);
-            Item("Neutral derrick", "nobody's: sugar-pad grey, idle; any engineer can capture it", 28, 9);
+            Item("Neutral derrick", "nobody's: a pre-war steel dispenser in sugar-pad grey, still and dusty (grit sifts off its head), waiting; any engineer can capture it", 28, 9);
             Bldg(Blue, "derrick", 34, 9);
-            Item("Derrick held", "in its holder's colours, the sheave turning: it pays 1.5 steel/s", 34, 9);
+            Item("Derrick held", "in its holder's colours, the flywheel turning; every 2 s a steel brick is pushed out under the head, slides down the chute into the tray, lit by the amber pour lamp: 1.5 steel/s", 34, 9);
             var site = Bldg(-1, "derrick", 43, 7);
             var engFrom = P(50, 2);
             Entity eng = null; float taken = -1;
@@ -1025,7 +1037,7 @@ namespace Pez.Sim
                 else if (taken < 0) taken = T;
                 else if (T - taken > 10f) { site.Team = -1; site.Working = false; eng = null; }
             });
-            Item("Derrick captured", "an engineer walks up and takes the neutral derrick: it turns Cherry's; released again after 10 s; loops", 46, 5, 9);
+            Item("Derrick captured", "an engineer walks up and takes the neutral derrick: its head flips open and comes down in Cherry's colours, and it starts pouring; released again after 10 s (the head flips back to grey); loops", 46, 5, 9);
 
             // Defence upkeep: a turret whose upkeep isn't paid stands dark and still, beside one that's paid.
             var dark = Bldg(Red, "laser_tower", 51, 11);
