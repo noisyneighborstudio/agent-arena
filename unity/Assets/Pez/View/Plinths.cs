@@ -164,15 +164,16 @@ namespace Pez.View
 
         // ---------------------------------------------------------------- unit heights
 
-        static readonly Dictionary<int, (Vector3 center, Spec spec)> placed = new Dictionary<int, (Vector3, Spec)>();
+        static readonly Dictionary<int, (Vector3 center, Spec spec, float yaw)> placed = new Dictionary<int, (Vector3, Spec, float)>();
         static readonly Dictionary<long, int> byTile = new Dictionary<long, int>();
         static long Tile(int x, int z) => ((long)x << 32) ^ (uint)z;
 
-        public static void Register(int id, Vector3 center, Spec spec)
+        /// <param name="yaw">How far the model is turned about its centre, in degrees (a drop-off faces its bay); its ramps turn with it.</param>
+        public static void Register(int id, Vector3 center, Spec spec, float yaw = 0f)
         {
             if (spec == null) return;
             Unregister(id);
-            placed[id] = (center, spec);
+            placed[id] = (center, spec, yaw);
             float hs = spec.Size * 0.5f;
             for (int x = Mathf.FloorToInt(center.x - hs); x <= Mathf.FloorToInt(center.x + hs); x++)
                 for (int z = Mathf.FloorToInt(center.z - hs); z <= Mathf.FloorToInt(center.z + hs); z++)
@@ -195,9 +196,15 @@ namespace Pez.View
         public static float HeightAt(Vector3 p)
         {
             if (byTile.Count == 0 || !byTile.TryGetValue(Tile(Mathf.FloorToInt(p.x), Mathf.FloorToInt(p.z)), out var id)) return 0f;
-            var (center, s) = placed[id];
+            var (center, s, yaw) = placed[id];
             float hs = s.Size * 0.5f, lx = p.x - center.x, lz = p.z - center.z;
             if (lx < -hs || lx > hs || lz < -hs || lz > hs) return 0f;
+            if (yaw != 0f)
+            {
+                // Into the model's own frame (the ramps are on its -Z side), undoing its turn.
+                float c = Mathf.Cos(yaw * Mathf.Deg2Rad), sn = Mathf.Sin(yaw * Mathf.Deg2Rad);
+                (lx, lz) = (lx * c - lz * sn, lx * sn + lz * c);
+            }
             foreach (var r in s.Ramps)
                 if (lx > r.X0 && lx < r.X1 && lz < -hs + r.Length) return s.Top * Mathf.Clamp01((lz + hs) / r.Length);
             return s.Top;

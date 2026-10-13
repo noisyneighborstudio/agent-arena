@@ -193,7 +193,7 @@ namespace Pez.Sim
              .Put("responding", e.Responding).PutV("home_pos", e.HomePos)
              .Put("cargo", e.Cargo).Put("cargo_salvage", e.CargoSalvage).Put("cargo_type", e.CargoType, -1).Put("harvest_type", e.HarvestType, -1);
             if (e.HarvestTile.HasValue) o.Set("harvest_tile", new List<object> { e.HarvestTile.Value.X, e.HarvestTile.Value.Y });
-            o.PutEnum("dock", e.Dock, DockStep.None).Put("dock_at", e.DockAt).Put("burning", e.Burning).Put("granted_share", e.GrantedShare);
+            o.PutEnum("dock", e.Dock, DockStep.None).Put("dock_at", e.DockAt).Put("bay", e.BaySide).Put("burning", e.Burning).Put("granted_share", e.GrantedShare);
             o.Put("work_timer", e.WorkTimer).Put("deposit", e.DepositId).Put("working", e.Working).Put("output", e.Output).Put("carrier", e.CarrierId).Put("offline", e.Offline);
             if (e.Passengers.Count > 0) o.Set("passengers", e.Passengers.Cast<object>().ToList());
             o.Put("fuel", e.Fuel).Put("fuel_cap", e.FuelCap).Put("landed", e.Landed).Put("stranded", e.Stranded).Put("at_depot", e.AtDepot).Put("fuel_warned", e.FuelWarned)
@@ -233,7 +233,8 @@ namespace Pez.Sim
             d.Load("responding", ref e.Responding); d.Load("home_pos", ref e.HomePos);
             d.Load("cargo", ref e.Cargo); d.Load("cargo_salvage", ref e.CargoSalvage); d.Load("cargo_type", ref e.CargoType); d.Load("harvest_type", ref e.HarvestType);
             if (d.Has("harvest_tile", out var ht) && ht is List<object> hl && hl.Count >= 2) e.HarvestTile = new Int2(SnapIO.ToI(hl[0]), SnapIO.ToI(hl[1]));
-            d.LoadEnum("dock", ref e.Dock); d.Load("dock_at", ref e.DockAt); d.Load("burning", ref e.Burning); d.Load("granted_share", ref e.GrantedShare);
+            d.LoadEnum("dock", ref e.Dock); d.Load("dock_at", ref e.DockAt); d.Load("bay", ref e.BaySide); d.Load("burning", ref e.Burning); d.Load("granted_share", ref e.GrantedShare);
+            e.BaySide = Math.Clamp(e.BaySide, 0, World.BaySides.Length - 1); // a save from before bays turned has none: south
             d.Load("work_timer", ref e.WorkTimer); d.Load("deposit", ref e.DepositId); d.Load("working", ref e.Working); d.Load("carrier", ref e.CarrierId); d.Load("offline", ref e.Offline);
             // A reactor saved before partial output made all of its power or none.
             if (def.Key == "fusion_reactor") e.Output = e.Working ? 1f : 0f;

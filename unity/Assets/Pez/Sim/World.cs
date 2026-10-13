@@ -750,6 +750,7 @@ namespace Pez.Sim
             e.BuildProgress = progress;
             e.Pos = e.PrevPos = e.Center;
             e.Hp = def.MaxHp * (progress >= 1 ? 1f : 0.1f);
+            if (def.DropOff) e.BaySide = ChooseBaySide(origin, def, NearestOreField(e.Center)); // its trucks back in from the ore's side, for good
             for (int y = 0; y < def.SizeY; y++)
                 for (int x = 0; x < def.SizeX; x++)
                     Map.Occupant[Map.Idx(origin.X + x, origin.Y + y)] = e.Id;
@@ -776,15 +777,17 @@ namespace Pez.Sim
             var def = Def(key);
             var e = NewEntity(team, def);
             var jitter = new Vec2((float)(rng.NextDouble() - 0.5) * 0.6f, (float)(rng.NextDouble() - 0.5) * 0.6f);
+            // The doorway: south, where the models' doors are, except a drop-off's, which faces its bay (its model is turned to match).
+            var door = at.IsStructure && at.Def.DropOff ? BaySides[DoorSide(at)] : BaySides[0];
             if (def.IsAir) e.Pos = e.PrevPos = at.Center + jitter;
             else
             {
-                // Exit just below the producer's footprint.
-                var exit = new Int2(at.Origin.X + at.Def.SizeX / 2, at.Origin.Y - 1);
+                // Exit just outside the producer's footprint, in the middle of its door side.
+                var exit = Int2.Of(at.Center + door * ((MathF.Abs(door.X) > 0.5f ? at.Def.SizeX : at.Def.SizeY) / 2f + 0.5f));
                 var tile = Paths.NearestPassable(exit);
                 e.Pos = e.PrevPos = tile.Center + jitter;
             }
-            e.Facing = e.TurretFacing = -MathF.PI / 2;
+            e.Facing = e.TurretFacing = door.Angle;
             e.GuardPos = e.Pos;
             e.FuelCap = DroneFuel(def);
             e.Fuel = e.FuelMax;
@@ -793,7 +796,8 @@ namespace Pez.Sim
             else if (!def.IsAir)
             {
                 // Roll a few tiles clear of the door so new units don't park in front of it (or a refinery's dock).
-                var clear = Paths.NearestPassable(Int2.Of(e.Pos + new Vec2((float)(rng.NextDouble() - 0.5) * 4f, -3f))).Center;
+                var across = new Vec2(-door.Y, door.X);
+                var clear = Paths.NearestPassable(Int2.Of(e.Pos + across * ((float)(rng.NextDouble() - 0.5) * 4f) + door * 3f)).Center;
                 SetOrder(e, Order.Move, clear);
                 e.GuardPos = clear;
             }
@@ -986,7 +990,7 @@ namespace Pez.Sim
             if (BlocksLane(team, ox, oy, def) is Entity d)
                 return $"it would block the truck lane of your {d.Def.Key} #{d.Id} (trucks back into its bay; keep the 2 tiles outside it clear)";
             if (def.DropOff && !Bay(new Int2(ox, oy), def).laneOk)
-                return $"a {def.Key} needs a clear 2-tile truck lane on one side (south preferred) for trucks to back into";
+                return $"a {def.Key} needs a clear 2-tile truck lane on one side (the side facing your ore is preferred) for trucks to back into";
             if (!requireNear) return null;
             // Must be near an existing friendly structure: territory grows outward from your bases.
             const int reach = 6;
@@ -1011,13 +1015,7 @@ namespace Pez.Sim
             var anchor = near ?? Int2.Of(Teams[team].StartPos).Center;
             var centre = new Vec2(Map.W / 2f, Map.H / 2f);
             var field = def.DropOff && near == null ? NearestOreField(anchor) : new List<Vec2>();
-            float ToField(Vec2 p) { float d = float.MaxValue; foreach (var f in field) d = MathF.Min(d, Vec2.Dist(p, f)); return d; }
-            // Which way is "right" for a base facing the map centre (a base on the centre faces east).
-            var facing = (centre - anchor).Normalized;
-            if (facing.LengthSq < 0.5f) facing = new Vec2(1, 0);
-            var right = new Vec2(facing.Y, -facing.X);
-            const float tie = 1e-4f; // closer than this is a tie (no two different spots are this close, and rounding is far smaller)
-            int Cmp(float a, float b) => a < b - tie ? -1 : a > b + tie ? 1 : 0;
+            var right = RightOf(anchor);
             Int2? best = null; float bestScore = float.MaxValue, bestCentre = 0, bestRight = 0;
             for (int r = 2; r <= 14; r++)
             {
@@ -1030,26 +1028,44 @@ namespace Pez.Sim
                         if (reach > r || (r > 2 && reach <= r - 1)) continue;
                         if (CanPlace(team, key, x, y, padding: 1, requireNear: requireNear) != null) continue;
                         // Turrets lean toward the map centre; everything else stays compact. Trucks drive to the head of a drop-off's lane
-                        // and back, so each tile between that and the ore counts twice.
+                        // (which opens toward the ore) and back, so each tile between that and the ore counts twice.
                         float score = Vec2.Dist(c, anchor) + (key == "gun_turret" ? Vec2.Dist(c, centre) * 0.6f : 0);
-                        if (field.Count > 0) score += 2f * ToField(Bay(new Int2(x, y), def).head);
-                        int cmp = Cmp(score, bestScore);
+                        if (field.Count > 0) { var at = new Int2(x, y); score += 2f * DistToField(field, Bay(at, def, ChooseBaySide(at, def, field)).head); }
+                        int cmp = TieCmp(score, bestScore);
                         float toCentre = 0, toRight = 0;
                         if (cmp <= 0)
                         {
                             toCentre = Vec2.Dist(c, centre);
                             var d = c - anchor;
                             toRight = d.X * right.X + d.Y * right.Y;
-                            if (cmp == 0) cmp = Cmp(toCentre, bestCentre);
-                            if (cmp == 0) cmp = Cmp(bestRight, toRight); // the further right wins
+                            if (cmp == 0) cmp = TieCmp(toCentre, bestCentre);
+                            if (cmp == 0) cmp = TieCmp(bestRight, toRight); // the further right wins
                         }
                         if (cmp < 0) { bestScore = score; bestCentre = toCentre; bestRight = toRight; best = new Int2(x, y); }
                     }
                 // A drop-off's score is at least its distance from the base, so once the best is under the next ring's distance
                 // nothing further out can beat it; before that, a spot beside the ore a few rings out may still be far better.
-                if (best.HasValue && (field.Count > 0 ? bestScore + tie <= r : r > 4)) break;
+                if (best.HasValue && (field.Count > 0 ? bestScore + Tie <= r : r > 4)) break;
             }
             return best;
+        }
+
+        const float Tie = 1e-4f; // closer than this is a tie (no two different spots are this close, and rounding is far smaller)
+        static int TieCmp(float a, float b) => a < b - Tie ? -1 : a > b + Tie ? 1 : 0;
+
+        static float DistToField(List<Vec2> field, Vec2 p)
+        {
+            float d = float.MaxValue;
+            foreach (var f in field) d = MathF.Min(d, Vec2.Dist(p, f));
+            return d;
+        }
+
+        /// <summary>Which way is "right" for something at a point facing the map centre (one on the centre faces east): the same turn for every seat.</summary>
+        Vec2 RightOf(Vec2 from)
+        {
+            var facing = (new Vec2(Map.W / 2f, Map.H / 2f) - from).Normalized;
+            if (facing.LengthSq < 0.5f) facing = new Vec2(1, 0);
+            return new Vec2(facing.Y, -facing.X);
         }
 
         /// <summary>
@@ -2182,32 +2198,80 @@ namespace Pez.Sim
         bool BayTaken(Entity dropOff, Entity e) =>
             Entities.Any(o => o != e && !o.Dead && o.IsHarvester && o.DockAt == dropOff.Id && o.Dock >= DockStep.Align);
 
-        // A bay's sides in order of preference: south (where the doors are), then east, west, north.
-        static readonly Vec2[] BaySides = { new Vec2(0, -1), new Vec2(1, 0), new Vec2(-1, 0), new Vec2(0, 1) };
+        // A bay's four sides, by Entity.BaySide: south (where the models' doors are, and what old saves have), east, west, north.
+        public static readonly Vec2[] BaySides = { new Vec2(0, -1), new Vec2(1, 0), new Vec2(-1, 0), new Vec2(0, 1) };
 
         /// <summary>
         /// A drop-off's truck bay: the point trucks back onto (just outside the footprint), the head of its lane
-        /// (BayLength further out), and the facing a docked truck has (out of the bay). South unless terrain blocks
-        /// that lane, then the first clear side. laneOk is false when no side has a clear lane (trucks unload beside it).
+        /// (BayLength further out), and the facing a docked truck has (out of the bay). On the drop-off's own side
+        /// (Entity.BaySide, facing its ore) unless that lane is blocked, then the first clear side in the order south,
+        /// east, west, north. laneOk is false when no side has a clear lane (trucks unload beside it, on its own side).
         /// </summary>
-        public (Vec2 bay, Vec2 head, float facing, bool laneOk) Bay(Entity s) => Bay(s.Origin, s.Def);
+        public (Vec2 bay, Vec2 head, float facing, bool laneOk) Bay(Entity s) => Bay(s.Origin, s.Def, s.BaySide);
 
-        public (Vec2 bay, Vec2 head, float facing, bool laneOk) Bay(Int2 origin, EntityDef def)
+        public (Vec2 bay, Vec2 head, float facing, bool laneOk) Bay(Int2 origin, EntityDef def, int side = 0)
         {
-            (Vec2, Vec2, float, bool) Side(Vec2 n)
-            {
-                var c = new Vec2(origin.X + def.SizeX / 2f, origin.Y + def.SizeY / 2f);
-                var bay = c + new Vec2(n.X * (def.SizeX / 2f + 0.5f), n.Y * (def.SizeY / 2f + 0.5f));
-                return (bay, bay + n * BayLength, n.Angle, true);
-            }
-            foreach (var n in BaySides)
-            {
-                var (bay, head, f, _) = Side(n);
-                if (LaneTiles(bay, head).All(t => Map.InBounds(t.X, t.Y) && Map.Passable(t.X, t.Y))) return (bay, head, f, true);
-            }
-            var (b0, h0, f0, _) = Side(BaySides[0]);
-            return (b0, h0, f0, false);
+            var (open, clear) = OpenBaySide(origin, def, side);
+            var (bay, head, f) = BayOn(origin, def, BaySides[open]);
+            return (bay, head, f, clear);
         }
+
+        /// <summary>The side a bay really opens on: its own unless that lane is blocked, then the first clear one (clear is false if none is, and then it is its own).</summary>
+        (int side, bool clear) OpenBaySide(Int2 origin, EntityDef def, int side)
+        {
+            side = Math.Clamp(side, 0, BaySides.Length - 1);
+            for (int k = 0; k < BaySides.Length; k++)
+            {
+                int i = k == 0 ? side : (k - 1 < side ? k - 1 : k); // its own side, then the rest in order
+                var (bay, head, _) = BayOn(origin, def, BaySides[i]);
+                if (LaneClear(bay, head)) return (i, true);
+            }
+            return (side, false);
+        }
+
+        /// <summary>The side (an index into BaySides) a drop-off's door faces: where its bay opens now.</summary>
+        int DoorSide(Entity s) => OpenBaySide(s.Origin, s.Def, s.BaySide).side;
+
+        /// <summary>Choose every drop-off's bay side again, from the map's ore as it is now (for tests that rewrite the ore after the world is built).</summary>
+        internal void ChooseBays()
+        {
+            foreach (var e in Entities)
+                if (!e.Dead && e.IsStructure && e.Def.DropOff) e.BaySide = ChooseBaySide(e.Origin, e.Def, NearestOreField(e.Center));
+        }
+
+        static (Vec2 bay, Vec2 head, float facing) BayOn(Int2 origin, EntityDef def, Vec2 n)
+        {
+            var c = new Vec2(origin.X + def.SizeX / 2f, origin.Y + def.SizeY / 2f);
+            var bay = c + new Vec2(n.X * (def.SizeX / 2f + 0.5f), n.Y * (def.SizeY / 2f + 0.5f));
+            return (bay, bay + n * BayLength, n.Angle);
+        }
+
+        bool LaneClear(Vec2 bay, Vec2 head) => LaneTiles(bay, head).All(t => Map.InBounds(t.X, t.Y) && Map.Passable(t.X, t.Y));
+
+        /// <summary>
+        /// The side a new drop-off's bay opens on: of the sides with a clear lane, the one whose lane head is nearest the ore
+        /// field (ties go to the right-hand side as the building faces the map centre, so mirrored bases choose mirrored sides).
+        /// South when there is no field, or no side is clear (as it always was).
+        /// </summary>
+        int ChooseBaySide(Int2 origin, EntityDef def, List<Vec2> field)
+        {
+            if (field.Count == 0) return 0;
+            var right = RightOf(new Vec2(origin.X + def.SizeX / 2f, origin.Y + def.SizeY / 2f));
+            int best = -1; float bestDist = 0, bestRight = 0;
+            for (int i = 0; i < BaySides.Length; i++)
+            {
+                var (bay, head, _) = BayOn(origin, def, BaySides[i]);
+                if (!LaneClear(bay, head)) continue;
+                float dist = DistToField(field, head), toRight = BaySides[i].X * right.X + BaySides[i].Y * right.Y;
+                int cmp = best < 0 ? -1 : TieCmp(dist, bestDist);
+                if (cmp == 0) cmp = TieCmp(bestRight, toRight);
+                if (cmp < 0) { best = i; bestDist = dist; bestRight = toRight; }
+            }
+            return Math.Max(0, best);
+        }
+
+        /// <summary>Which way a structure's door faces, in the sim's radians: its bay for a drop-off, else south, where the models' doors are.</summary>
+        public float DoorFacing(Entity s) => s.IsStructure && s.Def.DropOff ? Bay(s).facing : -MathF.PI / 2f;
 
         /// <summary>The tiles a truck's body sweeps backing from the head of a lane into its bay.</summary>
         static IEnumerable<Int2> LaneTiles(Vec2 bay, Vec2 head)
