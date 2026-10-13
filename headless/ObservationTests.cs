@@ -24,6 +24,7 @@ namespace Pez.Headless
         {
             ObserveArmyFinishesAndIdles();
             ObserveFog();
+            ObserveDismantled();
             ObserveProduction();
             ObserveBlockedAndStuck();
             ObserveCursorsAndGaps();
@@ -142,6 +143,38 @@ namespace Pez.Headless
             Check(Events(w, 1, 0).Any(e => (string)e["kind"] == "losses"), "its own side hears of the loss");
             // Nothing about the rival's economy or base.
             Check(!Events(w, 0, 0).Any(e => (string)e["kind"] is "unit_trained" or "construction_completed" && Json.Write(e).Contains("\"team\":1")), "never another team's production");
+        }
+
+        /// <summary>A team knocked out has its units dismantled: the ones we watched go are gone for sure, the ones in the fog are only remembered.</summary>
+        static void ObserveDismantled()
+        {
+            var w = new World(3, 7);
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var post = At(Mine0(w, "rifleman"), Clear(w, hq.Center + new Vec2(6, 0)));
+            var hq2 = w.Owned(2).First(e => e.Def.Key == "command_center");
+            Entity Spy(Vec2 at) => At(w.SpawnUnit(2, "engineer", hq2), at); // unarmed: nobody fights
+            var near = Spy(post.Pos + new Vec2(4, 0));
+            var strayed = Spy(post.Pos + new Vec2(4, 2));
+            var far = Clear(w, new Vec2(w.Map.W / 2f, w.Map.H / 2f));
+            w.UpdateVisibility();
+            Run(w, 1.05f);
+            long c0 = w.Observe.Log(0).Head;
+            string seen = Json.Write(w.Observe.Log(0).Snapshot());
+            Check(seen.Contains($"\"id\":{near.Id},") && seen.Contains($"\"id\":{strayed.Id},"), "setup: both enemy engineers are in sight");
+            At(strayed, far);
+            w.UpdateVisibility();
+            Run(w, 4.05f);
+            Check(Json.Write(w.Observe.Log(0).Snapshot()).Contains($"\"id\":{strayed.Id},\"key\":\"engineer\",\"team\":2,\"last_pos\""), "setup: one slipped out of sight and is remembered");
+            // Team 2 loses every structure and is knocked out; its engineers are dismantled where they stand.
+            long c1 = w.Observe.Log(0).Head;
+            foreach (var s in w.Owned(2).Where(e => e.IsStructure).ToList()) w.Remove(s);
+            Run(w, 2.1f);
+            Check(w.Teams[2].Defeated && !w.Owned(2).Any(), "team 2 is out and its units are dismantled");
+            var snap = Json.Write(w.Observe.Log(0).Snapshot());
+            var ev = Events(w, 0, c1);
+            Check(!snap.Contains($"\"id\":{near.Id},"), "an enemy seen dismantled leaves no contact behind");
+            Check(!ev.Any(e => (string)e["kind"] == "contacts_lost" && Json.Write(e).Contains($"\"id\":{near.Id},")), "nor is it reported as an enemy that merely left sight");
+            Check(snap.Contains($"\"id\":{strayed.Id},\"key\":\"engineer\",\"team\":2,\"last_pos\""), "one that went in the fog is still only a memory: nobody saw it go");
         }
 
         static void ObserveProduction()

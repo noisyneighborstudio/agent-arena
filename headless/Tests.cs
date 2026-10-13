@@ -1332,6 +1332,47 @@ namespace Pez.Headless
             long gained6 = OreOnMap(w6) - before6;
             Check(w6.Teams[2].Defeated && !w6.GameOver && w6.Owned(2).Count() == 0 && gained6 >= 3000 + 270, $"an eliminated team in an open arena leaves salvage too ({gained6} ore)");
             Check(w.Errors == 0 && w2.Errors == 0 && w3.Errors == 0 && w4.Errors == 0 && w5.Errors == 0 && w6.Errors == 0, "no sim errors");
+
+            // The viewers reload the ore map when OreVersion moves: a spill (sold, or a base dismantled) has to move it.
+            var w7 = new World(3, 7, 96); // three teams, and team 1 keeps a power plant: nobody is knocked out, so the clock keeps running
+            Quiet(w7); Rich(w7, 1);
+            w7.SpawnStructure(1, "power_plant", w7.FindPlacement(1, "power_plant").Value, 1f);
+            Run(w7, 10.1f); // settle: any version bump the start-up owes
+            int v0 = w7.OreVersion;
+            Commands.Execute(w7, 1, Cmd("type", "sell", "structure_id", Hq(w7, 1).Id, "confirm", true));
+            Run(w7, 10.1f);
+            Check(w7.OreVersion > v0, $"selling the last command center moves ore_version so viewers reload the ore ({v0} -> {w7.OreVersion})");
+            var w8 = new World(3, 7, 96);
+            Quiet(w8); Rich(w8, 1);
+            Run(w8, 10.1f);
+            int v8 = w8.OreVersion;
+            w8.Leave(1);
+            Run(w8, 10.1f);
+            Check(w8.OreVersion > v8, $"and so does a player leaving ({v8} -> {w8.OreVersion})");
+
+            // A base dismantled is announced where the ore actually landed, even when the team's last structures
+            // aren't at its first base.
+            var w9 = new World(2, 7, 160);
+            Quiet(w9);
+            var start9 = w9.Teams[1].StartPos;
+            w9.Teams[1].Stock.Clear(); // nothing to spill as the command center goes: the only salvage alert is the leave's
+            foreach (var s in w9.Owned(1).ToList()) w9.Remove(s);
+            var far = w9.SpawnStructure(1, "power_plant", w9.FindPlacement(1, "power_plant", new Vec2(160 - start9.X, 160 - start9.Y), requireNear: false).Value, 1f);
+            string home9 = StateView.Sector(start9), there9 = StateView.Sector(far.Center);
+            Check(home9 != there9, $"setup: the last structure ({there9}) is in another sector than the first base ({home9})");
+            string left9 = w9.Leave(1);
+            Check(left9.Contains($"at sector {there9}") && !left9.Contains(home9), $"a leaving team's salvage is announced where it lies: {left9}");
+            var avail9 = w9.Alerts.Active(w9, 0).FirstOrDefault(a => a.Kind == "salvage_available");
+            Check(avail9 != null && avail9.Lost.Any(l => l.Contains(there9)) && StateView.Sector(avail9.Pos) == there9, $"and so is the alert, text and position ({avail9?.Lost.FirstOrDefault()}, {(avail9 == null ? "-" : StateView.Sector(avail9.Pos))})");
+
+            // Split across two bases, it names both sectors, the bigger lot first.
+            var w10 = new World(2, 7, 160);
+            Quiet(w10);
+            var start10 = w10.Teams[1].StartPos;
+            var far10 = w10.SpawnStructure(1, "power_plant", w10.FindPlacement(1, "power_plant", new Vec2(160 - start10.X, 160 - start10.Y), requireNear: false).Value, 1f);
+            string left10 = w10.Leave(1);
+            Check(left10.Contains("sectors ") && left10.Contains(StateView.Sector(start10)) && left10.Contains(StateView.Sector(far10.Center)), $"salvage landing in two sectors names both: {left10}");
+            Check(w9.Errors == 0 && w10.Errors == 0 && w7.Errors == 0 && w8.Errors == 0, "no sim errors");
         }
 
         static void FieldRefuelling()

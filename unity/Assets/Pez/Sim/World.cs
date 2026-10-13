@@ -467,9 +467,10 @@ namespace Pez.Sim
 
         /// <summary>
         /// Spread ore values (per ore type) as salvage anyone can mine: on these tiles first, then on open ground around
-        /// them, as many tiles as it takes (a tile holds at most Map.MaxOrePerTile). Returns the amount actually placed.
+        /// them, as many tiles as it takes (a tile holds at most Map.MaxOrePerTile). Returns the amount actually placed,
+        /// and lists where each pile landed in `landed` (for saying where it is).
         /// </summary>
-        float SpillSalvage(float[] value, List<Int2> tiles)
+        float SpillSalvage(float[] value, List<Int2> tiles, List<(Int2 tile, int ore)> landed = null)
         {
             if (value.Sum() <= 0 || tiles.Count == 0) return 0;
             // Free ground, nearest the footprint first: the footprint itself, then open tiles with no ore on them.
@@ -511,10 +512,27 @@ namespace Pez.Sim
                     Map.OreType[i] = (byte)k;
                     Map.Ore[i] = Math.Min(Map.MaxOrePerTile, per);
                     placed += Map.Ore[i];
+                    landed?.Add((queue[ti], Map.Ore[i]));
                 }
             }
             MapVersion++;
+            if (placed > 0) oreDirty = true; // the viewers fetch the ore map again when OreVersion moves
             return placed;
+        }
+
+        /// <summary>
+        /// Where spilled ore landed, in words and as a spot for an alert: the sector it all lies in, or the sectors it is
+        /// split across (biggest first), and the middle of the biggest lot. `fallback` if none landed.
+        /// </summary>
+        static (string where, Vec2 at) SpillSite(List<(Int2 tile, int ore)> landed, Vec2 fallback)
+        {
+            if (landed.Count == 0) return ($"sector {StateView.Sector(fallback)}", fallback);
+            var lots = landed.GroupBy(l => StateView.Sector(l.tile.Center))
+                             .Select(g => (sector: g.Key, ore: g.Sum(l => l.ore), at: new Vec2(g.Average(l => l.tile.Center.X), g.Average(l => l.tile.Center.Y))))
+                             .OrderByDescending(l => l.ore).ThenBy(l => l.sector).ToList();
+            if (lots.Count == 1) return ($"sector {lots[0].sector}", lots[0].at);
+            string list = string.Join(", ", lots.Take(3).Select(l => $"{l.sector} ({l.ore} units)")) + (lots.Count > 3 ? $" and {lots.Count - 3} more" : "");
+            return ($"sectors {list}", lots[0].at);
         }
 
         /// <summary>
@@ -548,9 +566,9 @@ namespace Pez.Sim
         /// <summary>
         /// A team that's out for good (left, or knocked out) is taken apart: its derricks go back to neutral, and every
         /// building, unit and the whole stockpile turn to salvage ore on its old base (60% of a building's cost, 50% of a
-        /// unit's). Returns the ore placed.
+        /// unit's). Returns the ore placed and where it landed (the structures' footprints, so not always the first base).
         /// </summary>
-        float Dismantle(Team t)
+        (float total, string where, Vec2 at) Dismantle(Team t)
         {
             ReleaseDerricks(t.Id);
             t.Defeated = true; // first: a command center going with the rest isn't a "last one fell" spill (ReleaseStockpile)
@@ -570,9 +588,11 @@ namespace Pez.Sim
                 Remove(e);
             }
             if (tiles.Count == 0) tiles.Add(Int2.Of(t.StartPos));
-            float total = SpillSalvage(value, tiles);
+            var landed = new List<(Int2 tile, int ore)>();
+            float total = SpillSalvage(value, tiles, landed);
             t.Stock.Clear();
-            return total;
+            var (where, at) = SpillSite(landed, t.StartPos);
+            return (total, where, at);
         }
 
         /// <summary>
@@ -581,29 +601,27 @@ namespace Pez.Sim
         /// </summary>
         string Eliminate(Team t)
         {
-            float total = Dismantle(t);
+            var (total, where, at) = Dismantle(t);
             if (total <= 0) return "";
-            var where = StateView.Sector(t.StartPos);
             foreach (var other in Teams.Where(o => o.Id != t.Id && !o.Left && !o.Defeated))
-                Alerts.Raise(this, other.Id, "salvage_available", Priority.High, t.StartPos, hit: false).Lost.Add($"{(int)total} units of salvage ore at {where}");
-            return $". What it had left (stockpile and units) is now about {(int)total} units of salvage ore at sector {where}. First come, first served.";
+                Alerts.Raise(this, other.Id, "salvage_available", Priority.High, at, hit: false).Lost.Add($"{(int)total} units of salvage ore at {where}");
+            return $". What it had left (stockpile and units) is now about {(int)total} units of salvage ore at {where}. First come, first served.";
         }
 
         public string Leave(int teamId, string reason = null)
         {
             var t = Teams[teamId];
             if (t.Left) return "already left";
-            float total = Dismantle(t);
+            var (total, where, at) = Dismantle(t);
             t.Left = true;
             scoreCache = null;
             ForgetTeam(teamId);
             MapVersion++;
-            var where = StateView.Sector(t.StartPos);
-            string msg = $"{t.PlayerName ?? t.Name} ({t.Name}) {reason ?? "left the arena"}. Their base at sector {where} is now about {(int)total} units of salvage ore. First come, first served.";
+            string msg = $"{t.PlayerName ?? t.Name} ({t.Name}) {reason ?? "left the arena"}. Their base at {where} is now about {(int)total} units of salvage ore. First come, first served.";
             Emit("left", teamId, pos: t.StartPos, text: msg);
             Emit("chat", -1, text: msg);
             foreach (var other in Teams.Where(o => !o.Left && !o.Defeated))
-                Alerts.Raise(this, other.Id, "salvage_available", Priority.High, t.StartPos, hit: false).Lost.Add($"{(int)total} units of salvage ore");
+                Alerts.Raise(this, other.Id, "salvage_available", Priority.High, at, hit: false).Lost.Add($"{(int)total} units of salvage ore at {where}");
             return msg;
         }
 
@@ -780,7 +798,8 @@ namespace Pez.Sim
         {
             var ev = new GameEvent { Seq = nextSeq++, Tick = Tick, Type = type, Team = team, A = a, B = b, Pos = pos, Pos2 = pos2, Key = key, Text = text };
             // Which teams saw it go: only they may be told it was destroyed (the observation feed never reports deaths in the fog).
-            if (type == "destroyed" && Feed != null && ById.TryGetValue(a, out var gone))
+            // A dismantled unit (its team left or was knocked out) goes the same way: the feed forgets it where it was seen go.
+            if ((type == "destroyed" || type == "salvaged") && Feed != null && ById.TryGetValue(a, out var gone))
                 for (int t = 0; t < Teams.Count && t < 31; t++)
                     if (t != gone.Team && !gone.IsCarried && IsVisibleTo(t, gone)) ev.SeenBy |= 1 << t;
             Events.Add(ev);
