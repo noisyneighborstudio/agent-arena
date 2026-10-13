@@ -26,12 +26,20 @@ namespace Pez.Sim
 
         /// <summary>
         /// Ore regrowth, per field tile, in ore a second at the map's centre, scaled by RegrowWeight (1 in the middle,
-        /// RegrowEdge in the corners) and the square root of the map's ore richness (a scarce map regrows less, but not
-        /// in proportion: its stalemates need the long tail most). A mined-bare 96-tile map earns back about 7 ore/s at
-        /// richness 1 and 3.5 at 0.3, about 70% of it in the middle: a deep mine pumps 4/s, so deep mining stays the
-        /// mid-game economy and regrowth is the long tail that makes the middle worth fighting for.
+        /// RegrowEdge in the corners), RegrowByOre (iron and copper regrow faster than crystal and uranium: crystal's fields
+        /// ring the middle, where regrowth is fastest, and it used to take over) and the square root of the map's ore
+        /// richness (a scarce map regrows less, but not in proportion: its stalemates need the long tail most).
+        /// Measured on a mined-bare 96-tile map (mean of four seeds), over the first 20 minutes:
+        ///   richness 1:   6.6 ore/s (iron 2.6, copper 1.3, crystal 2.0, uranium 0.7), 41% of it in the middle;
+        ///                 6.3 in minutes 20-30, when the middle's crystal and uranium have refilled and iron and copper keep coming;
+        ///   richness 0.3: 3.2 ore/s (iron 1.3, copper 0.65, crystal 1.0, uranium 0.3), 40% of it in the middle.
+        /// (Before RegrowByOre: 6.9 and 2.9 ore/s, of which iron 1.6 and copper 0.6 at richness 1, 68% in the middle.)
+        /// A deep mine pumps 4/s, so deep mining stays the mid-game economy and regrowth is the long tail that keeps a
+        /// base's iron and copper trickling and makes the middle worth fighting for.
         /// </summary>
         public const float RegrowRate = 0.12f, RegrowEdge = 0.04f, RegrowFalloff = 2.5f;
+        /// <summary>Regrowth speed of each ore relative to the rest, per tile (in Defs.Ores order: iron_ore, copper_ore, crystal, uranium).</summary>
+        public static readonly float[] RegrowByOre = { 1.5f, 2f, 0.5f, 0.5f };
         public const int RegrowEvery = TickRate * 2;
         /// <summary>Selftest baseline only: no regrowth at all.</summary>
         public static bool RegrowthDisabled;
@@ -65,7 +73,7 @@ namespace Pez.Sim
                 if (field >= target || ore >= Map.MaxOrePerTile || Map.Occupant[i] != 0 || beingMined.Contains(i) || !Map.TerrainPassable(i % Map.W, i / Map.W)) continue;
                 if (ore > 0 && Map.OreType[i] != Map.OreBaseType[i]) continue; // salvage of another ore lies on it
                 if (field == 0 && !roots[i] && !Map.FieldNeighbourHasOre(i)) continue;
-                float amount = scale * Map.RegrowWeight(i);
+                float amount = scale * Map.RegrowWeight(i) * RegrowByOre[Map.OreBaseType[i]];
                 uint h = (uint)i * 2654435761u ^ (uint)Tick * 40503u;
                 int add = (int)(amount + ((h >> 8) & 0xFFFF) / 65536f);
                 if (add > 0) regrowNow.Add((i, Math.Min(Math.Min(add, target - field), Map.MaxOrePerTile - ore)));
@@ -80,19 +88,24 @@ namespace Pez.Sim
 
         // ------------------------------------------------------------------ defence upkeep
 
-        /// <summary>Armed defences a team keeps for free; each one beyond these costs UpkeepPerMinute steel.</summary>
+        /// <summary>Armed defences a team keeps for free; each one beyond these costs UpkeepPercent of its steel price a minute.</summary>
         public const int FreeDefences = 4;
-        public const float UpkeepPerMinute = 3f;
+        public const float UpkeepPercent = 4f;
+
+        /// <summary>Steel a minute one defence costs once it's past the free ones: UpkeepPercent of its steel price (a gun turret 6, a SAM site 8, a laser tower 10).</summary>
+        public static float UpkeepPerMinute(EntityDef d) => UpkeepPerMinute(d.Cost.TryGetValue("steel", out var steel) ? steel : 0);
+        public static float UpkeepPerMinute(int steelPrice) => steelPrice * UpkeepPercent / 100f;
 
         /// <summary>A team's finished armed defences (turrets, SAM sites, laser towers), oldest first.</summary>
         public List<Entity> Defences(int team) =>
             Entities.Where(e => !e.Dead && e.Team == team && e.IsStructure && e.IsArmed && e.IsComplete).OrderBy(e => e.Id).ToList();
 
         /// <summary>
-        /// Light upkeep for defences, every second: a team's first FreeDefences armed defences are free, and each one past
-        /// those costs UpkeepPerMinute steel a minute (an 11-tower wall: 21 steel a minute). What the stockpile can't pay
-        /// for goes offline, newest first: it stands but doesn't fire until the steel is there again. So a base can always
-        /// defend itself, and walling up for good costs a trickle.
+        /// Upkeep for defences, every second: a team's first FreeDefences armed defences are free, and each one past
+        /// those costs UpkeepPercent of its steel price a minute, so a big wall of expensive towers costs something real
+        /// (11 laser towers: 70 steel a minute, 11 gun turrets: 42). What the stockpile can't pay for goes offline, newest
+        /// first: it stands and draws no power, but doesn't fire until the steel is there again. So a base can always
+        /// defend itself, and walling up for good has a running cost.
         /// </summary>
         void Upkeep()
         {
@@ -101,28 +114,94 @@ namespace Pez.Sim
             {
                 if (t.Left || t.Defeated) continue;
                 var defs = Defences(t.Id);
-                float each = UpkeepPerMinute / 60f;
-                int paying = Math.Max(0, defs.Count - FreeDefences);
-                float steel = t.Stock.TryGetValue("steel", out var s) ? s : 0;
-                int afford = Math.Min(paying, (int)(steel / each + 1e-4f));
-                if (afford > 0) { t.Add("steel", -afford * each); t.Stats.UpkeepPaid += afford * each; }
+                float steel = t.Stock.TryGetValue("steel", out var s) ? s : 0, paid = 0;
                 var wentOff = new List<Entity>();
-                bool cameBack = false;
+                bool cameBack = false, changed = false, broke = false;
                 for (int i = 0; i < defs.Count; i++)
                 {
-                    bool off = i >= FreeDefences + afford; // the newest beyond what's paid for
+                    bool off = false;
+                    if (i >= FreeDefences)
+                    {
+                        float due = UpkeepPerMinute(defs[i].Def) / 60f;
+                        if (!broke && steel + 1e-4f >= due) { due = MathF.Min(due, steel); steel -= due; paid += due; }
+                        else { broke = true; off = true; } // the newer ones can't be paid either
+                    }
                     if (off && !defs[i].Offline) wentOff.Add(defs[i]);
                     if (!off && defs[i].Offline) cameBack = true;
-                    defs[i].Offline = off;
+                    if (defs[i].Offline != off) { defs[i].Offline = off; changed = true; }
                 }
+                if (paid > 0) { t.Add("steel", -paid); t.Stats.UpkeepPaid += paid; }
+                if (changed) UpdatePower(); // offline defences draw no power
                 if (wentOff.Count > 0)
                 {
                     var a = Alerts.Raise(this, t.Id, "defences_offline", Priority.High, wentOff[0].Center, hit: false);
-                    a.Lost.Add($"{string.Join(", ", wentOff.Select(e => $"{e.Def.Key} #{e.Id}"))} offline: upkeep is {UpkeepPerMinute:0} steel/min for each defence past your first {FreeDefences}, and you're out of steel. They hold fire until it's paid (newest go offline first)");
-                    Emit("defences_offline", t.Id, wentOff[0].Id, 0, wentOff[0].Center, text: $"{wentOff.Count} defence(s) went offline: no steel for their upkeep ({UpkeepPerMinute:0} steel/min each past the first {FreeDefences})");
+                    a.Lost.Add($"{string.Join(", ", wentOff.Select(e => $"{e.Def.Key} #{e.Id}"))} offline: upkeep is {UpkeepPercent:0.#}% of a defence's steel price a minute for each defence past your first {FreeDefences}, and you're out of steel. They hold fire and draw no power until it's paid (newest go offline first)");
+                    Emit("defences_offline", t.Id, wentOff[0].Id, 0, wentOff[0].Center, text: $"{wentOff.Count} defence(s) went offline: no steel for their upkeep ({UpkeepPercent:0.#}% of their steel price a minute each past the first {FreeDefences})");
                 }
                 if (cameBack && defs.All(e => !e.Offline)) Emit("defences_online", t.Id, text: "all your defences are back online: their upkeep is paid");
             }
+        }
+
+        // ------------------------------------------------------------------ fusion reactor
+
+        /// <summary>
+        /// Plasma a fusion reactor burns a second at full output (+500 power): 108 plasma an hour, from 216 uranium.
+        /// Its price is about 750 ore (400 steel, 100 circuits, 25 plasma: 500 iron, 200 copper and 50 uranium) against
+        /// 1,250 iron ore for the five power plants that make the same power, in 9 tiles instead of 20. Counting its fuel
+        /// it stays cheaper in ore than the plants for the first 2.3 hours (750 + 216 an hour, against 1,250); what you
+        /// pay for that is one building carrying all the power, and fuel to find.
+        /// </summary>
+        public const float FusionBurn = 0.03f;
+
+        /// <summary>The power a reactor makes at this share of full output.</summary>
+        public static int ReactorPower(Entity e, float share) => (int)MathF.Round(e.Def.Power * share);
+
+        /// <summary>
+        /// A reactor burns each tick's plasma from what the stockpile holds above 'reserve' and 'save_for' (they hold it
+        /// back from reactors as from converters), and makes the share of its power that burn pays for: short of plasma
+        /// it makes less power rather than none. Returns whether its power changed, so the team's power is added up again.
+        /// A tick's burn (0.0015) is less than half the gap between floats once a stockpile holds tens of thousands, so
+        /// taking it straight off the stock would change nothing there (free fuel). The team keeps what its reactors have
+        /// burned in PlasmaOwed instead, and SettleFusionBurn takes it off the stockpile once a second (0.03 a reactor:
+        /// well above the gap at any stock a game reaches). Every reactor's check, and Team.Amount, count the owed part
+        /// as already spent, so reactors can't burn plasma that isn't there and a purchase can't spend plasma that's burned.
+        /// </summary>
+        bool FusionTick(Entity e, Team team)
+        {
+            float burn = FusionBurn * Dt;
+            float free = (team.Stock.TryGetValue("plasma", out var pl) ? pl : 0) - team.Reserved("plasma") - team.PlasmaOwed;
+            float paid = MathF.Max(0f, MathF.Min(burn, free));
+            team.PlasmaOwed += paid;
+            float share = paid / burn;
+            bool changed = ReactorPower(e, share) != ReactorPower(e, e.Output);
+            e.Output = share;
+            e.Working = ReactorPower(e, share) > 0;
+            return changed;
+        }
+
+        /// <summary>Once a second: take the plasma the team's reactors have burned off its stockpile (never more than it holds).</summary>
+        void SettleFusionBurn()
+        {
+            foreach (var t in Teams)
+            {
+                if (t.PlasmaOwed <= 0) continue;
+                float take = MathF.Min(t.PlasmaOwed, MathF.Max(0f, t.Stock.TryGetValue("plasma", out var pl) ? pl : 0));
+                t.Add("plasma", -take);
+                t.PlasmaOwed -= take;
+            }
+        }
+
+        /// <summary>A reactor that has just been finished or captured starts at the share its new team can pay now, so its power counts from the first sum (not the old owner's, and not none).</summary>
+        void StartReactor(Entity e)
+        {
+            if (e.Def.Key == "fusion_reactor" && e.Team >= 0) FusionTick(e, Teams[e.Team]);
+        }
+
+        /// <summary>For the low-power alert (the owner's only: events can reach other players' copies): when a fusion reactor is making less than its full power for want of plasma, say so and what to do.</summary>
+        string ReactorShortNote(Team t)
+        {
+            var r = Entities.FirstOrDefault(e => !e.Dead && e.Team == t.Id && e.Def.Key == "fusion_reactor" && e.IsComplete && e.Output < 0.995f);
+            return r == null ? "" : $". Your fusion_reactor #{r.Id} is short of plasma and makes only {StateView.Pct(r.Output)}% of its {r.Def.Power} power: enrich more uranium, or lift the reserve/save_for on plasma";
         }
 
         // ------------------------------------------------------------------ neutral derricks
@@ -365,9 +444,8 @@ namespace Pez.Sim
         float[] TakeStockpile(Team t)
         {
             var value = new float[4];
-            foreach (var kv in t.Stock) if (kv.Value > 0) AddOre(value, kv.Key, t.Own(kv.Key));
-            t.Stock.Clear();
-            t.Granted.Clear();
+            foreach (var kv in t.Stock) AddOre(value, kv.Key, t.Own(kv.Key)); // (Own leaves out the plasma its reactors have burned: that's gone)
+            t.Stock.Clear(); t.Granted.Clear(); t.PlasmaOwed = 0;
             return value;
         }
 

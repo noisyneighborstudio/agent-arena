@@ -83,7 +83,7 @@ namespace Pez.Sim
             var o = new JObj().Set("id", t.Id).Set("name", t.Name).Set("controller", t.Controller).Put("player", t.PlayerName)
                 .Put("standing_orders", t.StandingOrders).Put("orders_version", t.OrdersVersion)
                 .Set("stock", SnapIO.Floats(t.Stock)).Set("rates", SnapIO.Floats(t.Rates))
-                .Set("power_produced", t.PowerProduced).Set("power_used", t.PowerUsed)
+                .Set("power_produced", t.PowerProduced).Set("power_used", t.PowerUsed).Put("plasma_owed", t.PlasmaOwed)
                 .Set("start", SnapIO.V(t.StartPos)).Put("defeated", t.Defeated).Put("left", t.Left).Put("resigned", t.Resigned)
                 .Put("stalled_since", t.StalledSince, -1f).Put("house", t.House).Set("seat", t.Seat).Put("protected_until", t.ProtectedUntil)
                 .Put("surface_warned_at", t.SurfaceWarnedAt, -999f).Put("home_ore_warned", t.HomeOreWarned, 0).Set("last_active_at", t.LastActiveAt);
@@ -129,7 +129,7 @@ namespace Pez.Sim
             d.Load("standing_orders", ref t.StandingOrders); d.Load("orders_version", ref t.OrdersVersion);
             SnapIO.LoadFloats(d.Obj("stock"), t.Stock); SnapIO.LoadFloats(d.Obj("rates"), t.Rates);
             SnapIO.LoadFloats(d.Obj("granted"), t.Granted); // a save from before gifts counted: nothing is a gift, as before
-            d.Load("power_produced", ref t.PowerProduced); d.Load("power_used", ref t.PowerUsed);
+            d.Load("power_produced", ref t.PowerProduced); d.Load("power_used", ref t.PowerUsed); d.Load("plasma_owed", ref t.PlasmaOwed);
             d.Load("start", ref t.StartPos); d.Load("defeated", ref t.Defeated); d.Load("left", ref t.Left); d.Load("resigned", ref t.Resigned);
             d.Load("stalled_since", ref t.StalledSince); d.Load("house", ref t.House); d.Load("seat", ref t.Seat);
             d.Load("protected_until", ref t.ProtectedUntil); d.Load("surface_warned_at", ref t.SurfaceWarnedAt); d.Load("home_ore_warned", ref t.HomeOreWarned); d.Load("last_active_at", ref t.LastActiveAt);
@@ -194,7 +194,7 @@ namespace Pez.Sim
              .Put("cargo", e.Cargo).Put("cargo_salvage", e.CargoSalvage).Put("cargo_type", e.CargoType, -1).Put("harvest_type", e.HarvestType, -1);
             if (e.HarvestTile.HasValue) o.Set("harvest_tile", new List<object> { e.HarvestTile.Value.X, e.HarvestTile.Value.Y });
             o.PutEnum("dock", e.Dock, DockStep.None).Put("dock_at", e.DockAt).Put("burning", e.Burning).Put("granted_share", e.GrantedShare);
-            o.Put("work_timer", e.WorkTimer).Put("deposit", e.DepositId).Put("working", e.Working).Put("carrier", e.CarrierId).Put("offline", e.Offline);
+            o.Put("work_timer", e.WorkTimer).Put("deposit", e.DepositId).Put("working", e.Working).Put("output", e.Output).Put("carrier", e.CarrierId).Put("offline", e.Offline);
             if (e.Passengers.Count > 0) o.Set("passengers", e.Passengers.Cast<object>().ToList());
             o.Put("fuel", e.Fuel).Put("fuel_cap", e.FuelCap).Put("landed", e.Landed).Put("stranded", e.Stranded).Put("at_depot", e.AtDepot).Put("fuel_warned", e.FuelWarned)
              .Put("no_auto_refuel_until", e.NoAutoRefuelUntil).PutEnum("resume_order", e.ResumeOrder, Order.Idle)
@@ -235,6 +235,9 @@ namespace Pez.Sim
             if (d.Has("harvest_tile", out var ht) && ht is List<object> hl && hl.Count >= 2) e.HarvestTile = new Int2(SnapIO.ToI(hl[0]), SnapIO.ToI(hl[1]));
             d.LoadEnum("dock", ref e.Dock); d.Load("dock_at", ref e.DockAt); d.Load("burning", ref e.Burning); d.Load("granted_share", ref e.GrantedShare);
             d.Load("work_timer", ref e.WorkTimer); d.Load("deposit", ref e.DepositId); d.Load("working", ref e.Working); d.Load("carrier", ref e.CarrierId); d.Load("offline", ref e.Offline);
+            // A reactor saved before partial output made all of its power or none.
+            if (def.Key == "fusion_reactor") e.Output = e.Working ? 1f : 0f;
+            d.Load("output", ref e.Output);
             foreach (var x in d.Arr("passengers")) if (x is double pid) e.Passengers.Add((int)pid);
             // A snapshot from before fuel existed: start full rather than stranded.
             e.Fuel = def.Fuel; d.Load("fuel", ref e.Fuel); d.Load("fuel_cap", ref e.FuelCap);
@@ -543,12 +546,11 @@ namespace Pez.Sim
 
             foreach (var id in d.Objs("inventions")) { var inv = Snapshot.ReadInvention(id); if (inv != null) w.Inventions[inv.Key] = inv; }
 
-            bool rebuildPower = false, rebuildVision = false;
+            bool rebuildVision = false;
             int i = 0;
             foreach (var td in d.Objs("teams"))
             {
                 var t = Snapshot.ReadTeam(td, i++, w.Map, w.Time);
-                rebuildPower |= !td.ContainsKey("power_produced");
                 rebuildVision |= !td.ContainsKey("visible");
                 w.Teams.Add(t);
             }
@@ -589,7 +591,7 @@ namespace Pez.Sim
             d.Load("seat_counter", ref w.seatCounter);
             if (d.Str("rng") is string r && ulong.TryParse(r, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var state)) w.rng.State = state;
 
-            if (rebuildPower) w.UpdatePower();
+            w.UpdatePower(); // always: a save from before a power rule changed (offline defences, reactor output) still holds the old sums
             if (rebuildVision) w.UpdateVisibility();
         }
     }

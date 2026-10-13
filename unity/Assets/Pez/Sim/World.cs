@@ -62,7 +62,9 @@ namespace Pez.Sim
         /// <summary>Enemies briefly revealed by firing on this team (entity id -> game time the reveal ends).</summary>
         public readonly Dictionary<int, float> Revealed = new Dictionary<int, float>();
 
-        public int Amount(string item) => Stock.TryGetValue(item, out var v) ? (int)v : 0;
+        /// <summary>Plasma the team's fusion reactors have burned but the stockpile hasn't paid yet (World.SettleFusionBurn): not available to spend.</summary>
+        public float PlasmaOwed;
+        public int Amount(string item) => Stock.TryGetValue(item, out var v) ? (int)(item == "plasma" ? v - PlasmaOwed : v) : 0;
         /// <summary>Change the stockpile. Taking something out spends the gift first (see Granted); adding is income, and is the team's own.</summary>
         public void Add(string item, float n)
         {
@@ -81,7 +83,7 @@ namespace Pez.Sim
         public void Give(string item, float n) { Add(item, n); Granted[item] = Gift(item) + n; }
         public float Gift(string item) => Granted.TryGetValue(item, out var g) ? g : 0f;
         /// <summary>What of an item the team holds above its gift: the part it mined, made or won itself, which a spill gives up.</summary>
-        public float Own(string item) => Stock.TryGetValue(item, out var v) ? MathF.Max(0f, v - Gift(item)) : 0f;
+        public float Own(string item) => Stock.TryGetValue(item, out var v) ? MathF.Max(0f, (item == "plasma" ? v - PlasmaOwed : v) - Gift(item)) : 0f;
         /// <summary>Add `n` of an item of which `giftShare` is gift: a refund of something bought with gift, or what a converter makes of it.</summary>
         public void Gain(string item, float n, float giftShare)
         {
@@ -787,6 +789,7 @@ namespace Pez.Sim
 
         void OnStructureComplete(Entity e)
         {
+            StartReactor(e);
             UpdatePower();
             if (e.Def.Key == "mining_refinery") SpawnUnit(e.Team, "mining_truck", e).GrantedShare = e.GrantedShare; // its free truck is as much a gift as the refinery was
         }
@@ -1166,7 +1169,8 @@ namespace Pez.Sim
             {
                 if (e.Dead || !e.IsStructure || !e.IsComplete || e.Team < 0) continue;
                 var t = Teams[e.Team];
-                if (e.Def.Key == "fusion_reactor" && !e.Working) continue; // out of plasma
+                if (e.Offline) continue; // an offline defence (upkeep unpaid) draws no power
+                if (e.Def.Key == "fusion_reactor") { t.PowerProduced += ReactorPower(e, e.Output); continue; } // as much as its plasma pays for
                 if (e.Def.Power > 0) t.PowerProduced += e.Def.Power; else t.PowerUsed -= e.Def.Power;
             }
             // Say when a team tips into low power (and out of it): otherwise half-speed production goes unnoticed.
@@ -1178,7 +1182,7 @@ namespace Pez.Sim
                 if (t.LowPower)
                 {
                     Alerts.Raise(this, t.Id, "low_power", Priority.Medium, at, hit: false)
-                          .Lost.Add($"power {t.PowerProduced} produced, {t.PowerUsed} used: building, training and refining run at half speed until you build a power_plant or sell something that draws power");
+                          .Lost.Add($"power {t.PowerProduced} produced, {t.PowerUsed} used: building, training and refining run at half speed until you build a power_plant or sell something that draws power" + ReactorShortNote(t));
                     Emit("low_power", t.Id, 0, 0, at, text: $"low power ({t.PowerProduced} produced, {t.PowerUsed} used): everything runs at half speed until you add a power_plant");
                 }
                 else Emit("power_restored", t.Id, 0, 0, at, text: $"power restored ({t.PowerProduced} produced, {t.PowerUsed} used): full speed again");
@@ -1198,14 +1202,7 @@ namespace Pez.Sim
                 if (e.Dead || !e.IsStructure || !e.IsComplete || e.Team < 0) continue; // neutral derricks pay nobody
                 var team = Teams[e.Team];
                 if (e.Def.Key == "derrick") { DerrickTick(e, team); continue; }
-                if (e.Def.Key == "fusion_reactor")
-                {
-                    float burn = 0.1f * Dt;
-                    bool fueled = (team.Stock.TryGetValue("plasma", out var pl) ? pl : 0) >= burn;
-                    if (fueled) team.Add("plasma", -burn);
-                    if (fueled != e.Working) { e.Working = fueled; powerChanged = true; }
-                    continue;
-                }
+                if (e.Def.Key == "fusion_reactor") { if (FusionTick(e, team)) powerChanged = true; continue; }
                 if (e.Def.Key == "deep_mine") { DeepMineTick(e, team); continue; }
                 if (e.Def.Recipes.Length == 0) continue;
                 float speed = team.LowPower ? 0.5f : 1f;
@@ -1230,6 +1227,7 @@ namespace Pez.Sim
                 }
                 e.Working = any;
             }
+            if (Tick % TickRate == 0) SettleFusionBurn();
             if (powerChanged) UpdatePower();
 
             // Per-second net rates, from a stock snapshot each second, averaged over about 15 s: a truck unloading 150 ore
@@ -1679,6 +1677,7 @@ namespace Pez.Sim
                  text: $"{Teams[e.Team].Name}'s engineer captured {(old >= 0 ? $"{Teams[old].Name}'s" : "a neutral")} {t.Def.Key} #{t.Id} at {(int)t.Center.X},{(int)t.Center.Y}");
             if (old >= 0) Alerts.Raise(this, old, "structure_lost", Priority.Critical, t.Center, attacker: e).Lost.Add($"{t.Def.Key} #{t.Id} (captured by an engineer)");
             if (t.Def.Key == "derrick") DerrickCaptured(t, old);
+            StartReactor(t);
             if (old >= 0 && t.Def.Key == "command_center") ReleaseStockpile(t, old, $"was captured by {Teams[e.Team].Name}");
             Remove(e); // the engineer moves in for good
             UpdatePower();
@@ -2448,7 +2447,7 @@ namespace Pez.Sim
             SetOrder(e, Order.Idle, e.Pos);
         }
 
-        /// <summary>Ore left at which a deep mine warns it's running low: two minutes of pumping.</summary>
+        /// <summary>Ore left at which a deep mine warns it's running low: five minutes of pumping.</summary>
         public const float DeepMineWarnAmount = EntityDef.DeepMineRate * 300f; // 5 minutes: time to survey, build a rig and drive it
 
         /// <summary>Seconds of pumping left in a deposit at this team's current rate (low power halves it).</summary>
