@@ -100,10 +100,7 @@ namespace Pez.Headless
             if (o.Sections.Contains("rates")) { progress("rates..."); RatesSection(sb); }
             if (o.Sections.Contains("regrow")) { progress("regrowth..."); RegrowSection(sb); }
             if (o.Sections.Contains("maps")) { progress("maps..."); MapsSection(sb); }
-            if (o.Sections.Contains("matrix"))
-            {
-                games = PlayMatrix(o, progress);
-            }
+            if (o.Sections.Contains("matrix")) games = PlayMatrix(o, progress);
             if (o.Sections.Contains("kit")) { progress("catch-up kit..."); KitSection(sb, games); }
             if (games.Count > 0) MatrixSection(sb, games, o);
             return sb.ToString();
@@ -148,11 +145,11 @@ namespace Pez.Headless
         public sealed class Rate
         {
             public string Name, Claimed, Where, Verdict;
-            public double Expect, Measured, Tolerance;
-            public Rate(string name, string where, double expect, double measured, double tolerance, string unit = "")
+            public double Measured;
+            public Rate(string name, string where, double expect, double measured, double tolerance)
             {
-                Name = name; Where = where; Expect = expect; Measured = measured; Tolerance = tolerance;
-                Claimed = F(expect) + unit;
+                Name = name; Where = where; Measured = measured;
+                Claimed = F(expect);
                 Verdict = Math.Abs(measured - expect) <= tolerance * Math.Abs(expect) + 1e-9 ? "ok" : "DIFFERS";
             }
             public bool Ok => Verdict == "ok";
@@ -182,7 +179,7 @@ namespace Pez.Headless
         }
 
         /// <summary>A finished structure for team 0 where the build rules would put it (a refinery's free truck is sent away again: nothing moves in a bench).</summary>
-        static Entity Build(World w, string key)
+        static Entity Stand(World w, string key)
         {
             var spot = w.FindPlacement(0, key);
             var e = spot.HasValue ? w.SpawnStructure(0, key, spot.Value, 1f) : null;
@@ -199,7 +196,7 @@ namespace Pez.Headless
                 var w = Bench(2); // 2 plants + the command center's 20: nothing short
                 rs.Add(new Rate("command center trickle, iron_ore/s", "rules (\"trickles 1 iron_ore/s\"), TECH_TREE", 1, PerSecond(w, x => Stock(x.Teams[0], "iron_ore"), 60), 0.05));
                 var low = Bench(0);
-                Build(low, "mining_refinery"); // 50 power wanted, 20 made: low power (and the refinery turns the trickle into steel as it comes, so count both)
+                Stand(low, "mining_refinery"); // 50 power wanted, 20 made: low power (and the refinery turns the trickle into steel as it comes, so count both)
                 low.Teams[0].Stock.Clear();
                 Steps(low, 1);
                 rs.Add(new Rate("command center trickle in low power, iron_ore/s", "rules (\"low power halves every rate\")", 0.5, PerSecond(low, x => Stock(x.Teams[0], "iron_ore") + Stock(x.Teams[0], "steel"), 60), 0.05));
@@ -208,7 +205,7 @@ namespace Pez.Headless
             double Converter(string building, string[] give, string[] outputs, double seconds = 60)
             {
                 var w = Bench(4);
-                Build(w, building);
+                Stand(w, building);
                 foreach (var item in give) w.Teams[0].Add(item, 100000);
                 return PerSecond(w, x => outputs.Sum(i => Stock(x.Teams[0], i)), seconds);
             }
@@ -221,7 +218,7 @@ namespace Pez.Headless
             rs.Add(new Rate("composite foundry, composite/s", "TECH_TREE (0.5/s)", 0.5, Converter("composite_foundry", new[] { "steel", "crystal" }, new[] { "composite" }), 0.05));
             {
                 var w = Bench(0);
-                Build(w, "mining_refinery"); // low power: 20 made, 50 wanted
+                Stand(w, "mining_refinery"); // low power: 20 made, 50 wanted
                 w.Teams[0].Add("iron_ore", 100000);
                 Steps(w, 1);
                 rs.Add(new Rate("mining refinery in low power, steel/s", "TECH_TREE (\"low power halves every rate\")", 2.5, PerSecond(w, x => Stock(x.Teams[0], "steel"), 60), 0.05));
@@ -256,7 +253,7 @@ namespace Pez.Headless
                 var rig = w.SpawnUnit(0, "drill_rig", w.Owned(0).First(e => e.Def.Key == "command_center"));
                 rig.Pos = rig.PrevPos = d.Pos;
                 w.Deploy(rig, d);
-                double warnedAt = -1, startAmount = d.Amount;
+                double warnedAt = -1;
                 for (int i = 0; i < 600 * World.TickRate && warnedAt < 0; i++)
                 {
                     w.Step();
@@ -268,9 +265,8 @@ namespace Pez.Headless
             {
                 var w = Bench(0);
                 var t = w.Teams[0];
-                var plain = Bench(0);
                 int before = t.PowerProduced;
-                Build(w, "fusion_reactor");
+                Stand(w, "fusion_reactor");
                 t.Add("plasma", 1000);
                 Steps(w, 2);
                 rs.Add(new Rate("fusion reactor power", "rules, TECH_TREE (+500)", 500, t.PowerProduced - before, 0.001));
@@ -280,7 +276,7 @@ namespace Pez.Headless
                 // Fed half of what it burns, it should make half of its power.
                 var half = Bench(0);
                 var ht = half.Teams[0];
-                var reactor = Build(half, "fusion_reactor");
+                var reactor = Stand(half, "fusion_reactor");
                 for (int i = 0; i < 30 * World.TickRate; i++) { half.Step(); ht.Add("plasma", World.FusionBurn * World.Dt * 0.5f); }
                 rs.Add(new Rate("fusion reactor fed half its burn: share of its power", "rules (\"proportionally less power instead of none\")", 0.5, reactor.Output, 0.1));
                 // What it costs against five power plants, in raw ore.
@@ -296,7 +292,7 @@ namespace Pez.Headless
                 var w = Bench(4);
                 var t = w.Teams[0];
                 int built = 0;
-                for (int i = 0; i < 11 && Build(w, key) != null; i++) built++;
+                for (int i = 0; i < 11 && Stand(w, key) != null; i++) built++;
                 t.Add("steel", 100000);
                 Steps(w, 1);
                 double paid = PerSecond(w, x => x.Teams[0].Stats.UpkeepPaid, 120) * 60;
@@ -375,7 +371,7 @@ namespace Pez.Headless
         static void RatesSection(StringBuilder sb)
         {
             Heading(sb, "Rates and costs against what the rules say");
-            sb.AppendLine("Each one is measured on a fresh 96x96 map (seed 7) with the trucks gone and power to spare unless the row says low power; a rate is the stockpile's gain over 60 game-seconds.");
+            sb.AppendLine("Each one is measured on a fresh two-team 96x96 map (seed 7) with the trucks gone and power to spare, unless the row says otherwise; a rate is the gain over 60 game-seconds.");
             sb.AppendLine();
             var rates = MeasureRates();
             Table(sb, new[] { "what", "claimed", "measured", "verdict", "where it is claimed" },
@@ -427,7 +423,7 @@ namespace Pez.Headless
             sb.AppendLine("Every ore tile cleared at minute 0, no trucks, mean of seeds 1-4. \"Middle\" is within 40% of the map's half-diagonal of its centre (the share the rules text and `World.Regrow` quote).");
             sb.AppendLine();
             var rows = new List<string[]>();
-            var cases = new[] { (96, 1f), (96, 0.3f), (128, 1f), (128, 0.3f) };
+            var cases = new[] { (80, 1f), (80, 0.3f), (96, 1f), (96, 0.3f), (128, 1f), (128, 0.3f) };
             var runs = new ConcurrentDictionary<(int, float, int), RegrowRun>();
             Parallel.ForEach(cases.SelectMany(c => Enumerable.Range(1, 4).Select(s => (c.Item1, c.Item2, s))), new ParallelOptions { MaxDegreeOfParallelism = 4 }, k => runs[k] = RegrowBare(k.Item1, k.Item2, k.Item3, 30));
             foreach (var (size, ore) in cases)
@@ -438,7 +434,7 @@ namespace Pez.Headless
                 double Type(int k, int to) => Avg(r => r.ByOre[to][k] / (to * 60.0));
                 rows.Add(new[]
                 {
-                    $"{size}x{size}", F(ore), F(Avg(r => r.FieldOre)), F(Rate(0, 20), "0.0"), F(Rate(0, 10), "0.0"), F(Rate(20, 30), "0.0"),
+                    $"{size}x{size}", F(ore), F(Avg(r => r.FieldOre), "0"), F(Rate(0, 20), "0.0"), F(Rate(0, 10), "0.0"), F(Rate(20, 30), "0.0"),
                     $"{Type(0, 20):0.0} / {Type(1, 20):0.0} / {Type(2, 20):0.0} / {Type(3, 20):0.0}",
                     F(100 * Avg(r => (double)r.Middle[20] / Math.Max(1, r.Total[20])), "0") + "%",
                     F(100 * Avg(r => (double)r.Total[30] / r.FieldOre), "0") + "%",
@@ -616,7 +612,6 @@ namespace Pez.Headless
             public double[] FinalStock = new double[10];
             public int Mined, Deep, SalvageMined, Kills, MaxDeepMines;
             public double DerrickSteel, Upkeep, Trickle;
-            public double DeepOnItsSide;                // deep ore in the deposits nearer to its base than to the other's, at the start
             public double HomeOreStart;
             public List<MinuteRow> Rows = new List<MinuteRow>();
         }
@@ -673,14 +668,11 @@ namespace Pez.Headless
             {
                 var t = w.Teams[i];
                 var tr = new TeamRun { Id = i };
-                int other = 1 - i;
-                tr.DeepOnItsSide = m.Deep.Where(d => Vec2.Dist(d.Pos, t.StartPos) < Vec2.Dist(d.Pos, w.Teams[other].StartPos)).Sum(d => (double)d.Initial);
                 tr.HomeOreStart = HomeOre(w, t);
                 g.Teams.Add(tr);
             }
             g.SurfaceByMinute = new double[minutes + 1]; g.RegrownByMinute = new double[minutes + 1];
             int ticksPerMin = 60 * World.TickRate, maxTicks = minutes * ticksPerMin;
-            double built = 0;
             while (w.Tick < maxTicks && !w.GameOver)
             {
                 foreach (var ai in ais) ai.Update(w);
@@ -714,10 +706,10 @@ namespace Pez.Headless
                 for (int i = 0; i < 2; i++)
                 {
                     var t = w.Teams[i]; var s = t.Stats; var tr = g.Teams[i];
-                    if (t.Defeated && tr.Rows.Count > 0 && tr.Rows[tr.Rows.Count - 1].Min < min - 1) continue;
+                    if (t.Defeated) continue; // (a knocked-out team has no more minutes: the averages are over the minutes it played)
                     var own = w.Owned(i).ToList();
                     int K(string key) => own.Count(e => e.Def.Key == key && (!e.IsStructure || e.IsComplete));
-                    built = s.Built.Sum(kv => { var d = Defs.Get(kv.Key); return d == null ? 0 : OreValue(d.Cost) * kv.Value; });
+                    double built = s.Built.Sum(kv => { var d = Defs.Get(kv.Key); return d == null ? 0 : OreValue(d.Cost) * kv.Value; });
                     tr.Rows.Add(new MinuteRow
                     {
                         Min = min, Mined = s.OreMined, Deep = s.DeepMined, Salvage = s.SalvageMined, Derrick = s.DerrickSteel, Trickle = tr.Trickle, Upkeep = s.UpkeepPaid, LowPowerS = tr.LowPowerS, Spent = built,
@@ -882,7 +874,7 @@ namespace Pez.Headless
             Table(sb, new[] { "group" }.Concat(items).Concat(new[] { "biggest peaks" }).ToArray(), stock);
 
             Sub(sb, "Deep ore used");
-            sb.AppendLine("Deep ore pumped out of the ground against what the map held. \"Used\" counts everything pumped; \"on its side\" is the share of a team's pumping that came from deposits nearer its base than the other's.");
+            sb.AppendLine("Deep ore pumped out of the ground against what the map held.");
             sb.AppendLine();
             var deep = new List<string[]>();
             foreach (var gr in groups)
@@ -901,7 +893,7 @@ namespace Pez.Headless
             var surf = new List<string[]>();
             foreach (var gr in groups)
             {
-                string Left(int m) { var xs = gr.Where(g => g.SurfaceByMinute.Length > m && g.SurfaceByMinute[m] > 0).Select(g => 100 * g.SurfaceByMinute[m] / g.SurfaceStart).ToList(); return xs.Count == 0 ? "-" : F(xs.Average(), "0") + "%"; }
+                string Left(int m) { var xs = gr.Where(g => m <= (int)g.EndMinute).Select(g => 100 * g.SurfaceByMinute[m] / g.SurfaceStart).ToList(); return xs.Count == 0 ? "-" : F(xs.Average(), "0") + "%"; }
                 var home = gr.SelectMany(g => g.Teams).Select(t => { var r = t.Rows.FirstOrDefault(x => x.HomeOre < 0.1 * t.HomeOreStart); return r == null ? (double?)null : r.Min; }).ToList();
                 var reg = gr.Where(g => (int)g.EndMinute > 30).Select(g => (g.RegrownByMinute[Math.Min(g.RegrownByMinute.Length - 1, (int)g.EndMinute)] - g.RegrownByMinute[30]) / (((int)g.EndMinute - 30) * 60.0)).ToList();
                 surf.Add(new[] { gr.Key, F(gr.Average(g => g.SurfaceStart) / 1000, "0.0") + "k", Left(10), Left(20), Left(30), Left(45),
