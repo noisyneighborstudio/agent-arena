@@ -541,12 +541,13 @@ namespace Pez.View
         }
 
         /// <summary>An electric arc from a to b: a jagged line that re-forks every 0.04 s for `life` seconds, fading, with a
-        /// flash of light at its middle. Shown to Fx.Audience's layers when it's set.</summary>
-        public static void Arc(Vector3 a, Vector3 b, Color c, float width, float life = 0.22f)
+        /// flash of light at its middle (`lamp` false: no light, for a small frequent spark). Shown to Fx.Audience's layers
+        /// when it's set.</summary>
+        public static void Arc(Vector3 a, Vector3 b, Color c, float width, float life = 0.22f, bool lamp = true)
         {
             if (Audience == null) Arc(a, b, c, width, life, -1);
             else foreach (var layer in Audience) Arc(a, b, c, width, life, layer);
-            S.Lamp((a + b) * 0.5f, c, 2.5f, 2.5f, life);
+            if (lamp) S.Lamp((a + b) * 0.5f, c, 2.5f, 2.5f, life);
             MuzzleFlash(a, 0.04f); MuzzleFlash(b, 0.04f); // sparks where it strikes
         }
 

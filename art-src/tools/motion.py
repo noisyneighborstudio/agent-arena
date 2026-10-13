@@ -214,9 +214,16 @@ STRUCTURES = [
         blank=dict(mode='path', path='press_feed > press_bed > press_out', material='steel until fused, then licorice'),
         stack=dict(mode='step_down', step=.06)),
    "Peephole dark; a thin wisp from a vent every 3 to 6 s."),
- S('fusion_reactor', 'High-output power.', "The spinner (magenta core and its inner ring) spins at 45 rpm and tumbles slowly, rotating 10°/s on X. "
-   "Under high load it spins up to 120 rpm and the ring emission rises. Destroyed: before collapsing, the core shrinks to 0 over 0.5 s and fires a large magenta shockwave effect.",
-   dict(spinner=dict(axis='Y', idle_rpm=45, active_rpm=120, spinup_s=2.0, tumble_x_deg_s=10)), "Core spins and tumbles."),
+ S('fusion_reactor', 'High-output power.', "A tokamak. While it has plasma to burn, the plasma ring in the vessel (plasma) circulates at 10 to 30 rpm with the "
+   "team's power load, its helical strands crawling round under the coils. Every 3.2 s with nothing drawing (1.3 s at full load) the injector fires a pellet: "
+   "the magazine's spring steps the stack (pellets) up one pellet into the head in 0.16 s, a small magenta zap leaves the muzzle (port) for the ring and the plasma flares. "
+   "The steam generator puffs from its vent (vent_0), faster under load. Out of plasma the ring quenches (flickers and fades over 1.5 s, coasts to a stop over 2.5 s), "
+   "the steam gives a last puff and the stack sinks into the magazine's base (1.2 s), leaving the cage empty. When plasma is back the stack rises (1 s) "
+   "and the central solenoid strikes the plasma: three magenta arcs 0.12 s apart from its cap into the ring, a flash, and it spins up over 2 s. "
+   "Unfinished it is dark with an empty magazine, so finishing one is its first light.",
+   dict(plasma=dict(axis='Y', rpm='10–30 with load', spinup_s=2, coast_s=2.5, quench_s=1.5),
+        pellets=dict(mode='step_up', pitch=.085, step_s=.16, shot_s='3.2–1.3 with load', empty='sinks 0.68 in 1.2 s')),
+   "Plasma circulates; a pellet every few seconds."),
  S('airfield', 'Builds and rearms aircraft.', "The lift (deck flush in a collar with the team landing ring, in the middle of the runway) is where new and landing aircraft are. "
    "While an aircraft is in this airfield's queue the approach lights (approach_0..4: four amber chevrons pointing −Z and a threshold bar) glow a steady low amber "
    "and the tower radar (radar) turns at 120°/s (40°/s idle, eased between). 1.5 s before the aircraft is done the lift goes down its well (−0.6 in 1.2 s, eased); "

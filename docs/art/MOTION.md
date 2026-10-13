@@ -108,9 +108,10 @@ Units are tiles (1 tile = 1 Unity unit) and seconds. Rotation speeds are in degr
 ### `fusion_reactor`
 *High-output power.*
 
-- **Mechanics:** The spinner (magenta core and its inner ring) spins at 45 rpm and tumbles slowly, rotating 10°/s on X. Under high load it spins up to 120 rpm and the ring emission rises. Destroyed: before collapsing, the core shrinks to 0 over 0.5 s and fires a large magenta shockwave effect.
-- **`spinner`:** axis=Y, idle_rpm=45, active_rpm=120, spinup_s=2.0, tumble_x_deg_s=10
-- **Idle:** Core spins and tumbles.
+- **Mechanics:** A tokamak. While it has plasma to burn, the plasma ring in the vessel (plasma) circulates at 10 to 30 rpm with the team's power load, its helical strands crawling round under the coils. Every 3.2 s with nothing drawing (1.3 s at full load) the injector fires a pellet: the magazine's spring steps the stack (pellets) up one pellet into the head in 0.16 s, a small magenta zap leaves the muzzle (port) for the ring and the plasma flares. The steam generator puffs from its vent (vent_0), faster under load. Out of plasma the ring quenches (flickers and fades over 1.5 s, coasts to a stop over 2.5 s), the steam gives a last puff and the stack sinks into the magazine's base (1.2 s), leaving the cage empty. When plasma is back the stack rises (1 s) and the central solenoid strikes the plasma: three magenta arcs 0.12 s apart from its cap into the ring, a flash, and it spins up over 2 s. Unfinished it is dark with an empty magazine, so finishing one is its first light.
+- **`plasma`:** axis=Y, rpm=10–30 with load, spinup_s=2, coast_s=2.5, quench_s=1.5
+- **`pellets`:** mode=step_up, pitch=0.085, step_s=0.16, shot_s=3.2–1.3 with load, empty=sinks 0.68 in 1.2 s
+- **Idle:** Plasma circulates; a pellet every few seconds.
 
 ### `airfield`
 *Builds and rearms aircraft.* Produces: gunship, transport_chopper, stealth_bomber.

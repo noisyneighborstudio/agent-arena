@@ -56,6 +56,7 @@ namespace Pez.View
             public AirfieldWorks Field;  // airfield: the lift, the approach lights, the tower and the windsock
             public OpticsWorks Optics;   // optics lab: the dome and telescope, the light through the prism, the lens dispenser
             public LaserWorks Laser;     // laser tower: the head's pitch, the coils charging and the lens
+            public FusionWorks Fusion;   // fusion reactor: the plasma ring, the pellet injector and the steam
             public bool GlowHidden;
             public Sheen Sheen;          // newcomer protection: the sheen over its parts (null when its team isn't protected)
             public Renderer[] Halos;     // power plant: the light rising out of its open stacks      // the neutral "last seen" glow is applied (a stream render of fogged enemy state)
@@ -880,6 +881,7 @@ namespace Pez.View
                 if (e.Def.Key == "airfield" && e.IsComplete && e.Team >= 0) (v.Field ??= AirfieldWorks.For(rig.Model, rig.Motion, e.Id)).Tick(World, e, SeesState(e, PovTeam), Time.deltaTime);
                 if (e.Def.Key == "optics_lab" && e.IsComplete && e.Team >= 0) (v.Optics ??= OpticsWorks.For(v.Rig.Model, e.Id)).Tick(e.Working, World.Teams[e.Team].LowPower, SeesState(e, PovTeam), Time.deltaTime);
                 if (e.Def.Key == "laser_tower" && e.IsComplete) { Fx.Audience = AudienceFor(e); (v.Laser ??= LaserWorks.For(rig.Model, e.Id)).Tick(this, v, SeesState(e, PovTeam), Time.deltaTime); Fx.Audience = null; }
+                if (e.Def.Key == "fusion_reactor" && e.Team >= 0) { var ft = World.Teams[e.Team]; Fx.Audience = AudienceFor(e); (v.Fusion ??= FusionWorks.For(rig.Model, e.Id)).Tick(e.IsComplete && e.Working, ft.PowerProduced > 0 ? ft.PowerUsed / (float)ft.PowerProduced : 1f, v.FireK < 0.15f, Time.deltaTime); Fx.Audience = null; }
                 if (World.Decaying(e) && Time.time >= v.DustNext)
                 {
                     // The match's decay stage: grit crumbles off the roof every few seconds.

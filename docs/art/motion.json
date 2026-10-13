@@ -280,17 +280,24 @@
   "key": "fusion_reactor",
   "kind": "structure",
   "role": "High-output power.",
-  "mechanics": "The spinner (magenta core and its inner ring) spins at 45 rpm and tumbles slowly, rotating 10\u00b0/s on X. Under high load it spins up to 120 rpm and the ring emission rises. Destroyed: before collapsing, the core shrinks to 0 over 0.5 s and fires a large magenta shockwave effect.",
+  "mechanics": "A tokamak. While it has plasma to burn, the plasma ring in the vessel (plasma) circulates at 10 to 30 rpm with the team's power load, its helical strands crawling round under the coils. Every 3.2 s with nothing drawing (1.3 s at full load) the injector fires a pellet: the magazine's spring steps the stack (pellets) up one pellet into the head in 0.16 s, a small magenta zap leaves the muzzle (port) for the ring and the plasma flares. The steam generator puffs from its vent (vent_0), faster under load. Out of plasma the ring quenches (flickers and fades over 1.5 s, coasts to a stop over 2.5 s), the steam gives a last puff and the stack sinks into the magazine's base (1.2 s), leaving the cage empty. When plasma is back the stack rises (1 s) and the central solenoid strikes the plasma: three magenta arcs 0.12 s apart from its cap into the ring, a flash, and it spins up over 2 s. Unfinished it is dark with an empty magazine, so finishing one is its first light.",
   "nodes": {
-   "spinner": {
+   "plasma": {
     "axis": "Y",
-    "idle_rpm": 45,
-    "active_rpm": 120,
-    "spinup_s": 2.0,
-    "tumble_x_deg_s": 10
+    "rpm": "10\u201330 with load",
+    "spinup_s": 2,
+    "coast_s": 2.5,
+    "quench_s": 1.5
+   },
+   "pellets": {
+    "mode": "step_up",
+    "pitch": 0.085,
+    "step_s": 0.16,
+    "shot_s": "3.2\u20131.3 with load",
+    "empty": "sinks 0.68 in 1.2 s"
    }
   },
-  "idle": "Core spins and tumbles.",
+  "idle": "Plasma circulates; a pellet every few seconds.",
   "produces": [],
   "emerge": "Rises out of its pad in stages; nothing appears instantly. stage_0 (pad) lifts from y=-0.15 to 0 during build progress 0\u201310%. stage_1, stage_2 and stage_3 each start at local y = -(stage height) and rise to 0 with ease-out cubic over progress 10\u201345%, 45\u201375% and 75\u201395%. The opaque terrain and pad hide whatever is still below ground. stage_3 ends with a 4% Y-scale overshoot that settles in 0.15 s (spring-loaded). Functional nodes (turret, spinner, door, lift) come last, at 95\u2013100%: a turret rises 0.3 out of its housing, then a spinner spins up from 0 rpm.",
   "remove": "Destroyed: shake \u00b10.03 for 0.4 s, then poof: a soft cream cloud bursts out of the building while it swells 8% for 0.06 s and pops to nothing in 0.14 s. A rubble decal fades in under it. Sold: dust at the footprint corners, then the same poof. Nothing sinks into the ground."

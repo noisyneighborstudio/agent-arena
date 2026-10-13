@@ -151,6 +151,35 @@ class Asset:
             f += [[c0, (j + 1) % sides, j], [c1, (n - 1) * sides + j, (n - 1) * sides + (j + 1) % sides]]
         mesh = trimesh.Trimesh(v, np.array(f)); mesh.fix_normals()
         self.add(node, m, mesh)
+    def hoop(self, m, path, r, node=None, closed=True, sides=12, side=None, r2=None):
+        """A tube of radius r along a polyline (a closed loop by default; an open one gets flat end caps). `side` fixes the
+        cross-section's first axis (a planar loop's normal, so a band lies flat in it) and r2 makes the section an
+        ellipse: r along `side`, r2 across it."""
+        p = np.asarray(path, float); n = len(p)
+        tan = (np.roll(p, -1, 0) - np.roll(p, 1, 0)) if closed else np.gradient(p, axis=0)
+        tan /= np.linalg.norm(tan, axis=1)[:, None]
+        if side is None:
+            ref = np.where(np.abs(tan[:, 1:2]) < .9, [[0, 1, 0]], [[1, 0, 0]])
+            u = np.cross(tan, ref)
+        else:
+            u = np.broadcast_to(np.asarray(side, float), p.shape).copy()
+            u -= tan * (u * tan).sum(1)[:, None]
+        u /= np.linalg.norm(u, axis=1)[:, None]
+        w = np.cross(tan, u)
+        a = np.linspace(0, 2 * math.pi, sides, endpoint=False)
+        v = (p[:, None, :] + r * np.cos(a)[None, :, None] * u[:, None, :] + (r2 or r) * np.sin(a)[None, :, None] * w[:, None, :]).reshape(-1, 3)
+        f = []
+        for i in range(n if closed else n - 1):
+            k = (i + 1) % n
+            for j in range(sides):
+                f += [[i * sides + j, i * sides + (j + 1) % sides, k * sides + (j + 1) % sides],
+                      [i * sides + j, k * sides + (j + 1) % sides, k * sides + j]]
+        if not closed:
+            v = np.vstack([v, p[0], p[-1]]); c0, c1 = len(v) - 2, len(v) - 1
+            for j in range(sides):
+                f += [[c0, (j + 1) % sides, j], [c1, (n - 1) * sides + j, (n - 1) * sides + (j + 1) % sides]]
+        mesh = trimesh.Trimesh(v, np.array(f)); mesh.fix_normals()
+        self.add(node, m, mesh)
     def octa(self, m, r, h, x=0, y=0, z=0, node=None):
         v = np.array([[r,0,0],[-r,0,0],[0,0,r],[0,0,-r],[0,h,0],[0,-h,0]], float)
         f = [[4,0,2],[4,2,1],[4,1,3],[4,3,0],[5,2,0],[5,1,2],[5,3,1],[5,0,3]]
@@ -838,16 +867,95 @@ def S_composite_foundry():
 
 def S_fusion_reactor():
     a = Asset('fusion_reactor', 'structures', 3); pad(a, 3)
-    a.cyl('cream', 1.3, .35, y=.26)
-    a.torus('steel', .95, .18, y=1.0)
-    for k in range(4):
-        ang = k * math.pi / 2 + math.pi / 4
-        a.box('team', .16, .7, .16, x=math.cos(ang) * .95, y=.75, z=math.sin(ang) * .95)
-    a.torus('magenta', .95, .05, y=1.0)
-    sp = a.node('spinner', a.key, (0, 1.0, 0))
-    a.sphere('magenta', .35, node=sp)
-    a.torus('steel', .5, .03, node=sp)
-    door(a, .7, .3, -1.31, y0=.08)
+    # A tokamak built as a toy: the power plant's big brother. A cream vacuum vessel (a doughnut) open along its crown,
+    # with the magenta plasma ring (the plasma node, turned by FusionWorks) running round inside it; eight team
+    # toroidal-field coils clasp it like wrapper bands, and the central solenoid stands in the hole, a smoke-plastic stem
+    # wound with foil modules under a team cap. All of it on an octagonal cream deck.
+    R, yc = .78, .74                                   # the vessel's major radius and the height of its midplane
+    ro, ri, slot = .30, .19, math.radians(36)          # vessel wall outer/inner radius; half-width of the crown slot
+    a.cyl('cream', 1.3, .14, y=.15, sections=8, rot=ry(22.5))
+    # Vessel: a C section revolved, open along the crown, its lips rounded.
+    rm, rc = (ro + ri) / 2, (ro - ri) / 2
+    def arc(r, t0, t1, n): return [(R + r * math.cos(t), yc + r * math.sin(t)) for t in np.linspace(t0, t1, n)]
+    def lip(t, sgn):                                   # a half round from the outer wall to the inner one
+        c = np.array([R + rm * math.cos(t), yc + rm * math.sin(t)])
+        er, et = np.array([math.cos(t), math.sin(t)]), np.array([-math.sin(t), math.cos(t)]) * sgn
+        return [tuple(c + rc * (math.cos(s) * er + math.sin(s) * et)) for s in np.linspace(0, math.pi, 6)[1:-1]]
+    t0, t1 = math.pi / 2 - slot, math.pi / 2 + slot - 2 * math.pi
+    prof = arc(ro, t0, t1, 18) + lip(t1, 1) + arc(ri, t1, t0, 14) + lip(t0, -1)
+    if sum(p[0] * q[1] - q[0] * p[1] for p, q in zip(prof, prof[1:] + prof[:1])) < 0: prof = prof[::-1]
+    a.rev('cream', prof, sections=32)
+    a.rev('steel', [(.48, .22), (.68, .22), (.7, .24), (.7, .29), (.68, .31), (.48, .31), (.46, .29), (.46, .24)], sections=24)  # the coils' seat
+    for k in range(8):                                 # gravity supports between the coils
+        f = math.radians(45 * k)
+        a.box('steel', .09, yc - ro - .2, .09, x=R * math.cos(f), y=.22 + (yc - ro - .2) / 2, z=R * math.sin(f), rot=ry(-45 * k))
+    # Toroidal-field coils: D-shaped team bands hugging the vessel, straight leg on the inside, each on a steel foot.
+    si, sa, sb, w = .43, .73, .42, .06
+    def dee(t):                                        # outer half an ellipse; inner half a flat leg with round corners
+        c, s_ = math.cos(t), math.sin(t)
+        if c >= 0: return si + sa * c, yc + sb * s_
+        return si - w * abs(c) ** (1 / 3), yc + sb * math.copysign(abs(s_) ** (1 / 3), s_)
+    for k in range(8):
+        f = math.radians(22.5 + 45 * k)
+        er, et = np.array([math.cos(f), 0, math.sin(f)]), np.array([-math.sin(f), 0, math.cos(f)])
+        pts = [dee(t) for t in np.linspace(0, 2 * math.pi, 26, endpoint=False)]
+        a.hoop('team', [s * er + np.array([0, y, 0]) for s, y in pts], .085, side=et, r2=.032, sides=8)
+
+    # Central solenoid: a smoke stem wound with foil modules, under a stepped team cap.
+    a.cyl('smoke', .24, 1.38, y=.22 + .69, sections=12)
+    for k in range(4): a.cyl('foil', .275, .19, y=.4 + k * .26, sections=12)
+    a.cyl('team', .31, .12, y=1.58, sections=20)
+    a.cyl('team', .24, .08, y=1.66, sections=20)
+    a.node('solenoid', a.key, (0, 1.6, 0))
+    # Pellet injector (left corner): the fuel is a magazine of magenta pellets, Pez bricks, in an open smoke cage, its
+    # open side to the camera. A spring in the steel base pushes the stack up into the team head, which fires the top
+    # pellet down its barrel into the vessel's crown slot (port marker, at the muzzle). FusionWorks steps the stack (the
+    # pellets node) up one pellet per shot: the bottom pellet hides in the base and the top one in the head, so the step
+    # loops seamlessly. Out of plasma the stack sinks into the base and the cage stands empty.
+    d = np.array([1, 0, 1]) / math.sqrt(2)             # from the centre out to the corner
+    cam = np.array([1, 0, -1]) / math.sqrt(2)          # towards the default camera
+    m = 1.5 * d
+    h, p, n = .065, .085, 9
+    yb = .36                                           # the spring base's top
+    y0 = yb - h / 2 - .006                             # the bottom pellet's centre at rest (inside the base)
+    yh = y0 + (n - 1) * p + h / 2 + .01                # the head's underside (the top pellet goes into it on a shot)
+    hc = yh - yb                                       # the cage's height
+    a.box('steel', .3, yb - .08, .3, x=m[0], y=.08 + (yb - .08) / 2, z=m[2], rot=ry(45))
+    q = m - cam * .12
+    a.box('smoke', .04, hc, .28, x=q[0], y=yb + hc / 2, z=q[2], rot=ry(45))
+    for sgn in (-1, 1):
+        q = m + sgn * .13 * d - cam * .04
+        a.box('smoke', .2, hc, .035, x=q[0], y=yb + hc / 2, z=q[2], rot=ry(45))
+    a.box('team', .34, .2, .34, x=m[0], y=yh + .1, z=m[2], rot=ry(45))
+    pe = a.node('pellets', 'stage_2', (m[0], y0, m[2]), rot=ry(45))
+    for i in range(n): a.box('magenta', .13, h, .2, y=i * p, node=pe)
+    a.strut('steel', tuple(1.36 * d + [0, yh + .1, 0]), tuple(.9 * d + [0, 1.05, 0]), .045, sections=10)
+    a.cyl('steel', .06, .05, x=.93 * d[0], y=1.06, z=.93 * d[2], sections=10)
+    a.node('port', a.key, tuple(.88 * d + [0, 1.04, 0]))
+    # Steam generator (right corner): the heat leaves the blanket by a pipe into a cream drum and steams off its vent (vent_0).
+    g = -1.55 * d
+    a.cyl('cream', .24, .66, x=g[0], y=.08 + .33, z=g[2], sections=10)
+    a.cyl('team', .25, .09, x=g[0], y=.62, z=g[2], sections=10)
+    a.cyl('cream', .18, .08, x=g[0], y=.78, z=g[2], sections=10)
+    a.cyl('steel', .06, .24, x=g[0], y=.92, z=g[2], sections=10)
+    a.node('vent_0', a.key, (g[0], 1.05, g[2]))
+    a.strut('steel', tuple(-1.33 * d + [0, .5, 0]), tuple(-1.0 * d + [0, .6, 0]), .05, sections=10)
+    # Switchyard (back corner): the output bus up to three tall cream insulators, the line running off the pad.
+    b = np.array([-1.1, 0, 1.1])
+    a.box('steel', .3, .32, .5, x=b[0], y=.24, z=b[2], rot=ry(45))
+    for k in (-1, 0, 1):
+        x, z = b[0] + k * .15 * d[0], b[2] + k * .15 * d[2]
+        a.rev('cream', [(0, .4), (.03, .4)] + [pt for j in range(3) for pt in ((.055 - j * .007, .44 + j * .07), (.055 - j * .007, .46 + j * .07), (.03, .5 + j * .07))] + [(0, .6)], x=x, z=z, sections=10)
+        a.cyl('steel', .013, .12, x=x, y=.64, z=z, sections=6)
+    a.strut('steel', (b[0] - .2, .14, b[2] + .2), (-1.42, .14, 1.42), .04)
+    # The plasma ring in the vessel: a core with two helical strands (the field lines), turned by FusionWorks.
+    a.node('stage_2', a.key)
+    pl = a.node('plasma', 'stage_2', (0, yc, 0))
+    a.hoop('magenta', [(R * math.cos(t), 0, R * math.sin(t)) for t in np.linspace(0, 2 * math.pi, 48, endpoint=False)], .065, node=pl, sides=8)
+    ts = np.linspace(0, 2 * math.pi, 84, endpoint=False)
+    for k in range(2):
+        q = ts * 7 + k * math.pi
+        a.hoop('magenta', np.c_[(R + .09 * np.cos(q)) * np.cos(ts), .09 * np.sin(q), (R + .09 * np.cos(q)) * np.sin(ts)], .026, node=pl, sides=4)
     return a
 
 def S_airfield():

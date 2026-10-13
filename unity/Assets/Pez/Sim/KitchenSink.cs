@@ -487,7 +487,11 @@ namespace Pez.Sim
                 Bldg(Blue, row[i], 4 + 6 * i, 10);
                 Bldg(Green, row[i], 4 + 6 * i, 3);
             }
-            Bldg(Blue, "fusion_reactor", 34, 10);
+            // The fusion reactor burns for 14 s, then runs dry for 8 s (quench, the magazine empties) and refuels (the stack
+            // rises, the solenoid strikes the plasma). Only this reactor's state is held: the stockpile stays full, so Blue's
+            // power never drops.
+            var fusion = Bldg(Blue, "fusion_reactor", 34, 10);
+            holds.Add(() => { if (T % 22f >= 14f) fusion.Working = false; });
             Bldg(Green, "command_center", 34, 3);
             // An airfield launching on low power: half-speed lift and radar, a stuttering chase. Its aircraft are cleared
             // away a few seconds after they're up.
@@ -504,6 +508,7 @@ namespace Pez.Sim
             Item("Low-power airfield (Lime)", "an aircraft every ~5 s: the lift goes down and brings it up at half speed, the approach lights chase once a second at half glow", 40, 3);
             Item("Powered (Blueberry)", "power plant cores glow with the load, steady steam; consumers at full light and speed", 16, 10, 9);
             Item("Low power (Lime)", "plant cores flicker at 4 Hz with dropouts, steam sputters; consumers dimmed to half, machinery at half speed", 16, 3, 9);
+            Item("Fusion reactor", "the plasma ring circulates and a pellet fires into it every few seconds; every 22 s it runs dry for 8 s: the plasma quenches and the magazine empties, then refuels and the solenoid strikes it alight", 34, 10, 8);
         }
 
         void Fires()
