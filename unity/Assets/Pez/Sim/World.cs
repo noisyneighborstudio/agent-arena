@@ -3431,9 +3431,9 @@ namespace Pez.Sim
             Alerts.Raise(this, champ.Id, "arena_cleared", Priority.High, champ.StartPos, hit: false).Lost.Add("every opponent is defeated; new challengers may join at any time, so keep your defences up");
         }
 
-        /// <summary>A team is still in the game while it has a structure, or a construction truck that could deploy into one.</summary>
-        public bool StillStanding(int team) =>
-            Entities.Any(e => !e.Dead && e.Team == team && ((e.IsStructure && e.Def.Key != "derrick") || e.Def.DeploysInto == "command_center"));
+        /// <summary>A team is still in the game while it has a structure, or a construction truck that could deploy into one. `without`: as if that one were gone.</summary>
+        public bool StillStanding(int team, Entity without = null) =>
+            Entities.Any(e => e != without && !e.Dead && e.Team == team && ((e.IsStructure && e.Def.Key != "derrick") || e.Def.DeploysInto == "command_center"));
 
         void CheckVictory()
         {

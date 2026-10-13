@@ -19,6 +19,7 @@ namespace Pez.Headless
 
         static void EconomyAndEndgame()
         {
+            AiEconomy();
             SalvageFromKills();
             OneValuation();
             GrantedValue();
@@ -1431,6 +1432,151 @@ namespace Pez.Headless
             throw new Exception("no open ground");
         }
 
+        // ------------------------------------------------------------------ the scripted AI's economy
+
+        /// <summary>A fresh world with the scripted AI on team 0 (passive, like the house AI) and nobody on team 1.</summary>
+        static (World w, SimpleAI ai) AiWorld(int seed = 3) => (new World(2, seed, 80), new SimpleAI(0, passive: true));
+
+        /// <summary>Plays the AI for `seconds`; `each` runs first every tick (a hand-fed income, say).</summary>
+        static void AiRun(World w, SimpleAI ai, float seconds, Action each = null)
+        {
+            for (int i = 0; i < seconds * World.TickRate; i++) { each?.Invoke(); ai.Update(w); w.Step(); }
+        }
+
+        /// <summary>Finished structures for team 0, as if the AI had built them.</summary>
+        static void AiBase(World w, params string[] keys)
+        {
+            foreach (var k in keys) w.SpawnStructure(0, k, w.FindPlacement(0, k).Value, 1f);
+        }
+
+        static int Have(World w, string key) => w.Owned(0).Count(e => e.IsStructure && e.Def.Key == key);
+
+        static void AiEconomy()
+        {
+            Console.WriteLine("\n-- scripted AI economy");
+            bool regrowth = World.RegrowthDisabled;
+            World.RegrowthDisabled = true; // ore the scenarios clear away stays gone
+            try { AiRefineries(); AiDeepMining(); AiDrillChoices(); AiDeepRecovery(); AiEconomyRecovery(); AiHeadquartersRecovery(); AiRigDestinations(); AiMinePlan(); AiBuildOverrides(); AiPlanEdges(); }
+            finally { World.RegrowthDisabled = regrowth; }
+        }
+
+        static void AiRefineries()
+        {
+
+            // No trucks, no power plants, and only the command center's trickle of iron ore coming in. The refineries used to
+            // eat the ore as it arrived, so neither the 200 a truck costs nor the 250 a plant costs ever sat in the stockpile.
+            var (w, ai) = AiWorld();
+            var t = w.Teams[0];
+            AiRun(w, ai, 4 * 60);
+            foreach (var e in w.Owned(0).Where(e => e.IsHarvester || e.Def.Key == "power_plant").ToList()) w.Remove(e);
+            t.Add("iron_ore", -t.Amount("iron_ore"));
+            AiRun(w, ai, 3);
+            Check(Have(w, "mining_refinery") >= 1 && t.LowPower && t.Reserve.TryGetValue("iron_ore", out var held) && held == 250,
+                  $"with its power gone the refineries leave alone the 250 iron ore the next power plant costs (reserve {(t.Reserve.TryGetValue("iron_ore", out var h2) ? h2 : 0)})");
+            AiRun(w, ai, 14 * 60);
+            Check(w.Owned(0).Any(e => e.IsHarvester) && Have(w, "power_plant") >= 1, $"and it works its way out: {w.Owned(0).Count(e => e.IsHarvester)} trucks, {Have(w, "power_plant")} power plants");
+
+            // The second refinery costs 100 copper ore, which the refineries turn into copper as it comes in: they leave it alone too.
+            var (w2, ai2) = AiWorld();
+            var t2 = w2.Teams[0];
+            AiBase(w2, "power_plant", "mining_refinery", "barracks", "factory", "power_plant", "electronics_plant", "gun_turret");
+            Array.Fill(t2.Explored, true); // the whole map's surface ore is in view: not an economy that has to go deep
+            t2.Add("iron_ore", 700); t2.Add("steel", 1000); t2.Add("copper", 500); t2.Add("circuits", 200);
+            t2.Add("copper_ore", -t2.Amount("copper_ore"));
+            AiRun(w2, ai2, 5, () => t2.Add("copper_ore", 3 * World.Dt));
+            Check(t2.Reserve.TryGetValue("copper_ore", out var cu) && cu == 100, $"it holds back the 100 copper ore its second refinery costs (reserve {(t2.Reserve.TryGetValue("copper_ore", out var c2) ? c2 : 0)})");
+            AiRun(w2, ai2, 115, () => t2.Add("copper_ore", 3 * World.Dt));
+            Check(Have(w2, "mining_refinery") >= 2, $"and with copper ore trickling in at 3 a second the refinery goes up ({Have(w2, "mining_refinery")} refineries, copper ore {t2.Amount("copper_ore")})");
+
+            // A gun turret short of 30 copper used to stall the whole tech tree. The AI waits a minute for it, then goes on with
+            // what it can pay for (leaving the copper alone), and comes back to the turret once there is copper.
+            var (w3, ai3) = AiWorld();
+            var t3 = w3.Teams[0];
+            AiBase(w3, "power_plant", "mining_refinery", "barracks", "factory", "power_plant", "electronics_plant");
+            Array.Fill(t3.Explored, true);
+            foreach (var d in w3.Map.Deep) d.Amount = 0; // nothing to drill: this is about the build order
+            t3.Add("iron_ore", 1400); t3.Add("steel", 20000); t3.Add("circuits", 5000); // plenty: the army can't spend it all
+            Action noCopper = () => { t3.Add("copper_ore", -t3.Amount("copper_ore")); t3.Add("copper", -t3.Amount("copper")); }; // spent as fast as it comes in
+            AiRun(w3, ai3, 45, noCopper);
+            Check(Have(w3, "gun_turret") == 0 && Have(w3, "optics_lab") == 0, "short of copper for the turret, it waits a while before going on");
+            var saved = Json.Write(ai3.SaveState());
+            var back = SimpleAI.LoadState((Dictionary<string, object>)Json.Parse(saved));
+            Check(saved.Contains("\"stuck_since\":[[") && Json.Write(back.SaveState()) == saved, "what it is waiting on is part of the saved game");
+            AiRun(w3, ai3, 45, noCopper);
+            Check(Have(w3, "gun_turret") == 0 && Have(w3, "optics_lab") == 1, $"then it builds the next step it can pay for ({Have(w3, "optics_lab")} optics lab)");
+            t3.Add("copper", 1000);
+            AiRun(w3, ai3, 40);
+            Check(Have(w3, "gun_turret") == 1, "and comes back to the turret as soon as the copper is there");
+
+            // Short of circuits, a fusion reactor can't be paid for: plain power plants keep the lights on instead of waiting on it.
+            var (w4, ai4) = AiWorld();
+            var t4 = w4.Teams[0];
+            AiBase(w4, "power_plant", "mining_refinery", "barracks", "factory", "electronics_plant", "enrichment_plant");
+            t4.Add("plasma", 200); t4.Add("iron_ore", 800); t4.Add("steel", 2000);
+            AiRun(w4, ai4, 3);
+            Check(t4.LowPower && Have(w4, "power_plant") == 2 && Have(w4, "fusion_reactor") == 0, $"low on power with no circuits for a reactor, it builds a power plant ({Have(w4, "power_plant")} plants)");
+
+            // Crystal and uranium trucks only while it is short of them and has something to refine them.
+            var (w6, ai6) = AiWorld();
+            var t6 = w6.Teams[0];
+            AiBase(w6, "power_plant", "mining_refinery", "barracks", "factory", "power_plant", "electronics_plant", "optics_lab");
+            for (int i = 0; i < 6; i++) w6.SpawnUnit(0, "mining_truck", w6.Owned(0).First(e => e.Def.Key == "command_center"));
+            t6.Add("crystal", 3000);
+            AiRun(w6, ai6, 3);
+            var trucks = w6.Owned(0).Where(e => e.IsHarvester).ToList();
+            Check(trucks.Count >= 7 && trucks.All(e => e.HarvestType != Map.Crystal), $"with 3000 crystal in the stockpile no truck goes for more ({trucks.Count} trucks)");
+            t6.Add("crystal", -t6.Amount("crystal"));
+            foreach (var e in trucks) e.Cargo = 0; // (a truck with a load keeps its ore type until it has unloaded)
+            AiRun(w6, ai6, 3);
+            Check(trucks.Any(e => e.HarvestType == Map.Crystal) && trucks.Count(e => e.HarvestType == Map.Crystal) <= 2, $"out of it, one does ({trucks.Count(e => e.HarvestType == Map.Crystal)} on crystal)");
+
+            // The attacking AI's waves aim at the enemy's base, not at the nearest derrick it holds: attack-move leaves a held
+            // derrick alone, so every wave used to stop beside it and the enemy base was never touched.
+            var w7 = new World(2, 3, 80);
+            var raider = new SimpleAI(0); // not passive
+            var foe = w7.Owned(1).First(e => e.Def.Key == "command_center");
+            var derrick = w7.Derricks.OrderBy(d => Vec2.Dist(d.Center, w7.Teams[0].StartPos)).First();
+            derrick.Team = 1; // the enemy holds it, and it is nearer than their base
+            w7.Teams[0].KnownEnemyStructures[derrick.Id] = ("derrick", derrick.Origin, 1);
+            w7.Teams[0].KnownEnemyStructures[foe.Id] = ("command_center", foe.Origin, 1);
+            var tanks = Enumerable.Range(0, 8).Select(_ => w7.SpawnUnit(0, "light_tank", w7.Owned(0).First(e => e.Def.Key == "command_center"))).ToList();
+            foreach (var u in w7.Owned(0).Where(e => !e.IsStructure)) w7.SetOrder(u, Order.Idle, u.Pos); // standing about, as a finished army does
+            raider.Update(w7);
+            Check(Vec2.Dist(derrick.Center, w7.Teams[0].StartPos) < Vec2.Dist(foe.Center, w7.Teams[0].StartPos) && tanks.All(u => u.Order == Order.AttackMove && Vec2.Dist(u.OrderPos, foe.Center) < 3),
+                  $"a wave goes for the enemy command center, not the derrick beside it (orders to {tanks[0].OrderPos}, base at {foe.Center})");
+        }
+
+        static void AiDeepMining()
+        {
+            var (w, ai) = AiWorld();
+            var t = w.Teams[0];
+            AiBase(w, "power_plant", "power_plant", "power_plant", "mining_refinery", "barracks", "factory", "electronics_plant", "gun_turret");
+            for (int i = 0; i < w.Map.Ore.Length; i++) w.Map.Ore[i] = 0;
+            var deps = w.Map.Deep.OrderBy(d => Vec2.Dist(d.Pos, t.StartPos)).Take(3).ToList();
+            deps[0].Type = Map.Iron; deps[1].Type = Map.Iron; deps[2].Type = Map.Copper; // the copper one is the farthest
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            foreach (var d in deps) { t.Surveyed.Add(d.Id); t.Zones[d.Id] = new ZoneFlag { ZoneId = d.Id, FlaggedBy = 0, FlaggedAt = w.Time }; }
+            var rig = At(w.SpawnUnit(0, "drill_rig", hq), deps[0].Pos + new Vec2(1, 0));
+            Check(Ok(Commands.Execute(w, 0, Cmd("type", "deploy", "units", new[] { rig.Id }))), "(a mine on the first deposit)");
+            var mine = w.Owned(0).First(e => e.Def.Key == "deep_mine");
+            deps[0].Amount = 0; // and it has run dry
+            t.Add("iron_ore", 1000); t.Add("circuits", 300);
+            t.Add("copper_ore", -t.Amount("copper_ore")); // short of copper
+            mine.LastHitTime = w.Time; // just hit: a building under fire can't be sold for 10 s
+            AiRun(w, ai, 5);
+            Check(!mine.Dead, "a spent mine that was just hit can't be sold yet");
+            AiRun(w, ai, 8);
+            Check(mine.Dead && !w.Owned(0).Any(e => e.Def.Key == "deep_mine"), "it sells a mine whose deposit is used up once it can (it draws 50 power for nothing)");
+            // Steel only trickles in (2 a second): the army used to spend every bit of it, so the 800-steel rig was never affordable.
+            AiRun(w, ai, 3 * 60, () => t.Add("steel", 2 * World.Dt));
+            Check(t.SaveFor == "drill_rig" && t.Reserved("steel") >= 800 && w.Owned(0).Count(e => !e.IsStructure && e.IsArmed) <= 2,
+                  $"with a dry mine and zones waiting it saves for a rig instead of building an army (saving for {t.SaveFor}, {t.Amount("steel")} steel)");
+            AiRun(w, ai, 12 * 60, () => t.Add("steel", 2 * World.Dt));
+            var next = w.Owned(0).FirstOrDefault(e => e.Def.Key == "deep_mine" && e.DepositId != deps[0].Id);
+            Check(next != null && next.DepositId == deps[2].Id, $"and drills the next deposit: the copper one it is short of, not just the nearest ({(next == null ? "no mine" : Defs.Ores[w.Map.DepositById(next.DepositId).Type])})");
+            Check(w.Errors == 0, $"no sim errors ({w.LastError})");
+        }
+
         /// <summary>One price list: kill value, kill salvage, a leaving team's base and a stockpile spill value things the same way.</summary>
         static void OneValuation()
         {
@@ -1521,6 +1667,307 @@ namespace Pez.Headless
             Check(spill[Map.Iron] >= 316 && spill[Map.Iron] <= 320 && spill[Map.Copper] >= 226 && spill[Map.Copper] <= 230 && spill[Map.Crystal] >= 198 && spill[Map.Crystal] <= 200 && spill[Map.Uranium] == 20,
                   $"a stockpile spills as its raw ores: iron {spill[0]}/320, copper {spill[1]}/230, crystal {spill[2]}/200, uranium {spill[3]}/20");
             Check(wh.Errors == 0 && wu.Errors == 0 && wv.Errors == 0 && ws.Errors == 0, "no sim errors");
+        }
+
+        /// <summary>Two ways deep mining used to get stuck for good: the factory gone with the last mine, and the mine cap filled with basic ores.</summary>
+        static void AiDeepRecovery()
+        {
+            // The factory is destroyed and the last deep mine runs dry while another zone is flagged: "economy first" used to hold
+            // the build order back for a rig that, with no factory, could never be built. It rebuilds the factory, then drills.
+            var (w, ai) = AiWorld();
+            var t = w.Teams[0];
+            AiBase(w, "power_plant", "power_plant", "mining_refinery", "barracks", "factory", "electronics_plant", "gun_turret");
+            for (int i = 0; i < w.Map.Ore.Length; i++) w.Map.Ore[i] = 0;
+            var deps = w.Map.Deep.OrderBy(d => Vec2.Dist(d.Pos, t.StartPos)).Take(3).ToList();
+            foreach (var d in deps) { d.Type = Map.Iron; t.Surveyed.Add(d.Id); t.Zones[d.Id] = new ZoneFlag { ZoneId = d.Id, FlaggedBy = 0, FlaggedAt = w.Time }; }
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var rig = At(w.SpawnUnit(0, "drill_rig", hq), deps[0].Pos + new Vec2(1, 0));
+            Check(Ok(Commands.Execute(w, 0, Cmd("type", "deploy", "units", new[] { rig.Id }))), "(a mine on the first deposit)");
+            deps[0].Amount = 0; // run dry
+            w.Remove(w.Owned(0).First(e => e.Def.Key == "factory")); // and the factory is gone
+            t.Add("steel", 3000); t.Add("copper", 800); t.Add("iron_ore", 1500); t.Add("circuits", 500);
+            AiRun(w, ai, 4 * 60);
+            Check(Have(w, "factory") == 1, $"with the factory gone it rebuilds production instead of waiting for a rig it can't build ({Have(w, "factory")} factories)");
+            AiRun(w, ai, 5 * 60);
+            Check(w.Owned(0).Any(e => e.Def.Key == "deep_mine" && e.DepositId != deps[0].Id), "and then drills the next zone");
+
+            // Four iron / copper mines pump, crystal and uranium sit at nothing with their plants built and a zone flagged for each:
+            // the mine cap used to be filled by basic ores alone. Crystal and uranium have a slot of their own.
+            var (w2, ai2) = AiWorld();
+            var t2 = w2.Teams[0];
+            AiBase(w2, "power_plant", "power_plant", "power_plant", "power_plant", "power_plant", "mining_refinery", "barracks", "factory", "electronics_plant", "optics_lab", "enrichment_plant");
+            for (int i = 0; i < w2.Map.Ore.Length; i++) w2.Map.Ore[i] = 0;
+            var deps2 = w2.Map.Deep.OrderBy(d => Vec2.Dist(d.Pos, t2.StartPos)).Take(6).ToList();
+            var types = new[] { Map.Iron, Map.Copper, Map.Iron, Map.Copper, Map.Crystal, Map.Uranium };
+            for (int i = 0; i < deps2.Count; i++) { deps2[i].Type = types[i]; deps2[i].Amount = deps2[i].Initial = 6000; t2.Surveyed.Add(deps2[i].Id); t2.Zones[deps2[i].Id] = new ZoneFlag { ZoneId = deps2[i].Id, FlaggedBy = 0, FlaggedAt = w2.Time }; }
+            var hq2 = w2.Owned(0).First(e => e.Def.Key == "command_center");
+            for (int i = 0; i < 4; i++)
+            {
+                var r = At(w2.SpawnUnit(0, "drill_rig", hq2), deps2[i].Pos + new Vec2(1, 0));
+                Check(Ok(Commands.Execute(w2, 0, Cmd("type", "deploy", "units", new[] { r.Id }))), $"(mine {i + 1} of 4 on a basic ore)");
+            }
+            t2.Add("steel", 4000); t2.Add("iron_ore", 1500); t2.Add("copper", 500); t2.Add("circuits", 500);
+            AiRun(w2, ai2, 3 * 60);
+            bool Has(DeepDeposit d) => w2.Owned(0).Any(e => (e.Def.Key == "drill_rig" && e.ZoneId == d.Id) || (e.Def.Key == "deep_mine" && e.DepositId == d.Id));
+            Check(Has(deps2[4]) && Has(deps2[5]) && w2.Owned(0).Count(e => e.Def.Key == "deep_mine") <= 6, $"with four basic mines up, the crystal and uranium zones still get theirs ({w2.Owned(0).Count(e => e.Def.Key == "deep_mine")} mines)");
+        }
+
+        /// <summary>
+        /// "Economy first" (no army, no tech, until a rig is on its way) must never hold back the buildings the economy stands on.
+        /// Each of them is destroyed in turn as the last deep mine runs dry, with another zone flagged and the resources to put
+        /// it back: the AI has to rebuild it and then drill the next zone. (The command center is not in the list: losing the
+        /// last one spills the stockpile, and a new one comes from a construction truck, which has its own tests.)
+        /// </summary>
+        static void AiEconomyRecovery()
+        {
+            foreach (var lost in new[] { "power_plant", "mining_refinery", "factory", "electronics_plant" })
+            {
+                var (w, ai) = AiWorld();
+                var t = w.Teams[0];
+                AiBase(w, "power_plant", "power_plant", "mining_refinery", "barracks", "factory", "electronics_plant", "gun_turret");
+                for (int i = 0; i < w.Map.Ore.Length; i++) w.Map.Ore[i] = 0;
+                var deps = w.Map.Deep.OrderBy(d => Vec2.Dist(d.Pos, t.StartPos)).Take(3).ToList();
+                foreach (var d in deps) { d.Type = Map.Iron; t.Surveyed.Add(d.Id); t.Zones[d.Id] = new ZoneFlag { ZoneId = d.Id, FlaggedBy = 0, FlaggedAt = w.Time }; }
+                var rig = At(w.SpawnUnit(0, "drill_rig", w.Owned(0).First(e => e.Def.Key == "command_center")), deps[0].Pos + new Vec2(1, 0));
+                Commands.Execute(w, 0, Cmd("type", "deploy", "units", new[] { rig.Id }));
+                deps[0].Amount = 0; // the last mine has run dry
+                foreach (var e in w.Owned(0).Where(e => e.Def.Key == lost).ToList()) w.Remove(e);
+                t.Add("iron_ore", 1500); t.Add("copper_ore", 300); t.Add("copper", 800); t.Add("circuits", 500); t.Add("steel", 400); // under the 800 a rig costs
+                AiRun(w, ai, 12 * 60);
+                Check(Have(w, lost) >= 1 && w.Owned(0).Any(e => e.Def.Key == "deep_mine" && e.DepositId != deps[0].Id),
+                      $"{lost} destroyed as the last mine runs dry: it is rebuilt ({Have(w, lost)}) and the next zone drilled ({w.Owned(0).Count(e => e.Def.Key == "deep_mine")} mines)");
+            }
+        }
+
+        /// <summary>
+        /// The command center is lost with the rest of the base standing: a construction truck (1500 steel + 200 circuits) is the
+        /// way back, and the army must not spend the steel as it comes in or the 1500 is never there.
+        /// </summary>
+        static void AiHeadquartersRecovery()
+        {
+            var (w, ai) = AiWorld();
+            var t = w.Teams[0];
+            AiBase(w, "power_plant", "power_plant", "mining_refinery", "barracks", "factory", "electronics_plant", "gun_turret");
+            w.Remove(w.Owned(0).First(e => e.Def.Key == "command_center"));
+            t.Add("circuits", 300); t.Add("copper", 500);
+            AiRun(w, ai, 25 * 60, () => t.Add("steel", 3 * World.Dt)); // steel trickles in at 3 a second (from the trucks' ore, as the refineries make it)
+            Check(Have(w, "command_center") >= 1, $"with its command center gone it saves for a construction truck instead of spending the steel on an army ({Have(w, "command_center")} command centers, steel {t.Amount("steel")})");
+        }
+
+        /// <summary>A base with the surface mined out, the usual buildings, and the nearest `n` deep zones flagged with the given ores (6000 each).</summary>
+        static (World w, SimpleAI ai, Team t, List<DeepDeposit> deps) AiDeepBase(params int[] ores)
+        {
+            var (w, ai) = AiWorld();
+            var t = w.Teams[0];
+            AiBase(w, "power_plant", "power_plant", "power_plant", "power_plant", "power_plant", "mining_refinery", "barracks", "factory", "electronics_plant");
+            for (int i = 0; i < w.Map.Ore.Length; i++) w.Map.Ore[i] = 0;
+            var deps = w.Map.Deep.OrderBy(d => Vec2.Dist(d.Pos, t.StartPos)).Take(ores.Length).ToList();
+            for (int i = 0; i < deps.Count; i++)
+            {
+                deps[i].Type = ores[i]; deps[i].Amount = deps[i].Initial = 6000;
+                t.Surveyed.Add(deps[i].Id); t.Zones[deps[i].Id] = new ZoneFlag { ZoneId = deps[i].Id, FlaggedBy = 0, FlaggedAt = w.Time };
+            }
+            return (w, ai, t, deps);
+        }
+
+        static void AiPump(World w, DeepDeposit d)
+        {
+            var r = At(w.SpawnUnit(0, "drill_rig", w.Owned(0).First(e => e.Def.Key == "command_center")), d.Pos + new Vec2(1, 0));
+            Check(Ok(Commands.Execute(w, 0, Cmd("type", "deploy", "units", new[] { r.Id }))), "(a mine up)");
+        }
+
+        /// <summary>
+        /// One plan for the deep mines that buying rigs and sending them both read: slots per ore (iron and copper share a cap of 4, a
+        /// basic ore it needs and has none of always gets one, crystal and uranium one each), what is taken, and which zones are open.
+        /// </summary>
+        static void AiMinePlan()
+        {
+            // Four iron mines pump, the surface copper is gone and there is no copper at all, with a step of the build order waiting on it,
+            // and copper zones are flagged: the cap used to filter them out, so copper starved until an iron deposit emptied. The AI retires
+            // the iron mine with the most left to make room, and drills copper.
+            var (w, ai, t, deps) = AiDeepBase(Map.Iron, Map.Iron, Map.Iron, Map.Iron, Map.Copper, Map.Copper);
+            for (int i = 0; i < 4; i++) AiPump(w, deps[i]);
+            deps[2].Amount = 5000; // the iron mine with the most left is deps[0], [1] or [3]
+            t.Add("copper_ore", -t.Amount("copper_ore")); t.Add("steel", 3000); t.Add("iron_ore", 1000); t.Add("circuits", 300); // (a gun turret, 30 copper, is the next step)
+            AiRun(w, ai, 8 * 60);
+            int ironMines = w.Owned(0).Count(e => e.Def.Key == "deep_mine" && w.Map.DepositById(e.DepositId).Type == Map.Iron);
+            Check(w.Owned(0).Any(e => e.Def.Key == "deep_mine" && w.Map.DepositById(e.DepositId).Type == Map.Copper) && ironMines >= 3,
+                  $"four iron mines, no copper and a step waiting on it: an iron mine goes and a copper one comes ({ironMines} iron mines, {w.Owned(0).Count(e => e.Def.Key == "deep_mine" && w.Map.DepositById(e.DepositId).Type == Map.Copper)} copper)");
+
+            // Four basic mines pump and two crystal zones are flagged, crystal at nothing with its plant built: one mine on crystal means one
+            // rig is worth buying (the second used to be bought and left idle, 800 steel for nothing).
+            var (w2, ai2, t2, d2) = AiDeepBase(Map.Iron, Map.Copper, Map.Iron, Map.Copper, Map.Crystal, Map.Crystal);
+            AiBase(w2, "optics_lab");
+            for (int i = 0; i < 4; i++) AiPump(w2, d2[i]);
+            t2.Add("steel", 4000); t2.Add("iron_ore", 1000); t2.Add("copper", 500); t2.Add("circuits", 300);
+            AiRun(w2, ai2, 3 * 60);
+            int bought = w2.Teams[0].Stats.Built.TryGetValue("drill_rig", out var nb) ? nb : 0;
+            Check(bought == 1 && !w2.Owned(0).Any(e => e.Def.Key == "drill_rig" && e.Order == Order.Idle) && w2.Owned(0).Count(e => e.Def.Key == "deep_mine") == 5,
+                  $"two crystal zones, one mine on crystal: it buys one rig, not two ({bought} rigs bought, {w2.Owned(0).Count(e => e.Def.Key == "deep_mine")} mines)");
+        }
+
+        /// <summary>Selling a mine must never cost the AI the game, a retired mine needs its paid replacement first, and a raw-ore shortage earns a slot like an empty stockpile.</summary>
+        static void AiPlanEdges()
+        {
+            // The dry mine is the last structure standing and a rig is on its way to a fresh deposit: selling it would eliminate the team
+            // (a drill rig doesn't keep a team in the game), so it stays until the new mine is up.
+            var (w, ai) = AiWorld();
+            var t = w.Teams[0];
+            for (int i = 0; i < w.Map.Ore.Length; i++) w.Map.Ore[i] = 0;
+            var deps = w.Map.Deep.OrderBy(d => Vec2.Dist(d.Pos, t.StartPos)).Take(2).ToList();
+            foreach (var d in deps) { d.Type = Map.Iron; d.Amount = d.Initial = 6000; t.Surveyed.Add(d.Id); t.Zones[d.Id] = new ZoneFlag { ZoneId = d.Id, FlaggedBy = 0, FlaggedAt = w.Time }; }
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var first = At(w.SpawnUnit(0, "drill_rig", hq), deps[0].Pos + new Vec2(1, 0));
+            Check(Ok(Commands.Execute(w, 0, Cmd("type", "deploy", "units", new[] { first.Id }))), "(a mine on the first deposit)");
+            var spare = At(w.SpawnUnit(0, "drill_rig", hq), t.StartPos + new Vec2(4, 4));
+            w.SetOrder(spare, Order.Idle, spare.Pos);
+            w.Remove(hq);
+            foreach (var e in w.Owned(0).Where(e => e.IsStructure && e.Def.Key != "deep_mine").ToList()) w.Remove(e);
+            deps[0].Amount = 0; // the mine has run dry: it is the only structure left
+            AiRun(w, ai, 60);
+            Check(!t.Defeated && w.Owned(0).Any(e => e.Def.Key == "deep_mine" && e.DepositId == deps[1].Id), $"a dry mine that is the last structure is kept until the new one is up ({(t.Defeated ? "the team was eliminated" : "still in the game")}, {w.Owned(0).Count(e => e.Def.Key == "deep_mine")} mines)");
+
+            // Four iron mines, no copper, 800 steel and a step waiting on copper: the iron mine is only retired once the rig that replaces
+            // it is bought (the budget used to be checked, then spent on something else, and the mine was gone for nothing).
+            var (w2, ai2, t2, d2) = AiDeepBase(Map.Iron, Map.Iron, Map.Iron, Map.Iron, Map.Copper);
+            for (int i = 0; i < 4; i++) AiPump(w2, d2[i]);
+            t2.Add("copper_ore", -t2.Amount("copper_ore")); t2.Add("steel", 800); t2.Add("circuits", 300);
+            AiRun(w2, ai2, 1); // its first think
+            int ironNow = w2.Owned(0).Count(e => e.Def.Key == "deep_mine");
+            bool paid = w2.Teams[0].UnitQueues[Producer.Factory].Any(q => q.Key == "drill_rig") || w2.Owned(0).Any(e => e.Def.Key == "drill_rig");
+            Check(ironNow == 4 && paid, $"it buys the replacement rig first and keeps all four mines meanwhile ({ironNow} mines, rig bought {paid})");
+            AiRun(w2, ai2, 5 * 60);
+            Check(w2.Owned(0).Any(e => e.Def.Key == "deep_mine" && w2.Map.DepositById(e.DepositId).Type == Map.Copper) && w2.Owned(0).Count(e => e.Def.Key == "deep_mine" && w2.Map.DepositById(e.DepositId).Type == Map.Iron) >= 3,
+                  $"and then swaps one iron mine for a copper one ({w2.Owned(0).Count(e => e.Def.Key == "deep_mine")} mines)");
+
+            // Four iron mines pump, a rig stands paid for and idle, there is plenty of refined copper but no copper ore, and a refinery is
+            // waiting on 100 copper ore: that raw shortage earns the copper zone a slot as an empty stockpile would.
+            var (w3, ai3, t3, d3) = AiDeepBase(Map.Iron, Map.Iron, Map.Iron, Map.Iron, Map.Copper);
+            AiBase(w3, "gun_turret");
+            for (int i = 0; i < 4; i++) AiPump(w3, d3[i]);
+            var idle = At(w3.SpawnUnit(0, "drill_rig", w3.Owned(0).First(e => e.Def.Key == "command_center")), t3.StartPos + new Vec2(4, 4));
+            w3.SetOrder(idle, Order.Idle, idle.Pos);
+            t3.Add("copper", 3000); t3.Add("copper_ore", -t3.Amount("copper_ore")); t3.Add("steel", 500); t3.Add("iron_ore", 1000); t3.Add("circuits", 300);
+            AiRun(w3, ai3, 5);
+            Check(idle.Order == Order.Drill && idle.ZoneId == d3[4].Id, $"3000 copper but none of the copper ore a refinery is waiting on, four iron mines up: the idle rig goes to the copper zone ({idle.OrderName}, zone {idle.ZoneId})");
+        }
+
+        /// <summary>The structure it builds is PickStep's step unless something urgent goes first, and that must be buildable: a blocked override never hides the step.</summary>
+        static void AiBuildOverrides()
+        {
+            // The last power plant dies while a fueled fusion reactor covers the demand; iron ore piles up past 1500 and there is copper ore
+            // for a refinery. The "another refinery" override used to win and then be refused (a refinery needs a power plant), every second,
+            // so the replacement plant was never built while the iron lasted.
+            var (w, ai) = AiWorld();
+            var t = w.Teams[0];
+            AiBase(w, "power_plant", "mining_refinery", "barracks", "factory", "electronics_plant", "enrichment_plant", "fusion_reactor");
+            t.Add("plasma", 500); t.Add("iron_ore", 6000); t.Add("copper_ore", 3000); t.Add("steel", 1000); t.Add("circuits", 300);
+            Array.Fill(t.Explored, true);
+            Run(w, 1); // the reactor lights up
+            w.Remove(w.Owned(0).First(e => e.Def.Key == "power_plant"));
+            AiRun(w, ai, 60);
+            Check(Have(w, "power_plant") >= 1 && !t.LowPower, $"with the iron ore piling up and the reactor holding the power, the lost power plant is still rebuilt ({Have(w, "power_plant")} plants, {t.Amount("iron_ore")} iron ore)");
+        }
+
+        /// <summary>A rig that exists always gets a free zone while the mines and rigs already on their way are under the cap, however many rigs are counted against it.</summary>
+        static void AiRigDestinations()
+        {
+            (World w, SimpleAI ai, Team t, List<DeepDeposit> deps) Base(int zones)
+            {
+                var (w, ai) = AiWorld();
+                var t = w.Teams[0];
+                AiBase(w, "power_plant", "power_plant", "power_plant", "mining_refinery", "barracks", "factory", "electronics_plant");
+                for (int i = 0; i < w.Map.Ore.Length; i++) w.Map.Ore[i] = 0;
+                var deps = w.Map.Deep.OrderBy(d => Vec2.Dist(d.Pos, t.StartPos)).Take(zones).ToList();
+                for (int i = 0; i < deps.Count; i++) { deps[i].Type = i % 2 == 0 ? Map.Iron : Map.Copper; deps[i].Amount = deps[i].Initial = 6000; t.Surveyed.Add(deps[i].Id); t.Zones[deps[i].Id] = new ZoneFlag { ZoneId = deps[i].Id, FlaggedBy = 0, FlaggedAt = w.Time }; }
+                t.Add("iron_ore", 1500); t.Add("copper", 500); t.Add("circuits", 300);
+                return (w, ai, t, deps);
+            }
+            void Mine(World w, DeepDeposit d)
+            {
+                var r = At(w.SpawnUnit(0, "drill_rig", w.Owned(0).First(e => e.Def.Key == "command_center")), d.Pos + new Vec2(1, 0));
+                Check(Ok(Commands.Execute(w, 0, Cmd("type", "deploy", "units", new[] { r.Id }))), "(a mine up)");
+            }
+
+            // Three iron / copper mines pump and a fourth rig stands idle: with the rig counted that is the cap, but it must still be sent.
+            var (w1, ai1, t1, d1) = Base(5);
+            for (int i = 0; i < 3; i++) Mine(w1, d1[i]);
+            var idle = At(w1.SpawnUnit(0, "drill_rig", w1.Owned(0).First(e => e.Def.Key == "command_center")), w1.Teams[0].StartPos + new Vec2(4, 4));
+            w1.SetOrder(idle, Order.Idle, idle.Pos);
+            AiRun(w1, ai1, 5);
+            Check(idle.Order == Order.Drill && (idle.ZoneId == d1[3].Id || idle.ZoneId == d1[4].Id), $"3 mines and an idle rig: the rig is sent to a free zone ({idle.OrderName}, zone {idle.ZoneId})");
+
+            // Two mines pump and two more rigs are on order (800 steel each): when they come out they must be sent too.
+            var (w2, ai2, t2, d2) = Base(5);
+            for (int i = 0; i < 2; i++) Mine(w2, d2[i]);
+            t2.Add("steel", 1700);
+            Check(Ok(Commands.Execute(w2, 0, Cmd("type", "train", "unit", "drill_rig", "count", 2))), "(two rigs queued)");
+            AiRun(w2, ai2, 3 * 60);
+            Check(w2.Owned(0).Count(e => e.Def.Key == "deep_mine") == 4, $"2 mines and 2 rigs on order: all four end up pumping ({w2.Owned(0).Count(e => e.Def.Key == "deep_mine")} mines, {w2.Owned(0).Count(e => e.Def.Key == "drill_rig")} rigs left)");
+
+            // The factory is gone, but a rig that already exists can still be sent.
+            var (w3, ai3, t3, d3) = Base(1);
+            var rig3 = At(w3.SpawnUnit(0, "drill_rig", w3.Owned(0).First(e => e.Def.Key == "command_center")), w3.Teams[0].StartPos + new Vec2(4, 4));
+            w3.SetOrder(rig3, Order.Idle, rig3.Pos);
+            w3.Remove(w3.Owned(0).First(e => e.Def.Key == "factory"));
+            AiRun(w3, ai3, 5);
+            Check(rig3.Order == Order.Drill && rig3.ZoneId == d3[0].Id, $"with the factory destroyed an existing rig is still sent to its zone ({rig3.OrderName})");
+        }
+
+        /// <summary>Which zones the AI's drill rigs go to: a raw-ore shortage counts, a stopped rig doesn't hold an ore, and one mine per crystal / uranium holds within a tick.</summary>
+        static void AiDrillChoices()
+        {
+            // A base with the surface mined out and two deep zones flagged; `refineries` more refineries built (the build order's
+            // refinery step is done, so nothing waits on copper ore).
+            (World w, SimpleAI ai, Team t, List<DeepDeposit> deps) Dry(int refineries)
+            {
+                var (w, ai) = AiWorld();
+                var t = w.Teams[0];
+                AiBase(w, "power_plant", "mining_refinery", "barracks", "factory", "power_plant", "electronics_plant", "gun_turret");
+                if (refineries > 0) AiBase(w, "mining_refinery", "power_plant");
+                for (int i = 0; i < w.Map.Ore.Length; i++) w.Map.Ore[i] = 0;
+                var deps = w.Map.Deep.OrderBy(d => Vec2.Dist(d.Pos, t.StartPos)).Take(2).ToList();
+                foreach (var d in deps) { t.Surveyed.Add(d.Id); t.Zones[d.Id] = new ZoneFlag { ZoneId = d.Id, FlaggedBy = 0, FlaggedAt = w.Time }; }
+                return (w, ai, t, deps);
+            }
+            bool GoesTo(World x, DeepDeposit d) => x.Owned(0).Any(e => (e.Def.Key == "drill_rig" && e.ZoneId == d.Id) || (e.Def.Key == "deep_mine" && e.DepositId == d.Id));
+
+            // A refinery waiting on 100 copper ore, with plenty of refined copper in hand and no surface ore left: copper deposits are
+            // still worth a rig (refined copper can't pay a refinery's copper ore).
+            var (w1, ai1, t1, d1) = Dry(0);
+            d1[0].Type = Map.Copper; d1[1].Type = Map.Copper;
+            t1.Add("copper", 3000); t1.Add("iron_ore", 1000); t1.Add("steel", 1000); t1.Add("copper_ore", -t1.Amount("copper_ore"));
+            AiRun(w1, ai1, 90);
+            Check(GoesTo(w1, d1[0]), $"with 3000 copper but no copper ore for its second refinery and no surface ore left, a rig goes to the copper zone ({w1.Owned(0).Count(e => e.Def.Key == "drill_rig")} rigs, {w1.Owned(0).Count(e => e.Def.Key == "deep_mine")} mines)");
+            var (w1b, ai1b, t1b, d1b) = Dry(1);
+            d1b[0].Type = Map.Copper; d1b[1].Type = Map.Copper;
+            t1b.Add("copper", 3000); t1b.Add("iron_ore", 1000); t1b.Add("steel", 1000); t1b.Add("copper_ore", -t1b.Amount("copper_ore"));
+            AiRun(w1b, ai1b, 90);
+            Check(!GoesTo(w1b, d1b[0]) && !GoesTo(w1b, d1b[1]), "but with no refinery waiting on copper ore, copper zones are not worth a rig while copper is plentiful");
+
+            // A crystal rig that was stopped keeps its old zone but isn't drilling: its ore is free again, and the rig gets a zone.
+            var (w2, ai2, t2, d2) = Dry(0);
+            AiBase(w2, "optics_lab");
+            d2[0].Type = Map.Crystal; t2.Surveyed.Remove(d2[1].Id); // the crystal zone is the only one it knows
+            t2.Add("steel", 1000); t2.Add("iron_ore", 1000);
+            var hq = w2.Owned(0).First(e => e.Def.Key == "command_center");
+            var stopped = At(w2.SpawnUnit(0, "drill_rig", hq), hq.Center + new Vec2(4, 4));
+            w2.SetOrder(stopped, Order.Idle, stopped.Pos);
+            stopped.ZoneId = d2[0].Id; // told to drill there, then stopped
+            AiRun(w2, ai2, 3);
+            Check(stopped.Order == Order.Drill && stopped.ZoneId == d2[0].Id, $"a stopped rig doesn't keep its crystal reserved against itself: it is sent to that zone ({stopped.OrderName}, zone {stopped.ZoneId})");
+
+            // Two idle rigs and two crystal zones in the same tick: one mine on crystal, so only one rig goes for it.
+            var (w3, ai3, t3, d3) = Dry(0);
+            AiBase(w3, "optics_lab");
+            d3[0].Type = Map.Crystal; d3[1].Type = Map.Crystal;
+            t3.Add("steel", 1000); t3.Add("iron_ore", 1000);
+            var hq3 = w3.Owned(0).First(e => e.Def.Key == "command_center");
+            var rigs3 = Enumerable.Range(0, 2).Select(i => At(w3.SpawnUnit(0, "drill_rig", hq3), hq3.Center + new Vec2(4 + i, 4))).ToList();
+            foreach (var r in rigs3) w3.SetOrder(r, Order.Idle, r.Pos);
+            ai3.Update(w3);
+            Check(rigs3.Count(r => r.Order == Order.Drill) == 1 && rigs3.Count(r => r.Order == Order.Idle) == 1,
+                  $"one mine on crystal at a time, even for two rigs sent in the same tick ({string.Join(", ", rigs3.Select(r => r.OrderName))})");
         }
 
         /// <summary>What the arena gives a team (starting stock and base, a late joiner's kit) can't be cashed out or farmed for score.</summary>

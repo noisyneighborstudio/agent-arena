@@ -1523,6 +1523,32 @@ namespace Pez.Headless
             Enemy(w2, "rocket_soldier", new Vec2(44.5f, 40.5f));
             Run(w2, 4);
             Check(w2.Alerts.Active(w2, 0).Any(a => a.Kind == "units_ambushed" && a.Priority == Priority.High), "a unit hit while moving raises HIGH units_ambushed");
+
+            // The log holds 500 alerts; the cap trims the oldest that have stopped merging, never one a fight is still adding to
+            // (it is saved with the game, so a resumed game keeps merging into it and the original has to as well).
+            var w3 = new World(2, 7);
+            var running = w3.Alerts.Raise(w3, 0, "enemy_near_base", Priority.High, new Vec2(10, 10));
+            for (int i = 0; i < 600; i++)
+            {
+                w3.Tick += 100; // 5 s
+                w3.Alerts.Raise(w3, 0, "enemy_near_base", Priority.High, new Vec2(10, 10)); // the same fight goes on
+                w3.Alerts.Raise(w3, 1, "stranger_" + i, Priority.Medium, new Vec2(30, 30)); // and 600 others come and go
+            }
+            Check(w3.Alerts.All.Count == 500 && w3.Alerts.All.Contains(running) && running.LastTick == w3.Tick,
+                  $"the 500-alert cap keeps an alert that is still merging, however old ({w3.Alerts.All.Count} alerts, the first one {(w3.Alerts.All.Contains(running) ? "kept" : "trimmed")})");
+
+            // 600 distinct alerts arrive inside one merge window (all open, so none can be trimmed); later raises only refresh one of them
+            // and the rest close. The cap is enforced again once there are closed ones to drop, not only when a new alert is created.
+            var w4 = new World(2, 7);
+            var keeper = w4.Alerts.Raise(w4, 0, "enemy_near_base", Priority.High, new Vec2(10, 10));
+            for (int i = 0; i < 600; i++) w4.Alerts.Raise(w4, 1, "burst_" + i, Priority.Medium, new Vec2(30, 30));
+            Check(w4.Alerts.All.Count == 601, $"alerts that are all still open are not trimmed ({w4.Alerts.All.Count})");
+            for (int step = 0; step < 3; step++)
+            {
+                w4.Tick += 120; // 6 s: inside the keeper's merge window, and past the others' after two steps
+                w4.Alerts.Raise(w4, 0, "enemy_near_base", Priority.High, new Vec2(10, 10));
+            }
+            Check(w4.Alerts.All.Count == 500 && w4.Alerts.All.Contains(keeper), $"and once they have closed, raises that only refresh one bring the log back to the cap ({w4.Alerts.All.Count} alerts)");
         }
 
         static void InterruptibleWait()

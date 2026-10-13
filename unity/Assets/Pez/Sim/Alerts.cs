@@ -51,20 +51,28 @@ namespace Pez.Sim
                 a = new Alert { Seq = nextSeq++, Team = team, Kind = kind, Priority = p, Pos = pos, StartTick = w.Tick };
                 All.Add(a);
                 open.Add(a);
-                if (All.Count > 500)
-                {
-                    // Trimmed alerts stop merging too: one left open but out of All wasn't saved, so a resumed game raised afresh what the original merged.
-                    var cut = new HashSet<Alert>(All.GetRange(0, All.Count - 500));
-                    All.RemoveRange(0, All.Count - 500);
-                    open.RemoveAll(cut.Contains);
-                }
             }
             else if (p > a.Priority) a.Priority = p;
             a.LastTick = w.Tick;
             if (hit) a.Count++;
             if (victim != null) a.Victims.Add(victim.Id);
             if (attacker != null) a.Attackers.Add(attacker.Id);
+            TrimToCap();
             return a;
+        }
+
+        /// <summary>
+        /// The log holds 500 alerts. Over that, the oldest alerts that have stopped merging go: one still open is saved with the game, so a
+        /// resumed game (which starts with far fewer alerts and never reaches the cap at the same moment) keeps merging into it, and the
+        /// original must too. Checked on every raise, merged or new: a burst of alerts that are all open can't be trimmed, and the ones
+        /// that close afterwards have to be dropped by a later raise even if it only refreshes one of them.
+        /// </summary>
+        void TrimToCap()
+        {
+            if (All.Count <= 500) return;
+            var stillOpen = new HashSet<Alert>(open);
+            var cut = new HashSet<Alert>(All.Where(x => !stillOpen.Contains(x)).Take(All.Count - 500));
+            if (cut.Count > 0) All.RemoveAll(cut.Contains);
         }
 
         /// <summary>

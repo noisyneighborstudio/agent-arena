@@ -19,6 +19,11 @@ namespace Pez.Sim
         float nextProspect; // when to try prospecting again after the area ran out
         int prospectRadius = 40; // widens as the surveyors cover the ground around the base
         int knownSurface = -1; // surface ore in the fields it has explored (refreshed every 10s)
+        readonly Dictionary<int, float> stuckSince = new Dictionary<int, float>(); // build-order steps it can't take yet (by place in the order): when each got stuck
+        const float SkipAfter = 60f; // seconds a step may hold up the rest of the order before later ones go first
+        bool wantCopper = true, wantCrystal, wantUranium; // ores the trucks go for: on below a low mark, off above a higher one
+        bool wentDeep; // it has had a deep mine or a rig: keeps drilling when the surface looks fine again
+        const int MaxDeepMines = 4; // iron and copper mines at once (each draws 50 power); crystal and uranium have a slot of their own each
 
         static readonly string[] BuildOrder =
         {
@@ -26,6 +31,40 @@ namespace Pez.Sim
             "mining_refinery", "power_plant", "optics_lab", "enrichment_plant", "power_plant", "radar_dome", "sam_site",
             "laser_tower", "power_plant", "composite_foundry", "airfield", "fusion_reactor", "gun_turret", "laser_tower", "sam_site",
         };
+
+        /// <summary>
+        /// The structures the economy stands on: what a drill rig needs standing (factory, electronics plant) and what those need
+        /// in turn (refinery, power plant), found from the defs. "Economy first" holds back everything else (army, defences, tech),
+        /// never these.
+        /// </summary>
+        static readonly HashSet<string> EconomyStructures = FindEconomyStructures();
+
+        static HashSet<string> FindEconomyStructures()
+        {
+            var keys = new HashSet<string>();
+            void Need(EntityDef d)
+            {
+                var wanted = new List<string>(d.Requires);
+                var maker = Defs.ProducerKey(d.BuiltBy);
+                if (maker != null) wanted.Add(maker);
+                foreach (var k in wanted)
+                {
+                    var need = Defs.Get(k);
+                    if (need == null || !need.IsStructure || !need.Buildable || !keys.Add(k)) continue; // (the command center can't be built)
+                    Need(need);
+                }
+            }
+            Need(Defs.Get("drill_rig"));
+            return keys;
+        }
+
+        /// <summary>The first economy structure of the build order that is missing (null when they all stand).</summary>
+        static string FirstMissingEconomy(System.Func<string, int> count)
+        {
+            foreach (var k in BuildOrder)
+                if (EconomyStructures.Contains(k) && count(k) == 0) return k;
+            return null;
+        }
 
         public SimpleAI(int team, bool passive = false) { this.team = team; Passive = passive; }
 
@@ -41,6 +80,57 @@ namespace Pez.Sim
         }
 
         JObj Do(World w, params object[] kv) => Commands.Execute(w, team, Cmd(kv));
+
+        /// <summary>Whether this team can get the item at all: a raw ore (trucks and deep mines bring it), or something it has built makes it.</summary>
+        bool Obtainable(World w, string item) =>
+            System.Array.IndexOf(Defs.Ores, item) >= 0 || w.Owned(team).Any(s => s.IsStructure && s.IsComplete && s.Def.Recipes.Any(r => r.Outputs.ContainsKey(item)));
+
+        /// <summary>The first step of the build order not built yet (null when it has them all).</summary>
+        static string FirstUnbuilt(System.Func<string, int> count)
+        {
+            var need = new Dictionary<string, int>();
+            foreach (var k in BuildOrder)
+            {
+                need[k] = need.TryGetValue(k, out var c) ? c + 1 : 1;
+                if (count(k) < need[k]) return k;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// The structure to build next from the build order: the first one not built yet. If that one can't be taken (short of
+        /// something, or a building it needs is gone) for SkipAfter seconds, or at once when it is short of a material nothing
+        /// it owns makes yet, later steps go ahead of it, as long as they leave alone what it is short of; it comes first
+        /// again as soon as it can be paid for. `head` is the first unbuilt step either way.
+        /// </summary>
+        string PickStep(World w, Team t, System.Func<string, int> count, out string head)
+        {
+            head = FirstUnbuilt(count);
+            HashSet<string> short0 = null; // what the stuck steps ahead are short of
+            bool skipping = false; // a step ahead has been given up on: the stuck ones after it are passed over at once
+            var need = new Dictionary<string, int>();
+            for (int i = 0; i < BuildOrder.Length; i++)
+            {
+                var k = BuildOrder[i];
+                need[k] = need.TryGetValue(k, out var c) ? c + 1 : 1;
+                if (count(k) >= need[k]) { stuckSince.Remove(i); continue; }
+                var def = Defs.Get(k);
+                var lacking = def.Cost.Where(kv => t.Amount(kv.Key) < kv.Value).Select(kv => kv.Key).ToList();
+                if (lacking.Count == 0 && w.MissingPrereq(team, def) == null)
+                {
+                    stuckSince.Remove(i);
+                    // (Power plants are built when the power runs short, not ahead of a stuck step.)
+                    if (short0 == null || (k != "power_plant" && !def.Cost.Keys.Any(short0.Contains))) return k;
+                    continue;
+                }
+                if (!stuckSince.TryGetValue(i, out var since)) stuckSince[i] = since = w.Time;
+                if (!skipping && w.Time - since < SkipAfter && lacking.All(m => Obtainable(w, m))) return k; // worth waiting for
+                skipping = true;
+                short0 = short0 ?? new HashSet<string>();
+                foreach (var m in lacking) short0.Add(m);
+            }
+            return head; // nothing behind it can go either: wait for it
+        }
 
         public void Update(World w)
         {
@@ -61,36 +151,135 @@ namespace Pez.Sim
                               (t.SurfaceWarnedAt > 0 && w.Time - t.SurfaceWarnedAt < 300);
             // Past the electronics plant it prospects anyway: deep mines are the economy's second stage.
             bool prospect = w.HasComplete(team, "electronics_plant") && t.Amount("steel") > 400;
-            // With the surface dry and no deep mine yet, the economy comes first: no army or new buildings (except power)
+            // Ores worth mining now: iron always; copper, crystal and uranium while the stock is low (the last two only with
+            // something to refine them). Each switches on below a low mark and off above a higher one, so trucks don't flap.
+            int copperOnHand = t.Amount("copper") + t.Amount("copper_ore"), ironOnHand = t.Amount("steel") + t.Amount("iron_ore");
+            // Trucks queueing for the bays (each bay takes one truck at a time), or iron ore piling up unrefined: another refinery.
+            bool moreRefineries = (!surfaceDry && trucks0.Count(e => e.Dock == DockStep.Queue) >= 2 || t.Amount("iron_ore") > 1500) && Count("mining_refinery") is int nr && nr >= 1 && nr < 4;
+            // Raw ore that a purchase it is waiting on (the first step of the build order, a refinery it wants more of) costs and it
+            // lacks: worth mining, by truck or deep mine, whatever refined copper or steel it has in hand.
+            var waiting = FirstUnbuilt(Count);
+            bool RawShort(string ore) => (waiting != null && Defs.Get(waiting).Cost.TryGetValue(ore, out var needed) && t.Amount(ore) < needed) ||
+                                         (moreRefineries && Defs.Get("mining_refinery").Cost.TryGetValue(ore, out var needed2) && t.Amount(ore) < needed2);
+            wantCopper = copperOnHand < (wantCopper ? 1800 : 800);
+            wantCrystal = (Count("optics_lab") > 0 || Count("composite_foundry") > 0) && t.Amount("crystal") < (wantCrystal ? 800 : 300);
+            wantUranium = Count("enrichment_plant") > 0 && t.Amount("uranium") < (wantUranium ? 600 : 250);
+            bool OreWanted(int type) => type == Map.Iron || (type == Map.Copper ? wantCopper || RawShort("copper_ore") : type == Map.Crystal ? wantCrystal : wantUranium);
+
+            // ---- The mine plan, worked out once; buying rigs and sending them both read it.
+            // Deep mines still pumping (a dry one draws 50 power for nothing), rigs actually on their way (World.RigsBound counts them
+            // so: a rig that was stopped keeps its old zone but isn't drilling anything), and what each ore has: mines + rigs heading out.
+            var deepMines = mine.Where(e => e.Def.Key == "deep_mine").ToList();
+            bool Pumping(Entity m) => w.Map.DepositById(m.DepositId) is DeepDeposit dd && dd.Amount > 0;
+            int pumping = deepMines.Count(Pumping);
+            var rigs = mine.Where(e => e.Def.Key == "drill_rig").ToList();
+            bool Bound(Entity r) => r.ZoneId != 0 && (r.Order == Order.Drill || (r.Order == Order.Refuel && r.ResumeOrder == Order.Drill));
+            int queuedRigs = t.UnitQueues[Producer.Factory].Count(q => q.Key == "drill_rig");
+            int rigsInFlight = rigs.Count + queuedRigs;
+            var has = new int[4];
+            foreach (var m in deepMines.Where(Pumping)) has[w.Map.DepositById(m.DepositId).Type]++;
+            foreach (var r in rigs.Where(Bound)) { var z = w.Map.DepositById(r.ZoneId); if (z != null) has[z.Type]++; }
+            int OnHand(int ore) => ore == Map.Iron ? ironOnHand : ore == Map.Copper ? copperOnHand : t.Amount(Defs.Ores[ore]);
+            bool Short(int type) => type == Map.Iron ? ironOnHand < 400 || RawShort("iron_ore") : type == Map.Copper && (copperOnHand < 300 || copperOnHand * 4 < ironOnHand || RawShort("copper_ore"));
+            // A basic ore it wants, has no mine on and next to none of (or is short of as the raw ore something is waiting on) gets one
+            // whatever the cap says; crystal / uranium it has a plant for and none of go ahead of the ordinary iron and copper (a deep mine
+            // pumps 4 a second, far more than anything uses).
+            bool Starved(int ore) => ore < Map.Crystal && has[ore] == 0 && OreWanted(ore) && (OnHand(ore) < 100 || RawShort(Defs.Ores[ore]));
+            bool Needy(int type) => type >= Map.Crystal && OreWanted(type) && t.Amount(Defs.Ores[type]) < 100;
+            // The flagged zones worth a rig, best first (iron and copper it's short of, then the rest, nearest first), and the ones no
+            // rig of its own is heading for.
+            var freeZones = w.Map.Deep.Where(d => t.Surveyed.Contains(d.Id) && OreWanted(d.Type) && w.DrillBlocker(d, team) == null)
+                                      .OrderBy(d => Short(d.Type) || Starved(d.Type) ? 0 : Needy(d.Type) ? 1 : d.Type >= Map.Crystal ? 3 : 2).ThenBy(d => Vec2.Dist(d.Pos, t.StartPos)).ToList();
+            var open = freeZones.Where(d => w.RigsBound(team, d.Id).Count == 0).ToList();
+            // Slots: how many more mines each ore may start. Iron and copper share the cap, except that a starved one always gets its
+            // first (and the other keeps its place); crystal and uranium have one each, while wanted.
+            int sharedFree = MaxDeepMines - has[Map.Iron] - has[Map.Copper];
+            int basicRoom = System.Math.Max(sharedFree, (Starved(Map.Iron) ? 1 : 0) + (Starved(Map.Copper) ? 1 : 0));
+            var slots = new int[4];
+            for (int o = Map.Iron; o <= Map.Copper; o++)
+                slots[o] = System.Math.Max(Starved(o) ? 1 : 0, basicRoom - (Starved(1 - o) ? 1 : 0));
+            slots[Map.Crystal] = OreWanted(Map.Crystal) ? System.Math.Max(0, 1 - has[Map.Crystal]) : 0;
+            slots[Map.Uranium] = OreWanted(Map.Uranium) ? System.Math.Max(0, 1 - has[Map.Uranium]) : 0;
+            int Open(int ore) => open.Count(d => d.Type == ore);
+            // Rigs worth having in all: as many as there are slots with an open zone to fill them. Buying stops there, so none idles.
+            int usable = System.Math.Min(basicRoom, System.Math.Min(slots[Map.Iron], Open(Map.Iron)) + System.Math.Min(slots[Map.Copper], Open(Map.Copper)))
+                       + System.Math.Min(slots[Map.Crystal], Open(Map.Crystal)) + System.Math.Min(slots[Map.Uranium], Open(Map.Uranium));
+            int unsent = rigs.Count(r => !Bound(r)) + queuedRigs;
+            // A starved basic ore with the cap full of the other: retire that one's mine with the most left, to make the room. Only when
+            // something is waiting on the missing ore, and only once the rig that replaces it is bought (built or queued, so paid for):
+            // until then the rig is saved for, and the mine keeps pumping.
+            bool Waiting(int ore)
+            {
+                string raw = Defs.Ores[ore], refined = ore == Map.Iron ? "steel" : "copper";
+                return RawShort(raw) || (waiting != null && Defs.Get(waiting).Cost.Any(kv => (kv.Key == raw || kv.Key == refined) && t.Amount(kv.Key) < kv.Value));
+            }
+            Entity retire = null;
+            bool retireWanted = false;
+            for (int o = Map.Iron; o <= Map.Copper && !retireWanted; o++)
+                if (sharedFree <= 0 && Starved(o) && Open(o) > 0 && has[1 - o] >= 2 && Waiting(o) && w.MissingPrereq(team, Defs.Get("drill_rig")) == null)
+                {
+                    retireWanted = true;
+                    if (unsent > 0)
+                        retire = deepMines.Where(m => m.IsComplete && Pumping(m) && w.Map.DepositById(m.DepositId).Type == 1 - o)
+                                          .OrderByDescending(m => w.Map.DepositById(m.DepositId).Amount).FirstOrDefault();
+                }
+            wentDeep |= deepMines.Count > 0 || rigsInFlight > 0;
+            bool wantDeep = surfaceDry || prospect || wentDeep;
+            bool deepOn = w.HasComplete(team, "factory") && wantDeep;
+            var surveyors = mine.Where(e => e.Def.Key == "geological_surveyor").ToList();
+            bool Queued(string k) => t.UnitQueues[Producer.Factory].Any(q => q.Key == k);
+            bool wantRig = deepOn && w.MissingPrereq(team, Defs.Get("drill_rig")) == null && unsent < usable && rigsInFlight < 2;
+            bool wantSurveyor = deepOn && surveyors.Count == 0 && usable < 2 && !Queued("geological_surveyor");
+            // What it saves up for, so the army and the build order don't spend it as it arrives and the converters leave it alone:
+            // the first two mines' rigs, or the surveyor that finds them. With the command center gone, the construction truck that
+            // puts one back comes before any of that (1500 steel is never there if the army spends it as it comes in).
+            bool needHq = Count("command_center") == 0 && !mine.Any(e => e.Def.Key == "construction_truck") && !Queued("construction_truck") &&
+                          w.HasComplete(team, "factory") && w.HasComplete(team, "electronics_plant");
+            string saving = needHq ? "construction_truck" : wantRig && (pumping < 2 || retireWanted) ? "drill_rig" : wantSurveyor && pumping == 0 ? "geological_surveyor" : null;
+            var savingCost = saving != null ? Defs.Get(saving).Cost : null;
+            if (saving != t.SaveFor) { if (saving != null) Do(w, "type", "save_for", "unit", saving); else Do(w, "type", "save_for"); }
+
+            // With the surface dry and no deep mine pumping, the economy comes first: no army or new buildings (except power)
             // until a rig is on its way.
             // Regrowing fields keep a trickle of surface ore about, so "dry" alone no longer says when to go deep: a free
-            // mining zone already flagged and no deep mine yet means saving for a rig too.
-            bool zoneWaiting = w.Map.Deep.Any(d => t.Surveyed.Contains(d.Id) && d.Amount > 0 && (d.MineId == 0 || w.Get(d.MineId) == null));
-            bool economyFirst = (surfaceDry || zoneWaiting) && !mine.Any(e => e.Def.Key == "deep_mine" || e.Def.Key == "drill_rig") &&
-                                !t.UnitQueues[Producer.Factory].Any(q => q.Key == "drill_rig") && w.HasComplete(team, "electronics_plant");
+            // mining zone already flagged and no deep mine pumping means saving for a rig too. (Once it has been deep, with
+            // no zone left to drill, it carries on: surveyors are still looking.) It holds back the army, defences and tech, never the
+            // buildings the economy stands on: if any of those is gone, putting it back comes first (see FirstMissingEconomy below).
+            bool economyFirst = (surfaceDry || usable > 0) && pumping == 0 && rigsInFlight == 0 && w.HasComplete(team, "electronics_plant") && (!wentDeep || usable > 0);
+
+            // Down to its last couple of mining trucks, a truck comes before anything else (they are where the money comes from).
+            var trucks = mine.Where(e => e.IsHarvester).ToList();
+            int wantTrucks = System.Math.Min(10, 3 + Count("mining_refinery") * 2 + Count("outpost") * 2);
+            bool truckWanted = trucks.Count < wantTrucks && t.UnitQueues[Producer.CommandCenter].Count == 0;
+            if (truckWanted && trucks.Count < 3 && t.Amount("iron_ore") >= 200) { Do(w, "type", "train", "unit", "mining_truck"); truckWanted = false; }
+            // (More trucks are no use while some stand idle with nothing to mine.)
+            bool needTrucks = trucks.Count < wantTrucks && trucks.Count(e => e.Order == Order.Idle) < 2;
+            truckWanted &= needTrucks;
 
             // ---- Base building
-            string next = null;
-            if (t.StructureQueue.Count == 0)
-            {
-                if (t.PowerProduced - t.PowerUsed < 25 && structures.Count > 1)
-                    next = w.MissingPrereq(team, Defs.Get("fusion_reactor")) == null && t.Amount("plasma") > 80 && Count("fusion_reactor") == 0 ? "fusion_reactor" : "power_plant";
-                // Trucks queueing for the bays: another refinery (each bay takes one truck at a time).
-                else if (!surfaceDry && trucks0.Count(e => e.Dock == DockStep.Queue) >= 2 && Count("mining_refinery") is int nr && nr >= 1 && nr < 4)
-                    next = "mining_refinery";
-                else if (!economyFirst)
-                {
-                    var need = new Dictionary<string, int>();
-                    foreach (var k in BuildOrder)
-                    {
-                        need[k] = need.TryGetValue(k, out var c) ? c + 1 : 1;
-                        if (Count(k) < need[k]) { next = k; break; }
-                    }
-                }
-                if (next != null && t.Missing(Defs.Get(next).Cost) == null && w.MissingPrereq(team, Defs.Get(next)) == null)
-                    Do(w, "type", "build", "structure", next);
-            }
-            var reserve = next != null ? Defs.Get(next).Cost : new Dictionary<string, int>();
+            // Planned every second, even while something is going up, so the ore it costs can be saved up (see the reserves below).
+            // Power comes first, counting what is going up and what the next step, or a rig on its way, will draw.
+            var pending = structures.Where(s => !s.IsComplete).Sum(s => s.Def.Power);
+            string head = null, step = null;
+            if (!economyFirst) step = PickStep(w, t, Count, out head);
+            else { stuckSince.Clear(); step = head = FirstMissingEconomy(Count); }
+            int draw = (step != null ? System.Math.Max(0, -Defs.Get(step).Power) : 0) + 50 * rigsInFlight;
+            // What to build: the step, unless something more urgent goes first. Every such override goes through Override(): it has to be
+            // buildable (the buildings it needs stand) and, unless it is worth saving up for, paid for; otherwise the step stands. So a
+            // blocked override can never hide the step it was meant to jump ahead of.
+            string Override(string key, bool saveUp = false) =>
+                key != null && w.MissingPrereq(team, Defs.Get(key)) == null && (saveUp || t.Missing(Defs.Get(key).Cost) == null) ? key : null;
+            bool powerShort = t.PowerProduced - t.PowerUsed + pending - draw < 25 && structures.Count > 1;
+            // (A fusion reactor only if it can be paid for now: short of circuits, plain power plants keep the lights on.)
+            string powerFix = !powerShort ? null : t.Amount("plasma") > 80 && Count("fusion_reactor") == 0 ? Override("fusion_reactor") ?? "power_plant" : "power_plant";
+            string next = Override(powerFix, saveUp: true) ?? Override(moreRefineries ? "mining_refinery" : null) ?? step;
+            if (next != null && t.StructureQueue.Count == 0 && t.Missing(Defs.Get(next).Cost) == null && w.MissingPrereq(team, Defs.Get(next)) == null &&
+                (saving == null || EconomyStructures.Contains(next) || next == "fusion_reactor" || Defs.Get(next).Cost.All(kv => t.Amount(kv.Key) - (savingCost.TryGetValue(kv.Key, out var rc) ? rc : 0) >= kv.Value)))
+                Do(w, "type", "build", "structure", next);
+            // What its own units may not spend: the next structure, and what it is saving up for.
+            var reserve = new Dictionary<string, int>();
+            foreach (var kv in next != null ? Defs.Get(next).Cost : new Dictionary<string, int>()) reserve[kv.Key] = kv.Value;
+            if (saving != null) foreach (var kv in savingCost) reserve[kv.Key] = (reserve.TryGetValue(kv.Key, out var also) ? also : 0) + kv.Value;
             bool Affordable(string unit)
             {
                 var cost = Defs.Get(unit).Cost;
@@ -98,20 +287,29 @@ namespace Pez.Sim
             }
 
             // ---- Mining trucks: enough of them, spread across the ore types the tech needs
-            var trucks = mine.Where(e => e.IsHarvester).ToList();
-            int wantTrucks = System.Math.Min(10, 3 + Count("mining_refinery") * 2 + Count("outpost") * 2);
-            if (trucks.Count < wantTrucks && t.UnitQueues[Producer.CommandCenter].Count == 0 && t.Amount("iron_ore") >= 200 + (reserve.TryGetValue("iron_ore", out var ri) ? ri : 0))
+            if (truckWanted && t.Amount("iron_ore") >= 200 + (reserve.TryGetValue("iron_ore", out var ri) ? ri : 0))
                 Do(w, "type", "train", "unit", "mining_truck");
-            // Trucks cost raw iron ore, which the refineries eat as it arrives: down to its last couple of trucks, keep
-            // enough back for one (not more: trucks lost far afield shouldn't swallow the whole income).
-            int keep = trucks.Count < 3 ? 200 : 0;
-            if (t.Reserved("iron_ore") != keep) Do(w, "type", "reserve", "item", "iron_ore", "amount", keep);
-            // Iron is the bulk resource: roughly 3 of every 5 trucks; one each on copper, then crystal/uranium as tech needs them.
-            var plan = new List<int> { Map.Iron, Map.Iron, Map.Copper, Map.Iron };
-            if (Count("optics_lab") > 0 || Count("composite_foundry") > 0) plan.Add(Map.Crystal);
-            if (Count("enrichment_plant") > 0) plan.Add(Map.Uranium);
+            // The refineries eat raw ore as it arrives, so an ore cost can't be saved up just by waiting: they leave alone
+            // what the next purchase costs in raw ore (the next structure, the first unbuilt step if it is waiting on ore while
+            // others go ahead, a refinery it wants more of, and a truck while it is short of them). Not more: a truck lost far
+            // afield shouldn't swallow the whole income.
+            foreach (var ore in Defs.Ores)
+            {
+                int hold = 0;
+                if (next != null && Defs.Get(next).Cost.TryGetValue(ore, out var c1)) hold = c1;
+                if (head != null && Defs.Get(head).Cost.TryGetValue(ore, out var c2)) hold = System.Math.Max(hold, c2);
+                if (moreRefineries && Defs.Get("mining_refinery").Cost.TryGetValue(ore, out var c3)) hold = System.Math.Max(hold, c3);
+                if (ore == "iron_ore" && (trucks.Count < 3 || (needTrucks && w.HasComplete(team, "factory")))) hold = System.Math.Max(hold, Defs.Get("mining_truck").Cost[ore]);
+                if ((t.Reserve.TryGetValue(ore, out var held) ? held : 0) != hold) Do(w, "type", "reserve", "item", ore, "amount", hold);
+            }
+            // Iron is the bulk resource: roughly 3 of every 5 trucks; one each on copper, then crystal/uranium as tech needs them
+            // (and only while it is short of them: ore nothing is using just piles up).
+            int copperType = wantCopper || RawShort("copper_ore") ? Map.Copper : Map.Iron; // (a refinery waiting on copper ore: trucks go for it even with copper in hand)
+            var plan = new List<int> { Map.Iron, Map.Iron, copperType, Map.Iron };
+            if (wantCrystal) plan.Add(Map.Crystal);
+            if (wantUranium) plan.Add(Map.Uranium);
             plan.Add(Map.Iron);
-            plan.Add(Map.Copper);
+            plan.Add(copperType);
             for (int i = 0; i < trucks.Count; i++)
             {
                 int type = i < plan.Count ? plan[i] : Map.Iron;
@@ -213,31 +411,45 @@ namespace Pez.Sim
                 Do(w, "type", "train", "unit", "medic");
 
             // ---- Deep mining: when the surface runs dry, survey outward from the base and drill what turns up.
-            if (w.HasComplete(team, "factory") && (surfaceDry || prospect || mine.Any(e => e.Def.Key == "deep_mine")))
+            // A mine whose deposit is used up pumps nothing but still draws power: sell it.
+            // (Never a structure the team is standing on: with it gone the team would be out of the game, a rig on its way or not.
+            // Refused while it is under fire: tried again next second.)
+            void Sell(Entity e) { if (w.StillStanding(team, e)) Do(w, "type", "sell", "structure_id", e.Id); }
+            foreach (var dm in deepMines.Where(e => e.IsComplete && !Pumping(e))) Sell(dm);
+            if (retire != null) Sell(retire);
+            // Surveyors and rigs that exist get their work whether or not there is a factory (it is needed to buy more, not to use them).
+            if (wantDeep)
             {
-                var free = w.Map.Deep.Where(d => t.Surveyed.Contains(d.Id) && d.Amount > 0 && (d.MineId == 0 || w.Get(d.MineId) == null))
-                                     .OrderBy(d => Vec2.Dist(d.Pos, t.StartPos)).ToList();
-                var surveyors = mine.Where(e => e.Def.Key == "geological_surveyor").ToList();
-                bool Queued(string k) => t.UnitQueues[Producer.Factory].Any(q => q.Key == k);
-                if (surveyors.Count == 0 && free.Count < 2 && !Queued("geological_surveyor") && Affordable("geological_surveyor"))
-                    Do(w, "type", "train", "unit", "geological_surveyor");
+                // Idle rigs go to the best open zone whose ore has a slot left and deploy there by themselves.
+                int roomLeft = basicRoom;
+                foreach (var rig in rigs.Where(e => e.Order == Order.Idle))
+                {
+                    var zone = open.FirstOrDefault(d => slots[d.Type] > 0 && (d.Type >= Map.Crystal || roomLeft > 0));
+                    if (zone == null) break;
+                    open.Remove(zone);
+                    var sent = Do(w, "type", "drill", "units", new[] { rig.Id }, "zone", zone.Id);
+                    if (!(sent["ok"] is bool ok && ok)) continue;
+                    slots[zone.Type]--;
+                    if (zone.Type < Map.Crystal) roomLeft--;
+                }
                 // Surveyors prospect around the base on their own, flagging mining zones as they go; when the area is
                 // covered they widen it.
                 if (w.Time >= nextProspect)
                     foreach (var sv in surveyors.Where(e => e.Order == Order.Idle))
                     {
                         var r = Do(w, "type", "prospect", "units", new[] { sv.Id }, "x", t.StartPos.X, "y", t.StartPos.Y, "radius", prospectRadius);
-                        if (r["ok"] is bool ok && ok) continue;
+                        if (r["ok"] is bool ok2 && ok2) continue;
                         if (prospectRadius < 120) prospectRadius += 30;
                         else nextProspect = w.Time + 30; // everything in reach is surveyed: look again later
                     }
-                var rigs = mine.Where(e => e.Def.Key == "drill_rig").ToList();
-                int rigsWanted = System.Math.Min(2, free.Count);
-                if (rigs.Count + t.UnitQueues[Producer.Factory].Count(q => q.Key == "drill_rig") < rigsWanted && Affordable("drill_rig"))
+            }
+            if (deepOn)
+            {
+                // (What it is saving for has its cost in the reserve, so that is not held against it.)
+                if (wantSurveyor && (saving == "geological_surveyor" ? t.Missing(savingCost) == null : Affordable("geological_surveyor")))
+                    Do(w, "type", "train", "unit", "geological_surveyor");
+                if (wantRig && (saving == "drill_rig" ? t.Missing(savingCost) == null : Affordable("drill_rig")))
                     Do(w, "type", "train", "unit", "drill_rig");
-                // Idle rigs go to the nearest free zone and deploy there by themselves.
-                var idleRigs = rigs.Where(e => e.Order == Order.Idle).Select(e => e.Id).ToList();
-                if (idleRigs.Count > 0 && free.Count > 0) Do(w, "type", "drill", "units", idleRigs);
             }
 
             // ---- Army
@@ -280,7 +492,9 @@ namespace Pez.Sim
             if (idle.Count >= waveSize)
             {
                 Vec2 goal;
-                var known = t.KnownEnemyStructures.Values.Where(k => k.team >= 0).ToList(); // not neutral derricks
+                // (Not derricks: attack-move leaves a held one alone, so a wave aimed at the nearest derrick stopped beside it and
+                // the next wave did the same, for the rest of the game, while the enemy base behind it stood.)
+                var known = t.KnownEnemyStructures.Values.Where(k => k.team >= 0 && k.key != "derrick").ToList();
                 if (known.Count > 0) { var k = known.OrderBy(x => Vec2.Dist(new Vec2(x.origin.X, x.origin.Y), t.StartPos)).First(); goal = new Vec2(k.origin.X + 1, k.origin.Y + 1); }
                 else
                 {

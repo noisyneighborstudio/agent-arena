@@ -395,6 +395,8 @@ namespace Pez.Sim
         internal JObj SaveState() => new JObj()
             .Set("team", team).Put("passive", Passive).Set("next_think", SnapIO.X(nextThink)).Set("wave_size", waveSize).Set("known_surface", knownSurface)
             .Set("next_prospect", SnapIO.X(nextProspect)).Set("prospect_radius", prospectRadius)
+            .Set("want_copper", wantCopper).Put("want_crystal", wantCrystal).Put("want_uranium", wantUranium).Put("went_deep", wentDeep)
+            .Set("stuck_since", stuckSince.OrderBy(kv => kv.Key).Select(kv => (object)new List<object> { kv.Key, SnapIO.X(kv.Value) }).ToList())
             .Set("outpost_targets", outpostTargets.Select(kv => (object)new List<object> { kv.Key, SnapIO.X(kv.Value.X), SnapIO.X(kv.Value.Y) }).ToList());
 
         internal static SimpleAI LoadState(D d)
@@ -404,6 +406,9 @@ namespace Pez.Sim
             var ai = new SimpleAI(d.In("team"), passive);
             d.Load("next_think", ref ai.nextThink); d.Load("wave_size", ref ai.waveSize); d.Load("known_surface", ref ai.knownSurface);
             d.Load("next_prospect", ref ai.nextProspect); d.Load("prospect_radius", ref ai.prospectRadius);
+            d.Load("want_copper", ref ai.wantCopper); d.Load("want_crystal", ref ai.wantCrystal); d.Load("want_uranium", ref ai.wantUranium); d.Load("went_deep", ref ai.wentDeep);
+            foreach (var x in d.Arr("stuck_since"))
+                if (x is List<object> s && s.Count >= 2) ai.stuckSince[SnapIO.ToI(s[0])] = SnapIO.ToF(s[1]);
             foreach (var x in d.Arr("outpost_targets"))
                 if (x is List<object> l && l.Count >= 3) ai.outpostTargets[SnapIO.ToI(l[0])] = new Vec2(SnapIO.ToF(l[1]), SnapIO.ToF(l[2]));
             return ai;
