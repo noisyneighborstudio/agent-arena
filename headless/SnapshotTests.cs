@@ -391,6 +391,13 @@ namespace Pez.Headless
             Commands.Execute(w, 0, Cmd("type", "attack_move", "units", new[] { tank.Id }, "x", d.Center.X - 3, "y", d.Center.Y));
             Step(game, 15);
             int saidFirst = w.Events.Count(e => e.Type == "derrick_skipped");
+            // A save from before the hints were kept as state (no derrick_hinted) still has the hint event: it counts, so the first resume doesn't repeat it.
+            var old = (Dictionary<string, object>)Json.Parse(Snap(game));
+            ((Dictionary<string, object>)old["world"]).Remove("derrick_hinted");
+            var older = Resume(Json.Write(old));
+            Commands.Execute(older.World, 0, Cmd("type", "attack_move", "units", new[] { tank.Id }, "x", d.Center.X - 3, "y", d.Center.Y + 2));
+            Step(older, 10);
+            Check(saidFirst == 1 && older.World.Events.Count(e => e.Type == "derrick_skipped") == 1, $"a save from before hints were state, resumed within the two minutes, doesn't repeat the hint its events show ({older.World.Events.Count(e => e.Type == "derrick_skipped")} hint events after resuming)");
             for (int i = 0; i < 2500; i++) w.Emit("shot", 1, 5, 6, pos: new Vec2(40, 40)); // far more than the 1500 events a save holds
             var back = Resume(Snap(game));
             Check(Snap(back) == Snap(game), "a game that has given a derrick hint saves and loads back to the same snapshot");
