@@ -61,7 +61,9 @@ namespace Pez.Sim
         /// <summary>Enemies briefly revealed by firing on this team (entity id -> game time the reveal ends).</summary>
         public readonly Dictionary<int, float> Revealed = new Dictionary<int, float>();
 
-        public int Amount(string item) => Stock.TryGetValue(item, out var v) ? (int)v : 0;
+        /// <summary>Plasma the team's fusion reactors have burned but the stockpile hasn't paid yet (World.SettleFusionBurn): not available to spend.</summary>
+        public float PlasmaOwed;
+        public int Amount(string item) => Stock.TryGetValue(item, out var v) ? (int)(item == "plasma" ? v - PlasmaOwed : v) : 0;
         public void Add(string item, float n) => Stock[item] = (Stock.TryGetValue(item, out var v) ? v : 0) + n;
         public string Missing(Dictionary<string, int> cost)
         {
@@ -473,12 +475,19 @@ namespace Pez.Sim
             EnsureDerricks(); // a bigger map gets more, around its new middle
         }
 
-        static readonly Dictionary<string, (byte ore, float mult)> SalvageOf = new Dictionary<string, (byte, float)>
+        /// <summary>
+        /// The raw ores one unit of each item is made from, as [iron, copper, crystal, uranium] (the Map.Iron... order): what a
+        /// unit of it is worth in kill value, salvage, spills and leaves. Every conversion reads this table, and a test keeps it
+        /// in step with the converters' recipes.
+        /// </summary>
+        internal static readonly Dictionary<string, float[]> OreMix = new Dictionary<string, float[]>
         {
-            { "iron_ore", (Map.Iron, 1f) }, { "steel", (Map.Iron, 1f) },
-            { "copper_ore", (Map.Copper, 1f) }, { "copper", (Map.Copper, 1f) }, { "circuits", (Map.Copper, 2f) },
-            { "crystal", (Map.Crystal, 1f) }, { "lenses", (Map.Crystal, 2f) }, { "composite", (Map.Crystal, 2f) },
-            { "uranium", (Map.Uranium, 1f) }, { "plasma", (Map.Uranium, 2f) },
+            { "iron_ore", new float[] { 1, 0, 0, 0 } }, { "steel", new float[] { 1, 0, 0, 0 } },
+            { "copper_ore", new float[] { 0, 1, 0, 0 } }, { "copper", new float[] { 0, 1, 0, 0 } },
+            { "circuits", new float[] { 1, 2, 0, 0 } },  // 2 copper + 1 steel
+            { "crystal", new float[] { 0, 0, 1, 0 } }, { "lenses", new float[] { 0, 0, 2, 0 } },
+            { "composite", new float[] { 2, 0, 1, 0 } }, // 2 steel + 1 crystal
+            { "uranium", new float[] { 0, 0, 0, 1 } }, { "plasma", new float[] { 0, 0, 0, 2 } },
         };
 
         /// <summary>
@@ -499,15 +508,17 @@ namespace Pez.Sim
 
         /// <summary>
         /// Spread ore values (per ore type) as salvage anyone can mine: on these tiles first, then on open ground around
-        /// them, as many tiles as it takes (a tile holds at most Map.MaxOrePerTile). Returns the amount actually placed.
+        /// them, as many tiles as it takes (a tile holds at most Map.MaxOrePerTile). Returns the amount actually placed,
+        /// and lists where each pile landed in `landed` (for saying where it is).
         /// </summary>
-        float SpillSalvage(float[] value, List<Int2> tiles)
+        float SpillSalvage(float[] value, List<Int2> tiles, List<(Int2 tile, int ore)> landed = null)
         {
             if (value.Sum() <= 0 || tiles.Count == 0) return 0;
             // Free ground, nearest the footprint first: the footprint itself, then open tiles with no ore on them.
             var footprint = new HashSet<Int2>(tiles);
             float cx = (float)tiles.Average(t => t.X) + 0.5f, cy = (float)tiles.Average(t => t.Y) + 0.5f;
-            var queue = new List<Int2>(tiles);
+            // A tile something still stands on (a captured command center's: trucks couldn't reach it) or that already holds ore takes none.
+            var queue = tiles.Where(p => Map.Occupant[Map.Idx(p.X, p.Y)] == 0 && Map.Ore[Map.Idx(p.X, p.Y)] == 0).ToList();
             // Each ore type covers its share of the footprint, and more ground if that won't hold it all.
             float total = value.Sum();
             var share = new int[4];
@@ -542,70 +553,112 @@ namespace Pez.Sim
                     Map.OreType[i] = (byte)k;
                     Map.Ore[i] = Math.Min(Map.MaxOrePerTile, per);
                     placed += Map.Ore[i];
+                    landed?.Add((queue[ti], Map.Ore[i]));
                 }
             }
             MapVersion++;
+            if (placed > 0) oreDirty = true; // the viewers fetch the ore map again when OreVersion moves
             return placed;
         }
 
         /// <summary>
-        /// A team's last command center has fallen: everything in its stockpile spills out as salvage ore on the
-        /// footprint, first come, first served. (The team plays on with whatever else it has.)
+        /// Where spilled ore landed, in words and as a spot for an alert: the sector it all lies in, or the sectors it is
+        /// split across (biggest first), and the middle of the biggest lot. `fallback` if none landed.
         /// </summary>
-        void ReleaseStockpile(Entity cc)
+        static (string where, Vec2 at) SpillSite(List<(Int2 tile, int ore)> landed, Vec2 fallback)
         {
-            var t = Teams[cc.Team];
-            var value = new float[4];
-            foreach (var kv in t.Stock) if (SalvageOf.TryGetValue(kv.Key, out var sv) && kv.Value > 0) value[sv.ore] += kv.Value * sv.mult;
+            if (landed.Count == 0) return ($"sector {StateView.Sector(fallback)}", fallback);
+            var lots = landed.GroupBy(l => StateView.Sector(l.tile.Center))
+                             .Select(g => (sector: g.Key, ore: g.Sum(l => l.ore), at: new Vec2(g.Average(l => l.tile.Center.X), g.Average(l => l.tile.Center.Y))))
+                             .OrderByDescending(l => l.ore).ThenBy(l => l.sector).ToList();
+            if (lots.Count == 1) return ($"sector {lots[0].sector}", lots[0].at);
+            string list = string.Join(", ", lots.Take(3).Select(l => $"{l.sector} ({l.ore} units)")) + (lots.Count > 3 ? $" and {lots.Count - 3} more" : "");
+            return ($"sectors {list}", lots[0].at);
+        }
+
+        /// <summary>
+        /// A command center has left its owner (destroyed, sold or captured: Remove and the capture both come here, so no
+        /// route misses it). If it was the team's last, everything in its stockpile spills out as salvage ore on the
+        /// footprint, first come, first served; one still standing (captured) gets it on the open ground around it.
+        /// The team plays on with whatever else it has. `how` finishes "its last command center ...", e.g. "fell".
+        /// </summary>
+        void ReleaseStockpile(Entity cc, int owner, string how)
+        {
+            var t = Teams[owner];
+            // A team that's already out is taken apart whole, stockpile and all (Dismantle).
+            if (t.Left || t.Defeated || Entities.Any(o => !o.Dead && o.Team == owner && o.Def.Key == "command_center")) return;
+            var value = TakeStockpile(t);
             var tiles = new List<Int2>();
             for (int y = 0; y < cc.Def.SizeY; y++) for (int x = 0; x < cc.Def.SizeX; x++) tiles.Add(new Int2(cc.Origin.X + x, cc.Origin.Y + y));
             float total = SpillSalvage(value, tiles);
-            t.Stock.Clear();
             if (total <= 0) return;
             var where = StateView.Sector(cc.Center);
-            string msg = $"{t.Name}'s last command center fell at sector {where}: its stockpile spilled out as about {(int)total} units of salvage ore. First come, first served.";
+            string msg = $"{t.Name}'s last command center {how} at sector {where}: its stockpile spilled out as about {(int)total} units of salvage ore. First come, first served.";
             Emit("chat", -1, text: msg);
             var truck = Entities.FirstOrDefault(e => !e.Dead && e.Team == t.Id && e.Def.DeploysInto == "command_center");
-            Alerts.Raise(this, t.Id, "stockpile_lost", Priority.Critical, cc.Center, hit: false).Lost.Add($"your whole stockpile ({(int)total} units) spilled out as salvage at {where}; anyone can mine it, so get your trucks there first" +
+            Alerts.Raise(this, t.Id, "stockpile_lost", Priority.Critical, cc.Center, hit: false).Lost.Add($"your last command center {how}, so your whole stockpile ({(int)total} units) spilled out as salvage at {where}; anyone can mine it, so get your trucks there first" +
                 (truck != null ? $". Deploy your construction_truck #{truck.Id} into a new command center somewhere safe to rebuild" : ""));
             foreach (var other in Teams.Where(o => o.Id != t.Id && !o.Left && !o.Defeated))
                 Alerts.Raise(this, other.Id, "salvage_available", Priority.High, cc.Center, hit: false).Lost.Add($"{(int)total} units of salvage ore at {where}");
+        }
+
+        /// <summary>
+        /// A team that's out for good (left, or knocked out) is taken apart: its derricks go back to neutral, and every
+        /// building, unit and the whole stockpile turn to salvage ore on its old base (DismantleStructureShare of a
+        /// building's value, DismantleUnitShare of a unit's, all of the stockpile). Returns the ore placed and where it landed
+        /// (the structures' footprints, so not always the first base).
+        /// </summary>
+        (float total, string where, Vec2 at) Dismantle(Team t)
+        {
+            ReleaseDerricks(t.Id);
+            t.Defeated = true; // first: a command center going with the rest isn't a "last one fell" spill (ReleaseStockpile)
+            var value = TakeStockpile(t);
+            var tiles = new List<Int2>();
+            foreach (var e in Entities.Where(e => !e.Dead && e.Team == t.Id).ToList())
+            {
+                if (e.IsStructure)
+                {
+                    AddWorth(value, e, DismantleStructureShare);
+                    for (int y = 0; y < e.Def.SizeY; y++) for (int x = 0; x < e.Def.SizeX; x++) tiles.Add(new Int2(e.Origin.X + x, e.Origin.Y + y));
+                }
+                else if (!e.IsMine) AddWorth(value, e, DismantleUnitShare);
+                Emit("salvaged", e.Team, e.Id, 0, e.Center, key: e.Def.Key); // dismantled, not destroyed: no wreck
+                Remove(e);
+            }
+            if (tiles.Count == 0) tiles.Add(Int2.Of(t.StartPos));
+            var landed = new List<(Int2 tile, int ore)>();
+            float total = SpillSalvage(value, tiles, landed);
+            var (where, at) = SpillSite(landed, t.StartPos);
+            return (total, where, at);
+        }
+
+        /// <summary>
+        /// A team knocked out (no structures or construction truck left, or resigned in a closed game) is dismantled into
+        /// salvage like a leave. Returns the sentence to add to the announcement; the others are told where the ore is.
+        /// </summary>
+        string Eliminate(Team t)
+        {
+            var (total, where, at) = Dismantle(t);
+            if (total <= 0) return "";
+            foreach (var other in Teams.Where(o => o.Id != t.Id && !o.Left && !o.Defeated))
+                Alerts.Raise(this, other.Id, "salvage_available", Priority.High, at, hit: false).Lost.Add($"{(int)total} units of salvage ore at {where}");
+            return $". What it had left (stockpile and units) is now about {(int)total} units of salvage ore at {where}. First come, first served.";
         }
 
         public string Leave(int teamId, string reason = null)
         {
             var t = Teams[teamId];
             if (t.Left) return "already left";
-            ReleaseDerricks(teamId);
-            var value = new float[4];
-            void AddCost(Dictionary<string, int> cost, float f) { foreach (var kv in cost) if (SalvageOf.TryGetValue(kv.Key, out var s)) value[s.ore] += kv.Value * s.mult * f; }
-            foreach (var kv in t.Stock) if (SalvageOf.TryGetValue(kv.Key, out var s) && kv.Value > 0) value[s.ore] += kv.Value * s.mult;
-            var tiles = new List<Int2>();
-            foreach (var e in Entities.Where(e => !e.Dead && e.Team == teamId).ToList())
-            {
-                if (e.IsStructure)
-                {
-                    AddCost(e.Def.Key == "command_center" ? new Dictionary<string, int> { { "iron_ore", 1500 }, { "copper_ore", 500 } } : e.Def.Cost, 0.6f * e.BuildProgress);
-                    for (int y = 0; y < e.Def.SizeY; y++) for (int x = 0; x < e.Def.SizeX; x++) tiles.Add(new Int2(e.Origin.X + x, e.Origin.Y + y));
-                }
-                else if (!e.IsMine) AddCost(e.Def.Cost, 0.5f);
-                Emit("salvaged", e.Team, e.Id, 0, e.Center, key: e.Def.Key); // dismantled, not destroyed: no wreck
-                Remove(e);
-            }
-            if (tiles.Count == 0) tiles.Add(Int2.Of(t.StartPos));
-            float total = SpillSalvage(value, tiles);
+            var (total, where, at) = Dismantle(t);
             t.Left = true;
-            t.Defeated = true;
-            t.Stock.Clear();
             scoreCache = null;
             ForgetTeam(teamId);
             MapVersion++;
-            var where = StateView.Sector(t.StartPos);
-            string msg = $"{t.PlayerName ?? t.Name} ({t.Name}) {reason ?? "left the arena"}. Their base at sector {where} is now about {(int)total} units of salvage ore. First come, first served.";
+            string msg = $"{t.PlayerName ?? t.Name} ({t.Name}) {reason ?? "left the arena"}. Their base at {where} is now about {(int)total} units of salvage ore. First come, first served.";
             Emit("left", teamId, pos: t.StartPos, text: msg);
             Emit("chat", -1, text: msg);
             foreach (var other in Teams.Where(o => !o.Left && !o.Defeated))
-                Alerts.Raise(this, other.Id, "salvage_available", Priority.High, t.StartPos, hit: false).Lost.Add($"{(int)total} units of salvage ore");
+                Alerts.Raise(this, other.Id, "salvage_available", Priority.High, at, hit: false).Lost.Add($"{(int)total} units of salvage ore at {where}");
             return msg;
         }
 
@@ -687,6 +740,7 @@ namespace Pez.Sim
 
         void OnStructureComplete(Entity e)
         {
+            StartReactor(e);
             UpdatePower();
             if (e.Def.Key == "mining_refinery") SpawnUnit(e.Team, "mining_truck", e);
         }
@@ -745,7 +799,11 @@ namespace Pez.Sim
             return null;
         }
 
-        public void Remove(Entity e)
+        /// <summary>
+        /// Take an entity out of the world. `how` is only for a command center: what happened to a team's last one,
+        /// worded for the alert and chat ("fell" unless the caller says otherwise).
+        /// </summary>
+        public void Remove(Entity e, string how = "fell")
         {
             if (e.Dead) return;
             e.Dead = true;
@@ -772,6 +830,8 @@ namespace Pez.Sim
                     }
                 if (e.Team >= 0) Teams[e.Team].StructureQueue.RemoveAll(p => p.StructureId == e.Id);
                 UpdatePower();
+                if (e.Team >= 0 && e.Def.Key == "command_center") ReleaseStockpile(e, e.Team, how);
+                if (e.Def.Key == "derrick") DerrickDestroyed(e); // however it goes, the site comes back neutral
             }
         }
 
@@ -781,7 +841,8 @@ namespace Pez.Sim
         {
             var ev = new GameEvent { Seq = nextSeq++, Tick = Tick, Type = type, Team = team, A = a, B = b, Pos = pos, Pos2 = pos2, Key = key, Text = text };
             // Which teams saw it go: only they may be told it was destroyed (the observation feed never reports deaths in the fog).
-            if (type == "destroyed" && Feed != null && ById.TryGetValue(a, out var gone))
+            // A dismantled unit (its team left or was knocked out) goes the same way: the feed forgets it where it was seen go.
+            if ((type == "destroyed" || type == "salvaged") && Feed != null && ById.TryGetValue(a, out var gone))
                 for (int t = 0; t < Teams.Count && t < 31; t++)
                     if (t != gone.Team && !gone.IsCarried && IsVisibleTo(t, gone)) ev.SeenBy |= 1 << t;
             Events.Add(ev);
@@ -1071,7 +1132,8 @@ namespace Pez.Sim
             {
                 if (e.Dead || !e.IsStructure || !e.IsComplete || e.Team < 0) continue;
                 var t = Teams[e.Team];
-                if (e.Def.Key == "fusion_reactor" && !e.Working) continue; // out of plasma
+                if (e.Offline) continue; // an offline defence (upkeep unpaid) draws no power
+                if (e.Def.Key == "fusion_reactor") { t.PowerProduced += ReactorPower(e, e.Output); continue; } // as much as its plasma pays for
                 if (e.Def.Power > 0) t.PowerProduced += e.Def.Power; else t.PowerUsed -= e.Def.Power;
             }
             // Say when a team tips into low power (and out of it): otherwise half-speed production goes unnoticed.
@@ -1083,7 +1145,7 @@ namespace Pez.Sim
                 if (t.LowPower)
                 {
                     Alerts.Raise(this, t.Id, "low_power", Priority.Medium, at, hit: false)
-                          .Lost.Add($"power {t.PowerProduced} produced, {t.PowerUsed} used: building, training and refining run at half speed until you build a power_plant or sell something that draws power");
+                          .Lost.Add($"power {t.PowerProduced} produced, {t.PowerUsed} used: building, training and refining run at half speed until you build a power_plant or sell something that draws power" + ReactorShortNote(t));
                     Emit("low_power", t.Id, 0, 0, at, text: $"low power ({t.PowerProduced} produced, {t.PowerUsed} used): everything runs at half speed until you add a power_plant");
                 }
                 else Emit("power_restored", t.Id, 0, 0, at, text: $"power restored ({t.PowerProduced} produced, {t.PowerUsed} used): full speed again");
@@ -1103,14 +1165,7 @@ namespace Pez.Sim
                 if (e.Dead || !e.IsStructure || !e.IsComplete || e.Team < 0) continue; // neutral derricks pay nobody
                 var team = Teams[e.Team];
                 if (e.Def.Key == "derrick") { DerrickTick(e, team); continue; }
-                if (e.Def.Key == "fusion_reactor")
-                {
-                    float burn = 0.1f * Dt;
-                    bool fueled = (team.Stock.TryGetValue("plasma", out var pl) ? pl : 0) >= burn;
-                    if (fueled) team.Add("plasma", -burn);
-                    if (fueled != e.Working) { e.Working = fueled; powerChanged = true; }
-                    continue;
-                }
+                if (e.Def.Key == "fusion_reactor") { if (FusionTick(e, team)) powerChanged = true; continue; }
                 if (e.Def.Key == "deep_mine") { DeepMineTick(e, team); continue; }
                 if (e.Def.Recipes.Length == 0) continue;
                 float speed = team.LowPower ? 0.5f : 1f;
@@ -1134,6 +1189,7 @@ namespace Pez.Sim
                 }
                 e.Working = any;
             }
+            if (Tick % TickRate == 0) SettleFusionBurn();
             if (powerChanged) UpdatePower();
 
             // Per-second net rates, from a stock snapshot each second, averaged over about 15 s: a truck unloading 150 ore
@@ -1582,6 +1638,8 @@ namespace Pez.Sim
                  text: $"{Teams[e.Team].Name}'s engineer captured {(old >= 0 ? $"{Teams[old].Name}'s" : "a neutral")} {t.Def.Key} #{t.Id} at {(int)t.Center.X},{(int)t.Center.Y}");
             if (old >= 0) Alerts.Raise(this, old, "structure_lost", Priority.Critical, t.Center, attacker: e).Lost.Add($"{t.Def.Key} #{t.Id} (captured by an engineer)");
             if (t.Def.Key == "derrick") DerrickCaptured(t, old);
+            StartReactor(t);
+            if (old >= 0 && t.Def.Key == "command_center") ReleaseStockpile(t, old, $"was captured by {Teams[e.Team].Name}");
             Remove(e); // the engineer moves in for good
             UpdatePower();
         }
@@ -1830,16 +1888,13 @@ namespace Pez.Sim
                 TallyDeath(t, src);
                 var lost = Alerts.Raise(this, t.Team, t.IsStructure ? "structure_lost" : "units_lost", t.IsStructure ? Priority.Critical : Priority.Medium, t.Center, attacker: src);
                 lost.Lost.Add($"{t.Def.Key} #{t.Id}");
-                bool lastHq = t.Def.Key == "command_center" && !Entities.Any(o => !o.Dead && o != t && o.Team == t.Team && o.Def.Key == "command_center");
                 // Killed by another team (its unit, turret, mine, or a fire it set): part of the wreck is left as salvage.
                 bool enemyKill = team >= 0 && team < Teams.Count && team != t.Team;
                 float value = 0;
                 var salvage = enemyKill ? KillSalvage(t, out value) : null;
                 if (enemyKill) Teams[team].Stats.KillValue += (int)value;
-                Remove(t);
-                if (lastHq) ReleaseStockpile(t);
+                Remove(t); // a team's last command center spills its stockpile as it goes (ReleaseStockpile)
                 if (salvage != null) DropSalvage(t, salvage, team);
-                if (t.Def.Key == "derrick") DerrickDestroyed(t);
             }
         }
 
@@ -2387,7 +2442,7 @@ namespace Pez.Sim
             SetOrder(e, Order.Idle, e.Pos);
         }
 
-        /// <summary>Ore left at which a deep mine warns it's running low: two minutes of pumping.</summary>
+        /// <summary>Ore left at which a deep mine warns it's running low: five minutes of pumping.</summary>
         public const float DeepMineWarnAmount = EntityDef.DeepMineRate * 300f; // 5 minutes: time to survey, build a rig and drive it
 
         /// <summary>Seconds of pumping left in a deposit at this team's current rate (low power halves it).</summary>
@@ -3271,9 +3326,8 @@ namespace Pez.Sim
                 return;
             }
             t.Defeated = true;
-            ReleaseDerricks(t.Id);
-            foreach (var e in Entities.Where(e => !e.Dead && e.Team == t.Id).ToList()) { Emit("destroyed", e.Team, e.Id, 0, e.Center, key: e.Def.Key); Remove(e); }
-            Emit("defeated", t.Id, text: $"{t.Name} ({t.PlayerName ?? t.Controller}) could make no further progress ({why}) and was resigned as lost");
+            string salvage = Eliminate(t);
+            Emit("defeated", t.Id, text: $"{t.Name} ({t.PlayerName ?? t.Controller}) could make no further progress ({why}) and was resigned as lost{salvage}");
         }
 
         /// <summary>Open arena: someone has beaten every opponent in the room (it stays open for new challengers).</summary>
@@ -3310,9 +3364,8 @@ namespace Pez.Sim
                 {
                     if (team.Defeated || StillStanding(team.Id)) continue;
                     team.Defeated = true;
-                    ReleaseDerricks(team.Id);
-                    foreach (var e in Entities.Where(e => !e.Dead && e.Team == team.Id).ToList()) { Emit("destroyed", e.Team, e.Id, 0, e.Center, key: e.Def.Key); Remove(e); }
-                    Emit("defeated", team.Id, text: $"{team.Name} ({team.PlayerName ?? team.Controller}) has been eliminated");
+                    string salvage = Eliminate(team);
+                    Emit("defeated", team.Id, text: $"{team.Name} ({team.PlayerName ?? team.Controller}) has been eliminated{salvage}");
                     ForgetTeam(team.Id);
                 }
                 CheckArenaCleared();
@@ -3324,9 +3377,8 @@ namespace Pez.Sim
                 if (!StillStanding(team.Id))
                 {
                     team.Defeated = true;
-                    ReleaseDerricks(team.Id);
-                    foreach (var e in Entities) if (!e.Dead && e.Team == team.Id) { Emit("destroyed", e.Team, e.Id, 0, e.Center, key: e.Def.Key); Remove(e); }
-                    Emit("defeated", team.Id, text: $"{team.Name} ({team.PlayerName ?? team.Controller}) has been defeated");
+                    string salvage = Eliminate(team);
+                    Emit("defeated", team.Id, text: $"{team.Name} ({team.PlayerName ?? team.Controller}) has been defeated{salvage}");
                 }
             }
             var alive = Teams.Where(t => !t.Defeated).ToList();

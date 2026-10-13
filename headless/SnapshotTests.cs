@@ -54,10 +54,10 @@ namespace Pez.Headless
         {
             [typeof(Entity)] = "Id Team Def Pos PrevPos Facing TurretFacing Hp Dead Origin BuildProgress Rally Order OrderPos GuardPos TargetId UntilCapturable EngageDerricks Path PathIdx Cooldown " +
                 "SpeedCap Group ProgressPos ProgressAt GhostUntil ProgressDist Waypoints WaypointLoop RetreatBelow Retreating RetreatSpent GivingWay OwnBlockedSince RepathTimer Moving LastAttackerId LastHitTime " +
-                "LastCallForHelp LastAttackerTeam Responding HomePos Cargo CargoType HarvestType HarvestTile WorkTimer Burning Dock DockAt BaySide DepositId Working Offline CarrierId Passengers Fuel Landed Stranded " +
+                "LastCallForHelp LastAttackerTeam Responding HomePos Cargo CargoType HarvestType HarvestTile WorkTimer Burning Dock DockAt BaySide DepositId Working Output Offline CarrierId Passengers Fuel Landed Stranded " +
                 "FuelCap AtDepot FuelWarned NoAutoRefuelUntil ResumeOrder ResumePos ResumeGuard ResumeTarget ResumeWaypoints ResumeSpeedCap MineQueue LastFiredAt " +
                 "Prospecting ProspectCenter ProspectRadius SkipSites SurveyFailure SurveyFailedAt ZoneId | CmdId", // CmdId: the observation feed's command tracking, which restarts (as a new stream) with the process
-            [typeof(Team)] = "Id Name Controller PlayerName StandingOrders OrdersVersion Stock Rates PowerProduced PowerUsed Detected Revealed Defeated StartPos " +
+            [typeof(Team)] = "Id Name Controller PlayerName StandingOrders OrdersVersion Stock Rates PowerProduced PowerUsed PlasmaOwed Detected Revealed Defeated StartPos " +
                 "Visible Explored Left Resigned StalledSince House Seat ProtectedUntil StructureQueue UnitQueues KnownEnemyStructures Surveyed SurveySites Zones " +
                 "SurfaceWarnedAt HomeOreWarned LastActiveAt Reserve SaveFor SaveForCost Stats",
             [typeof(World)] = "Map Paths MapVersion Open MaxPlayers MaxMapSize GrowStep SafeJoinDistance ProtectionSeconds Teams ById Entities Projectiles Events " +
@@ -225,6 +225,8 @@ namespace Pez.Headless
 
             BusyGame();
             FoggedSnapshots();
+            FoggedFusion();
+            FoggedOwnerEvents();
             OlderSnapshotsLoad(json);
             TokensSurviveRestart();
         }
@@ -270,6 +272,86 @@ namespace Pez.Headless
             Check(ms.Count == w.Scores().Count && ms.Count >= 2, $"a player's copy carries the server's scoreboard ({ms.Count} teams), which its fogged world can't count");
             var spec = Json.Write(ApiServer.ViewSnapshot(g));
             Check(Resume(spec).World.Get(hidden.Id) != null && !spec.Contains("Secret: rush"), "a spectator's copy still has everything but the orders");
+        }
+
+        /// <summary>
+        /// Fusion reactors in a player's browser copy: a rival's owed plasma (which says it runs reactors, and how many) and a
+        /// rival reactor's output stay out of it; the player's own, and a spectator's copy, keep them.
+        /// </summary>
+        static void FoggedFusion()
+        {
+            var g = new Game(new GameConfig { Seed = 3, MapSize = 64, Controllers = new[] { "llm", "llm" } });
+            var w = g.World;
+            foreach (var t in w.Teams) t.ProtectedUntil = 0;
+            // One of the rival's reactors stands in the player's sight, one at the rival's own (unscouted) base, and the player has one.
+            var seenR = w.SpawnStructure(1, "fusion_reactor", w.FindPlacement(0, "fusion_reactor").Value, 1f);
+            var hiddenR = w.SpawnStructure(1, "fusion_reactor", w.FindPlacement(1, "fusion_reactor").Value, 1f);
+            var ownR = w.SpawnStructure(0, "fusion_reactor", w.FindPlacement(0, "fusion_reactor").Value, 1f);
+            for (int i = 0; i < 3 * World.TickRate + 7; i++) // half-fed, ending mid-second so some burn is owed
+            {
+                foreach (var t in w.Teams) t.Add("plasma", 0.5f * World.FusionBurn * World.Dt);
+                w.Step();
+            }
+            Check(w.Teams[1].PlasmaOwed > 0 && w.Teams[0].PlasmaOwed > 0 && seenR.Output > 0f && seenR.Output < 1f && ownR.Output > 0f && w.IsVisibleTo(0, seenR) && !w.IsVisibleTo(0, hiddenR),
+                  $"set up: both teams burn plasma on reactors, one rival reactor in sight and one hidden (owed {w.Teams[1].PlasmaOwed:0.0000}/{w.Teams[0].PlasmaOwed:0.0000}, output {seenR.Output:0.00})");
+
+            var world = Snapshot.Parse(Json.Write(ApiServer.ViewSnapshot(g, 0))).Obj("world");
+            var teams = world.Arr("teams");
+            var ents = world.Arr("entities").OfType<Dictionary<string, object>>().ToList();
+            Dictionary<string, object> Ent(Entity e) => ents.FirstOrDefault(x => Convert.ToInt32(x["id"]) == e.Id);
+            Check(!((Dictionary<string, object>)teams[1]).ContainsKey("plasma_owed") && ((Dictionary<string, object>)teams[0]).ContainsKey("plasma_owed"),
+                  "a rival's owed plasma (it says whether they run reactors, and how many) isn't in the player's copy; the player's own is");
+            Check(Ent(seenR) != null && !Ent(seenR).ContainsKey("output") && Ent(hiddenR) == null && Ent(ownR) != null && Ent(ownR).ContainsKey("output"),
+                  "a rival's reactor in sight is in the copy without its output, one at an unscouted base isn't, and the player's own keeps its output");
+            var spec = Snapshot.Parse(Json.Write(ApiServer.ViewSnapshot(g))).Obj("world");
+            var specEnts = spec.Arr("entities").OfType<Dictionary<string, object>>().ToList();
+            Check(((Dictionary<string, object>)spec.Arr("teams")[1]).ContainsKey("plasma_owed") && specEnts.Any(x => Convert.ToInt32(x["id"]) == seenR.Id && x.ContainsKey("output")) && specEnts.Any(x => Convert.ToInt32(x["id"]) == hiddenR.Id),
+                  "a spectator's copy still has every team's owed plasma and every reactor's output");
+            // And the copy still runs.
+            var copy = Resume(Json.Write(ApiServer.ViewSnapshot(g, 0)));
+            copy.World.Mirror = true;
+            Step(copy, 5);
+            Check(copy.World.Errors == 0, $"the copy runs on with a rival's reactor in it ({copy.World.LastError})");
+        }
+
+        /// <summary>
+        /// A rival's economy events (power totals, the starved reactor, upkeep, research) say what only its owner should know:
+        /// they stay out of a player's copy even when the spot they name is in the player's sight.
+        /// </summary>
+        static void FoggedOwnerEvents()
+        {
+            var g = new Game(new GameConfig { Seed = 3, MapSize = 64, Controllers = new[] { "llm", "llm" } });
+            var w = g.World;
+            foreach (var t in w.Teams) t.ProtectedUntil = 0;
+            // Each team has a reactor with no plasma, six turrets (90 power drawn against the command center's 20) and no steel for their upkeep.
+            foreach (int id in new[] { 0, 1 })
+            {
+                w.SpawnStructure(id, "fusion_reactor", w.FindPlacement(id, "fusion_reactor").Value, 1f);
+                for (int i = 0; i < 6; i++) w.SpawnStructure(id, "gun_turret", w.FindPlacement(id, "gun_turret").Value, 1f);
+                w.Teams[id].Stock["steel"] = 0;
+            }
+            w.Emit("research_started", 1, pos: w.Teams[1].StartPos, key: "t1:secret", text: "research started on Secret (t1:secret), 90s");
+            for (int i = 0; i < 3 * World.TickRate; i++) w.Step();
+            var owner = new[] { "low_power", "defences_offline", "research_started" };
+            bool Had(string ty, int tm) => w.Events.Any(e => e.Type == ty && e.Team == tm);
+            Check(Had("low_power", 1) && Had("defences_offline", 1) && Had("research_started", 1) && Had("low_power", 0) && Had("defences_offline", 0),
+                  "set up: both teams have had a low-power and a defences-offline event, and the rival a research event");
+            Array.Fill(w.Teams[0].Visible, true); // the whole map in the player's sight, the rival's base and the spots its events name
+            string json = Json.Write(ApiServer.ViewSnapshot(g, 0));
+            var evs = Snapshot.Parse(json).Obj("world").Arr("events").OfType<Dictionary<string, object>>().ToList();
+            int Team(Dictionary<string, object> e) => e.TryGetValue("team", out var tv) ? Convert.ToInt32(tv) : -1;
+            Check(!evs.Any(e => Team(e) == 1 && owner.Contains((string)e["type"])) && !json.Contains("Secret (t1:secret)") && !evs.Any(e => e.TryGetValue("text", out var xt) && xt is string xs && xs.Contains("fusion_reactor")),
+                  $"a rival's low_power, defences_offline and research events don't reach the player's copy, though the spots they name are in sight ({evs.Count(e => Team(e) == 1)} rival events kept)");
+            Check(evs.Any(e => Team(e) == 0 && (string)e["type"] == "low_power") && evs.Any(e => Team(e) == 0 && (string)e["type"] == "defences_offline"),
+                  "the player's own are in it");
+            Check(!evs.Any(e => Team(e) == 1 && ((string)e["type"] == "low_power" || e.TryGetValue("text", out var tx) && tx is string txs && txs.Contains("produced,"))),
+                  "and no rival power totals");
+            var spec = Snapshot.Parse(Json.Write(ApiServer.ViewSnapshot(g))).Obj("world").Arr("events").OfType<Dictionary<string, object>>().ToList();
+            Check(owner.All(ty => spec.Any(e => Team(e) == 1 && (string)e["type"] == ty)), "a spectator's copy still has them all");
+            // An event of the rival's that is just what happened in sight still gets through.
+            var sight = w.Emit("built", 1, 99, pos: w.Teams[1].StartPos, key: "gun_turret");
+            var evs2 = Snapshot.Parse(Json.Write(ApiServer.ViewSnapshot(g, 0))).Obj("world").Arr("events").OfType<Dictionary<string, object>>().ToList();
+            Check(evs2.Any(e => Convert.ToInt32(e["seq"]) == sight.Seq), "while what happened in the player's sight (a building finished) still reaches it");
         }
 
         static void BusyGame()

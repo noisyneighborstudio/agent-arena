@@ -19,6 +19,7 @@ namespace Pez.Headless
         static void EconomyAndEndgame()
         {
             SalvageFromKills();
+            OneValuation();
             OreRegrowth();
             ParallelProduction();
             ConstructionTruck();
@@ -27,9 +28,224 @@ namespace Pez.Headless
             UnitsLeaveByTheDoor();
             MatchClock();
             Derricks();
+            SellRules();
             AttackUntilCapturable();
             AttackMoveDerricks();
             DefenceUpkeep();
+            FusionReactor();
+            DeepDepositKits();
+            DeepKitForJoiners();
+        }
+
+        /// <summary>A base site's deep deposits within `within` tiles as a string: ore, starting amount and distance, sorted.</summary>
+        static string DeepSignature(Map m, Vec2 site, float within) =>
+            string.Join(" ", m.Deep.Where(d => Vec2.Dist(d.Pos, site) <= within).Select(d => $"{Defs.Ores[d.Type]}:{d.Initial:0}@{Vec2.Dist(d.Pos, site):0.0}").OrderBy(x => x, StringComparer.Ordinal));
+
+        /// <summary>The deposit of this ore nearest a site.</summary>
+        static DeepDeposit NearestDeep(Map m, Vec2 site, int ore) => m.Deep.Where(d => d.Type == ore).OrderBy(d => Vec2.Dist(d.Pos, site)).FirstOrDefault();
+
+        /// <summary>Deep deposits on a new map are the same from every base site: a kit each, the rest in the middle, every ore there.</summary>
+        static void DeepDepositKits()
+        {
+            var sizes = new[] { 56, 80, 96, 112, 160 }; var seeds = new[] { 1, 7, 99, 1337, 4242 };
+            var uneven = new List<string>(); var noKit = new List<string>(); var noOre = new List<string>(); var badAmount = new List<string>(); var noRoom = new List<string>(); var crowded = new List<string>();
+            int maps = 0;
+            foreach (int size in sizes)
+                foreach (int seed in seeds)
+                {
+                    var m = Map.Generate(size, size, seed); maps++;
+                    string tag = $"{seed}/{size}";
+                    var sites = m.Spawns.Take(4).ToList();
+                    // Same ore, amount and distance at all four corners, near and far.
+                    foreach (float within in new[] { Map.DeepKitReach, 30f, 40f })
+                        if (sites.Select(s => DeepSignature(m, s, within)).Distinct().Count() > 1) uneven.Add($"{tag} within {within}");
+                    // Each base has a deep iron and a deep copper deposit of its own in reach (and, where the bases are far enough apart
+                    // not to share reach, exactly one of each).
+                    if (!sites.All(s => Vec2.Dist(NearestDeep(m, s, Map.Iron).Pos, s) <= Map.DeepKitReach && Vec2.Dist(NearestDeep(m, s, Map.Copper).Pos, s) <= Map.DeepKitReach &&
+                                        (size < 80 || (m.Deep.Count(d => d.Type == Map.Iron && Vec2.Dist(d.Pos, s) <= Map.DeepKitReach) == 1 && m.Deep.Count(d => d.Type == Map.Copper && Vec2.Dist(d.Pos, s) <= Map.DeepKitReach) == 1)))) noKit.Add(tag);
+                    // Crystal and uranium are in the middle, not in a base's kit area (on maps big enough to have the room).
+                    if (size >= 80 && m.Deep.Any(d => d.Type >= Map.Crystal && sites.Any(s => Vec2.Dist(d.Pos, s) <= Map.DeepKitReach))) crowded.Add(tag);
+                    // Every ore exists deep, in the usual amounts.
+                    if (Enumerable.Range(0, 4).Any(t => m.Deep.All(d => d.Type != t))) noOre.Add(tag);
+                    if (m.Deep.Any(d => d.Type <= Map.Copper ? d.Initial < 4000 || d.Initial >= 8000 : d.Type == Map.Crystal ? d.Initial < 2000 || d.Initial >= 4000 : d.Initial < 1500 || d.Initial >= 3000)) badAmount.Add(tag);
+                    // Open ground a deep mine can stand on, and a way there from the sites.
+                    var reach = new bool[m.W * m.H]; var q = new Queue<Int2>(); var start = Int2.Of(m.Spawns[0]);
+                    reach[m.Idx(start.X, start.Y)] = true; q.Enqueue(start);
+                    while (q.Count > 0)
+                    {
+                        var c = q.Dequeue();
+                        foreach (var n in new[] { new Int2(c.X + 1, c.Y), new Int2(c.X - 1, c.Y), new Int2(c.X, c.Y + 1), new Int2(c.X, c.Y - 1) })
+                            if (m.TerrainPassable(n.X, n.Y) && !reach[m.Idx(n.X, n.Y)]) { reach[m.Idx(n.X, n.Y)] = true; q.Enqueue(n); }
+                    }
+                    if (!m.Deep.All(d => m.Passable((int)d.Pos.X, (int)d.Pos.Y) && reach[m.Idx((int)d.Pos.X, (int)d.Pos.Y)])) noRoom.Add(tag);
+                }
+            string of = $"{maps} maps: seeds {string.Join(",", seeds)} at sizes {string.Join(",", sizes)}";
+            Check(uneven.Count == 0, $"every base site sees the same deep deposits (ore, amount, distance) within {Map.DeepKitReach}, 30 and 40 tiles, on {of}" + (uneven.Count > 0 ? $"; uneven: {string.Join(", ", uneven)}" : ""));
+            Check(noKit.Count == 0, "each base has its own deep iron and deep copper deposit in reach (exactly one of each where bases don't share reach)" + (noKit.Count > 0 ? $"; not on {string.Join(", ", noKit)}" : ""));
+            Check(crowded.Count == 0, "crystal and uranium deposits keep out of the bases' kit areas (80 and up)" + (crowded.Count > 0 ? $"; inside on {string.Join(", ", crowded)}" : ""));
+            Check(noOre.Count == 0, "every ore, uranium and crystal too, has a deep deposit on every map" + (noOre.Count > 0 ? $"; missing on {string.Join(", ", noOre)}" : ""));
+            Check(badAmount.Count == 0, "deposit amounts stay in the old ranges (iron and copper 4000-8000, crystal 2000-4000, uranium 1500-3000)" + (badAmount.Count > 0 ? $"; out of range on {string.Join(", ", badAmount)}" : ""));
+            Check(noRoom.Count == 0, "every deposit is on open, reachable ground" + (noRoom.Count > 0 ? $"; not on {string.Join(", ", noRoom)}" : ""));
+
+            // The case the issue measured: two players at opposite corners get equal deposits on their own sides, whatever the seed.
+            var lopsided = new List<string>();
+            foreach (var (seed, size) in new[] { (1, 80), (99, 80), (7, 80), (7, 96), (1337, 80) })
+            {
+                var m = Map.Generate(size, size, seed);
+                var a = m.Spawns[0]; var b = m.Spawns[1];
+                var mine = m.Deep.Where(d => Vec2.Dist(d.Pos, a) < Vec2.Dist(d.Pos, b) - 0.01f).ToList();
+                var theirs = m.Deep.Where(d => Vec2.Dist(d.Pos, b) < Vec2.Dist(d.Pos, a) - 0.01f).ToList();
+                if (mine.Count != theirs.Count || mine.Sum(d => d.Initial) != theirs.Sum(d => d.Initial)) lopsided.Add($"{seed}/{size}: {mine.Count} deposits {mine.Sum(d => d.Initial):0} ore vs {theirs.Count} deposits {theirs.Sum(d => d.Initial):0}");
+            }
+            Check(lopsided.Count == 0, "two players get the same number of deposits and the same ore nearer their own base than the other's (the seeds that were lopsided before)" + (lopsided.Count > 0 ? $"; {string.Join("; ", lopsided)}" : ""));
+
+            // New maps are still made from the seed alone, and different seeds differ.
+            var one = Map.Generate(80, 80, 7); var again = Map.Generate(80, 80, 7); var other = Map.Generate(80, 80, 8);
+            string Dump(Map m) => string.Join("|", m.Deep.Select(d => $"{d.Id} {d.Type} {d.Pos.X},{d.Pos.Y} {d.Initial}"));
+            Check(Dump(one) == Dump(again) && Dump(one) != Dump(other), "deep deposits come from the seed: the same seed makes the same ones, another seed other ones");
+
+            // A mine can be built on each deposit of a real game, and a saved game keeps the deposits it has (only new maps change).
+            var w = new World(2, 7, 80);
+            Check(w.Map.Deep.All(d => w.DeepMineSpot(d, 0, out _) != null), $"a deep mine fits on every one of a game's {w.Map.Deep.Count} deposits");
+            var game = new Game(new GameConfig { Seed = 99, MapSize = 80, Controllers = new[] { "llm", "llm" } });
+            string Deposits(Game g) => string.Join("|", g.World.Map.Deep.Select(d => $"{d.Id} {d.Type} {d.Pos.X},{d.Pos.Y} {d.Amount} {d.Initial} {d.MineId}"));
+            game.World.Map.Deep[3].Amount -= 250; // part mined out
+            var back = Resume(Snap(game));
+            Check(Deposits(back) == Deposits(game) && back.World.Map.Deep.Count > 0, "a saved game resumes with exactly the deep deposits it had");
+        }
+
+        /// <summary>A base added by a join gets the same kit as the others; the strip's random extras stay in neutral ground.</summary>
+        static void DeepKitForJoiners()
+        {
+            var bad = new List<string>(); int joins = 0;
+            foreach (int seed in new[] { 3, 7, 1337 })
+            {
+                var w = new World(2, seed, 80) { Open = true };
+                var home = w.Map.Spawns[0];
+                var iron = NearestDeep(w.Map, home, Map.Iron); var copper = NearestDeep(w.Map, home, Map.Copper);
+                iron.Amount = 12; // base one has mined its deep iron nearly out: a newcomer's kit is still the full one
+                for (int j = 0; j < 3; j++, joins++)
+                {
+                    var oldDeposits = w.Map.Deep.Select(d => $"{d.Id} {d.Type} {d.Pos.X},{d.Pos.Y} {d.Initial}").ToList();
+                    int lastId = w.Map.Deep.Max(d => d.Id);
+                    var team = w.AddTeam("llm", $"Joiner{j}", out var err);
+                    string tag = $"seed {seed} join {j + 1}";
+                    if (team == null) { bad.Add($"{tag}: {err}"); continue; }
+                    var site = team.StartPos;
+                    var fresh = w.Map.Deep.Where(d => d.Id > lastId).ToList();
+                    var kit = w.Map.Deep.Where(d => Vec2.Dist(d.Pos, site) <= Map.DeepKitReach).ToList();
+                    var ni = kit.Where(d => d.Type == Map.Iron).ToList(); var nc = kit.Where(d => d.Type == Map.Copper).ToList();
+                    if (kit.Count != 2 || ni.Count != 1 || nc.Count != 1) { bad.Add($"{tag}: {kit.Count} deposits in reach of the new base ({string.Join(", ", kit.Select(d => Defs.Ores[d.Type]))})"); continue; }
+                    if (ni[0].Initial != iron.Initial || nc[0].Initial != copper.Initial || ni[0].Amount != ni[0].Initial) bad.Add($"{tag}: kit amounts {ni[0].Initial:0}/{nc[0].Initial:0}, wanted {iron.Initial:0}/{copper.Initial:0}");
+                    if (MathF.Abs(Vec2.Dist(ni[0].Pos, site) - Vec2.Dist(iron.Pos, home)) > 1.5f || MathF.Abs(Vec2.Dist(nc[0].Pos, site) - Vec2.Dist(copper.Pos, home)) > 1.5f)
+                        bad.Add($"{tag}: kit distances {Vec2.Dist(ni[0].Pos, site):0.0}/{Vec2.Dist(nc[0].Pos, site):0.0}, wanted {Vec2.Dist(iron.Pos, home):0.0}/{Vec2.Dist(copper.Pos, home):0.0}");
+                    if (!kit.All(d => fresh.Contains(d))) bad.Add($"{tag}: the kit isn't new deposits");
+                    // The strip's other deposits are neutral: out of every base's reach.
+                    var extras = fresh.Where(d => !kit.Contains(d)).ToList();
+                    if (extras.Any(d => w.Map.Spawns.Any(s => Vec2.Dist(d.Pos, s) <= Map.DeepKitReach))) bad.Add($"{tag}: a random extra inside a base's reach");
+                    // Everything that was already there is untouched.
+                    if (!oldDeposits.All(o => w.Map.Deep.Select(d => $"{d.Id} {d.Type} {d.Pos.X},{d.Pos.Y} {d.Initial}").Contains(o))) bad.Add($"{tag}: an old deposit changed");
+                    if (!w.Map.Deep.All(d => w.DeepMineSpot(d, team.Id, out _) != null || w.Entities.Any(e => !e.Dead && e.DepositId == d.Id))) bad.Add($"{tag}: a deposit with no room for a mine");
+                }
+            }
+            Check(bad.Count == 0, $"each of {joins} joiners gets the first base's kit (same ores and amounts at the same distances, whatever it has mined), and the strip's extras stay in neutral ground" + (bad.Count > 0 ? $"; {string.Join("; ", bad)}" : ""));
+
+            // A game from before kits (nothing of the sort near its first base) still gives a newcomer a kit, with fresh amounts.
+            var old = new World(2, 7, 80) { Open = true };
+            old.Map.Deep.Clear();
+            old.Map.Deep.Add(new DeepDeposit { Id = 1, Pos = new Vec2(40.5f, 40.5f), Type = Map.Uranium, Amount = 2000, Initial = 2000 });
+            var late = old.AddTeam("llm", "Late", out _);
+            var lateKit = old.Map.Deep.Where(d => Vec2.Dist(d.Pos, late.StartPos) <= Map.DeepKitReach).ToList();
+            Check(lateKit.Count == 2 && lateKit.Any(d => d.Type == Map.Iron && d.Initial >= 4000 && d.Initial < 8000) && lateKit.Any(d => d.Type == Map.Copper && d.Initial >= 4000 && d.Initial < 8000) && old.Map.Deep.Count(d => d.Id == 1) == 1,
+                  $"a map with no kits still gives a joiner one: {string.Join(", ", lateKit.Select(d => $"{Defs.Ores[d.Type]} {d.Initial:0}"))}");
+
+            // A copy lands on a tile centre, which can be up to 0.7 tiles from where it was aimed: with the first base's copper right at the
+            // edge of its reach (21.9 tiles, and the 11.5 ahead, 18.5 aside spot), no copy may end up past the reach and so out of the kit.
+            var past = new List<string>(); int tried = 0;
+            foreach (int seed in new[] { 3, 7, 1337 })
+                foreach (var (ahead, aside) in new[] { (21.9f, 0f), (20.8f, -6.8f), (20.8f, 6.8f), (17.5f, -13.2f), (17.5f, 13.2f), (15.1f, 15.9f), (11.5f, 18.5f), (11.5f, -18.5f) })
+                {
+                    var w = new World(2, seed, 80) { Open = true };
+                    var home = w.Map.Spawns[0];
+                    var dir = (new Vec2(w.Map.W / 2f, w.Map.H / 2f) - home).Normalized; var side = new Vec2(-dir.Y, dir.X);
+                    var copper = NearestDeep(w.Map, home, Map.Copper);
+                    copper.Pos = home + dir * ahead + side * aside;
+                    int lastId = w.Map.Deep.Max(d => d.Id);
+                    var joiner = w.AddTeam("llm", "Edge", out _); tried++;
+                    if (!w.Map.Deep.Any(d => d.Id > lastId && d.Type == Map.Copper && d.Initial == copper.Initial && Vec2.Dist(d.Pos, joiner.StartPos) <= Map.DeepKitReach)) past.Add($"{seed} ({ahead}, {aside})");
+                }
+            Check(past.Count == 0, $"a joiner's copy of a kit deposit always lands inside the kit's reach, even when the first base's is at its edge ({tried} cases)" + (past.Count > 0 ? $"; copper missing for {string.Join(", ", past)}" : ""));
+        }
+
+        /// <summary>Selling can't dodge a loss: unfinished buildings refund by health, a building under fire can't be sold, and derricks can't be sold at all.</summary>
+        static void SellRules()
+        {
+            var w = new World(2, 7, 96);
+            var t = w.Teams[1];
+            foreach (var u in w.Entities.Where(e => !e.IsStructure).ToList()) w.Remove(u);
+            int Steel() => (int)t.Amount("steel");
+
+            // Unfinished, healthy (the health it should have at that point of the build): the unbuilt share back, as before.
+            var healthy = w.SpawnStructure(1, "factory", w.FindPlacement(1, "factory").Value, 0.5f);
+            healthy.Hp = healthy.Def.MaxHp * (0.1f + 0.9f * 0.5f);
+            int s0 = Steel();
+            var ok = Commands.Execute(w, 1, Cmd("type", "sell", "structure_id", healthy.Id, "confirm", true));
+            Check(Ok(ok) && healthy.Dead && Steel() - s0 == 225, $"a healthy half-built factory still refunds 75% ({Steel() - s0} steel): {Said(ok)}");
+            // Unfinished and almost destroyed: it refunds what's left of it, not the whole unbuilt share.
+            var wreck = w.SpawnStructure(1, "factory", w.FindPlacement(1, "factory").Value, 0.5f);
+            wreck.Hp = 1;
+            s0 = Steel();
+            var bad = Commands.Execute(w, 1, Cmd("type", "sell", "structure_id", wreck.Id, "confirm", true));
+            Check(Ok(bad) && wreck.Dead && Steel() - s0 <= 1, $"a half-built factory at 1 HP refunds almost nothing ({Steel() - s0} steel, was 225)");
+            // A fresh foundation at its starting health (10%) is not "damaged": it refunds in full.
+            var fresh = w.SpawnStructure(1, "factory", w.FindPlacement(1, "factory").Value, 0f);
+            s0 = Steel();
+            Commands.Execute(w, 1, Cmd("type", "sell", "structure_id", fresh.Id, "confirm", true));
+            Check(fresh.Dead && Steel() - s0 == 300, $"a new foundation at its starting health refunds in full ({Steel() - s0} steel)");
+            // A foundation at half its starting health refunds half.
+            var half = w.SpawnStructure(1, "factory", w.FindPlacement(1, "factory").Value, 0f);
+            half.Hp = half.Def.MaxHp * 0.05f;
+            s0 = Steel();
+            Commands.Execute(w, 1, Cmd("type", "sell", "structure_id", half.Id, "confirm", true));
+            Check(half.Dead && Steel() - s0 == 150, $"a foundation at half its health refunds half ({Steel() - s0} steel)");
+
+            // Under fire: refused for 10 s after the last hit, with when it can be sold; then it sells.
+            var pp = w.SpawnStructure(1, "power_plant", w.FindPlacement(1, "power_plant").Value, 1f);
+            w.Hurt(pp, 100, null, 0);
+            var no = Commands.Execute(w, 1, Cmd("type", "sell", "structure_id", pp.Id));
+            Check(!Ok(no) && !pp.Dead && Said(no).Contains("under fire") && Said(no).Contains("10 s"), $"a building an enemy just hit can't be sold: {Said(no)}");
+            Run(w, 6);
+            no = Commands.Execute(w, 1, Cmd("type", "sell", "structure_id", pp.Id));
+            Check(!Ok(no) && !pp.Dead && Said(no).Contains("in 4 s"), $"and the error counts down: {Said(no)}");
+            Run(w, 4.5f);
+            var yes = Commands.Execute(w, 1, Cmd("type", "sell", "structure_id", pp.Id, "confirm", true));
+            Check(Ok(yes) && pp.Dead, $"10 s after the last hit it can be sold: {Said(yes)}");
+            // A burning building is dying to whoever set the fire: no selling it until it's repaired above the burn line.
+            var blaze = w.SpawnStructure(1, "power_plant", w.FindPlacement(1, "power_plant").Value, 1f);
+            blaze.Hp = blaze.Def.MaxHp * 0.2f;
+            Run(w, 1);
+            var nb = Commands.Execute(w, 1, Cmd("type", "sell", "structure_id", blaze.Id, "confirm", true));
+            Check(blaze.Burning && !Ok(nb) && !blaze.Dead && Said(nb).Contains("on fire") && Said(nb).Contains("30%"), $"a burning building can't be sold: {Said(nb)}");
+            blaze.Hp = blaze.Def.MaxHp * 0.5f;
+            Run(w, 1);
+            var nb2 = Commands.Execute(w, 1, Cmd("type", "sell", "structure_id", blaze.Id, "confirm", true));
+            Check(!blaze.Burning && Ok(nb2) && blaze.Dead, $"repaired above the burn line, the fire is out and it sells: {Said(nb2)}");
+            // Unfinished buildings are covered too.
+            var site = w.SpawnStructure(1, "factory", w.FindPlacement(1, "factory").Value, 0.3f);
+            w.Hurt(site, 10, null, 0);
+            Check(!Ok(Commands.Execute(w, 1, Cmd("type", "sell", "structure_id", site.Id))) && !site.Dead, "an unfinished building that was just hit can't be sold either");
+
+            // Derricks can't be sold, whoever holds them; if one is ever removed another way, its site still comes back.
+            var d = w.Derricks.First();
+            d.Team = 1;
+            var nd = Commands.Execute(w, 1, Cmd("type", "sell", "structure_id", d.Id));
+            Check(!Ok(nd) && !d.Dead && d.Team == 1 && Said(nd).Contains("can't be sold") && Said(nd).Contains("steel/s"), $"a held derrick can't be sold: {Said(nd)}");
+            int before = w.Derricks.Count();
+            w.Remove(d);
+            Check(w.DerrickRespawns.Count == 1 && w.Derricks.Count() == before - 1, "removed any other way, a derrick still queues its respawn");
+            Run(w, World.DerrickRespawn + 2);
+            var back = w.Derricks.FirstOrDefault(x => x.Origin.Equals(d.Origin));
+            Check(back != null && back.Team == -1 && w.DerrickRespawns.Count == 0 && w.Derricks.Count() == before, "and a fresh neutral derrick rises on the site");
         }
 
         static void DefenceUpkeep()
@@ -39,26 +255,33 @@ namespace Pez.Headless
             foreach (var u in w.Entities.Where(e => !e.IsStructure).ToList()) w.Remove(u);
             var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
             var turrets = new List<Entity>();
+            int baseUsed = t.PowerUsed;
             for (int i = 0; i < 11; i++) turrets.Add(w.SpawnStructure(0, "gun_turret", w.FindPlacement(0, "gun_turret").Value, 1f));
             t.Stock["steel"] = 1000;
             Run(w, 60.05f);
             float paid = 1000 - t.Stock["steel"];
-            Check(Math.Abs(paid - 21f) < 0.6f && turrets.All(x => !x.Offline), $"an 11-turret base pays 3 steel/min for each turret past the first 4: {paid:0.0} steel a minute");
+            Check(Math.Abs(paid - 42f) < 1.2f && turrets.All(x => !x.Offline), $"an 11-turret base pays 4% of the 150 steel price (6 steel/min) for each turret past the first 4: {paid:0.0} steel a minute");
             var st = D(StateData.Team(w, 0));
             var up = (Dictionary<string, object>)st["upkeep"];
-            Check((double)up["defences"] == 11 && (double)up["paying"] == 7 && (double)up["steel_per_min"] == 21 && ((List<object>)up["offline"]).Count == 0, "state shows the upkeep: 11 defences, 7 paying, 21 steel/min");
+            Check((double)up["defences"] == 11 && (double)up["paying"] == 7 && (double)up["steel_per_min"] == 42 && ((List<object>)up["offline"]).Count == 0, "state shows the upkeep: 11 defences, 7 paying, 42 steel/min");
+            var rulesText = Json.Write(StateView.Rules());
+            Check(Defs.Get("laser_tower").Description.Contains("4% of its steel price") && rulesText.Contains("4% of its steel price") && rulesText.Contains("a wall of 11 gun turrets costs 42 steel/min, 11 laser towers 70"),
+                  "the defence descriptions and the rules state the upkeep as a share of the steel price, with the 11-tower numbers");
 
             // Out of steel: the newest go offline (the first 4 never do), and hold fire.
-            t.Stock["steel"] = 0.16f; // enough for 3 of the 7 for one second
+            t.Stock["steel"] = 0.25f; // enough for 2 of the 7 for one second
             Run(w, 1);
             var off = turrets.Where(x => x.Offline).ToList();
-            Check(off.Count == 4 && off.All(x => x.Id > turrets[6].Id) && turrets.Take(4).All(x => !x.Offline),
+            Check(off.Count == 5 && off.All(x => x.Id > turrets[5].Id) && turrets.Take(4).All(x => !x.Offline),
                   $"short of steel, the newest defences past the free ones go offline ({off.Count} offline: #{string.Join(", #", off.Select(x => x.Id))})");
+            Check(t.PowerUsed == baseUsed + 6 * 15, $"and only the 6 still online draw power ({t.PowerUsed} used)");
             t.Stock["steel"] = 0;
             Run(w, 1);
             Check(turrets.Count(x => x.Offline) == 7 && w.Alerts.Active(w, 0).Any(a => a.Kind == "defences_offline" && a.Priority == Priority.High),
                   "with no steel at all, all 7 paid defences are offline and a DEFENCES OFFLINE alert says so");
             Check(((List<string>)StateView.TeamState(w, 0)["my_structures"]).Count(l => l.Contains("OFFLINE")) == 7, "my_structures marks them OFFLINE");
+            // Offline defences draw no power: 11 turrets draw 15 each, but with 7 offline only the 4 free ones do.
+            Check(t.PowerUsed == baseUsed + 4 * 15, $"7 offline turrets draw no power: {t.PowerUsed} used, of which the 4 free turrets draw {4 * 15} (the rest of the base {baseUsed})");
             // An enemy tank next to an offline turret and an online one: only the online one fires.
             var enemy = w.SpawnUnit(1, "heavy_tank", w.Owned(1).First(e => e.IsStructure));
             var offT = turrets.Last(); var onT = turrets[0];
@@ -71,6 +294,7 @@ namespace Pez.Headless
             t.Stock["steel"] = 500;
             Run(w, 1.05f);
             Check(turrets.All(x => !x.Offline) && w.Events.Any(e => e.Type == "defences_online"), "paid again, they come back online");
+            Check(t.PowerUsed == baseUsed + 11 * 15, $"and draw power again ({t.PowerUsed} used)");
             // A base of 4 or fewer never pays anything.
             var w2 = new World(2, 7, 96);
             var t2 = w2.Teams[0];
@@ -78,6 +302,210 @@ namespace Pez.Headless
             t2.Stock["steel"] = 0;
             Run(w2, 30);
             Check(w2.Defences(0).All(x => !x.Offline) && t2.Stats.UpkeepPaid == 0, "a base can always defend itself: the first 4 defences are free and never go offline");
+
+            // Upkeep follows the steel price: past the first 4 a gun turret costs 6 steel/min, a SAM site 8, a laser tower 10.
+            var w3 = new World(2, 7, 96);
+            var t3 = w3.Teams[0];
+            for (int i = 0; i < 4; i++) w3.SpawnStructure(0, "gun_turret", w3.FindPlacement(0, "gun_turret").Value, 1f);
+            var laser = w3.SpawnStructure(0, "laser_tower", w3.FindPlacement(0, "laser_tower").Value, 1f);
+            var sam = w3.SpawnStructure(0, "sam_site", w3.FindPlacement(0, "sam_site").Value, 1f);
+            var gun = w3.SpawnStructure(0, "gun_turret", w3.FindPlacement(0, "gun_turret").Value, 1f);
+            t3.Stock["steel"] = 1000;
+            Run(w3, 60.05f);
+            float paid3 = 1000 - t3.Stock["steel"];
+            Check(Math.Abs(paid3 - 24f) < 0.8f, $"a laser tower, a SAM site and a gun turret past the free four pay 10 + 8 + 6 steel/min: {paid3:0.0} steel a minute");
+            // They are paid oldest first: steel for the laser tower alone (10/min) keeps it online and drops the two newer ones.
+            t3.Stock["steel"] = 10f / 60f + 0.001f;
+            Run(w3, 1);
+            Check(!laser.Offline && sam.Offline && gun.Offline, $"short of steel, the older defence stays paid and the newer ones go offline (laser {(laser.Offline ? "offline" : "online")}, sam {(sam.Offline ? "offline" : "online")}, gun {(gun.Offline ? "offline" : "online")})");
+        }
+
+        /// <summary>
+        /// The fusion reactor: +500 power for the plasma it burns, scaled to the share of its burn the team can pay (so a
+        /// trickle of plasma gives a trickle of power, not none), leaving plasma held back by reserve or save_for alone.
+        /// </summary>
+        static void FusionReactor()
+        {
+            var fr = Defs.Get("fusion_reactor"); var plant = Defs.Get("power_plant");
+            // In raw ore (steel and copper 1, circuits 2 copper + 1 steel, plasma 2 uranium) it costs less per power than power plants,
+            // takes less room, and its fuel for an hour still leaves it ahead.
+            int Ore(Dictionary<string, int> c) => c.Sum(kv => kv.Value * (kv.Key switch { "circuits" => 3, "plasma" => 2, _ => 1 }));
+            float perHour = World.FusionBurn * 3600 * 2; // uranium
+            Check((float)Ore(fr.Cost) / fr.Power < (float)Ore(plant.Cost) / plant.Power && (float)fr.Power / (fr.SizeX * fr.SizeY) > (float)plant.Power / (plant.SizeX * plant.SizeY)
+                  && Ore(fr.Cost) + perHour < 5 * Ore(plant.Cost),
+                  $"a fusion reactor beats power plants per ore and per tile: {Ore(fr.Cost)} ore for +{fr.Power} ({(float)Ore(fr.Cost) / fr.Power:0.00} each) in {fr.SizeX * fr.SizeY} tiles, against {5 * Ore(plant.Cost)} for five plants in {5 * plant.SizeX * plant.SizeY}; an hour of its fuel is {perHour:0} uranium");
+
+            int baseMade = 0;
+            (World w, Team t, Entity r) Reactor(float plasma = 0)
+            {
+                var w = new World(2, 7, 96);
+                var t = w.Teams[0];
+                foreach (var u in w.Entities.Where(e => !e.IsStructure).ToList()) w.Remove(u);
+                baseMade = t.PowerProduced;
+                t.Stock["plasma"] = plasma;
+                var r = w.SpawnStructure(0, "fusion_reactor", w.FindPlacement(0, "fusion_reactor").Value, 1f);
+                return (w, t, r);
+            }
+            // Reactors burn plasma into the team's PlasmaOwed and the stockpile pays it once a second: plasma left is stock minus owed.
+            float Left(Team t) => t.Stock["plasma"] - t.PlasmaOwed;
+            string ConverterLine(World w, Entity r) => ((List<string>)StateView.TeamState(w, 0)["converters"]).First(l => l.StartsWith($"#{r.Id} "));
+
+            // Fuelled: it makes its full +500 and burns FusionBurn plasma a second.
+            var (w1, t1, r1) = Reactor(100);
+            Run(w1, 60);
+            float burned = 100 - Left(t1);
+            Check(t1.PowerProduced == baseMade + 500 && r1.Working && Math.Abs(burned - World.FusionBurn * 60) < 0.05f && ConverterLine(w1, r1).EndsWith("working"),
+                  $"a fuelled reactor makes +500 and burns {World.FusionBurn} plasma/s ({burned / 60:0.000}/s measured; power {t1.PowerProduced - baseMade})");
+
+            // Half the plasma it needs arriving: half the power, not none, and nothing stockpiled.
+            var (w2, t2, r2) = Reactor();
+            t2.Stock["plasma"] = 0;
+            for (int i = 0; i < 20 * World.TickRate; i++) { t2.Add("plasma", 0.5f * World.FusionBurn * World.Dt); w2.Step(); }
+            Check(Math.Abs(t2.PowerProduced - baseMade - 250) <= 2 && r2.Working && Left(t2) < 0.01f && ConverterLine(w2, r2).Contains("SHORT OF PLASMA") && ConverterLine(w2, r2).Contains("50%"),
+                  $"with half the plasma it needs it makes half the power ({t2.PowerProduced - baseMade} of 500): {ConverterLine(w2, r2)}");
+            // And a tenth of what it needs: a tenth of the power.
+            for (int i = 0; i < 20 * World.TickRate; i++) { t2.Add("plasma", 0.1f * World.FusionBurn * World.Dt); w2.Step(); }
+            Check(Math.Abs(t2.PowerProduced - baseMade - 50) <= 2, $"and a tenth of it, a tenth of the power ({t2.PowerProduced - baseMade} of 500)");
+
+            // No plasma at all: no power from it, and it says so.
+            var (w3, t3, r3) = Reactor();
+            t3.Stock["plasma"] = 0;
+            Run(w3, 5);
+            Check(t3.PowerProduced == baseMade && !r3.Working && ConverterLine(w3, r3).Contains("IDLE (no plasma"), $"with no plasma it makes nothing ({t3.PowerProduced - baseMade}): {ConverterLine(w3, r3)}");
+            // Short of power because of it, the low-power alert says why and what to do.
+            for (int i = 0; i < 2; i++) w3.SpawnStructure(0, "gun_turret", w3.FindPlacement(0, "gun_turret").Value, 1f);
+            Run(w3, 1);
+            Check(t3.LowPower && w3.Alerts.All.Any(a => a.Team == 0 && a.Kind == "low_power" && a.Lost.Any(l => l.Contains($"fusion_reactor #{r3.Id} is short of plasma and makes only 0% of its 500 power"))),
+                  "and the low-power alert names the starved reactor");
+
+            // Reserve and save_for hold plasma back from it, as from converters.
+            var (w4, t4, r4) = Reactor();
+            t4.Stock["plasma"] = 50;
+            t4.Reserve["plasma"] = 50;
+            Run(w4, 10);
+            Check(t4.Stock["plasma"] == 50 && t4.PowerProduced == baseMade && !r4.Working, $"plasma held back by 'reserve' is not burned ({t4.Stock["plasma"]:0.###} left, power {t4.PowerProduced - baseMade})");
+            t4.Reserve["plasma"] = 40;
+            Run(w4, 10);
+            Check(Left(t4) < 50 && Left(t4) >= 40 && t4.PowerProduced == baseMade + 500, $"it burns what's above the reserve ({Left(t4):0.###} of 50, reserve 40)");
+            t4.Reserve.Clear();
+            t4.Stock["plasma"] = 40;
+            t4.SaveFor = "laser_tank";
+            t4.SaveForCost["plasma"] = 40;
+            Run(w4, 10);
+            Check(t4.Stock["plasma"] == 40 && t4.PowerProduced == baseMade, $"plasma saved for a purchase ('save_for') is not burned either ({t4.Stock["plasma"]:0.###} left)");
+
+            // A big stockpile: a tick's burn (0.0015) is below what a float stock of 100,000 can add or take away, so the
+            // burn is owed and paid once a second (0.03, which a float of 100,000 holds to within 0.004). 200 s at full output is 6 plasma.
+            var (w5, t5, r5) = Reactor(100000);
+            Run(w5, 200);
+            float burned5 = 100000 - Left(t5);
+            Check(burned5 > 5.8f && burned5 < 6.4f && t5.Stock["plasma"] <= 99995 && t5.PowerProduced == baseMade + 500,
+                  $"a reactor burns its fuel off a stockpile of 100,000 too ({burned5:0.000} of {World.FusionBurn * 200} plasma in 200 s, {100000 - t5.Stock["plasma"]:0.00} taken off the stock)");
+
+            // Two reactors on too little plasma share it: they can't burn more than the stockpile holds (each used to count only
+            // its own debt, so two reactors on 0.5 plasma burned 1.0), and the second one's power drops with the first's.
+            var (w10, t10, r10) = Reactor(0.5f);
+            var r10b = w10.SpawnStructure(0, "fusion_reactor", w10.FindPlacement(0, "fusion_reactor").Value, 1f);
+            float lowest10 = float.MaxValue;
+            for (int i = 0; i < 60 * World.TickRate; i++) { w10.Step(); lowest10 = MathF.Min(lowest10, t10.Stock["plasma"]); }
+            Check(lowest10 >= 0f && Left(t10) > -0.001f && Left(t10) < 0.0016f && r10.Output < 0.001f && r10b.Output < 0.001f && t10.PowerProduced == baseMade,
+                  $"two reactors on 0.5 plasma burn exactly that and stop (left {Left(t10):0.0000}, stock never below {lowest10:0.0000}, power {t10.PowerProduced - baseMade})");
+            var (w11, t11, r11) = Reactor(0.5f);
+            var r11b = w11.SpawnStructure(0, "fusion_reactor", w11.FindPlacement(0, "fusion_reactor").Value, 1f);
+            Run(w11, 3);
+            Check(t11.PowerProduced == baseMade + 1000 && Left(t11) < 0.5f - 0.05f, $"while it lasts both make full power ({t11.PowerProduced - baseMade}), burning together ({0.5f - Left(t11):0.000} of 0.5 plasma gone after 3 s)");
+
+            // Burned plasma can't be spent: Team.Amount (and so Missing, which every purchase checks) leaves out what is owed.
+            var (w12, t12, r12) = Reactor(40);
+            Run(w12, 0.5f);
+            var plasma40 = new Dictionary<string, int> { { "plasma", 40 } };
+            Check(t12.Amount("plasma") == 39 && t12.Missing(plasma40) != null && t12.PlasmaOwed > 0,
+                  $"a stockpile of 40 plasma that a reactor has burned into can't buy a 40-plasma unit ({t12.Amount("plasma")} available; {t12.Missing(plasma40) ?? "affordable"})");
+            // A team that leaves takes its stockpile with it as salvage, minus the plasma already burned, and owes nothing after.
+            float owed12 = t12.PlasmaOwed;
+            w12.Leave(0);
+            Check(owed12 > 0 && t12.PlasmaOwed == 0 && t12.Stock.Count == 0, $"a team that leaves leaves no burned plasma owed behind ({owed12:0.0000} owed before)");
+
+            // A reactor starts at the share its team can pay: finished with plasma in the stockpile it counts at once, without a tick.
+            var (w6, t6, r6) = Reactor(100);
+            Check(r6.Output == 1f && t6.PowerProduced == baseMade + 500, $"a newly finished reactor with plasma counts its full power in the first sum ({t6.PowerProduced - baseMade})");
+            var (w7, t7, r7) = Reactor(0);
+            Check(r7.Output == 0f && t7.PowerProduced == baseMade, $"and with none it counts nothing ({t7.PowerProduced - baseMade})");
+
+            // Captured, it is the new owner's to fuel: a team with no plasma gets none of the old owner's output, and doesn't
+            // flip into power and back out of it for a tick (no power_restored, no second low_power).
+            var w8 = new World(2, 7, 96);
+            foreach (var u in w8.Owned(0).Concat(w8.Owned(1)).Where(e => !e.IsStructure).ToList()) w8.Remove(u);
+            var t8a = w8.Teams[0]; var t8b = w8.Teams[1];
+            t8b.Stock["plasma"] = 100;
+            var r8 = w8.SpawnStructure(1, "fusion_reactor", w8.FindPlacement(1, "fusion_reactor").Value, 1f);
+            for (int i = 0; i < 2; i++) w8.SpawnStructure(0, "gun_turret", w8.FindPlacement(0, "gun_turret").Value, 1f); // 30 power drawn against the command center's 20
+            r8.Hp = r8.Def.MaxHp * 0.4f;
+            Run(w8, 2);
+            var eng8 = w8.SpawnUnit(0, "engineer", w8.Owned(0).First(e => e.IsStructure));
+            eng8.Pos = eng8.PrevPos = r8.Center + new Vec2(1.6f, 0);
+            w8.SetOrder(eng8, Order.Capture, r8.Center, r8.Id);
+            int power0 = t8a.PowerProduced, restored0 = w8.Events.Count(e => e.Type == "power_restored" && e.Team == 0), low0 = w8.Events.Count(e => e.Type == "low_power" && e.Team == 0);
+            Run(w8, 3);
+            Check(r8.Team == 0 && r8.Output == 0f && t8a.PowerProduced == power0 && t8a.LowPower
+                  && w8.Events.Count(e => e.Type == "power_restored" && e.Team == 0) == restored0 && w8.Events.Count(e => e.Type == "low_power" && e.Team == 0) == low0,
+                  $"a captured reactor makes only what its new team's plasma pays for ({r8.Output:0.00}), without the old owner's output flipping the team out of low power for a tick");
+
+            // Saved and resumed, a half-fed reactor keeps its output.
+            var game = new Game(new GameConfig { Seed = 5, MapSize = 64, Controllers = new[] { "llm", "llm" } });
+            var gw = game.World;
+            foreach (var u in gw.Entities.Where(e => !e.IsStructure).ToList()) gw.Remove(u);
+            var gr = gw.SpawnStructure(0, "fusion_reactor", gw.FindPlacement(0, "fusion_reactor").Value, 1f);
+            for (int i = 0; i < 5 * World.TickRate + 7; i++) { gw.Teams[0].Add("plasma", 0.5f * World.FusionBurn * World.Dt); gw.Step(); } // ends mid-second: some burn is owed
+            var json = Snap(game);
+            var back = Resume(json);
+            var br = back.World.Get(gr.Id);
+            var again = Snap(back);
+            Check(gr.Output > 0.4f && gr.Output < 0.6f && br != null && Math.Abs(br.Output - gr.Output) < 1e-4f && br.Working && back.World.Teams[0].PowerProduced == gw.Teams[0].PowerProduced && again == json,
+                  $"a half-fed reactor survives a save and resume ({gr.Output:0.00} -> {br?.Output:0.00}, power {back.World.Teams[0].PowerProduced} of {gw.Teams[0].PowerProduced}; identical {again == json}: {FirstDiff(json, again)})");
+            Check(gw.Teams[0].PlasmaOwed > 0 && Math.Abs(back.World.Teams[0].PlasmaOwed - gw.Teams[0].PlasmaOwed) < 1e-5f, $"and so does the plasma the team's reactors owe its stockpile ({gw.Teams[0].PlasmaOwed:0.0000})");
+
+            // A save from before reactors had partial output (no "output" saved) loads sensibly: a working one at full, an idle one at none.
+            var fuelled = gw.SpawnStructure(0, "fusion_reactor", gw.FindPlacement(0, "fusion_reactor").Value, 1f);
+            gw.Teams[0].Stock["plasma"] = 1000;
+            for (int i = 0; i < 3 * World.TickRate; i++) gw.Step();
+            var root = (Dictionary<string, object>)Json.Parse(Snap(game));
+            int stripped = 0;
+            foreach (var en in (List<object>)((Dictionary<string, object>)root["world"])["entities"])
+                if (en is Dictionary<string, object> ed && (string)ed["def"] == "fusion_reactor") { ed.Remove("output"); stripped++; }
+            var old = Resume(Json.Write(root));
+            var ow = old.World;
+            Check(stripped == 2 && ow.Get(fuelled.Id).Output == 1f && ow.Get(fuelled.Id).Working && ow.Teams[0].PowerProduced == gw.Teams[0].PowerProduced,
+                  $"a save from before partial output loads a working reactor at full output ({ow.Get(fuelled.Id).Output:0.00}, power {ow.Teams[0].PowerProduced} of {gw.Teams[0].PowerProduced})");
+            gw.Teams[0].Stock["plasma"] = 0;
+            gw.Teams[0].PlasmaOwed = 0;
+            for (int i = 0; i < 2 * World.TickRate; i++) gw.Step();
+            root = (Dictionary<string, object>)Json.Parse(Snap(game));
+            foreach (var en in (List<object>)((Dictionary<string, object>)root["world"])["entities"])
+                if (en is Dictionary<string, object> ed && (string)ed["def"] == "fusion_reactor") ed.Remove("output");
+            old = Resume(Json.Write(root));
+            Check(old.World.Get(fuelled.Id).Output == 0f && !old.World.Get(fuelled.Id).Working && old.World.Teams[0].PowerProduced == gw.Teams[0].PowerProduced,
+                  $"and an idle one at none (power {old.World.Teams[0].PowerProduced} of {gw.Teams[0].PowerProduced})");
+
+            // A save from before offline defences stopped drawing power still holds the old power_used. Loading adds power
+            // up again, so a team that has enough under the new rules isn't left at half speed. Steel at zero means the
+            // defences' Offline flags never change, so nothing else would correct it.
+            var g9 = new Game(new GameConfig { Seed = 5, MapSize = 64, Controllers = new[] { "llm", "llm" } });
+            var w9 = g9.World;
+            foreach (var u in w9.Entities.Where(e => !e.IsStructure).ToList()) w9.Remove(u);
+            var t9 = w9.Teams[0];
+            w9.SpawnStructure(0, "power_plant", w9.FindPlacement(0, "power_plant").Value, 1f);
+            for (int i = 0; i < 9; i++) w9.SpawnStructure(0, "gun_turret", w9.FindPlacement(0, "gun_turret").Value, 1f);
+            t9.Stock["steel"] = 0;
+            for (int i = 0; i < 3 * World.TickRate; i++) w9.Step();
+            int offline9 = w9.Defences(0).Count(d => d.Offline), used9 = t9.PowerUsed;
+            var root9 = (Dictionary<string, object>)Json.Parse(Snap(g9));
+            var team9 = (Dictionary<string, object>)((List<object>)((Dictionary<string, object>)root9["world"])["teams"])[0];
+            team9["power_used"] = (double)(used9 + offline9 * 15); // what the old rules counted: the offline turrets too
+            var back9 = Resume(Json.Write(root9));
+            var bt9 = back9.World.Teams[0];
+            Check(offline9 == 5 && bt9.PowerUsed == used9 && !bt9.LowPower && back9.World.Events.Any(e => e.Type == "power_restored" && e.Team == 0),
+                  $"loading an older save adds power up again: {bt9.PowerUsed} used, not {used9 + offline9 * 15} ({offline9} offline turrets draw nothing), low power {bt9.LowPower}");
         }
 
         /// <summary>attack "until":"capturable": units hold fire at 50% so a commander with slow replies can still land the capture.</summary>
@@ -768,8 +1196,8 @@ namespace Pez.Headless
                   $"the house AI that loses its HQ builds a construction truck and deploys a new one ({wg.Owned(0).Count(e => e.Def.Key == "command_center")} command centers, {built} trucks built)");
         }
 
-        /// <summary>Mine a fresh map bare, let it regrow: how much comes back in 10 and 20 minutes, and where.</summary>
-        static (int total, int middle, int edges, int fieldOre) RegrowBare(int size, float oreScale, float minutes, int seed = 7)
+        /// <summary>Mine a fresh map bare, let it regrow: how much comes back in 10 and 20 minutes, where, and of which ore (iron, copper, crystal, uranium).</summary>
+        static (int total, int middle, int edges, int fieldOre, int[] byOre) RegrowBare(int size, float oreScale, float minutes, int seed = 7)
         {
             var w = new World(2, seed, size, oreScale);
             foreach (var e in w.Entities.Where(e => e.IsHarvester).ToList()) w.Remove(e);
@@ -777,13 +1205,15 @@ namespace Pez.Headless
             Array.Clear(w.Map.Ore, 0, w.Map.Ore.Length);
             Run(w, minutes * 60);
             int mid = 0, edge = 0;
+            var byOre = new int[4];
             float half = 0.5f * MathF.Sqrt(2) * size;
             for (int i = 0; i < w.Map.Ore.Length; i++)
             {
                 float dx = i % size + 0.5f - size / 2f, dy = i / size + 0.5f - size / 2f;
                 if (MathF.Sqrt(dx * dx + dy * dy) < half * 0.4f) mid += w.Map.Ore[i]; else edge += w.Map.Ore[i];
+                if (w.Map.OreBase[i] > 0) byOre[w.Map.OreBaseType[i]] += w.Map.Ore[i];
             }
-            return (w.Map.Ore.Sum(), mid, edge, field);
+            return (w.Map.Ore.Sum(), mid, edge, field, byOre);
         }
 
         static void OreRegrowth()
@@ -791,9 +1221,12 @@ namespace Pez.Headless
             foreach (var (size, scale) in new[] { (96, 1f), (96, 0.3f), (208, 0.3f) })
             {
                 var r = RegrowBare(size, scale, 20);
-                Console.WriteLine($"      regrowth {size}x{size} ore x{scale}, 20 min after mined bare: {r.total} of {r.fieldOre} ({r.total / 1200f:0.0} ore/s), middle {r.middle}, edges {r.edges}");
-                Check(r.total / 1200f > 1.5f && r.total / 1200f < 10f && r.middle > r.edges * 1.4f,
-                      $"a mined-bare {size}x{size} map (ore x{scale}) earns back meaningful income in 20 minutes ({r.total / 1200f:0.0} ore/s, a deep mine pumps 4), mostly in the middle ({r.middle} vs {r.edges} at the edges)");
+                Console.WriteLine($"      regrowth {size}x{size} ore x{scale}, 20 min after mined bare: {r.total} of {r.fieldOre} ({r.total / 1200f:0.0} ore/s), middle {r.middle}, edges {r.edges}; iron {r.byOre[0] / 1200f:0.0}, copper {r.byOre[1] / 1200f:0.0}, crystal {r.byOre[2] / 1200f:0.0}, uranium {r.byOre[3] / 1200f:0.0} ore/s");
+                Check(r.total / 1200f > 1.5f && r.total / 1200f < 10f,
+                      $"a mined-bare {size}x{size} map (ore x{scale}) earns back meaningful income in 20 minutes ({r.total / 1200f:0.0} ore/s, a deep mine pumps 4)");
+                int basic = r.byOre[0] + r.byOre[1];
+                Check(basic > r.total * 0.4f && r.byOre[2] < r.total * 0.5f,
+                      $"and iron and copper are a real share of it, not crystal ({basic / 1200f:0.0} ore/s iron + copper, {r.byOre[2] / 1200f:0.0} crystal)");
             }
 
             // Never past the original amount, from a field's root when it's mined to nothing, never under a structure or
@@ -809,10 +1242,10 @@ namespace Pez.Headless
             int far = crystal.Where(i => !roots[i]).OrderByDescending(i => Vec2.Dist(new Vec2(i % m.W, i / m.W), new Vec2(root % m.W, root / m.W))).First();
             Run(w, 2.1f);
             bool rootsOnly = tiles.Where(i => m.Ore[i] > 0).All(i => roots[i]);
-            for (int k = 0; k < 120 && m.Ore[root] == 0; k++) w.Step();
+            for (int k = 0; k < 20 * 300 && m.Ore[root] == 0; k++) w.Step(); // crystal regrows at half the base rate: a minute or so
             Check(rootsOnly && m.Ore[root] > 0 && m.Ore[far] == 0,
                   $"a field mined to nothing starts growing back from its root (the tile that held the most), not everywhere at once (first pass: only roots {rootsOnly}; root {m.Ore[root]}, far tile {m.Ore[far]})");
-            Run(w, 60);
+            Run(w, 300);
             Check(m.Ore[far] > 0, "and spreads from there into the rest of the field");
             // A building on a mined tile, and a truck parked on another: neither regrows.
             var mid = new Vec2(m.W / 2f, m.H / 2f);
@@ -887,6 +1320,98 @@ namespace Pez.Headless
                         if (clear) return p;
                     }
             throw new Exception("no open ground");
+        }
+
+        /// <summary>One price list: kill value, kill salvage, a leaving team's base and a stockpile spill value things the same way.</summary>
+        static void OneValuation()
+        {
+            Console.WriteLine("\n-- one valuation: kill value, salvage, leaves and spills");
+            long[] OreByType(World x) { var n = new long[4]; for (int i = 0; i < x.Map.Ore.Length; i++) if (x.Map.Ore[i] > 0) n[x.Map.OreType[i]] += x.Map.Ore[i]; return n; }
+
+            // The table every conversion reads is what the converters really do: a material's ores are its recipe's inputs' ores.
+            var bad = new List<string>();
+            foreach (var item in Defs.Items) if (!World.OreMix.ContainsKey(item)) bad.Add($"{item} has no ore mix");
+            foreach (var r in Defs.All.Values.SelectMany(d => d.Recipes).Where(r => r.Outputs.Count == 1 && r.Inputs.Count > 0))
+            {
+                var made = r.Outputs.First();
+                var sum = new float[4];
+                foreach (var inp in r.Inputs) for (int k = 0; k < 4; k++) sum[k] += inp.Value * World.OreMix[inp.Key][k];
+                for (int k = 0; k < 4; k++) if (Math.Abs(sum[k] / made.Value - World.OreMix[made.Key][k]) > 1e-4f) bad.Add($"{made.Key} is not {string.Join("+", sum)} per unit");
+            }
+            Check(bad.Count == 0, $"every item's ore mix matches its converter recipe ({string.Join("; ", bad)})");
+
+            // The same value in a kill and in a leave, for every kind of deployed structure.
+            void Bare(World x) // team 1 with nothing: no stockpile, no buildings, no units
+            {
+                x.Teams[0].ProtectedUntil = 0; x.Teams[1].ProtectedUntil = 0;
+                x.Teams[1].Stock.Clear();
+                foreach (var e in x.Owned(1).ToList()) x.Remove(e);
+            }
+            Entity Setup(World x, string key)
+            {
+                Bare(x);
+                if (key == "derrick") { var d = x.Derricks.First(); d.Team = 1; return d; }
+                return x.SpawnStructure(1, key, Int2.Of(OpenGround(x)), 1f);
+            }
+            // What each is worth, from the cost of what deploys into it: construction truck 1500 steel + 200 circuits (a circuit is
+            // 2 copper ore + 1 iron ore), outpost truck 400 steel + 100 copper + 50 circuits, drill rig 800 steel; a derrick is 600.
+            foreach (var (key, worth) in new[] { ("command_center", 2100), ("outpost", 650), ("deep_mine", 800), ("derrick", 600) })
+            {
+                var wk = new World(2, 7, 96);
+                var victim = Setup(wk, key);
+                var shooter = wk.SpawnUnit(0, "heavy_tank", wk.Owned(0).First(e => e.IsStructure));
+                int kv = wk.Teams[0].Stats.KillValue;
+                wk.Hurt(victim, 1e6f, shooter);
+                int killValue = wk.Teams[0].Stats.KillValue - kv;
+                var wl = new World(2, 7, 96);
+                var mine = Setup(wl, key);
+                long before = OreByType(wl).Sum();
+                wl.Leave(1);
+                long left = OreByType(wl).Sum() - before;
+                if (key == "derrick") Check(killValue == worth && mine.Team == -1 && left == 0, $"a derrick is worth {killValue} when killed; leaving hands it back neutral, whole, not as salvage ({left} ore)");
+                else Check(killValue == worth && left >= 0.6f * worth - 8 && left <= 0.6f * worth, $"a {key} is worth {killValue} when killed and a leave dismantles 60% of the same ({left} of {worth})");
+            }
+
+            // A building nobody finished counts at the price its owner paid: all of it.
+            var wu = new World(2, 7, 96);
+            Bare(wu);
+            var unfinished = wu.SpawnStructure(1, "power_plant", Int2.Of(OpenGround(wu)), 0.08f);
+            var killer = wu.SpawnUnit(0, "heavy_tank", wu.Owned(0).First(e => e.IsStructure));
+            int kv0 = wu.Teams[0].Stats.KillValue, sl0 = wu.Teams[0].Stats.SalvageLeft;
+            wu.Hurt(unfinished, 1e6f, killer);
+            Check(unfinished.Dead && wu.Teams[0].Stats.KillValue - kv0 == 250 && wu.Teams[0].Stats.SalvageLeft - sl0 == 62,
+                  $"killing a power plant 8% built credits its full 250 as kill value and a quarter as salvage ({wu.Teams[0].Stats.KillValue - kv0}, {wu.Teams[0].Stats.SalvageLeft - sl0})");
+            var wv = new World(2, 7, 96);
+            Bare(wv);
+            wv.SpawnStructure(1, "power_plant", Int2.Of(OpenGround(wv)), 0.08f);
+            long beforeV = OreByType(wv).Sum();
+            wv.Leave(1);
+            long leftV = OreByType(wv).Sum() - beforeV;
+            Check(leftV >= 146 && leftV <= 150, $"and a leave counts it the same way: 60% of the 250 ({leftV})");
+
+            // Killing a heavy tank (400 steel + 80 circuits): the circuits come back as their copper AND the iron in them.
+            var wh = new World(2, 7, 96);
+            var spot = OpenGround(wh);
+            var tank = At(wh.SpawnUnit(1, "heavy_tank", wh.Owned(1).First(e => e.Def.Key == "command_center")), spot);
+            var gun = At(wh.SpawnUnit(0, "heavy_tank", wh.Owned(0).First(e => e.Def.Key == "command_center")), spot + new Vec2(-4, 0));
+            wh.Hurt(tank, 1e6f, gun);
+            var ore = OreNear(wh, spot, 4);
+            Check(wh.Teams[0].Stats.KillValue == 640 && ore[Map.Iron] == 120 && ore[Map.Copper] == 40 && ore[Map.Crystal] == 0 && ore[Map.Uranium] == 0,
+                  $"a heavy tank is worth 640 ore and leaves a quarter: 120 iron ore, 40 copper ore ({ore[0]} iron, {ore[1]} copper; kill value {wh.Teams[0].Stats.KillValue})");
+
+            // A stockpile of every material spills as the raw ores they're made from.
+            var ws = new World(2, 7, 80);
+            ws.Teams[1].ProtectedUntil = 0;
+            ws.Teams[1].Stock.Clear();
+            foreach (var item in new[] { ("circuits", 100), ("composite", 100), ("lenses", 50), ("plasma", 10), ("copper", 30), ("steel", 20) }) ws.Teams[1].Add(item.Item1, item.Item2);
+            ws.SpawnStructure(1, "power_plant", ws.FindPlacement(1, "power_plant").Value, 1f);
+            var beforeS = OreByType(ws);
+            Commands.Execute(ws, 1, Cmd("type", "sell", "structure_id", ws.Owned(1).First(e => e.Def.Key == "command_center").Id, "confirm", true));
+            var spill = OreByType(ws).Select((v, i) => v - beforeS[i]).ToArray();
+            // 100 circuits = 100 iron + 200 copper; 100 composite = 200 iron + 100 crystal; 50 lenses = 100 crystal; 10 plasma = 20 uranium; plus 30 copper, 20 steel.
+            Check(spill[Map.Iron] >= 316 && spill[Map.Iron] <= 320 && spill[Map.Copper] >= 226 && spill[Map.Copper] <= 230 && spill[Map.Crystal] >= 198 && spill[Map.Crystal] <= 200 && spill[Map.Uranium] == 20,
+                  $"a stockpile spills as its raw ores: iron {spill[0]}/320, copper {spill[1]}/230, crystal {spill[2]}/200, uranium {spill[3]}/20");
+            Check(wh.Errors == 0 && wu.Errors == 0 && wv.Errors == 0 && ws.Errors == 0, "no sim errors");
         }
 
         static void SalvageFromKills()
@@ -994,7 +1519,7 @@ namespace Pez.Headless
                 int o0 = w6.Map.Ore.Sum();
                 var v = At(w6.SpawnUnit(1, key, h6), s6);
                 w6.Hurt(v, 100000, k6);
-                float paid = Defs.Get(key).Cost.Sum(kv => kv.Value * (kv.Key is "circuits" or "lenses" or "plasma" or "composite" ? 2 : 1));
+                float paid = Defs.Get(key).Cost.Sum(kv => kv.Value * World.OreMix[kv.Key].Sum()); // in raw ore, as salvage counts it
                 float got = w6.Map.Ore.Sum() - o0;
                 if (got > paid * 0.26f) { cheap = false; worst = $"{key}: {got}/{paid}"; }
             }

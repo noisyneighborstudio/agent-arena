@@ -120,24 +120,211 @@ namespace Pez.Sim
             }
             m.OreField(rng, (int)centre.X - 2, (int)centre.Y + 2, 1, 70, 130, Uranium);
             m.OreField(rng, (int)centre.X + 2, (int)centre.Y - 2, 1, 70, 130, Uranium);
-            m.SeedDeep(rng, (x, y) => true);
+            m.SeedStartingDeep(rng);
             return m;
         }
 
-        /// <summary>Scatter deep deposits over the ground `where` allows (about 12 per 80x80), clear of base sites.</summary>
+        // ---- Deep deposits. Every base site gets the same ones, so no corner is richer than another: the starting map lays
+        // each deposit down with its turned copies (Images), and a base added by a join is given a copy of the first base's kit.
+
+        /// <summary>
+        /// A base's own deep deposits, its kit (one iron, one copper), lie within this many tiles of its site, and no other
+        /// deposit is put that close to any base: past this the ground is neutral (the middle, the far edges).
+        /// </summary>
+        public const float DeepKitReach = 22f;
+
+        /// <summary>One deposit of a base's kit as seen from its site: the ore, the amount, how far ahead (toward the middle of the map) and aside it lies.</summary>
+        struct KitSpot { public byte Type; public float Amount, Ahead, Aside; }
+
+        /// <summary>A deposit's amount, in the ranges deep ore always had: 4000-8000 iron or copper, 2000-4000 crystal, 1500-3000 uranium.</summary>
+        static float DeepAmount(Random rng, int type) => type <= Copper ? rng.Next(4000, 8000) : type == Crystal ? rng.Next(2000, 4000) : rng.Next(1500, 3000);
+
+        /// <summary>The centre of the tile p is on: where a deposit goes.</summary>
+        static Vec2 DeepTile(Vec2 p) => Int2.Of(p).Center;
+
+        /// <summary>The ring the neutral derricks stand on, as a fraction of the map's size (World.EnsureDerricks). Deposits keep 5 tiles off it, so no derrick is shoved aside by one.</summary>
+        const float DerrickRing = 0.12f;
+
+        /// <summary>How far neutral deposits keep from every base site: past its kit, or less on a small map where the middle is close.</summary>
+        float NeutralGap() => MathF.Min(DeepKitReach + 4f, 0.75f * Vec2.Dist(new Vec2(W / 2f, H / 2f), Spawns[0]));
+
+        /// <summary>
+        /// p and its copies turned a quarter, half and three quarters round the centre of the map, which carry each corner base
+        /// site onto the next (a map that isn't square is mirrored across and down instead). Tile centres stay tile centres, and
+        /// a copy is exactly as far from its own site as p is from the first.
+        /// </summary>
+        Vec2[] Images(Vec2 p) => W == H
+            ? new[] { p, new Vec2(W - p.Y, p.X), new Vec2(W - p.X, H - p.Y), new Vec2(p.Y, H - p.X) }
+            : new[] { p, new Vec2(W - p.X, p.Y), new Vec2(p.X, H - p.Y), new Vec2(W - p.X, H - p.Y) };
+
+        /// <summary>
+        /// Whether a deep mine could work a deposit here: inside the map, the tile open and reachable, and room for the mine's 2x2
+        /// over or beside it (as World.DeepMineSpot looks) that holds no structure and no surface ore.
+        /// </summary>
+        bool DeepSpotClear(Vec2 p, bool[] reach)
+        {
+            int x = (int)p.X, y = (int)p.Y;
+            if (x < 3 || y < 3 || x >= W - 3 || y >= H - 3 || !Passable(x, y) || !reach[Idx(x, y)]) return false;
+            bool Free(int tx, int ty) { int i = Idx(tx, ty); return InBounds(tx, ty) && Tiles[i] <= Terrain.Dirt && Occupant[i] == 0 && Ore[i] == 0 && OreBase[i] == 0; }
+            for (int oy = y - 2; oy <= y + 1; oy++)
+                for (int ox = x - 2; ox <= x + 1; ox++)
+                    if (Free(ox, oy) && Free(ox + 1, oy) && Free(ox, oy + 1) && Free(ox + 1, oy + 1)) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// Add a deposit of this ore and amount at each of `spots`, if every one can go there: clear ground, at least `apart`
+        /// from each other and from every deposit already made, at least `away` from every base site, and off the derricks' ring.
+        /// If not, none is added (and null `spots`, a spot that fell outside a kit's reach, never fits).
+        /// </summary>
+        bool AddDeep(Vec2[] spots, byte type, float amount, bool[] reach, float apart, float away)
+        {
+            if (spots == null) return false;
+            for (int a = 0; a < spots.Length; a++)
+            {
+                var p = spots[a];
+                if (!DeepSpotClear(p, reach) || Spawns.Any(s => Vec2.Dist(s, p) < away) || Deep.Any(d => Vec2.Dist(d.Pos, p) < apart)) return false;
+                if (MathF.Abs(Vec2.Dist(p, new Vec2(W / 2f, H / 2f)) - DerrickRing * MathF.Min(W, H)) < 5f) return false;
+                for (int b = 0; b < a; b++) if (Vec2.Dist(spots[b], p) < apart) return false;
+            }
+            foreach (var p in spots) Deep.Add(new DeepDeposit { Id = nextDepositId++, Pos = p, Type = type, Amount = amount, Initial = amount });
+            return true;
+        }
+
+        /// <summary>
+        /// Try the spots `pick` offers until a set fits (AddDeep). With `ease`, a crowded map is let off: the spacing between deposits
+        /// eases from 9 tiles to 5, then the distance from base sites from `away` to 10, rather than leave an ore out.
+        /// </summary>
+        bool PlaceDeep(Func<Vec2[]> pick, byte type, float amount, bool[] reach, float away, int tries, bool ease)
+        {
+            for (float keep = away; ; keep = 10f)
+            {
+                for (float apart = 9f; apart >= (ease ? 5f : 9f); apart -= 2f)
+                    for (int i = 0; i < tries; i++)
+                        if (AddDeep(pick(), type, amount, reach, apart, keep)) return true;
+                if (!ease || keep <= 10f) return false;
+            }
+        }
+
+        /// <summary>
+        /// The deep deposits of a new map, the same from every corner. Each base site gets a kit of one deep iron and one deep
+        /// copper deposit; the contested middle gets deep crystal and deep uranium, so every ore exists deep; bigger maps get
+        /// more neutral deposits. Each is laid with its turned copies: the same ore and amount at the same distance from its
+        /// own site. Deterministic from the seed.
+        /// </summary>
+        void SeedStartingDeep(Random rng)
+        {
+            var reach = new bool[W * H];
+            foreach (var s in Spawns) { var r = Reachable(Int2.Of(s)); for (int i = 0; i < reach.Length; i++) reach[i] |= r[i]; }
+            var centre = new Vec2(W / 2f, H / 2f);
+            float gap = NeutralGap();
+            LayKit(rng, Spawns[0], centre, reach, true, null);
+            Func<Vec2[]> anywhere = () => Images(DeepTile(new Vec2(3 + rng.Next(W - 6), 3 + rng.Next(H - 6))));
+            // The contested middle: crystal, then uranium, round the centre (anywhere there's room, if the middle is full).
+            float near = DerrickRing * MathF.Min(W, H) + 5f, far = MathF.Max(near + 3f, 0.3f * MathF.Min(W, H));
+            Func<Vec2[]> middle = () =>
+            {
+                float a = (float)rng.NextDouble() * 2 * MathF.PI, rho = near + (float)rng.NextDouble() * (far - near);
+                return Images(DeepTile(centre + new Vec2(MathF.Cos(a), MathF.Sin(a)) * rho));
+            };
+            foreach (byte ore in new[] { Crystal, Uranium })
+            {
+                float amount = DeepAmount(rng, ore);
+                if (!PlaceDeep(middle, ore, amount, reach, gap, 300, true)) PlaceDeep(anywhere, ore, amount, reach, gap, 300, true);
+            }
+            // The rest of the old density (about 12 per 80x80), as more neutral sets anywhere clear of the bases.
+            int more = Math.Max(0, (int)MathF.Round(3f * W * H / 6400f) - 4);
+            for (int n = 0; n < more; n++)
+            {
+                int roll = rng.Next(100), type = roll < 35 ? Iron : roll < 65 ? Copper : roll < 85 ? Crystal : Uranium;
+                PlaceDeep(anywhere, (byte)type, DeepAmount(rng, type), reach, gap, 30, false);
+            }
+        }
+
+        /// <summary>
+        /// A base's kit: one deep iron and one deep copper deposit, usually 12-21 tiles from `home` (nearer on a small map) and
+        /// toward the middle of the map. With a `template` (another base's kit) each lies as far from `home` at the same bearing,
+        /// and holds the same amount, turning round the site a little if that ground isn't clear; without one the kit is rolled.
+        /// `all` lays each deposit with its turned copies at the other corners too (the starting map), otherwise only here.
+        /// </summary>
+        void LayKit(Random rng, Vec2 home, Vec2 centre, bool[] reach, bool all, KitSpot[] template)
+        {
+            var dir = (centre - home).Normalized; var side = new Vec2(-dir.Y, dir.X);
+            float toCentre = Vec2.Dist(centre, home);
+            // The spot, on its tile centre (which can be most of a tile from where it was aimed), with its copies; null if that tile is past the kit's reach.
+            Vec2[] Spots(float ahead, float aside)
+            {
+                var p = DeepTile(home + dir * ahead + side * aside);
+                return Vec2.Dist(p, home) > DeepKitReach ? null : all ? Images(p) : new[] { p };
+            }
+            bool Copy(KitSpot k)
+            {
+                float r = MathF.Sqrt(k.Ahead * k.Ahead + k.Aside * k.Aside), bearing = MathF.Atan2(k.Aside, k.Ahead);
+                for (int turn = 0; turn <= 16; turn++) // 0, +6, -6, +12, -12 ... degrees
+                {
+                    float a = bearing + (turn + 1) / 2 * (turn % 2 == 1 ? 1 : -1) * 6f * MathF.PI / 180f;
+                    if (AddDeep(Spots(r * MathF.Cos(a), r * MathF.Sin(a)), k.Type, k.Amount, reach, 9f, 10f)) return true;
+                }
+                return false;
+            }
+            for (byte ore = Iron; ore <= Copper; ore++)
+            {
+                if (template != null && Copy(template[ore])) continue;
+                // Rolled: iron to one side of the line to the middle and copper to the other, so the two don't crowd each other;
+                // if the ground there won't take every copy, anywhere within the base's reach.
+                float amount = template != null ? template[ore].Amount : DeepAmount(rng, ore);
+                int sideSign = ore == Iron ? -1 : 1;
+                for (int pass = 0; pass < 2; pass++)
+                {
+                    float near = pass == 0 ? MathF.Min(12f, toCentre * 0.5f) : 10.5f, far = pass == 0 ? MathF.Min(DeepKitReach - 1f, toCentre * 0.65f) : DeepKitReach - 1f;
+                    float spread = pass == 0 ? 32f : 60f;
+                    if (PlaceDeep(() =>
+                    {
+                        float r = near + (float)rng.NextDouble() * (far - near), deg = 10f + (float)rng.NextDouble() * spread;
+                        float a = (pass == 0 ? sideSign : rng.Next(2) * 2 - 1) * deg * MathF.PI / 180f;
+                        return Spots(r * MathF.Cos(a), r * MathF.Sin(a));
+                    }, ore, amount, reach, 10f, 300, true)) break;
+                }
+            }
+        }
+
+        /// <summary>
+        /// The kit of the base at `site` (with `centre` the middle of the map it was made for), to give another base the same: its
+        /// nearest deep iron and nearest deep copper within DeepKitReach, with the amounts they began with. Null if either is
+        /// missing, as on a map made before bases had kits.
+        /// </summary>
+        KitSpot[] KitAt(Vec2 site, Vec2 centre)
+        {
+            var dir = (centre - site).Normalized; var side = new Vec2(-dir.Y, dir.X);
+            var kit = new KitSpot[2];
+            for (byte ore = Iron; ore <= Copper; ore++)
+            {
+                var near = Deep.Where(d => d.Type == ore && Vec2.Dist(d.Pos, site) <= DeepKitReach).OrderBy(d => Vec2.Dist(d.Pos, site)).FirstOrDefault();
+                if (near == null) return null;
+                var off = near.Pos - site;
+                kit[ore] = new KitSpot { Type = ore, Amount = near.Initial, Ahead = off.X * dir.X + off.Y * dir.Y, Aside = off.X * side.X + off.Y * side.Y };
+            }
+            return kit;
+        }
+
+        /// <summary>
+        /// Scatter neutral deep deposits over the ground `where` allows (about 12 per 80x80), keeping out of every base site's kit
+        /// area. This is what the strips added as the map grows get, on top of the new base's kit.
+        /// </summary>
         void SeedDeep(Random rng, Func<int, int, bool> where)
         {
             int cells = 0;
             for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) if (where(x, y)) cells++;
             int want = Math.Max(2, (int)(cells / 6400f * 12));
+            float gap = NeutralGap();
             for (int tries = 0; tries < want * 30 && want > 0; tries++)
             {
                 int x = 3 + rng.Next(W - 6), y = 3 + rng.Next(H - 6);
                 if (!where(x, y) || !Passable(x, y)) continue;
                 var p = new Vec2(x + 0.5f, y + 0.5f);
-                if (Spawns.Any(s => Vec2.Dist(s, p) < 10) || Deep.Any(d => Vec2.Dist(d.Pos, p) < 9)) continue;
+                if (Spawns.Any(s => Vec2.Dist(s, p) < gap) || Deep.Any(d => Vec2.Dist(d.Pos, p) < 9)) continue;
                 int roll = rng.Next(100), type = roll < 35 ? Iron : roll < 65 ? Copper : roll < 85 ? Crystal : Uranium;
-                float amount = type <= Copper ? rng.Next(4000, 8000) : type == Crystal ? rng.Next(2000, 4000) : rng.Next(1500, 3000);
+                float amount = DeepAmount(rng, type);
                 Deep.Add(new DeepDeposit { Id = nextDepositId++, Pos = p, Type = type, Amount = amount, Initial = amount });
                 want--;
             }
@@ -255,8 +442,10 @@ namespace Pez.Sim
             }
 
             m.Spawns.Add(sp);
-            // Deep deposits carry over unchanged; the new strip gets its own.
+            // Deep deposits carry over unchanged. The new base gets the same kit as the first one (rolled fresh on a map that has
+            // none), and the strip's random extras go in neutral ground only, away from every base.
             m.Deep.AddRange(Deep); m.nextDepositId = nextDepositId;
+            m.LayKit(rng, sp, centre, m.Reachable(Int2.Of(sp)), false, KitAt(Spawns[0], new Vec2(oldW / 2f, oldH / 2f)));
             m.SeedDeep(rng, InNew);
             if (bases.Count > 0) m.EnsureConnected(bases[0], sp);
             return m;

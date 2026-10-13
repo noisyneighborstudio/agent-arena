@@ -103,7 +103,9 @@ namespace Pez.Sim
 
         // Converters / reactors: currently producing
         public bool Working;
-        /// <summary>A defence whose upkeep its team can't pay: it stands, but doesn't fire until the steel is there (World.Upkeep).</summary>
+        /// <summary>Fusion reactors: the share of its power it makes, 0 to 1 (the share of its plasma burn the team could pay last tick).</summary>
+        public float Output;
+        /// <summary>A defence whose upkeep its team can't pay: it stands and draws no power, but doesn't fire until the steel is there (World.Upkeep).</summary>
         public bool Offline;
 
         // Transports and passengers
