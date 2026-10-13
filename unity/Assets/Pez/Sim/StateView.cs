@@ -605,6 +605,9 @@ namespace Pez.Sim
         ///     building; cheaper fusion with partial output; upkeep 4% of steel price; regrowth by ore; bays face the ore; fair
         ///     deep kits and neutral fields; invention pricing fixes; seat-symmetric placement, doors and tie-breaks. A drop-off's
         ///     bay opens on its clear side nearest the ore and its door turns to face it (this replaces 41's south-lane placement).
+        ///     Merged with 42's movement: a loaded truck on picked-over ground (no stop within reach collects 8 ore) sets out for
+        ///     its next spot at most every two seconds, not every second; a truck pulling into a bay swings in and shoves aside
+        ///     a unit parked on the head of its lane, rather than waiting for it to leave.
         /// </summary>
         public const int RulesVersion = 43;
 

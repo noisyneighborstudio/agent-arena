@@ -284,6 +284,10 @@ namespace Pez.Headless
             w.Teams[1].Stock["steel"] = 4321;
             seen.GrantedShare = mine.GrantedShare = 1f; // flagged as gifts, to see whose flag the copy carries
             Step(g, 0.5f);
+            // The world works out vision every fourth tick, and the copy works it out afresh from where everything stands when it is built
+            // (a player's copy has no rival's vision to load). Bring the world's up to date, or a unit that moved a step since (a truck
+            // on its way to the ore, a soldier) can cross the edge of a tile's sight and leave the two a tile apart.
+            w.UpdateVisibility();
             Check(w.IsVisibleTo(0, seen) && !w.IsVisibleTo(0, hidden), "set up: one enemy in sight, one hidden at its base");
             var json = Json.Write(ApiServer.ViewSnapshot(g, 0));
             var copy = Resume(json);

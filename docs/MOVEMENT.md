@@ -132,6 +132,13 @@ After phase 3 the guard should never fire in play; its counter staying at zero i
   buildings planned again, and the guard counting only time spent moving (it settled trucks that had just moved up a
   queue). The gate now also checks the guard catches a deliberate dance, and that nothing goes stop-go on a beat while
   mining thin ore.
+- **Rules 43 (the economy audit merged in):** the thin-ore gate still has a beat in it. Once a truck has picked a field
+  over, the best stop collects a few units and the hop is a tile or two, so it hops about every 1.3 s and, with the
+  8-in-10-s threshold, 3 of 16 seeds and sizes of Rules 42 itself failed it (the gate only passed on its own seed).
+  A loaded truck whose best stop collects under 8 ore now sets out for the next only on a 2-second beat of the world's
+  clock; the ore regrows no faster for the hurry (the 16 seeds mine 0.7% less, and the longest beat falls from 8 to 5).
+  A truck pulling into a bay swings in from where it was stopped short by a unit parked on the lane's head, and the
+  bay shoves that unit aside (Align holds the line), instead of waiting in Enter for it to leave.
 - **Phase 3:** not started. What's left for it: units shoved while standing (a queued truck nudged by one passing, an
   idle soldier pushed by separation) still slide without turning.
 

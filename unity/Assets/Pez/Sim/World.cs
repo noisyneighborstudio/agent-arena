@@ -2073,11 +2073,17 @@ namespace Pez.Sim
                     Vec2? home = drops.Count > 0 ? drops.OrderBy(dp => Vec2.DistSq(dp, from)).First() : (Vec2?)null;
                     // Ore within its reach first: it mines a patch from where it stands rather than hopping tile to tile
                     // (drive a tile, stop, mine a few, drive a tile: a slide-pause rhythm on thin ore).
-                    e.HarvestTile = (e.Moving ? null : Map.NearestOre(e.Pos, 3, t => Vec2.Dist(t.Center, e.Pos) <= MineReach && Free(t) && Wanted(t) && Unclaimed(t), want, home))
-                                    ?? RichestNear(e.Pos, 8f, t => Free(t) && Wanted(t) && Unclaimed(t), want, home) // where a stop collects most
-                                    ?? Map.NearestOre(from, 40, t => Free(t) && Wanted(t) && Unclaimed(t), want, home)
-                                    ?? Map.NearestOre(from, 80, t => Free(t) && Wanted(t), want, home)
-                                    ?? Map.NearestOre(from, 80, Free, want, home);
+                    int collects = int.MaxValue; // what the stop RichestNear picks collects
+                    var spot = (e.Moving ? null : Map.NearestOre(e.Pos, 3, t => Vec2.Dist(t.Center, e.Pos) <= MineReach && Free(t) && Wanted(t) && Unclaimed(t), want, home))
+                               ?? RichestNear(e.Pos, 8f, t => Free(t) && Wanted(t) && Unclaimed(t), want, home, out collects) // where a stop collects most
+                               ?? Map.NearestOre(from, 40, t => Free(t) && Wanted(t) && Unclaimed(t), want, home)
+                               ?? Map.NearestOre(from, 80, t => Free(t) && Wanted(t), want, home)
+                               ?? Map.NearestOre(from, 80, Free, want, home);
+                    // Picked-over ground, where the best stop collects under ThinStop: a loaded truck on it sets out for its next spot only on
+                    // a beat (ThinHopEvery) of the world's clock, so scraping a field is a hop every couple of seconds, not a stop-go beat of
+                    // one a second. (The ore regrows no faster for the hurry.) Mid-drive, or empty (just out of the bay), it picks at once.
+                    if (collects < ThinStop && e.Cargo > 0 && !e.Moving && Tick % ThinHopEvery != 0) return;
+                    e.HarvestTile = spot;
                     e.Path = null;
                     if (!e.HarvestTile.HasValue)
                     {
@@ -2152,7 +2158,11 @@ namespace Pez.Sim
                         {
                             if (e.Dock != DockStep.Enter) e.Path = null;
                             e.Dock = DockStep.Enter;
-                            if (Vec2.Dist(e.Pos, head) > 0.35f) { FollowPath(e, head, 0.3f); return; }
+                            // A unit parked on the head of the lane counts as the truck being there (FollowPath stops it as close
+                            // as it can get): it swings in from where it stopped, and Align holds its line, so separation shoves
+                            // the parked unit aside. (Waiting for the unit to leave, a truck sat in Enter for good behind a tank
+                            // parked on the lane.)
+                            if (Vec2.Dist(e.Pos, head) > 0.35f && !(FollowPath(e, head, 0.3f) && Vec2.Dist(e.Pos, head) <= TakenReach(e))) return;
                             e.Dock = DockStep.Align;
                             e.Moving = false;
                             e.Path = null;
@@ -2210,13 +2220,19 @@ namespace Pez.Sim
 
         /// <summary>How far a parked mining truck's cutter reaches: its own tile and the eight around it.</summary>
         public const float MineReach = 1.5f;
+        /// <summary>Ore a stop has to collect (within MineReach of it) to be worth a drive of its own. Under it, the ground is picked over (see ThinHopEvery).</summary>
+        public const int ThinStop = 8;
+        /// <summary>Ticks between the beats a truck on picked-over ground sets out for its next spot on (two seconds).</summary>
+        public const int ThinHopEvery = TickRate * 2;
         /// <summary>
         /// The ore tile within `radius` of `from` where a parked truck collects the most: the ore within its reach there
         /// (MineReach, the tile and the eight around it), less a little for the drive. On a thin or picked-over field a
         /// truck used to drive to the nearest tile, take a unit or two, and drive a tile again: a slide-pause rhythm.
+        /// `collects` is that ore, at the tile it returns.
         /// </summary>
-        Int2? RichestNear(Vec2 from, float radius, Func<Int2, bool> ok, int want, Vec2? home = null)
+        Int2? RichestNear(Vec2 from, float radius, Func<Int2, bool> ok, int want, Vec2? home, out int collects)
         {
+            collects = int.MaxValue;
             Int2? best = null; float bestScore = float.MinValue, bestHome = 0;
             int r = (int)MathF.Ceiling(radius), cx = (int)from.X, cy = (int)from.Y;
             bool Good(int x, int y) => Map.InBounds(x, y) && Map.OreAt(x, y) > 0 && (want < 0 || Map.OreType[Map.Idx(x, y)] == want) && ok(new Int2(x, y));
@@ -2233,7 +2249,7 @@ namespace Pez.Sim
                     float toHome = home.HasValue ? Vec2.DistSq(new Int2(x, y).Center, home.Value) : 0f;
                     int cmp = best == null ? -1 : TieCmp(bestScore, score);
                     if (cmp == 0) cmp = TieCmp(toHome, bestHome);
-                    if (cmp < 0) { bestScore = score; bestHome = toHome; best = new Int2(x, y); }
+                    if (cmp < 0) { bestScore = score; bestHome = toHome; best = new Int2(x, y); collects = sum; }
                 }
             return best;
         }
@@ -3144,7 +3160,7 @@ namespace Pez.Sim
         bool FollowPath(Entity e, Vec2 dest, float tolerance)
         {
             float dd = Vec2.Dist(e.Pos, dest);
-            if (dd <= tolerance || (dd <= e.Def.Radius * 2f + 0.6f && GoalTaken(e, dest))) { e.Moving = false; e.Path = null; return true; }
+            if (dd <= tolerance || (dd <= TakenReach(e) && GoalTaken(e, dest))) { e.Moving = false; e.Path = null; return true; }
             if (e.IsAir) { StepToward(e, dest); return false; }
             if (e.Path == null)
             {
@@ -3176,6 +3192,9 @@ namespace Pez.Sim
             }
             return true;
         }
+
+        /// <summary>How near a point another unit stands on e has to get for that to count as there (GoalTaken): a couple of its radii, and a little.</summary>
+        static float TakenReach(Entity e) => e.Def.Radius * 2f + 0.6f;
 
         /// <summary>
         /// Another unit stands still on the point e is going to: as close as e can get counts as there. (Pushing in to the

@@ -1327,18 +1327,14 @@ namespace Pez.Headless
             var t1 = At(wq.SpawnUnit(0, "mining_truck", hqq), bayQ + acrossQ * -3f + outQ * 4f);
             var t2 = At(wq.SpawnUnit(0, "mining_truck", hqq), bayQ + acrossQ * 3f + outQ * 4f);
             foreach (var tq in new[] { t1, t2 }) { tq.Cargo = 150; tq.CargoType = 0; wq.SetOrder(tq, Order.ReturnOre, tq.Pos); }
-            bool bothIn = false, queued = false, backedIn = false, done1 = false, done2 = false, waitedStill = false, waitedOnItsSide = true;
+            bool bothIn = false, queued = false, backedIn = false, done1 = false, done2 = false, waitedStill = false;
             for (int k = 0; k < 40 * World.TickRate && !(done1 && done2); k++)
             {
                 wq.Step();
+                // (The queue is single file: each waiting truck takes a spot of its own beside the lane, in the order it joined, so the
+                // side it came from no longer decides where it stands. It still has to stand still there.)
                 foreach (var tq in new[] { t1, t2 })
-                    if (tq.Dock == DockStep.Queue && !tq.Moving)
-                    {
-                        // (Waiting on the side of the lane it came from: an id's parity used to choose, so a truck and its half-turned twin waited on opposite sides.)
-                        waitedStill = true;
-                        float onLeft = (tq.Pos.X - headQ.X) * acrossQ.X + (tq.Pos.Y - headQ.Y) * acrossQ.Y;
-                        if (onLeft * (tq == t1 ? -1f : 1f) <= 0f) waitedOnItsSide = false;
-                    }
+                    if (tq.Dock == DockStep.Queue && !tq.Moving) waitedStill = true;
                 done1 |= t1.Dock == DockStep.PullOut; done2 |= t2.Dock == DockStep.PullOut;
                 if (t1.Dock >= DockStep.Align && t2.Dock >= DockStep.Align) bothIn = true;
                 if (t1.Dock == DockStep.Queue || t2.Dock == DockStep.Queue) queued = true;
@@ -1347,7 +1343,7 @@ namespace Pez.Headless
             }
             Check(done1 && done2 && queued && !bothIn && backedIn,
                   $"two trucks share one bay: one waits its turn beside the lane, each unloads backed in, facing out (both delivered {done1 && done2}, queued {queued}, both in at once {bothIn}, after {wq.Time:0.0}s)");
-            Check(waitedStill && waitedOnItsSide, $"and the truck that waits stands on the side of the lane it came from (it stood still there {waitedStill}, on its own side {waitedOnItsSide})");
+            Check(waitedStill, $"and the truck that waits stands still on its spot in the queue (it stood still there {waitedStill})");
 
             // Nothing can be built on a truck lane, and a drop-off whose south is walled off gets a bay on a clear side.
             var (bayL, headL, _, okL) = wq.Bay(hqq);
