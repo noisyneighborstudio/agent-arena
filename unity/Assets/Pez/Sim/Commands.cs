@@ -413,10 +413,22 @@ namespace Pez.Sim
                                        (used >= 0.5f ? " and may turn back to refuel before it arrives; rally nearer, or at a refuel point (outpost)" : "") : ""));
         }
 
+        /// <summary>A structure an enemy hit this recently (seconds) can't be sold.</summary>
+        const float SellHitCooldown = 10f;
+
         static JObj Sell(World w, int team, Dictionary<string, object> c)
         {
             var s = OwnStructure(w, team, c);
             if (s == null) return Err("structure_id must be one of your structures");
+            if (s.Def.Key == "derrick")
+                return Err($"derrick #{s.Id} can't be sold: it's a landmark, not something you built. Hold it to keep its +{World.DerrickSteel} steel/s; if you can't, an enemy engineer can take it or their fire can destroy it (a fresh neutral one rises on the site {World.DerrickRespawn / 60:0} minutes later)");
+            // A building under fire can't be sold out from under the attacker: that would deny the kill (and its salvage).
+            float sinceHit = w.Time - s.LastHitTime;
+            if (sinceHit < SellHitCooldown)
+                return Err($"{s.Def.Key} #{s.Id} was hit {sinceHit:0} s ago: a building that's under fire can't be sold. Defend or repair it, and you can sell it in {MathF.Ceiling(SellHitCooldown - sinceHit):0} s if nobody hits it again");
+            // The same for a burning one: it's dying to whoever set the fire, who gets the kill and the salvage.
+            if (s.Burning)
+                return Err($"{s.Def.Key} #{s.Id} is on fire ({StateView.Pct(s.Hp / s.Def.MaxHp)}% health) and can't be sold while it burns. Repair it above {StateView.Pct(World.BurnBelow)}% health (repair truck) to put the fire out, then you can sell it");
             // Selling the last of a tech building locks out what needs it: ask first (it's easy to sell your own tech gate).
             var lost = w.Owned(team).Any(o => o != s && o.IsStructure && o.Def.Key == s.Def.Key) ? new List<string>()
                 : Defs.All.Values.Where(d => d.Buildable && d.OwnerTeam < 0 && (d.Requires.Contains(s.Def.Key) || Defs.ProducerKey(d.BuiltBy) == s.Def.Key)).Select(d => d.Key).ToList();
@@ -426,8 +438,10 @@ namespace Pez.Sim
             string spill = spills ? $"your whole stockpile spills out as salvage at sector {StateView.Sector(s.Center)} for anyone to mine" : "";
             if (lost.Count > 0 && !(c.TryGetValue("confirm", out var cf) && cf is bool yes && yes))
                 return Err($"{s.Def.Key} #{s.Id} is your only {s.Def.Key}: without it {lockout}{(spills ? $", and {spill}" : "")}. Send the sell again with \"confirm\":true to sell it anyway");
-            // Complete: half back, scaled by health. Unfinished: unbuilt share back in full.
-            float factor = s.IsComplete ? 0.5f * (s.Hp / s.Def.MaxHp) : 1f - 0.5f * s.BuildProgress;
+            // Complete: half back, scaled by health. Unfinished: the unbuilt share back, scaled by how much of the health
+            // it should have at this point of the build is left (it starts at 10% and gains the rest as it goes up).
+            float factor = s.IsComplete ? 0.5f * (s.Hp / s.Def.MaxHp)
+                : (1f - 0.5f * s.BuildProgress) * MathF.Min(1f, s.Hp / (s.Def.MaxHp * (0.1f + 0.9f * s.BuildProgress)));
             w.Teams[team].Pay(s.Def.Cost, -factor);
             string refund = string.Join(", ", s.Def.Cost.Select(kv => $"{(int)(kv.Value * factor)} {kv.Key}"));
             w.Emit("sold", team, s.Id, pos: s.Center, key: s.Def.Key);

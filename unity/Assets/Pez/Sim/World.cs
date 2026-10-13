@@ -821,6 +821,7 @@ namespace Pez.Sim
                 if (e.Team >= 0) Teams[e.Team].StructureQueue.RemoveAll(p => p.StructureId == e.Id);
                 UpdatePower();
                 if (e.Team >= 0 && e.Def.Key == "command_center") ReleaseStockpile(e, e.Team, how);
+                if (e.Def.Key == "derrick") DerrickDestroyed(e); // however it goes, the site comes back neutral
             }
         }
 
@@ -1876,7 +1877,6 @@ namespace Pez.Sim
                 if (enemyKill) Teams[team].Stats.KillValue += (int)value;
                 Remove(t); // a team's last command center spills its stockpile as it goes (ReleaseStockpile)
                 if (salvage != null) DropSalvage(t, salvage, team);
-                if (t.Def.Key == "derrick") DerrickDestroyed(t);
             }
         }
 
