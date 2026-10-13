@@ -847,7 +847,7 @@ namespace Pez.View
                 // here it rises out of the ground, stage by stage, rather than popping in.
                 v.BuiltShown = e.BuildProgress;
                 rig.Emerge.SetBuildProgress(0f);
-                rig.Emerge.StartCoroutine(rig.Emerge.PlayBuild(2.4f));
+                rig.Emerge.StartCoroutine(rig.Emerge.PlayBuild(1f));   // within a second: the sim has it whole and capturable already
                 Fx.StageDust(rig.Root.position, e.Def.SizeX, e.Def.SizeY);
             }
             if (e.IsStructure && e.Def.DropOff && rig.HasModel)

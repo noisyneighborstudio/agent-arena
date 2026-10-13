@@ -97,6 +97,9 @@ def stem(a, S2, S3, kind):
     a.box('smoke', w, .06, .035, x=SX, y=s1 - .03, z=SZ - w / 2 + .018, node=S2)
     a.box('smoke', w - .04, .03, w - .04, x=SX, y=s0 + .045, z=SZ, node=S2)
     a.box('clear', w - .07, s1 - s0 - .16, .01, x=SX, y=(s0 + .1 + s1 - .06) / 2, z=SZ - w / 2 + .012, node=S2)
+    wn = a.node('dm_warn', S2)                        # amber strips beside the window: they pulse under 5 minutes left
+    for s in (-1, 1): a.box('amber', .05, s1 - s0 - .2, .012, x=SX + s * (w / 2 - .035), y=(s0 + .1 + s1 - .06) / 2, z=SZ - w / 2 - .004, node=wn)
+    a.box('amber', .012, s1 - s0 - .2, .05, x=SX + w / 2 + .004, y=(s0 + .1 + s1 - .06) / 2, z=SZ - w / 2 + .035, node=wn)   # round the +x corner
     for i in range(3): a.box('team', .03, .045, .18, x=SX + w / 2 + .004, y=.6 + i * .1, z=SZ, node=S2)
     a.box('dark', w - .05, .035, .045, x=SX, y=s1 + .017, z=SZ - w / 2 + .03, node=S2)
     PB = .086
@@ -123,7 +126,7 @@ def lamp(a, S2, x, z, y0=DK):
     a.cyl('steel', .02, .3, x=x, y=y0 + .15, z=z, node=S2, sections=6)       # a beacon post, so it shows over the deck
     ln = a.node('dm_lamp', S2, (x, y0 + .36, z))
     a.cyl('amber', .08, .11, node=ln, sections=8)
-    a.cyl('team', .085, .03, y=.07, node=ln, sections=8)
+    a.cyl('team', .085, .03, y=-.07, node=ln, sections=8)
 
 
 def family(key, kind, lamp_at=(-.2, .8)):
@@ -188,7 +191,7 @@ def S_deep_mine_iron():
     # The tower's crown is its head: a team cap over the winder, wider than the shaft below it, with a team roof.
     a.box('team', TW + .12, .34, TW + .12, x=XS, y=TT - .1, z=ZS, node=S3)
     a.box('team', TW - .04, .07, TW - .04, x=XS, y=TT + .1, z=ZS, node=S3)
-    a.box('dark', .3, .08, .02, x=XS, y=TT - .08, z=ZS - (TW + .12) / 2 - .005, node=S3)   # the winder's window
+    a.box('amber', .3, .08, .02, x=XS, y=TT - .08, z=ZS - (TW + .12) / 2 - .005, node=a.node('dm_glow', S3))   # the winder's window: lit while it winds
     # The guide rails up the slot, and the dump door in the +x wall at the top (dark: open).
     for s in (-1, 1): a.box('steel', .025, TT - DK - .2, .025, x=XS + s * .1, y=(DK + TT - .06) / 2, z=ZS - .2, node=S2)
     a.box('dark', .03, .2, .2, x=XS + TW / 2 + .002, y=1.18, z=ZS - .12, node=S2)
@@ -294,7 +297,7 @@ def S_deep_mine_copper():
         a.box('cream', .12, .04, .12, x=P(t, side=0)[0], y=DK + .02, z=P(t, side=0)[2], node=S1)
     # The tail pulley over the collar, and the tail's guard: a cream boot with a team top, where the bricks come up.
     tp = a.node('dm_pulley_1', S2, tuple(P(0, up=-.045)), rot=ry(yaw))
-    a.cyl('steel', .045, W + .02, axis='x', node=tp, sections=8)
+    a.cyl('steel', .045, W + .02, axis='x', node=tp, sections=6)
     a.box('dark', .02, .08, .02, x=0, node=tp)
     q = P(-.02, up=-.06)
     a.box('team', .38, .18, .2, x=q[0], y=DK + .09, z=q[2], rot=ry(yaw), node=S1)
@@ -330,7 +333,9 @@ def S_deep_mine_copper():
     a.box('patina', .44, .16, .4, x=CX, y=CY - .05, z=CZ, rot=ry(yaw), node=S2)
     a.box('team', .44, .14, .4, x=CX, y=CY + .1, z=CZ, rot=ry(yaw), node=S2)
     hd = np.array([-u[0], 0, -u[2]]); hd /= np.linalg.norm(hd)
-    a.box('dark', .3, .18, .03, x=CX - hd[0] * .2, y=CY + .04, z=CZ - hd[2] * .2, rot=ry(yaw), node=S2)
+    a.box('amber', .3, .18, .03, x=CX - hd[0] * .2, y=CY + .04, z=CZ - hd[2] * .2, rot=ry(yaw), node=a.node('dm_glow', S2))   # the crusher's mouth: lit while it crushes
+    lx = Rb[:3, :3] @ np.array([-1., 0, 0]); lx[1] = 0; lx /= np.linalg.norm(lx)   # the house's side that faces the camera
+    a.box('amber', .02, .08, .26, x=CX + lx[0] * .225, y=CY - .02, z=CZ + lx[2] * .225, rot=ry(yaw), node=a.node('dm_glow_side', S2))
     cr = a.node('dm_crusher', S2, (CX - hd[0] * .1, CY + .04, CZ - hd[2] * .1), rot=ry(yaw))
     a.cyl('steel', .09, .26, axis='x', node=cr, sections=10)
     for k in range(2):
@@ -338,7 +343,7 @@ def S_deep_mine_copper():
     a.box('team', .5, .08, .46, x=CX, y=CY + .2, z=CZ, rot=ry(yaw), node=S3)
     a.box('team', .34, .08, .3, x=CX, y=CY + .27, z=CZ, rot=ry(yaw), node=S3)
     hp_ = a.node('dm_pulley_0', S2, tuple(P(1, up=-.045)), rot=ry(yaw))
-    a.cyl('steel', .05, W + .02, axis='x', node=hp_, sections=8)
+    a.cyl('steel', .05, W + .02, axis='x', node=hp_, sections=6)
     a.box('dark', .02, .09, .02, node=hp_)
     # The hopper under the crusher: a cream bin with a team rim, its heap of crushed copper.
     BY = CY - .2
@@ -363,7 +368,8 @@ def S_deep_mine_crystal():
     ring(a, 'cream', R0 + .06, R1, DK, RH - .18, x=CX, z=CZ, node=S1, sections=36)
     ring(a, 'team', R0 + .03, R1 + .02, RH - .18, RH, x=CX, z=CZ, node=S2, sections=36)
     ring(a, 'cream', R0, R0 + .08, DK, RH - .02, x=CX, z=CZ, node=S1, sections=36)
-    a.cyl('dark', R0 + .02, .02, x=CX, y=DK + .01, z=CZ, node=S1, sections=16)     # the tank's floor, in shadow
+    a.cyl('dark', R0 + .02, .02, x=CX, y=DK + .01, z=CZ, node=S1, sections=16)     # the tank's floor
+    ring(a, 'cyan', .3, .44, DK + .02, DK + .03, x=CX, z=CZ, node=a.node('dm_glow', S1), sections=28)   # the tank's light: cyan while it drills
     ring(a, 'steel', R1 - .01, R1 + .03, DK + .05, DK + .09, x=CX, z=CZ, node=S1, sections=36)   # a hoop round the tank's foot
     collar(a, CX, CZ, S1, r=.24)
     # The frosted-glass collar on its steel foot, a team ring round its top: the core waits down inside it, dark.
@@ -435,13 +441,10 @@ def S_deep_mine_uranium():
     RD, YD = .6, .38                  # the dome's radius and the drum's top
     # (the shaft's collar is sealed under the dome: its port is the team ring on the shoulder)
     a.cyl('smoke', RD, YD - DK, x=DX, y=(DK + YD) / 2, z=DZ, node=S1, sections=16)
-    ring(a, 'steel', RD - .01, RD + .025, DK + .02, DK + .06, x=DX, z=DZ, node=S1, sections=28)
-    ring(a, 'team', RD - .01, RD + .03, YD - .05, YD + .01, x=DX, z=DZ, node=S1, sections=20)
+    ring(a, 'team', RD - .01, RD + .03, DK + .02, DK + .08, x=DX, z=DZ, node=S1, sections=20)
     # Sight glasses round the drum, on the faces the camera sees: the rods glow behind them (sour acid is always lit).
-    gl = a.node('dm_glow', S1)                         # lit while there's uranium (DeepMineWorks)
-    for th in (-75, -40, -5, 30):
-        t = math.radians(th)
-        a.box('acid', .14, .07, .03, x=DX + (RD + .005) * math.cos(t), y=(DK + .06 + YD - .05) / 2, z=DZ + (RD + .005) * math.sin(t), rot=ry(-th + 90), node=gl)
+    gl = a.node('dm_glow', S1)                         # the drum's lip is a sight band: lit while there's uranium
+    ring(a, 'acid', RD - .01, RD + .03, YD - .06, YD + .01, x=DX, z=DZ, node=gl, sections=24)
     # The dome: squashed, smoke plastic, with steel ribs over it, the port hatch on its shoulder, the team cap on top.
     # (an open shell standing on the drum: already round, so round_models leaves it as it is)
     prof = [((RD - .02) * math.cos(p), .72 * (RD - .02) * math.sin(p)) for p in np.linspace(0, math.radians(58), 6)]
@@ -575,7 +578,7 @@ def S_derrick():
     c0, c1 = np.array([WZ - .06, MY - .04]), np.array([-.74, Y0 + .16])
     cl = np.linalg.norm(c1 - c0); ca = math.degrees(math.atan2(c0[1] - c1[1], c0[0] - c1[0]))
     cm = (c0 + c1) / 2
-    a.box('foil', .3, .03, cl, x=SX + .18, y=cm[1], z=cm[0], rot=rx(ca), node=S2)
+    a.box('dark', .3, .03, cl, x=SX + .18, y=cm[1], z=cm[0], rot=rx(ca), node=S2)
     for s in (-1, 1): a.box('oldsteel', .03, .08, cl, x=SX + .18 + s * .16, y=cm[1] + .035, z=cm[0], rot=rx(ca), node=S2)
     a.box('licorice', .2, .022, .03, x=SX + .18, y=c1[1] + .02, z=c1[0] + .015, node=S2)   # a hazard lip: licorice
     a.box('cream', .2, .022, .03, x=SX + .18, y=c1[1] + .02, z=c1[0] + .05, node=S2)
@@ -592,7 +595,7 @@ def S_derrick():
         a.box('foil', .2, .06, .1, x=dx, y=dy + .03, z=dz, node=pl, rot=ry(r))
     a.node('dk_tray', S1, (TX_ + .12, Y0 + .04, TZ_ + .02))
     br = a.node('dk_brick', S2, (SX + .18, MY - .02, WZ - .04))
-    a.box('foil', .26, .09, .15, node=br)
+    a.box('amber', .26, .09, .15, node=br)          # fresh off the press: hot
     a.box('steel', .2, .02, .1, y=.05, node=br)
     # A chain hanging off the head's hinge bracket at the back, and a lantern bracket on the -x side: old fittings.
     a.tube('steel', [(SX - SW / 2 - .02, ST - .05, SZ + .3), (SX - SW / 2 - .05, ST - .3, SZ + .32), (SX - SW / 2 - .03, ST - .5, SZ + .28)], .012, node=S2, sides=5)

@@ -23,9 +23,10 @@ namespace Pez.View
     ///  - The stem shows what's left: six ore pieces (dm_res_0..5, top down), one per sixth of the deposit, on a spring
     ///    (dm_spring, dm_follower). Each time the deposit drops below a sixth the team flip-top head (dm_head) pops, the top
     ///    piece (dm_candy) flips out and the spring pushes the rest up a slot. Dry, the stem is empty and the head hangs open.
-    ///  - Glow is state: the amber lamp (dm_lamp) is dark while the deposit holds up and pulses once it runs low (the sim's
-    ///    running-low warning: 5 minutes left). When the deposit runs dry the trip in hand finishes empty, a last puff of dust rises
-    ///    from the shaft, the lamp blinks three times and goes out, and the whole mine darkens to 60% over 2 s: it stands
+    ///  - Glow is state: each mine's working lights (dm_glow*) are lit while it works, at a fifth on low power, out when it stops.
+    ///    The amber lamp (dm_lamp) and the strips beside the stem's window (dm_warn) are dark while the deposit holds up
+    ///    and pulse once it runs low (the sim's running-low warning: 5 minutes left). When the deposit runs dry the trip in hand finishes empty, a last puff of dust rises
+    ///    from the shaft, the lamp blinks three times and goes out, and the whole mine darkens (to about 60% in the stream) over 2 s: it stands
     ///    dark and still, finished, readable from across the map. Low power: half
     ///    speed, and the mine's own glows at half. Dark until built; under fog, neutral and still.
     /// The ore parts take the deposit's colour (Models.TintOre). It owns the glows it drives: For() takes them out of
@@ -44,6 +45,7 @@ namespace Pez.View
         const float Tip = 58f;                                  // the bucket's tip at the dump, degrees
         const float HangOpen = 34f, PopOpen = 48f;              // the head: hanging open on an empty stem; popped
         const float BeltBricksPerSecond = 1f;                   // copper: one brick into the crusher a second (4 ore each)
+        const float Dead = 0.35f;                               // a dry mine's dim (linear: about 60% in the stream)
 
         readonly Kind kind;
         readonly GameObject model;
@@ -68,7 +70,8 @@ namespace Pez.View
         float beltS, beltSpeed, pulleyAngle;
         // Glows it drives itself.
         readonly Renderer lamp;
-        readonly Renderer[] core, ore, all;
+        readonly Renderer[] core, ore, all, warn;
+        float shownWarn = -1f;
         float dead, shownDead = -1f;
         float u, lastS, sheaveAngle, drumAngle, bob, drain, headAngle, popT = -1f, shownLamp = -1f, shownCore = -1f, shownOre = -1f, dryT = -1f;
         int shown = -1, oreType = -1;
@@ -182,14 +185,19 @@ namespace Pez.View
             var ls = l ? PezShade.Emissive(l.gameObject) : new Renderer[0];
             lamp = ls.Length > 0 ? ls[0] : null;
             var loadGlow = load ? PezShade.Emissive(load.gameObject) : new Renderer[0];
-            var g = PezMotion.FindDeep(model, "dm_glow");
-            var stateGlow = g ? PezShade.Emissive(g.gameObject) : new Renderer[0];
+            // Every working light: the emissives under any node named dm_glow...
+            var gl = new System.Collections.Generic.List<Renderer>();
+            foreach (var t in model.GetComponentsInChildren<Transform>(true))
+                if (t.name.StartsWith("dm_glow") && !t.name.Contains("__")) gl.AddRange(PezShade.Emissive(t.gameObject));
+            var stateGlow = gl.ToArray();
             bool cyan = loadGlow.Length > 0 && loadGlow[0].sharedMaterial != null && loadGlow[0].sharedMaterial.name.StartsWith("M_E_Cyan");
             core = cyan ? loadGlow : new Renderer[0];
             ore = cyan ? stateGlow : Concat(loadGlow, stateGlow);
+            var wn = PezMotion.FindDeep(model, "dm_warn");
+            warn = wn ? PezShade.Emissive(wn.gameObject) : new Renderer[0];
             if (glows != null)
             {
-                var own = new System.Collections.Generic.HashSet<Renderer>(Concat(core, ore));
+                var own = new System.Collections.Generic.HashSet<Renderer>(Concat(Concat(core, ore), warn));
                 if (lamp) own.Add(lamp);
                 glows = System.Array.FindAll(glows, r => !own.Contains(r));
             }
@@ -222,7 +230,7 @@ namespace Pez.View
         /// </summary>
         public void Tick(World world, Entity e, bool sees, float dt)
         {
-            if (!sees) { Lamp(0.25f); Core(0.25f); Ore(0.8f); return; } // remembered under fog: no live state
+            if (!sees) { Lamp(0.25f); return; } // remembered under fog: no live state (its lights stay as they were last seen)
             bool complete = e.IsComplete;
             var deposit = world.Map.DepositById(e.DepositId);
             int type = deposit != null ? deposit.Type : -1;
@@ -320,15 +328,19 @@ namespace Pez.View
             // Dead: once it's dry and the lamp has gone out, the whole mine darkens over 2 s, so it reads as finished from
             // across the map. Ore again (only ever in the kitchen sink): it lights back up.
             dead = Mathf.MoveTowards(dead, complete && dry && (dryT < 0f || dryT >= 3f) ? 1f : 0f, dt / 2f);
-            if (Mathf.Abs(dead - shownDead) > 0.01f) { shownDead = dead; PezShade.SetDim(all, Mathf.Lerp(1f, 0.6f, dead)); shownLamp = shownCore = shownOre = -1f; }
+            if (Mathf.Abs(dead - shownDead) > 0.01f) { shownDead = dead; PezShade.SetDim(all, Mathf.Lerp(1f, Dead, dead)); shownLamp = shownCore = shownOre = shownWarn = -1f; }
 
             // Glow is state.
             if (!complete) Lamp(0.05f);
             else if (dry) Lamp(dryT >= 0f && dryT < 3f && Mathf.Repeat(dryT, 1f) < 0.5f ? 1f : 0.03f);
             else if (runningLow) Lamp(Mathf.Lerp(0.15f, 0.9f * k, 0.5f + 0.5f * Mathf.Sin((now * 0.5f + phase) * Mathf.PI * 2f)));
             else Lamp(0.08f);
-            Core(working ? k : 0.12f);
-            Ore(complete && !dry ? k : 0.05f);
+            // The stem's amber strips pulse with the lamp under 5 minutes left: the sim's warning, beside the gauge.
+            Warn(complete && runningLow ? Mathf.Lerp(0.05f, 0.9f * k, 0.5f + 0.5f * Mathf.Sin((now * 0.5f + phase) * Mathf.PI * 2f)) : 0.03f);
+            // Low power: the working lights at a fifth, so a starved mine reads at a glance (half still looks lit).
+            float gk = low ? 0.2f : 1f;
+            Core(working ? gk : 0.12f);
+            Ore(working ? gk : 0.05f);
         }
 
         /// <summary>The skip's height above its rest over a hoist's trip.</summary>
@@ -562,7 +574,7 @@ namespace Pez.View
             if (Mathf.Abs(g - shownLamp) < 0.005f) return;
             shownLamp = g;
             // The lamp body darkens with its light, as WorldView's power glow does.
-            if (lamp) PezShade.Set(lamp, Mathf.Lerp(0.15f, 1f, Mathf.InverseLerp(0.25f, 1f, g)) * Mathf.Lerp(1f, 0.6f, dead), g);
+            if (lamp) PezShade.Set(lamp, Mathf.Lerp(0.15f, 1f, Mathf.InverseLerp(0.25f, 1f, g)) * Mathf.Lerp(1f, Dead, dead), g);
         }
 
         /// <summary>Crystal's core: cyan only while the mine works.</summary>
@@ -570,15 +582,24 @@ namespace Pez.View
         {
             if (core.Length == 0 || Mathf.Abs(g - shownCore) < 0.005f) return;
             shownCore = g;
-            PezShade.Set(core, Mathf.Lerp(0.35f, 1f, Mathf.InverseLerp(0.1f, 1f, g)) * Mathf.Lerp(1f, 0.6f, dead), g);
+            PezShade.Set(core, Mathf.Lerp(0.35f, 1f, Mathf.InverseLerp(0.1f, 1f, g)) * Mathf.Lerp(1f, Dead, dead), g);
         }
 
-        /// <summary>Uranium's rods and sight glasses: sour acid is always lit while there's any (half on low power).</summary>
+        /// <summary>The stem's running-low strips.</summary>
+        void Warn(float g)
+        {
+            if (warn.Length == 0 || Mathf.Abs(g - shownWarn) < 0.01f) return;
+            shownWarn = g;
+            PezShade.Set(warn, Mathf.Lerp(0.1f, 1f, Mathf.InverseLerp(0.05f, 1f, g)) * Mathf.Lerp(1f, Dead, dead), g);   // unlit, the strips go dark, not orange
+        }
+
+        /// <summary>The mine's working lights (dm_glow: iron's winder window, copper's crusher mouth, crystal's tank floor,
+        /// uranium's sight band) and uranium's rods: lit while it works (half on low power), out when it stops.</summary>
         void Ore(float g)
         {
             if (ore.Length == 0 || Mathf.Abs(g - shownOre) < 0.005f) return;
             shownOre = g;
-            PezShade.Set(ore, Mathf.Lerp(0.3f, 1f, Mathf.InverseLerp(0.05f, 1f, g)) * Mathf.Lerp(1f, 0.6f, dead), g);
+            PezShade.Set(ore, Mathf.Lerp(0.3f, 1f, Mathf.InverseLerp(0.05f, 1f, g)) * Mathf.Lerp(1f, Dead, dead), g);
         }
     }
 }

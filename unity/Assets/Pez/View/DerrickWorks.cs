@@ -9,8 +9,9 @@ namespace Pez.View
     ///  - Held: the flywheel (dk_wheel) turns, and every 2 s (3 steel a brick, the sim's 1.5/s) a steel brick (dk_brick) is
     ///    pushed out of the mouth under the head's chin, slides down the chute (dk_chute_top to dk_chute_end) and drops into
     ///    the tray (dk_tray) onto the heap of ingots (dk_pile jolts), bounces, and sinks into the heap. The head (dk_head) kicks a few degrees as each brick
-    ///    comes out, and the amber pour lamp in the mouth (dk_lamp) lights the pour. The team colour itself never glows.
-    ///  - Neutral (sugar-pad grey): still, its lamp dark; now and then grit sifts off its head. Waiting.
+    ///    comes out, and the amber pour lamp in the mouth (dk_lamp) lights the pour; the brick is hot amber, fresh off the
+    ///    press, on a dark chute. The team colour itself never glows.
+    ///  - Neutral (a cool steel grey on its head and collar): still, its lamp dark; now and then grit sifts off its head.
     ///  - Captured (or released): the head flips open, wide, and comes down in its new owner's colours with a thud.
     ///  - Under fog: still.
     /// WorldView tints the whole model when the owner changes; this puts the old colours back on the head until the flip
@@ -50,6 +51,7 @@ namespace Pez.View
             var ls = l ? PezShade.Emissive(l.gameObject) : new Renderer[0];
             lamp = ls.Length > 0 ? ls[0] : null;
             teamShown = team;
+            if (team < 0) Grey(this.model);
             phase = seed * 0.37f;
             beat = Mathf.Repeat(seed * 0.29f, 1f) * Beat;        // derricks don't all pour together
             nextDust = Time.time + 2f + Mathf.Repeat(seed * 0.53f, 1f) * 5f;
@@ -65,7 +67,8 @@ namespace Pez.View
             // the old colours until it's turned over.
             if (e.Team != teamShown)
             {
-                if (head) Models.TintTeam(head.gameObject, teamShown);
+                if (e.Team < 0) Grey(model);
+                if (head) Wear(head.gameObject, teamShown);
                 flipTo = e.Team; teamShown = e.Team; flipT = 0f; flipped = false;
             }
             bool held = sees && e.Team >= 0 && e.IsComplete;
@@ -110,7 +113,7 @@ namespace Pez.View
                 else if (t < 0.8f) angle = FlipOpen * (1f - EaseIn((t - 0.5f) / 0.3f));
                 else { float v = t - 0.8f; angle = 10f * Mathf.Abs(Mathf.Sin(v * 14f)) * Mathf.Exp(-v * 8f); }
                 // Turned over at the top of the flip: the new colours.
-                if (!flipped && t >= 0.3f) { if (head) Models.TintTeam(head.gameObject, flipTo); flipped = true; }
+                if (!flipped && t >= 0.3f) { if (head) Wear(head.gameObject, flipTo); flipped = true; }
                 if (t >= 0.8f && t - dt < 0.8f && head && sees) Fx.DecayDust(head.position, 1.4f);    // the thud
                 if (t > 1.4f) flipT = -1f;
             }
@@ -150,6 +153,30 @@ namespace Pez.View
             if (was < 0.56f && f >= 0.56f) { Fx.PourDust(tray.position, PezPalette.MaterialsSpringSteel); pileBob = 1f; }   // it lands: a puff of steel dust
             // The pour lamp: up as the brick comes out, out once it's in the tray.
             return f < 0.05f ? f / 0.05f : f < 0.5f ? 1f : f < 0.62f ? 1f - (f - 0.5f) / 0.12f : 0f;
+        }
+
+        // Nobody's: a cool steel grey, not the sugar pad's warm beige (the sand's hue, and every building's cream), so an
+        // unclaimed derrick reads as a prize waiting, not an unpainted building. Derricks only: other neutrals keep Mats'.
+        static readonly Color NeutralGrey = new Color32(163, 168, 174, 255);
+        static readonly System.Collections.Generic.Dictionary<Material, Material> greyed = new System.Collections.Generic.Dictionary<Material, Material>();
+
+        static void Wear(GameObject go, int team) { Models.TintTeam(go, team); if (team < 0) Grey(go); }
+
+        static void Grey(GameObject go)
+        {
+            foreach (var r in go.GetComponentsInChildren<Renderer>(true))
+            {
+                var mats = r.sharedMaterials;
+                bool changed = false;
+                for (int i = 0; i < mats.Length; i++)
+                {
+                    var m = mats[i];
+                    if (m == null || !m.name.StartsWith("M_Team") || m.name.EndsWith("_neutral")) continue;
+                    if (!greyed.TryGetValue(m, out var g)) { g = new Material(m) { name = m.name + "_neutral", enableInstancing = true }; g.color = NeutralGrey; greyed[m] = g; }
+                    mats[i] = g; changed = true;
+                }
+                if (changed) r.sharedMaterials = mats;
+            }
         }
 
         static float EaseOut(float k) => 1f - (1f - k) * (1f - k) * (1f - k);

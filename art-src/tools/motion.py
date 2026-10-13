@@ -335,22 +335,25 @@ STRUCTURES = [
  S('deep_mine', 'Pumps ore from the deep deposit under it straight into the stockpile.', "One family, one machine per ore. The view draws each deep mine with the "
    "model for the ore under it (deep_mine_iron, deep_mine_copper, deep_mine_crystal, deep_mine_uranium: Models.DeepMineModel, from the deposit's type when the "
    "view creates it) and runs every one with DeepMineWorks from the sim (Working: the deposit has ore and the mine is built; the deposit's Amount / Initial; the "
-   "team's LowPower). This model, deep_mine, is the fallback for a mine whose ore the view doesn't know (a player's view of a deposit it hasn't surveyed) or "
-   "whose model is missing: a headframe over the shaft whose skip (dm_skip) hauls ore candy up 1.1, tips its bucket (dm_bucket) 58° into the bin and goes back "
+   "team's LowPower). This model, deep_mine, is the fallback for a mine whose deposit the view's world doesn't hold (a player's own copy of the "
+   "world, which has only the deposits that team surveyed) or whose model is missing. The game's streams render the host's world, so they show the "
+   "ore's machine to anyone who sees the mine, as the old model's ore-tinted stem did: a headframe over the shaft whose skip (dm_skip) hauls ore candy up 1.1, tips its bucket (dm_bucket) 58° into the bin and goes back "
    "down, the drum (dm_drum) and sheave (dm_sheave) turning with the rope (dm_rope), the fan (dm_fan) breathing. "
    "What every mine shares: the sugar pad and cream deck, the team shaft collar, and the dispenser stem in the back corner, the reserve gauge. Its window shows "
    "six pieces of the ore (dm_res_0..5, M_OreTint, tinted to the deposit's ore: bricks, nuggets, crystals or rods) on a spring (dm_spring) under its follower "
    "(dm_follower), one per sixth of the deposit. Each time the deposit drops below a sixth the team flip-top head (dm_head, hinged at its back edge) snaps open "
    "48° in 0.1 s, the top piece (dm_candy) rises out and flips over the front lip, the rest ride up a slot on the spring, and the head drops shut with a bounce. "
-   "One trip of the mine's machine every 4 s while it works (16 ore at the sim's 4/s); every 8 s on low power, which halves the rate, with the mine's own "
-   "glows at half. Glow is state: the amber lamp (dm_lamp) is dark while the deposit holds up and pulses at 0.5 Hz once it runs low (the sim's running-low "
-   "warning, 5 minutes left). Run dry, the trip in hand finishes and the machine parks, a last puff of ore dust rises from the shaft 0.6 s later, the lamp "
-   "blinks three times (1 s each) and goes out, the stem is empty with the head hanging open 34°, and the whole mine darkens to 60% over 2 s: dark and still, "
+   "One trip of the mine's machine every 4 s while it works (16 ore at the sim's 4/s); every 8 s on low power, which halves the rate, with its working lights at a fifth "
+   "so a starved mine reads at a glance. Glow is state: each mine's working lights (dm_glow and dm_glow_side) are lit while it works, at a fifth on low power, and out when it stops; the "
+   "amber lamp on its beacon post (dm_lamp) and the amber strips beside the stem's window (dm_warn) are dark while the deposit holds up and pulse at 0.5 "
+   "Hz once it runs low (the sim's running-low warning, 5 minutes left). Run dry, the trip in hand finishes and the machine parks, a last puff of ore dust rises from the shaft 0.6 s later, the lamp "
+   "blinks three times (1 s each) and goes out, the stem is empty with the head hanging open 34°, and the whole mine darkens (dim 0.35 linear, about 60% in the stream) over 2 s: dark and still, "
    "finished, readable from across the map. Built from a drill rig: the rig sinks as stage_0..stage_3 rise (PezEmerge). Sold or destroyed: the shared poof. "
    "Dark until built; under fog, neutral and still.",
    dict(dm_res_0=dict(mode='reserve_stack', pieces=6, note='dm_res_0..5, one per sixth of the deposit; dm_spring and dm_follower under them'),
         dm_head=dict(mode='hinge_pop', open_deg=48, open_s=.1, hang_open_deg=34),
-        dm_lamp=dict(mode='state_glow', running_low_hz=.5, dry='three 1 s blinks, then dark'),
+        dm_lamp=dict(mode='state_glow', running_low_hz=.5, dry='three 1 s blinks, then dark', note='dm_warn pulses with it'),
+        dm_glow=dict(mode='state_glow', note='each mine\'s working lights: 1 working, 0.2 on low power, off stopped'),
         dm_skip=dict(mode='hoist', rise=1.1, trip_s='4 (8 on low power)', note='fallback model only; the per-ore models below')),
    "Working: its machine running a trip every 4 s. Dry: parked, the stem empty with its head hanging open, the lamp out, the mine darkened."),
  S('deep_mine_iron', 'The deep mine on an iron deposit: the pithead.', "A stout enclosed winding tower in the right corner, its crown a team head with the "
@@ -361,7 +364,7 @@ STRUCTURES = [
    "puff of cinnamon dust rises. The skip goes back down in 1.3 s. The sheave is driven by the skip's travel through the rope (the rope leaves it at radius "
    "0.3), so it spins up, slows and reverses with the skip; the rope below it (dm_rope) stretches to the skip's eye (dm_eye). On low power the winder labours: "
    "now and then, on the way up, the skip slows to a crawl for half a second. The fan in the left corner (dm_fan) turns at 540°/s while it works (270 on low "
-   "power) and coasts down when it stops. The tallest of the four.",
+   "power) and coasts down when it stops. The winder's window in the crown (dm_glow) glows amber while it winds. The tallest of the four.",
    dict(dm_skip=dict(mode='hoist', rise=.78, trip_s='4 (8 on low power)', up_s=1.4, down_s=1.3),
         dm_bucket=dict(mode='tip', tip_deg=58, tip_s=.24, hold_s=.2),
         dm_tumble_0=dict(mode='tumble', bricks=3, each_s=.55, stagger_s=.09, note='dm_chute to dm_bin, end over end'),
@@ -374,8 +377,9 @@ STRUCTURES = [
    "(dm_belt_b), one into the crusher a second (each 6 s on the belt; half the rate on low power); each grows up out of the shaft over the first 8% of the belt "
    "and drops into the crusher over the last 6%. As each drops, the hopper's heap (dm_heap) bobs and a puff of mint dust rises from the crusher. The belt "
    "eases to speed over 0.5 s; the crusher drum (dm_crusher, steel with dark teeth, in the open mouth of its mint housing under a team roof) turns at 200°/s "
-   "at full rate, and the head and tail pulleys (dm_pulley_0, dm_pulley_1) turn with the belt. Stopped (dry), the tail loads no more bricks: those on the belt "
-   "run off into the crusher and the belt stops. The longest and lowest of the four.",
+   "at full rate, and the head and tail pulleys (dm_pulley_0, dm_pulley_1) turn with the belt. Stopped (dry), the tail loads no more bricks; those on the belt "
+   "shrink away where they are in 0.5 s and the belt coasts to a stop (no ore after the sim's last). The crusher's mouth (dm_glow) and a slot in the side of its house facing the camera (dm_glow_side) glow amber while it "
+   "crushes. The longest and lowest of the four.",
    dict(dm_carry_0=dict(mode='belt', bricks=6, per_s='1 (0.5 on low power)', note='dm_belt_a to dm_belt_b; in at the tail, off into the crusher'),
         dm_crusher=dict(axis='X', deg_per_s='200 x the belt rate'),
         dm_pulley_0=dict(mode='belt_driven', radius=.05, note='dm_pulley_0 and dm_pulley_1')),
@@ -386,19 +390,20 @@ STRUCTURES = [
    "lifts a glowing core (dm_load, rock-candy cyan) up out of the frosted collar 0.58 (dm_top) in 1.4 s, its cage (dm_bucket) tips 58° toward the tray on the "
    "rim (dm_bin), the shards slide down the chute and ring as they land: a thin cyan ring flashes out of the tray, two glowing chips bounce off it and a spark "
    "flies, and the tray's heap (dm_heap) bobs. The barrel goes back down into the collar in 1.3 s. The hoist's sheave (dm_sheave) turns with the rope. Cyan "
-   "only while it works: the core glows at full (half on low power) and dims to 0.12 when the mine stops. The widest and flattest of the four.",
+   "only while it works: the core and a ring of light in the tank's floor (dm_glow) glow at full (a fifth on low power) and go dark when the mine stops. "
+   "The widest and flattest of the four.",
    dict(dm_skip=dict(mode='hoist', rise=.58, trip_s='4 (8 on low power)', up_s=1.4, down_s=1.3),
         dm_bucket=dict(mode='tip', tip_deg=58, tip_s=.24, hold_s=.2),
         dm_drill=dict(axis='Y', deg_per_s='50 (25 on low power)', spinup='40°/s²', coast='20°/s²'),
         dm_load=dict(mode='state_glow', note='M_E_Cyan: 1 working (0.5 on low power), 0.12 stopped')),
    "Working: the drill string turning and a glowing core lifted out and tipped every 4 s. Dry: the barrel parked down in the collar, the core dark."),
- S('deep_mine_uranium', 'The deep mine on a uranium deposit: the containment.', "An armoured dome sealed over the shaft: a smoke drum with a steel foot and a "
-   "team lip, sour-acid sight glasses round it (dm_glow), a smoke dome with team ribs and a team cap. A jib crane (dm_jib) on a steel post at the front edge "
+ S('deep_mine_uranium', 'The deep mine on a uranium deposit: the containment.', "An armoured dome sealed over the shaft: a smoke drum with a team foot and a "
+   "sour-acid sight band for its lip (dm_glow), a smoke dome with team ribs and a team cap. A jib crane (dm_jib) on a steel post at the front edge "
    "swings its hook (dm_skip) between the port on the dome's shoulder (a team ring) and the cask under it on the carousel (dm_carousel) in the front corner. "
    "Each 4 s trip: the hook lifts an acid rod (dm_load) out of the port 0.42 (dm_top) in 0.64 s, the jib swings about 92° over the cask in 0.56 s, lowers the "
    "rod into it in 0.56 s, lets it go (the rod sinks into the cask in 0.16 s and the seal hisses: a wisp of steam), raises the hook in 0.48 s, swings back in "
    "0.56 s and lowers into the port in 0.56 s to take the next. After each rod the carousel turns the next cask round, 90° in 0.8 s. Sour acid is always lit "
-   "while there's uranium: the rods and the sight glasses glow at full (half on low power) and go out when the deposit is dry. The roundest of the four.",
+   "while there's uranium: the rods and the sight band glow at full (a fifth on low power) and go out when the deposit is dry. The roundest of the four.",
    dict(dm_jib=dict(mode='swing', swing_deg='about 92 (from the model: the hook to dm_bin)', out_s=.56, back_s=.56),
         dm_skip=dict(mode='jib_hook', rise=.42, lower='to dm_bin', trip_s='4 (8 on low power)'),
         dm_carousel=dict(mode='index', deg=90, s=.8, note='after each rod'),
@@ -408,13 +413,13 @@ STRUCTURES = [
    "landmark, run by DerrickWorks from the sim: a giant riveted steel dispenser on a stepped stone plinth, older and heavier than anything a team builds. Its "
    "battered stem has riveted bands, cream buttresses, a kraft repair patch and a rust run, a window on a stack of steel ingots over a great spring, and a "
    "flywheel (dk_wheel) on its side; its huge team flip-top head (dk_head, hinged at its back edge, closing on a team collar) is sugar-pad grey while nobody "
-   "holds it. Held: the flywheel spins up to 90°/s (and coasts down when it's released), and every 2 s (3 steel a brick, the sim's 1.5 steel/s) a steel brick "
-   "(dk_brick) is pushed out of the mouth under the head's chin (0.24 s), slides down the foil chute gathering speed (0.6 s, from dk_chute_top to "
+   "holds it (a cool steel grey on its head and collar, set by DerrickWorks: the sugar pad's beige is the sand's hue). Held: the flywheel spins up to 90°/s (and coasts down when it's released), and every 2 s (3 steel a brick, the sim's 1.5 steel/s) a steel brick "
+   "(dk_brick, hot amber, fresh off the press) is pushed out of the mouth under the head's chin (0.24 s), slides down the dark chute gathering speed (0.6 s, from dk_chute_top to "
    "dk_chute_end), drops off the lip into the tray (dk_tray) with a bounce, and settles into the heap of ingots there (dk_pile jolts 0.015, a puff of steel "
    "dust). The head kicks 4° as each brick comes out, and the amber pour lamp in the mouth (dk_lamp) lights the pour: up as the brick comes out, out once "
    "it's in the tray (the team colour itself never glows). Neutral: still, the lamp dark; every 5–9 s grit sifts off its head (waiting). Captured or released: "
    "the head flips open 150° in 0.3 s, holds 0.2 s, turns over into its new owner's colours at the top, and slams shut in 0.3 s with a bounce and a puff of "
-   "dust. A fresh derrick (a new map's, or one rising again 2 minutes after the last was destroyed) rises out of the ground stage by stage over 2.4 s with "
+   "dust. A fresh derrick (a new map's, or one rising again 2 minutes after the last was destroyed) rises out of the ground stage by stage in 1 s (the sim has it whole and capturable already) with "
    "stage dust; the sim places it whole. Destroyed: the shared poof (it can't be sold). Under fog: still.",
    dict(dk_wheel=dict(axis='X', deg_per_s='90 while held', spinup='45°/s²', coast='20°/s²'),
         dk_brick=dict(mode='pour', every_s=2, note='mouth 0.24 s, chute 0.6 s, tray 0.28 s, into the heap 0.3 s'),
