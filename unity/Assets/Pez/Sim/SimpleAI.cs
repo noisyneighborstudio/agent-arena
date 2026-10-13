@@ -26,6 +26,7 @@ namespace Pez.Sim
         const int MaxDeepMines = 4; // iron and copper mines at once (each draws 50 power); crystal and uranium have a slot of their own each
         const int ThinOre = 3000; // ore of the kinds it wants within reach of its drop-offs: below this the home fields are thin, and it looks farther afield
         const float EnemyBerth = 30f; // an outpost site keeps this far from every enemy structure it knows of
+        const float HouseDefenceReach = 30f; // the house AI answers a threat only with units this close to it: it holds its ground, it does not march across the map
         const float MaxExpansion = 170f; // and is no more than this far from its nearest drop-off
         const int MaxOutposts = 4; // outposts at once while the ore within reach is thin (two otherwise)
         const float SiteClear = 18f; // in an open arena the outpost itself stands at least this far from any base site but its own: the 18 tiles the derricks keep
@@ -447,20 +448,29 @@ namespace Pez.Sim
             if (wantUranium) plan.Add(Map.Uranium);
             plan.Add(Map.Iron);
             plan.Add(copperType);
+            // The house AI's trucks keep to fair ore (#87). A truck choosing its own ore creeps from field to field, 12 tiles at a time, once its
+            // drop-offs' reach is mined out (World.UpdateHarvester), and the nearest ore within 80 tiles can be the rival's: its home field or
+            // its corner, where its army sits. Ore by a base site that is not ours is fair only to trucks whose drop-offs reach it (an outpost's).
+            bool Fair(Vec2 p) => !Passive || Reached(p) || !w.Map.Spawns.Any(s => Vec2.Dist(s, t.StartPos) >= 20f && Vec2.Dist(s, p) < SiteBerth);
             for (int i = 0; i < trucks.Count; i++)
             {
                 int type = i < plan.Count ? plan[i] : Map.Iron;
                 var tr = trucks[i];
                 // Trucks that ran out of ore stand idle: every 20 s they look again (fields regrow, salvage lands).
                 bool retry = tr.Order == Order.Idle && (int)w.Time % 20 == 0;
-                if ((tr.HarvestType != type || retry) && tr.Cargo == 0 && tr.Order != Order.ReturnOre)
+                bool drifted = tr.Order == Order.Harvest && tr.HarvestTile.HasValue && !Fair(tr.HarvestTile.Value.Center);
+                if ((tr.HarvestType != type || retry || drifted) && tr.Cargo == 0 && tr.Order != Order.ReturnOre)
                 {
-                    // None of its ore within 80 tiles: it goes to the nearest field of that ore its drop-offs reach, an outpost's perhaps, to a tile of
-                    // it that is safe (the first field that has one).
-                    var farField = tr.Order == Order.Idle && w.Map.NearestOre(tr.Pos, 80, null, type) == null
-                        ? fields.Where(f => f.type == type && f.ore >= 100 && Reached(f.at)).OrderBy(f => System.MathF.Round(Vec2.Dist(f.at, tr.Pos), 2)).ThenByDescending(f => Rightward(f.at)).Select(f => SafeOreNear(f.at, type)).FirstOrDefault(p => p.HasValue) : null;
-                    if (farField.HasValue) Do(w, "type", "harvest", "units", new[] { tr.Id }, "ore", Defs.Ores[type], "x", farField.Value.X, "y", farField.Value.Y);
-                    else Do(w, "type", "harvest", "units", new[] { tr.Id }, "ore", Defs.Ores[type]);
+                    // The house AI sends it to the nearest fair ore of its kind that is not by an enemy it knows of; the attacking AI leaves the
+                    // pick to the command (the nearest ore of that kind). None within 80 tiles: it goes to the nearest field of that ore its
+                    // drop-offs reach, an outpost's perhaps, to a tile of it that is safe (the first field that has one).
+                    var near = w.Map.NearestOre(tr.Pos, 80, !Passive ? null : (System.Func<Int2, bool>)(tt => Fair(tt.Center) && !foes.Any(h => Vec2.Dist(h, tt.Center) < World.HostileOreRadius)), type, t.StartPos);
+                    Vec2? goal = Passive && near.HasValue ? near.Value.Center : (Vec2?)null;
+                    if (!near.HasValue && tr.Order == Order.Idle)
+                        goal = fields.Where(f => f.type == type && f.ore >= 100 && Reached(f.at)).OrderBy(f => System.MathF.Round(Vec2.Dist(f.at, tr.Pos), 2)).ThenByDescending(f => Rightward(f.at)).Select(f => SafeOreNear(f.at, type)).FirstOrDefault(p => p.HasValue);
+                    if (goal.HasValue) Do(w, "type", "harvest", "units", new[] { tr.Id }, "ore", Defs.Ores[type], "x", goal.Value.X, "y", goal.Value.Y);
+                    else if (drifted) Do(w, "type", "stop", "units", new[] { tr.Id });
+                    else if (!Passive) Do(w, "type", "harvest", "units", new[] { tr.Id }, "ore", Defs.Ores[type]);
                 }
             }
 
@@ -657,11 +667,14 @@ namespace Pez.Sim
             var army = mine.Where(e => !e.IsStructure && e.IsArmed).ToList();
             // (Its base, not a derrick out in the contested middle: armies passing a derrick would otherwise keep the whole
             // army home on defence and the AI would never attack.)
-            var threat = w.Entities.FirstOrDefault(e => !e.Dead && e.Team != team && e.Team >= 0 && !e.IsStructure && w.IsVisibleTo(team, e) &&
+            // (The house AI holds its ground: an unarmed truck, surveyor or outpost truck by an outpost is no attack, and only the units within
+            // HouseDefenceReach of a threat answer it. Sending the whole army across the map after either left both armies parked in the
+            // contested middle, shooting every truck sent to mine there: #87.)
+            var threat = w.Entities.FirstOrDefault(e => !e.Dead && e.Team != team && e.Team >= 0 && !e.IsStructure && !(Passive && !e.IsArmed) && w.IsVisibleTo(team, e) &&
                                                         structures.Any(s => s.Def.Key != "derrick" && Vec2.Dist(e.Pos, s.Center) < 10));
             if (threat != null)
             {
-                foreach (var u in army.Where(u => (u.Order == Order.Idle || u.Order == Order.Move) && u.Def.Weapon.CanHit(threat.Def)))
+                foreach (var u in army.Where(u => (u.Order == Order.Idle || u.Order == Order.Move) && u.Def.Weapon.CanHit(threat.Def) && (!Passive || Vec2.Dist(u.Pos, threat.Pos) <= HouseDefenceReach)))
                     w.SetOrder(u, Order.AttackMove, threat.Pos);
                 return;
             }
