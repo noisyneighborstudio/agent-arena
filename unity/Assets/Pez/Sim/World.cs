@@ -137,6 +137,27 @@ namespace Pez.Sim
         /// snapshot. A player's copy is fogged, so its own count of who's still standing would be wrong anyway.
         /// </summary>
         public bool Mirror;
+
+        /// <summary>
+        /// Orders players gave over the API, the last CommandLogTicks of them, numbered (CommandSeq is the last number, and
+        /// is saved). A view's copy of the game, which runs on between snapshots, gives them again at the same ticks
+        /// (Game.Replay). Without them it learns of an order only at the next snapshot, seconds later, and every unit
+        /// ordered meanwhile slides over to where it should be.
+        /// </summary>
+        public readonly List<LoggedCommand> CommandLog = new List<LoggedCommand>();
+        public long CommandSeq;
+        public const int CommandLogTicks = 30 * TickRate;
+
+        /// <summary>Logs a command that worked (ApiServer), unless it changes nothing a copy shows (chat, a tech proposal).</summary>
+        public void LogCommand(int team, Dictionary<string, object> cmd)
+        {
+            var type = cmd.Str("type", "").ToLowerInvariant();
+            if (type == "say" || type == "propose_tech" || type == "start_match") return;
+            CommandLog.Add(new LoggedCommand { Seq = ++CommandSeq, Tick = Tick, Team = team, Cmd = cmd });
+            int cut = 0;
+            while (cut < CommandLog.Count && (CommandLog[cut].Tick < Tick - CommandLogTicks || CommandLog.Count - cut > 400)) cut++;
+            if (cut > 0) CommandLog.RemoveRange(0, cut);
+        }
         public int MaxPlayers = 8;
         public int MaxMapSize = Map.MaxSize;
         public int GrowStep = 32;
@@ -3142,5 +3163,14 @@ namespace Pez.Sim
                 Emit("game_over", Winner, text: Winner >= 0 ? $"{Teams[Winner].Name} ({Teams[Winner].PlayerName ?? Teams[Winner].Controller}) wins" : "draw");
             }
         }
+    }
+
+    /// <summary>An order a player gave, numbered, at the tick it was given (after that tick's step, before the next).</summary>
+    public class LoggedCommand
+    {
+        public long Seq;
+        public int Tick;
+        public int Team;
+        public Dictionary<string, object> Cmd;
     }
 }

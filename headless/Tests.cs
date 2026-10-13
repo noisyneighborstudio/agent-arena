@@ -57,6 +57,7 @@ namespace Pez.Headless
             NoDancing();
             RunOver();
             NoSpinBesideParkedTruck();
+            ViewCopyReplaysOrders();
             GroupMove();
             ResignWhenStalled();
             IdleSeatsResign();
@@ -338,6 +339,49 @@ namespace Pez.Headless
                 was = walker.Facing;
             }
             Check(walker.Order == Order.Idle && flips <= 2 && truck.Pos.Equals(at), $"a soldier walks to a spot beside a parked truck and stops ({walker.OrderName} at {walker.Pos} for {spot}, {flips} snap turns)");
+        }
+
+        static void ViewCopyReplaysOrders()
+        {
+            // A browser's copy runs on from one snapshot to the next. The next snapshot brings the orders given meanwhile, at
+            // their ticks, and the copy gives them again: it arrives where the game is, with nothing to slide over.
+            var host = new Game(new GameConfig { Seed = 9, MapSize = 80, Controllers = new[] { "llm", "llm" } });
+            var w = host.World;
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var army = Enumerable.Range(0, 12).Select(i => At(w.SpawnUnit(0, i % 3 == 0 ? "light_tank" : "rocket_soldier", hq), hq.Center + new Vec2(5 + i % 4 * 1.5f, 4 + i / 4 * 1.5f))).ToList();
+            void Give(Dictionary<string, object> c) { if (Ok(Commands.Execute(w, 0, c))) w.LogCommand(0, c); }
+            void Steps(Game g, int n) { int to = g.World.Tick + n; while (g.World.Tick < to) g.CatchUp(Math.Min(to, g.World.Tick + 60), 0); }
+            Steps(host, 20);
+            Dictionary<string, object> Snap(int team) => Snapshot.Parse(Json.Write(ApiServer.ViewSnapshot(host, team)));
+            var before = Snap(-1); var beforeMine = Snap(0);
+            Steps(host, 7);
+            Give(Cmd("type", "move", "units", army.Take(6).Select(e => e.Id).ToArray(), "x", hq.Center.X + 21.37, "y", hq.Center.Y + 3.11));
+            Steps(host, 25);
+            Give(Cmd("type", "attack_move", "units", army.Skip(6).Select(e => e.Id).ToArray(), "x", hq.Center.X + 14, "y", hq.Center.Y + 18));
+            Give(Cmd("type", "say", "text", "go"));
+            Steps(host, 40);
+            Give(Cmd("type", "stop", "units", new[] { army[0].Id }));
+            Steps(host, 8);
+            var after = Snap(-1); var afterMine = Snap(0);
+
+            float Drift(Dictionary<string, object> from, Dictionary<string, object> to, bool replay)
+            {
+                var copy = new Game(new GameConfig { Seed = 1, MapSize = 48, Controllers = new[] { "llm" } });
+                copy.Restore(from); copy.World.Mirror = true;
+                if (replay)
+                    foreach (var x in to.Obj("world").Arr("commands"))
+                        if (x is List<object> l && l[3] is Dictionary<string, object> cmd)
+                            copy.Replay[(long)(double)l[0]] = new LoggedCommand { Seq = (long)(double)l[0], Tick = (int)(double)l[1], Team = (int)(double)l[2], Cmd = cmd };
+                Steps(copy, w.Tick - copy.World.Tick);
+                return army.Max(e => Vec2.Dist(e.Pos, copy.World.Get(e.Id).Pos));
+            }
+            float off = Drift(before, after, true), offMine = Drift(beforeMine, afterMine, true), without = Drift(before, after, false);
+            Check(off < 0.001f && offMine < 0.05f && without > 1f,
+                  $"a view's copy replays the orders given between snapshots (worst unit off {off:0.000} tiles; in a player's fogged copy {offMine:0.000}; without the orders {without:0.0})");
+            var mine = afterMine.Obj("world").Arr("commands");
+            Check(mine.Count == 3 && after.Obj("world").Arr("commands").Count == 3, $"the snapshot carries the orders but not the chat ({mine.Count})");
+            var rival = Snapshot.Parse(Json.Write(ApiServer.ViewSnapshot(host, 1))).Obj("world").Arr("commands");
+            Check(rival.Count == 0, "a rival's snapshot doesn't carry your orders");
         }
 
         static void GroupMove()

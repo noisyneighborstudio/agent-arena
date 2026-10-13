@@ -121,7 +121,7 @@ namespace Pez.View
         {
             if (string.IsNullOrEmpty(newUrl)) return;
             url = newUrl;
-            lastTick = -1; newestTick = -1; serverOffset = float.NaN; queue.Clear();
+            lastTick = -1; newestTick = -1; serverOffset = float.NaN; queue.Clear(); Runner?.Game?.Replay.Clear();
             StopAllCoroutines();
             fetching = false;
             expired = false; failures = 0; seatEnded = false; Result = null;
@@ -213,10 +213,16 @@ namespace Pez.View
             var wd = root.Obj("world");
             int tick = wd.In("tick");
             bool sameGame = Loaded && wd.Str("game_id") == game.World.GameId;
-            if (sameGame && tick < lastTick - 200) { lastTick = -1; newestTick = -1; serverOffset = float.NaN; queue.Clear(); } // the server went back (a restart from an older save): follow it
+            if (sameGame && tick < lastTick - 200) { lastTick = -1; newestTick = -1; serverOffset = float.NaN; queue.Clear(); game.Replay.Clear(); } // the server went back (a restart from an older save): follow it
             if (sameGame && (tick <= lastTick || tick <= newestTick)) return; // nothing newer than what's on screen or queued
             var p = new Pending { Root = root, World = wd, Tick = tick, Bytes = text.Length, ParseMs = parseMs };
             newestTick = tick;
+            // The orders in it, for the copy to give at their ticks (Game.Replay): it plays behind the newest snapshot, so it
+            // hears of each one before reaching it.
+            if (!sameGame) game.Replay.Clear();
+            foreach (var x in wd.Arr("commands"))
+                if (x is List<object> l && l.Count >= 4 && l[0] is double seq && l[1] is double at && l[2] is double by && l[3] is Dictionary<string, object> cmd)
+                    game.Replay[(long)seq] = new LoggedCommand { Seq = (long)seq, Tick = (int)at, Team = (int)by, Cmd = cmd };
             float offset = tick - Time.unscaledTime * TickRateNow;
             serverOffset = float.IsNaN(serverOffset) || Mathf.Abs(offset - serverOffset) > BufferTicks * 2 ? offset : Mathf.Lerp(serverOffset, offset, 0.2f);
             // A first load, a new match, a different point of view, or far behind (a hidden tab): straight to it.

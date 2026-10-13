@@ -496,7 +496,7 @@ namespace Pez.Sim
                 .Set("tick", Tick).Set("game_id", GameId).Put("game_over", GameOver).Put("winner", Winner, -1).Set("map_version", MapVersion)
                 .Put("open", Open).Set("max_players", MaxPlayers).Set("max_map_size", MaxMapSize).Set("grow_step", GrowStep)
                 .Set("safe_join_distance", SnapIO.X(SafeJoinDistance)).Set("protection_seconds", SnapIO.X(ProtectionSeconds)).Set("stall_grace", SnapIO.X(StallGrace))
-                .Set("next_id", nextId).Set("next_seq", nextSeq).Set("seat_counter", seatCounter).Set("rng", rng.State.ToString("x16"))
+                .Set("next_id", nextId).Set("next_seq", nextSeq).Put("command_seq", CommandSeq, 0L).Set("seat_counter", seatCounter).Set("rng", rng.State.ToString("x16"))
                 .Put("errors", Errors).Put("last_error", LastError).Put("arena_champion", ArenaChampion).Put("contested", contested).Put("regrown", Regrown).Set("sudden_death_at", SnapIO.X(SuddenDeathAt))
                 .Set("derrick_respawns", DerrickRespawns.Select(r => (object)new List<object> { r.origin.X, r.origin.Y, SnapIO.X(r.at) }).ToList())
                 .Set("event_counts", EventCounts.Aggregate(new JObj(), (j, kv) => j.Set(kv.Key, kv.Value)))
@@ -531,7 +531,7 @@ namespace Pez.Sim
             d.Load("tick", ref w.Tick); d.Load("game_id", ref w.GameId); d.Load("game_over", ref w.GameOver); d.Load("winner", ref w.Winner); d.Load("map_version", ref w.MapVersion);
             d.Load("open", ref w.Open); d.Load("max_players", ref w.MaxPlayers); d.Load("max_map_size", ref w.MaxMapSize); d.Load("grow_step", ref w.GrowStep);
             d.Load("safe_join_distance", ref w.SafeJoinDistance); d.Load("protection_seconds", ref w.ProtectionSeconds); d.Load("stall_grace", ref w.StallGrace);
-            d.Load("errors", ref w.Errors); d.Load("last_error", ref w.LastError);
+            d.Load("errors", ref w.Errors); d.Load("last_error", ref w.LastError); d.Load("command_seq", ref w.CommandSeq);
             d.Load("arena_champion", ref w.ArenaChampion); d.Load("contested", ref w.contested); d.Load("regrown", ref w.Regrown); d.Load("sudden_death_at", ref w.SuddenDeathAt);
             foreach (var x in d.Arr("derrick_respawns"))
                 if (x is List<object> l && l.Count >= 3) w.DerrickRespawns.Add((new Int2(SnapIO.ToI(l[0]), SnapIO.ToI(l[1])), SnapIO.ToF(l[2])));
@@ -677,6 +677,7 @@ namespace Pez.Sim
 
         public static JObj Put(this JObj o, string k, float v, float def = 0f) { if (!v.Equals(def)) o[k] = X(v); return o; }
         public static JObj Put(this JObj o, string k, int v, int def = 0) { if (v != def) o[k] = v; return o; }
+        public static JObj Put(this JObj o, string k, long v, long def) { if (v != def) o[k] = v; return o; }
         public static JObj Put(this JObj o, string k, bool v) { if (v) o[k] = true; return o; }
         public static JObj Put(this JObj o, string k, string v) { if (v != null) o[k] = v; return o; }
         public static JObj PutV(this JObj o, string k, Vec2 v) { if (v.X != 0 || v.Y != 0) o[k] = V(v); return o; }

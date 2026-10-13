@@ -73,7 +73,7 @@ namespace Pez.Headless
             for (int i = 0; i < 10 * World.TickRate; i++) game.Advance(World.Dt);
             var path = new Dictionary<int, float>(); var start = new Dictionary<int, Vec2>(); var last = new Dictionary<int, Vec2>();
             var orders = new Dictionary<int, Dictionary<string, int>>();
-            var moving = new Dictionary<int, int>(); var facingTurn = new Dictionary<int, float>(); var lastFacing = new Dictionary<int, float>(); var flips = new Dictionary<int, int>();
+            var moving = new Dictionary<int, int>(); var facingTurn = new Dictionary<int, float>(); var lastFacing = new Dictionary<int, float>(); var flips = new Dictionary<int, int>(); var slid = new Dictionary<int, float>(); var slidStill = new Dictionary<int, float>();
             int ticks = (int)(seconds * World.TickRate);
             var trace = (Environment.GetEnvironmentVariable("PEZ_TRACE") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries).Select(int.Parse).ToHashSet();
             for (int i = 0; i < ticks; i++)
@@ -85,8 +85,15 @@ namespace Pez.Headless
                 foreach (var e in w.Entities)
                 {
                     if (e.Dead || e.IsStructure || e.IsMine || e.IsCarried) continue;
-                    if (!start.ContainsKey(e.Id)) { start[e.Id] = last[e.Id] = e.Pos; path[e.Id] = 0; orders[e.Id] = new(); moving[e.Id] = 0; lastFacing[e.Id] = e.Facing; facingTurn[e.Id] = 0; flips[e.Id] = 0; }
-                    path[e.Id] += Vec2.Dist(e.Pos, last[e.Id]); last[e.Id] = e.Pos;
+                    if (!start.ContainsKey(e.Id)) { start[e.Id] = last[e.Id] = e.Pos; path[e.Id] = 0; orders[e.Id] = new(); moving[e.Id] = 0; lastFacing[e.Id] = e.Facing; facingTurn[e.Id] = 0; flips[e.Id] = 0; slid[e.Id] = 0; slidStill[e.Id] = 0; }
+                    var dp = e.Pos - last[e.Id]; float dl = dp.Length;
+                    if (!e.IsAir && dl > 0.004f)
+                    {
+                        // Sliding: moved while not walking/driving, or crabwise (over 0.8 rad off its facing).
+                        float off = MathF.Abs(MathF.Atan2(MathF.Sin(dp.Angle - e.Facing), MathF.Cos(dp.Angle - e.Facing)));
+                        if (!e.Moving) slidStill[e.Id] += dl; else if (off > 0.8f) slid[e.Id] += dl;
+                    }
+                    path[e.Id] += dl; last[e.Id] = e.Pos;
                     var o = e.OrderName + (e.Retreating ? "+retreat" : "") + (w.Time < e.GhostUntil ? "+ghost" : "");
                     orders[e.Id][o] = orders[e.Id].TryGetValue(o, out var c) ? c + 1 : 1;
                     if (e.Moving) moving[e.Id]++;
@@ -95,7 +102,7 @@ namespace Pez.Headless
             }
             var rows = start.Keys.Select(id => w.Get(id)).Where(e => e != null && !e.Dead).Select(e => new
             {
-                e, path = path[e.Id], net = Vec2.Dist(start[e.Id], e.Pos), mv = moving[e.Id] / (float)ticks, turn = facingTurn[e.Id], flips = flips[e.Id],
+                e, path = path[e.Id], net = Vec2.Dist(start[e.Id], e.Pos), mv = moving[e.Id] / (float)ticks, turn = facingTurn[e.Id], flips = flips[e.Id], slid = slid[e.Id], still = slidStill[e.Id],
                 top = string.Join(",", orders[e.Id].OrderByDescending(kv => kv.Value).Take(3).Select(kv => $"{kv.Key}:{kv.Value * 100 / ticks}%")),
             }).ToList();
             var dancers = rows.Where(r => r.path > 4f && r.net < r.path * 0.25f).OrderByDescending(r => r.path - r.net).ToList();
@@ -111,6 +118,41 @@ namespace Pez.Headless
             Console.WriteLine($"{spinners.Count} spin (a facing snap of over 0.8 rad at least every 5 s)");
             foreach (var r in spinners.Take(verbose ? 60 : 15))
                 Console.WriteLine($"  #{r.e.Id} t{r.e.Team} {r.e.Def.Key,-20} flips {r.flips,4} path {r.path,5:0.0} net {r.net,4:0.0} moving {r.mv:P0}  {r.top}");
+            var sliders = rows.Where(r => r.slid + r.still > 1f).OrderByDescending(r => r.slid + r.still).ToList();
+            Console.WriteLine($"{sliders.Count} slide over a tile ({sliders.Sum(r => r.slid):0} tiles crabwise while moving, {sliders.Sum(r => r.still):0} while standing)");
+            foreach (var g in sliders.GroupBy(r => r.e.Def.Key).OrderByDescending(g => g.Sum(r => r.slid + r.still)))
+                Console.WriteLine($"  {g.Key,-20} x{g.Count(),3}: crabwise {g.Sum(r => r.slid),5:0.0} standing {g.Sum(r => r.still),5:0.0}");
+            foreach (var r in sliders.Take(verbose ? 40 : 10))
+                Console.WriteLine($"  #{r.e.Id} t{r.e.Team} {r.e.Def.Key,-20} crabwise {r.slid,5:0.0} standing {r.still,5:0.0} path {r.path,5:0.0}  {r.top}");
+            return 0;
+        }
+
+        /// <summary>
+        /// Debug aid (--drift A --to B): how far a copy restored from snapshot A and run to B's tick ends up from B, unit by
+        /// unit: what a browser view, which runs on between snapshots, has to correct (and slide) at each one.
+        /// </summary>
+        public static int Drift(string a, string b)
+        {
+            var game = new Game(new GameConfig { Seed = 1, MapSize = 48, Controllers = new[] { "llm" } });
+            game.Restore(Snapshot.Parse(System.IO.File.ReadAllText(a)));
+            var truth = new Game(new GameConfig { Seed = 1, MapSize = 48, Controllers = new[] { "llm" } });
+            truth.Restore(Snapshot.Parse(System.IO.File.ReadAllText(b)));
+            var w = game.World; var t = truth.World;
+            int from = w.Tick;
+            // As the browser does: B's orders, given again at their ticks (snapshots from before rules 37's host carry none).
+            int replayed = 0;
+            foreach (var x in Snapshot.Parse(System.IO.File.ReadAllText(b)).Obj("world").Arr("commands"))
+                if (x is List<object> l && l.Count >= 4 && l[3] is Dictionary<string, object> cmd && Environment.GetEnvironmentVariable("PEZ_NOREPLAY") == null)
+                { game.Replay[(long)(double)l[0]] = new LoggedCommand { Seq = (long)(double)l[0], Tick = (int)(double)l[1], Team = (int)(double)l[2], Cmd = cmd }; replayed++; }
+            Console.WriteLine($"B carries {replayed} orders to replay");
+            while (w.Tick < t.Tick) game.CatchUp(Math.Min(t.Tick, w.Tick + 60), 0);
+            var rows = t.Entities.Where(e => !e.Dead && !e.IsStructure && !e.IsMine && !e.IsCarried && w.ById.ContainsKey(e.Id))
+                .Select(e => (e, c: w.ById[e.Id], d: Vec2.Dist(e.Pos, w.ById[e.Id].Pos))).OrderByDescending(r => r.d).ToList();
+            Console.WriteLine($"ran {from} to {t.Tick} ({(t.Tick - from) * World.Dt:0.0}s): {rows.Count} units; off by > 0.1 tile: {rows.Count(r => r.d > 0.1f)}, > 0.5: {rows.Count(r => r.d > 0.5f)}, > 2: {rows.Count(r => r.d > 2f)}; mean {(rows.Count > 0 ? rows.Average(r => r.d) : 0):0.00}");
+            int sameOrder = rows.Count(r => r.d > 0.1f && r.e.Order == r.c.Order && Vec2.Dist(r.e.OrderPos, r.c.OrderPos) < 0.5f && r.e.TargetId == r.c.TargetId);
+            Console.WriteLine($"  of those off by > 0.1, {sameOrder} have the same order in both (drift without a new command)");
+            foreach (var r in rows.Take(25))
+                Console.WriteLine($"  #{r.e.Id} t{r.e.Team} {r.e.Def.Key,-16} off {r.d,5:0.00}  truth {r.e.OrderName} to {r.e.OrderPos} tgt {r.e.TargetId}  copy {r.c.OrderName} to {r.c.OrderPos} tgt {r.c.TargetId}");
             return 0;
         }
     }
