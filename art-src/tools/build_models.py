@@ -698,15 +698,56 @@ def S_radar_dome():
     return a
 
 def S_gun_turret():
-    a = Asset('gun_turret', 'structures', 1)
-    a.box('cream', .9, .28, .9, y=.14)
-    tu = a.node('turret', a.key, (0, .28, 0))
-    a.cyl('steel', .28, .06, y=.03, node=tu)
-    a.box('team', .5, .3, .52, y=.21, node=tu)
-    a.box('team', .5, .08, .1, y=.4, z=-.2, node=tu, rot=rx(-20))
-    br = a.node('barrel', tu, (0, .2, .26))
-    a.cyl('steel', .06, .36, z=.18, axis='z', node=br)
-    a.box('steel', .16, .12, .12, z=.38, node=br)
+    a = Asset('gun_turret', 'structures', 1); pad(a, 1)
+    # The stem: a cream octagonal bunker tapering up to the smoke-plastic collar the head turns on. A
+    # magazine window in its front face shows the candy-brick rounds stacked inside, waiting to be fed up into the gun.
+    bunker = trimesh.creation.revolve(np.array([(0, .08), (.43, .08), (.37, .27), (0, .27)], float), sections=8)
+    bunker.apply_transform(axis_rot('y')); bunker.apply_transform(ry(22.5)); a.add(None, 'cream', bunker)
+    a.cyl('smoke', .29, .05, y=.275, sections=24)                      # the collar the head turns on
+    a.box('dark', .17, .14, .02, y=.17, z=-.372, rot=rx(17))           # magazine window (the face leans in 17 deg)
+    for k in range(3): a.box('bone', .13, .03, .025, y=.125 + k * .043, z=-.388 + k * .013, rot=rx(17))
+    # A kraft ammo crate on the plinth's back corner, a few rounds on its lid.
+    a.box('kraft', .16, .12, .13, x=.33, y=.14, z=.33, rot=ry(45))
+    for k in range(2): a.box('bone', .05, .035, .1, x=.33 + (k - .5) * .045, y=.22, z=.33 + (.5 - k) * .045, rot=ry(45))
+    # The head (turret): the team flip-top, hinged at its back edge, on a steel turntable. In front of it the gun is a
+    # revolver: a steel drum (the drum node, its axis along +Z) holds six candy-brick rounds and turns one chamber per
+    # shot, lining the next one up with the barrel above it. The barrel slides back in its sleeve on firing (PezMotion's
+    # recoil) and compresses the spring steel recoil spring (the spring node, along +Z) against a collar; the brick
+    # muzzle is its far end. Everything on the turret clears the stem (nothing on it reaches below the turntable).
+    tu = a.node('turret', a.key, (0, .3, 0))
+    a.cyl('steel', .24, .04, y=.02, node=tu, sections=24)             # turntable
+    # The head: a team wedge, tall at the back and sloping down to its face (so it shows which way it looks even from
+    # straight above), under a lid that overhangs it a little.
+    hw, zb, zf, yb, yf = .21, -.27, .10, .26, .19
+    head = trimesh.convex.convex_hull(np.array([(sx * hw, y, z) for sx in (-1, 1) for (y, z) in ((.03, zb), (yb, zb), (yf, zf), (.03, zf))], float))
+    a.add(tu, 'team', head)
+    tilt = math.degrees(math.atan2(yb - yf, zf - zb))
+    n = np.array([0, math.cos(math.radians(tilt)), math.sin(math.radians(tilt))])
+    c = np.array([0, (yb + yf) / 2, (zb + zf) / 2]) + n * .03
+    a.box('team', .46, .06, .39, y=c[1], z=c[2], node=tu, rot=rx(tilt))  # the lid
+    a.cyl('steel', .025, .38, y=yb + .02, z=zb - .02, axis='x', node=tu)  # its hinge pin
+    a.box('dark', .22, .035, .02, y=.15, z=zf, node=tu)                 # the gunner's sight slit
+    dy, dz, dr, dl = .165, .19, .115, .13                               # drum axis height, centre, radius, length
+    ry_ = .095                                                          # the rounds' radius in the drum
+    by = dy + ry_                                                       # barrel axis: level with the drum's top chamber
+    a.cyl('steel', .025, .2, y=dy, z=dz, axis='z', node=tu)            # drum axle, from the head to the yoke
+    a.box('steel', .08, by + .03 - dy, .03, y=(dy + by + .03) / 2, z=.29, node=tu)  # the yoke: axle up to the sleeve
+    a.cyl('steel', .065, .12, y=by, z=.34, axis='z', node=tu)          # barrel sleeve
+    dr_ = a.node('drum', tu, (0, dy, dz))
+    a.cyl('smoke', dr, dl, axis='z', node=dr_, sections=6)
+    for sz in (-1, 1): a.cyl('foil', .055, .02, z=sz * (dl / 2 + .005), axis='z', node=dr_, sections=12)  # hub caps
+    for k in range(6):                                                  # the rounds, seated in its six flats
+        t = math.radians(90 + 60 * k)
+        a.box('bone', .062, .032, dl + .01, x=ry_ * math.cos(t), y=ry_ * math.sin(t), node=dr_, rot=rz(60 * k))
+    a.node('eject', tu, (-.17, dy + .03, dz))                           # where spent cases leave (the drum's side)
+    sp = a.node('spring', tu, (0, by, .40), rot=rx(90))                # recoil spring: local +Y runs along the barrel
+    a.coil('steel', .058, .011, .0, .15, 3, node=sp, per_turn=16, sides=6)
+    br = a.node('barrel', tu, (0, by, .28))
+    a.cyl('steel', .045, .27, z=.235, axis='z', node=br, sections=16)  # tube (its breech end stays in the sleeve)
+    a.cyl('foil', .072, .03, z=.285, axis='z', node=br, sections=16)    # the collar the spring presses on
+    a.box('team', .15, .12, .12, z=.43, node=br)                        # brick muzzle
+    a.cyl('dark', .036, .01, z=.49, axis='z', node=br, sections=12)     # the bore
+    for sx in (-1, 1): a.box('dark', .01, .055, .028, x=sx * .076, z=.43, node=br)  # side vents
     return a
 
 def S_sam_site():

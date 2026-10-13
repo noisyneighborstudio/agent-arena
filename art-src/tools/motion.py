@@ -202,8 +202,16 @@ STRUCTURES = [
  S('radar_dome', 'Reveals the minimap.', "The spinner (dish) yaws at 12 rpm. When it detects a new enemy, it snaps to that direction at 180°/s, holds for 1 s, then resumes rotating. "
    "When power is low, the dish stops and the beacon goes out.",
    dict(spinner=dict(axis='Y', idle_rpm=12, active_rpm=12, spinup_s=.5)), "The amber beacon blinks every 1 s."),
- S('gun_turret', 'Ground defence cannon.', "The turret yaws at 120°/s and fires when within 5° of the target. Recoil is 0.1 over 0.05 s with a 0.3 s return. The turret has 360° of rotation.",
-   dict(**TURRET(120), **BARREL(.1, .05, .3)), "Slow ±45° scan every 5 s."),
+ S('gun_turret', 'Ground defence cannon.', "A revolver cannon under a team flip-top head. The turret has 360° of rotation and follows the sim's aim "
+   "(at least 240°/s in the view, so the shot leaves along the barrel); the sim fires within 20° of the target, every 1.3 s. Shots and flashes leave "
+   "from the brick muzzle at the barrel's far end. On each shot the barrel recoils 0.1 into its sleeve over 0.05 s and returns over 0.3 s, pressing "
+   "the recoil spring round it against the sleeve (spring, scaled along the barrel to the gap the collar leaves). The drum (six candy-brick rounds) "
+   "indexes one chamber, 60°, starting 0.05 s after the shot and taking 0.2 s, turning the fired chamber toward the ejection side (the eject marker) and "
+   "the next round up to the barrel; halfway through, the spent round's foil wrapper flicks out of that side and tumbles to the ground. "
+   "Low power doesn't slow it.",
+   dict(**TURRET(120), **BARREL(.1, .05, .3), drum=dict(axis='Z', index_deg=60, delay_s=.05, index_s=.2),
+        spring=dict(mode='scale_y_with_recoil')),
+   "Holds its aim 3 s after a fight, settles forward, and now and then (every 20–45 s) glances up to 24° to one side for 2–3 s."),
  S('sam_site', 'Anti-air missile launcher.', "A twin-pod launcher on a jacked turntable. The turret yaws at 200°/s to the sim's aim. The rack (barrel: the elevation axle "
    "with a two-tube pod on each end) rests 25° nose-up; while the site is engaging it raises to the air target it faces, 10° to 70° (eased, up to 140°/s), "
    "holds that 3 s after the last launch, then settles back. The search radar (radar) turns at 20 rpm (10 on low power); on contact it carries on round to "

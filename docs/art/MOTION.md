@@ -121,10 +121,12 @@ Units are tiles (1 tile = 1 Unity unit) and seconds. Rotation speeds are in degr
 ### `gun_turret`
 *Ground defence cannon.*
 
-- **Mechanics:** The turret yaws at 120°/s and fires when within 5° of the target. Recoil is 0.1 over 0.05 s with a 0.3 s return. The turret has 360° of rotation.
+- **Mechanics:** A revolver cannon under a team flip-top head. The turret has 360° of rotation and follows the sim's aim (at least 240°/s in the view, so the shot leaves along the barrel); the sim fires within 20° of the target, every 1.3 s. Shots and flashes leave from the brick muzzle at the barrel's far end. On each shot the barrel recoils 0.1 into its sleeve over 0.05 s and returns over 0.3 s, pressing the recoil spring round it against the sleeve (spring, scaled along the barrel to the gap the collar leaves). The drum (six candy-brick rounds) indexes one chamber, 60°, starting 0.05 s after the shot and taking 0.2 s, turning the fired chamber toward the ejection side (the eject marker) and the next round up to the barrel; halfway through, the spent round's foil wrapper flicks out of that side and tumbles to the ground. Low power doesn't slow it.
 - **`turret`:** yaw_speed_deg=120, yaw_limit_deg=360, idle_scan=True
 - **`barrel`:** recoil=0.1, recoil_out_s=0.05, return_s=0.3, pitch_deg=0
-- **Idle:** Slow ±45° scan every 5 s.
+- **`drum`:** axis=Z, index_deg=60, delay_s=0.05, index_s=0.2
+- **`spring`:** mode=scale_y_with_recoil
+- **Idle:** Holds its aim 3 s after a fight, settles forward, and now and then (every 20–45 s) glances up to 24° to one side for 2–3 s.
 
 ### `sam_site`
 *Anti-air missile launcher.*

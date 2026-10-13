@@ -581,7 +581,7 @@ namespace Pez.Sim
             Lane("flak_track", "recon_drone", a0, 14, 6.2f, "Flak (air bursts)");
             Lane("gunship", "light_tank", a0, 18, 4.4f, "Gunship rockets");
             Lane("stealth_bomber", "outpost", a0, 22.5f, 0f, "Stealth bomber (bombs)");
-            Lane("gun_turret", "light_tank", a0, 26, 5f, "Gun turret");
+            TurretLane(a0 + 13, 24); // out on its own, clear of the bomber's runs and the lanes either side
             // The SAM site tracks a gunship flying to and fro across its front, from 5.7 tiles out to 2.5 (the rack climbs
             // from about 23 to 44 degrees as it closes), and launches at it.
             {
@@ -612,6 +612,24 @@ namespace Pez.Sim
                     if (shooter.Order != Order.Attack || shooter.TargetId != target.Id) w.SetOrder(shooter, Order.Attack, target.Center, target.Id);
                 });
             Item(name, $"{Pretty(shooterKey)} firing at a {Pretty(targetKey)}", a + dist / 2, b, zoom);
+        }
+
+        /// <summary>The gun turret at (a, b) tracking a Cherry light tank that drives back and forth across its front, 4 to 4.7
+        /// tiles out (in range the whole way, its bearing swinging about 64 deg), and firing at it forever.</summary>
+        void TurretLane(float a, float b)
+        {
+            var turret = Bldg(Blue, "gun_turret", a, b);
+            var tank = Unit(Red, "light_tank", a + 4f, b - 2.5f, Toward, pin: false);
+            var from = P(a + 4f, b - 2.5f); var to = P(a + 4f, b + 2.5f);
+            void Go() { w.SetOrder(tank, Order.Move, to); tank.Waypoints.Add(from); tank.WaypointLoop = true; }
+            Go();
+            holds.Add(() =>
+            {
+                if (turret.Dead || tank.Dead) return;
+                if (tank.Order != Order.Move) Go();
+                w.FireFor(turret, tank);
+            });
+            Item("Gun turret", "tracking a Light Tank driving back and forth across its front: the drum turns a round up per shot, the recoil spring takes the kick", a + 2.5f, b);
         }
 
         void Motion()

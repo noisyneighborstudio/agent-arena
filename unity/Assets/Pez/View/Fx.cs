@@ -78,6 +78,7 @@ namespace Pez.View
         static readonly Color32 Hull = PezPalette.MaterialsSmokePlastic;
         static readonly Color32 Steel = PezPalette.MaterialsSpringSteel;
         static readonly Color32 Licorice = PezPalette.MaterialsLicorice;
+        static readonly Color32 Foil = PezPalette.MaterialsFoil;
         static readonly Color32 ScorchCol = new Color32(24, 19, 17, 215);
         static readonly Vector3 Up = Vector3.up;
         /// <summary>How long a vehicle wreck smokes (s); the wreck lies 20 s.</summary>
@@ -485,6 +486,13 @@ namespace Pez.View
         {
             var v = dir * Random.Range(0.6f, 1.1f) + Up * Random.Range(0.8f, 1.4f) + Random.insideUnitSphere * 0.2f;
             S.EmitShard(lip + Random.insideUnitSphere * 0.06f, v, Random.Range(0.09f, 0.13f), Random.Range(2.2f, 3.2f), Vary(c, 0.1f, (byte)(glow ? 255 : 0)));
+        }
+
+        /// <summary>A gun turret's spent round: its foil wrapper flicks out of the drum's side, tumbles down and settles.</summary>
+        public static void SpentWrapper(Vector3 port, Vector3 side)
+        {
+            var v = side * Random.Range(0.9f, 1.3f) + Up * Random.Range(0.9f, 1.3f) + Random.insideUnitSphere * 0.15f;
+            S.EmitShard(port + side * 0.02f, v, Random.Range(0.035f, 0.045f), Random.Range(1.4f, 1.9f), Vary(Foil, 0.08f, 0));
         }
 
         /// <summary>The ore lands in the bay: a puff of dust tinted toward the ore, rising over the truck so it reads from
