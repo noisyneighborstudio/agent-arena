@@ -499,12 +499,109 @@ def S_barracks():
     return a
 
 def S_factory():
+    """A Pez dispenser lying on its side, turning out vehicles. The door end is the dispenser's head; behind it the
+    stem is an open tray (the candy channel) with a spring-loaded pusher that feeds each vehicle into the head; a
+    gantry on the tray's walls carries a team head from the press at the back and drops it onto the hull; the press
+    stamps heads off a foil wrapper roll. FactoryWorks runs all of it from the sim's production queue."""
     a = Asset('factory', 'structures', 3); pad(a, 3)
-    a.box('foil', 2.75, 1.0, 2.55, y=.58, z=.1)
-    for z in (-1.17, 1.37): a.box('steel', 2.8, .12, .12, y=1.1, z=z)  # crimps
-    a.box('team', 2.78, 1.02, .55, y=.585, z=.25)                        # wrapper band
-    door(a, 1.5, .8, -1.18, anim=True)
-    a.cyl('steel', .12, .5, x=1.0, y=1.3, z=.9)
+    s1, s2, s3 = a.node('stage_1', a.key), a.node('stage_2', a.key), a.node('stage_3', a.key)
+    # The head house (the dispensing chamber) with the vehicle door in its face; units spawn inside it, 0.6 behind the
+    # door. Lower half in stage 1, upper in stage 2, so the shell climbs in two steps.
+    hz, hd = -.85, .7                                               # centre and depth: face at z -1.2, back at -0.5
+    a.box('cream', 1.96, .37, hd, y=.265, z=hz)
+    a.box('cream', 1.96, .5, hd, y=.7, z=hz)
+    door(a, 1.5, .8, -1.21, anim=True)
+    a.box('dark', .62, .34, .04, y=.64, z=-.49)                     # the chamber's mouth on the tray side
+    a.node('chamber', s2, (0, .6, -.5))                              # where the pusher stops: the vehicle is in the head
+    a.box('smoke', 1.56, .05, .6, y=.94, z=hz)                      # the neck: a dark seam under the head
+    # The flip-top head: team, hinged at its back edge (the head node's pivot), with a chin over the door (the door is
+    # its mouth) and two porthole eyes (the line's control room). FactoryWorks lifts it as the door rolls up, so the
+    # head opens as each vehicle is dispensed.
+    hd_ = a.node('head', s3, (0, .96, -.5))
+    a.box('team', 1.62, .2, .66, y=.1, z=-.37, node=hd_)
+    loaf = trimesh.creation.cylinder(radius=.33, height=1.62, sections=24)  # the head's rounded crown
+    loaf.apply_transform(axis_rot('x')); loaf.apply_scale((1, .55, 1)); loaf.apply_translation((0, .2, -.37)); a.add(hd_, 'team', loaf)
+    a.box('team', 1.5, .12, .14, y=0, z=-.74, node=hd_)             # chin over the door
+    for sx in (-1, 1):
+        a.cyl('steel', .1, .03, x=sx * .42, y=.17, z=-.705, axis='z', node=hd_, sections=12)
+        a.cyl('dark', .072, .03, x=sx * .42, y=.17, z=-.718, axis='z', node=hd_, sections=12)
+    a.cyl('steel', .04, 1.5, axis='x', node=hd_, sections=12)       # hinge pin
+    # The stem: a cream base with smoke grip ribs, carrying the tray (smoke U-channel, steel floor, dark line rails).
+    a.box('cream', 1.44, .37, 1.45, y=.265, z=.225)
+    for sx in (-1, 1):
+        for k in range(4): a.box('cream', .04, .24, .1, x=sx * .73, y=.25, z=-.27 + k * .34)
+    for sx in (-1, 1):
+        a.box('smoke', .15, .3, 1.35, x=sx * .545, y=.6, z=.175)    # tray walls
+        a.box('steel', .07, .025, 1.35, x=sx * .545, y=.762, z=.175)  # the gantry's runway
+    a.box('steel', .94, .02, 1.35, y=.46, z=.175)                   # tray floor
+    for sx in (-1, 1): a.box('dark', .04, .03, 1.35, x=sx * .2, y=.485, z=.175)  # line rails
+    # The spring and its pusher. The spring node's +y runs along -z from its seat on the press's front face;
+    # FactoryWorks stretches it (scale y) to keep it on the pusher, which it moves with the vehicle's progress.
+    zs, L0, zp = .85, .74, .5
+    a.cyl('cream', .15, .03, y=.6, z=zs - .015, axis='z', sections=24)       # spring seat
+    sp = a.node('spring', s2, (0, .6, zs), rot=rx(-90) @ np.diag([1, (zs - zp) / L0, 1, 1]))
+    a.coil('cream', .13, .017, 0, L0, 8, node=sp, per_turn=16, sides=5)
+    pu = a.node('pusher', s2, (0, .6, zp))
+    a.box('steel', .84, .26, .05, node=pu)
+    a.cyl('cream', .09, .06, z=.03, axis='z', node=pu, sections=12)
+    # The vehicle on the line: a hull blank on tracks, facing the door; its team head (blank_head) is dropped on by the
+    # gantry. Hidden while the line is empty.
+    bl = a.node('blank', s2, (0, .47, zp - .3))
+    for sx in (-1, 1): a.box('licorice', .1, .14, .5, x=sx * .17, y=.07, node=bl)
+    a.box('cream', .26, .12, .46, y=.15, node=bl)                   # a raw cream blank: the candy before its head
+    a.box('dark', .12, .02, .1, y=.215, z=-.15, node=bl)
+    bh = a.node('blank_head', bl, (0, .21, .02), rot=np.diag([1e-3, 1e-3, 1e-3, 1]))  # not on yet (static pose)
+    a.box('team', .22, .1, .2, y=.05, node=bh)
+    a.box('dark', .22, .02, .02, y=.05, z=-.1, node=bh)
+    # The gantry: end trucks on the runway, legs, a team bridge, a trolley; the hoist (hook block and the head it
+    # carries, hook_head) hangs from the cable, which FactoryWorks stretches as it lets the hoist down.
+    ga = a.node('gantry', s2, (0, .775, zp - .3))
+    for sx in (-1, 1):
+        a.box('steel', .1, .06, .22, x=sx * .545, y=.03, node=ga)
+        a.strut('steel', (sx * .545, .05, -.06), (sx * .5, .33, 0), .022, node=ga, sections=6)
+        a.strut('steel', (sx * .545, .05, .06), (sx * .5, .33, 0), .022, node=ga, sections=6)
+    a.box('team', 1.18, .09, .12, y=.36, node=ga)
+    a.box('steel', .16, .07, .17, y=.285, node=ga)
+    hy = .02                                                       # the hoist's height under the bridge (static pose: half way down)
+    cb = a.node('cable', ga, (0, .25, 0), rot=np.diag([1, (.25 - hy) / .1, 1, 1]))
+    for sx in (-1, 1): a.strut('dark', (sx * .025, 0, 0), (sx * .025, -.1, 0), .006, node=cb, sections=6)
+    ho = a.node('hoist', ga, (0, hy, 0))
+    a.box('dark', .14, .05, .1, y=-.025, node=ho)
+    hh = a.node('hook_head', ho, (0, -.15, 0))                     # each head node's origin is its base (hook_head,
+    a.box('team', .22, .1, .2, y=.05, node=hh)                     # die_head, blank_head), so they can swap in place
+    # The press at the back: a cream frame with a team crown, the ram (its own node) stamping onto a dark die. The
+    # stamped head waits on the press's front edge (die_head) for the gantry.
+    a.box('cream', 1.24, .67, .56, y=.415, z=1.13)
+    a.box('dark', .5, .03, .3, y=.765, z=1.18)
+    for sx in (-1, 1): a.box('cream', .16, .62, .32, x=sx * .5, y=1.06, z=1.18)
+    a.box('team', 1.04, .12, .36, y=1.41, z=1.18)
+    crown = trimesh.creation.cylinder(radius=.18, height=1.04, sections=20)  # the press's crown, a smaller team head
+    crown.apply_transform(axis_rot('x')); crown.apply_scale((1, .55, 1)); crown.apply_translation((0, 1.46, 1.18)); a.add(None, 'team', crown)
+    a.box('steel', .7, .04, .42, y=1.33, z=1.18)
+    rm = a.node('ram', s3, (0, 1.31, 1.18))
+    a.cyl('steel', .06, .2, y=-.06, node=rm, sections=10)
+    a.box('steel', .5, .14, .26, y=-.2, node=rm)
+    dh = a.node('die_head', s2, (0, .75, .93))
+    a.box('team', .22, .1, .2, y=.05, node=dh)
+    # The foil wrapper roll on its cradle beside the press, feeding its strip in; spool turns as the press indexes.
+    sx_, sz_ = 1.06, 1.05
+    for dz in (-.2, .2): a.box('steel', .26, .3, .05, x=sx_, y=.23, z=sz_ + dz)
+    spl = a.node('spool', s2, (sx_, .4, sz_))
+    a.cyl('foil', .27, .3, axis='z', node=spl, sections=18)
+    for dz in (-.16, .16): a.cyl('cream', .3, .03, z=dz, axis='z', node=spl, sections=18)
+    a.cyl('steel', .05, .44, axis='z', node=spl, sections=10)
+    for k in range(3): a.box('steel', .03, .5, .02, z=-.175, rot=rz(60 * k), node=spl)
+    a.box('foil', .46, .012, .22, x=.85, y=.672, z=1.05)               # the strip into the press
+    # The press's exhaust stack in the back corner; stack_0 marks its mouth.
+    kx, kz = -1.06, 1.06
+    a.cyl('cream', .22, .22, x=kx, y=.19, z=kz, sections=24)
+    a.rev('cream', [(0, .3), (.13, .3), (.09, 1.55), (0, 1.55)], x=kx, z=kz)
+    a.cyl('team', .115, .09, x=kx, y=1.3, z=kz, sections=24)
+    a.cyl('steel', .11, .06, x=kx, y=1.56, z=kz, sections=16)
+    a.cyl('dark', .075, .02, x=kx, y=1.59, z=kz, sections=16)
+    a.node('stack_0', a.key, (kx, 1.6, kz))
+    # Spare tyres stacked in the yard.
+    for k in range(2): a.cyl('licorice', .13, .07, x=1.1, y=.12 + k * .075, z=-.25, sections=12)
     return a
 
 def S_electronics_plant():

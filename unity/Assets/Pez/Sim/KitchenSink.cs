@@ -480,7 +480,7 @@ namespace Pez.Sim
 
         void Power()
         {
-            Begin("power", "Power", "Blueberry is powered; Lime's base draws more than its plant makes.", 72, 80, 40, 16);
+            Begin("power", "Power", "Blueberry is powered; Lime's base draws more than its plant makes.", 72, 80, 50, 16);
             string[] row = { "power_plant", "barracks", "electronics_plant", "radar_dome", "optics_lab" };
             for (int i = 0; i < row.Length; i++)
             {
@@ -509,6 +509,22 @@ namespace Pez.Sim
             Item("Powered (Blueberry)", "power plant cores glow with the load, steady steam; consumers at full light and speed", 16, 10, 9);
             Item("Low power (Lime)", "plant cores flicker at 4 Hz with dropouts, steam sputters; consumers dimmed to half, machinery at half speed", 16, 3, 9);
             Item("Fusion reactor", "the plasma ring circulates and a pellet fires into it every few seconds; every 22 s it runs dry for 8 s: the plasma quenches and the magazine empties, then refuels and the solenoid strikes it alight", 34, 10, 8);
+
+            // A factory on each side (beside Lime's airfield) making a heavy tank that never finishes (it starts over 2 s short of done, so no roll-out
+            // and no lamps): the line, gantry and press at full speed on Blueberry, at half and labouring on Lime.
+            foreach (var (team, b) in new[] { (Blue, 10f), (Green, 3f) })
+            {
+                var fac = Bldg(team, "factory", 46, b);
+                var q = w.Teams[team].UnitQueues[Producer.Factory];
+                var item = new ProdItem { Key = "heavy_tank", StructureId = fac.Id };
+                float cap = w.Def("heavy_tank").BuildTime - 2f;
+                holds.Add(() =>
+                {
+                    if (!q.Contains(item)) q.Insert(0, item);
+                    if (item.Progress >= cap) item.Progress = 0f;
+                });
+            }
+            Item("Factory line, powered and low", "the line, gantry and press making a heavy tank that never finishes: Blueberry at full speed, Lime at half with the press labouring", 46, 6.5f, 9);
         }
 
         void Fires()

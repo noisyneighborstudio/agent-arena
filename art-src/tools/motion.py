@@ -167,8 +167,27 @@ STRUCTURES = [
    dict(head=dict(mode='flip_top', open_s='1.25 s before the soldier is out', close_s='after the spit'),
         stack=dict(mode='rise_with_progress', slots=4), soldier=dict(mode='spit_tuck_roll', spit_s=.55, roll_s=.35, spin_deg=720, tuck=.65)),
    "The flag on the pole (flag) is cloth: it streams downwind and ripples, harder in a stronger wind.", ['rifleman', 'rocket_soldier', 'laser_trooper', 'medic']),
- S('factory', 'Builds vehicles.', "While building, the team wrapper band pulses brighter by 10%. Each finished vehicle comes out through the roll-up door. The door takes 0.35 s to open.",
-   dict(door=dict(mode='rollup', open_s=.35, close_s=.5)), "Exhaust stack puffs every 3 s.", ['mining_truck', 'repair_truck', 'outpost_truck', 'scout_buggy', 'light_tank', 'heavy_tank', 'artillery', 'laser_tank']),
+ S('factory', 'Builds vehicles.', 'A Pez dispenser lying on its side: the head house over the door is its flip-top head, the tray behind it the candy channel. It runs from the item the '
+   'factory is making (f = progress / build time, so low power halves it with the sim). A hull blank rises onto the tray at the back (f 0 to 0.12). The '
+   "gantry (gantry node, on the tray walls) dips its hoist over the press and picks up a team head (hook_head takes die_head's place, f 0.09), carries it "
+   'over the hull (f 0.14 to 0.3), lets it down on its cable and sets it on (blank_head, f 0.44) with welding sparks every 0.2 s, and lifts the hook by f '
+   '0.55. Then the spring-loaded pusher (pusher; the cream spring node stretches to stay on it) feeds the hull up the tray into the head house, reaching '
+   'the chamber mouth at f 1, the gantry riding with it to the end of its runway. On trained the hull is inside, the pusher snaps back and the spring '
+   "recoils (a damped spring, about 12% overshoot), cocked for the next. A cancelled item's hull is dropped and its head goes back on the die. While "
+   'producing the press ram strokes 0.25 every 1.5 s (fall 0.1 s, dwell, slow rise); each stroke restocks the die, indexes the foil wrapper roll (spool) '
+   '36°, puffs steam off the die and pale smoke from the stack (stack_0). Low power: a stroke every 3 s with a stall on the way up, sparks every 0.4 s. '
+   'The flip-top head (head node, hinged at its back edge) lifts up to 22° as the roll-up door opens and drops back with a bounce when it closes. '
+   "Roll-out anticipation (lamps, roof vents, the door open before the unit appears, the dark bay) is WorldView's RollOut. A remembered factory under fog "
+   "shows idle; a burning factory's stack doesn't puff.",
+   dict(door=dict(mode='rollup', open_s=.35, close_s=.5),
+        head=dict(mode='hinge_with_door', open_deg=22),
+        gantry=dict(mode='slide_z_with_progress', speed=1.6),
+        hoist=dict(mode='drop_on_cable', speed=.8),
+        pusher=dict(mode='slide_z_with_progress', push_from=.55),
+        spring=dict(mode='scale_y_to_pusher'),
+        ram=dict(mode='stroke', travel=.25, period_s=1.5, low_power_period_s=3),
+        spool=dict(axis='Z', index_deg=36)),
+   'The gantry parked over the press with its hook up and a head waiting on the die, the pusher cocked, the line empty; the stack gives a thin wisp every 3 s (every 4 to 7 s on low power).', ['mining_truck', 'repair_truck', 'outpost_truck', 'scout_buggy', 'light_tank', 'heavy_tank', 'artillery', 'laser_tank']),
  S('electronics_plant', 'Turns copper and steel into circuits.', "A circuit-candy line, one cycle per circuit the sim makes (1 s; 2 s on low power, which halves production). "
    "Each cycle the pick-and-place carriage (gantry, a little team head) dips its nozzle at the copper feeder, carries the chip (held) along its bridge, pecks it onto the board "
    "under it (chip_N appears, with a solder glint) and runs home; then the belt indexes one slot in 0.3 s: a blank drops out of the magazine, the boards (board_N) move on "
