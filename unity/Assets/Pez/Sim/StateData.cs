@@ -54,6 +54,7 @@ namespace Pez.Sim
                     .Set("working", e.Def.Recipes.Length > 0 || e.Def.Key == "fusion_reactor" ? (object)e.Working : null)
                     .Set("under_attack", w.Time - e.LastHitTime < 5);
                 if (e.IsArmed) s.Set("offline", e.Offline);
+                if (e.Def.Key == "fusion_reactor") s.Set("power_pct", StateView.Pct(e.Output)); // the share of its +500 its plasma pays for
                 var d = e.Def.Key == "deep_mine" ? w.Map.DepositById(e.DepositId) : null;
                 if (d != null) s.Set("ore", Defs.Ores[d.Type]).Set("deposit_left", (int)d.Amount).Set("runs_dry_in_s", (int)World.DeepMineSecondsLeft(d, t));
                 return (object)s;
