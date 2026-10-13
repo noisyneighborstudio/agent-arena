@@ -64,7 +64,7 @@ namespace Pez.View
             public Bounds? Roof;
             // Drop-offs: the dock lamps and chute, and what the bay's truck reported this frame or last.
             public DockView Dock;
-            public float BayYaw;         // degrees: how far its model is turned so the door faces the bay (a quarter turn each; 0 = south)
+            public float BayYaw;         // degrees: how far its model is turned so its door faces the side its trucks or units use (a quarter turn each; 0 = south)
             public int DockFrame = -10;
             public DockView.Phase DockBest;
             // Construction: the staked site, the last progress seen (stage landings) and the crane's beam cadence.
@@ -837,18 +837,22 @@ namespace Pez.View
         }
 
         /// <summary>
-        /// A drop-off's model faces its bay: the pack's doors face -Z (south), so the model (and the plinth ramp that goes with
-        /// the door) turns a quarter turn per side about its centre. Footprints are square, so it still fits. Everything built on
-        /// the model (door, lamps, crane, stacks) turns with it. The bay stays on its own side for life, unless an enemy building
-        /// goes up on its lane and the sim moves it to a clear side (World.Bay), so FollowBay checks for that.
+        /// A drop-off's model faces its bay, and a barracks' or factory's its door (the side its units come out on): the pack's doors
+        /// face -Z (south), so the model (and the plinth ramp that goes with the door) turns a quarter turn per side about its centre.
+        /// Footprints are square, so it still fits. Everything built on the model (door, lamps, crane, stacks) turns with it. The side
+        /// is kept for life, unless an enemy building goes up on a drop-off's lane and the sim moves its bay to a clear side
+        /// (World.Bay), so FollowBay checks for that.
         /// </summary>
         void TurnToBay(EV v)
         {
-            if (!v.E.Def.DropOff) return;
-            float yaw = -90f - World.Bay(v.E).facing * Mathf.Rad2Deg; // the door (-Z) turns from south to the bay's direction
-            v.BayYaw = Mathf.Round(yaw / 90f) * 90f;
+            if (!World.HasDoorSide(v.E.Def)) return;
+            float yaw = YawOfDoor(World.DoorFacing(v.E)); // the door (-Z) turns from south to the side its units and trucks use
+            v.BayYaw = yaw;
             v.Rig.Body.localRotation = Quaternion.Euler(0f, v.BayYaw, 0f);
         }
+
+        /// <summary>The yaw (degrees, a quarter turn each) that turns a model's -Z door to face the sim's direction `facing` (radians).</summary>
+        static float YawOfDoor(float facing) => Mathf.Round((-90f - facing * Mathf.Rad2Deg) / 90f) * 90f;
 
         /// <summary>
         /// Twice a second, a drop-off whose bay the sim has moved to another side (its lane was built over) turns its model, plinth
@@ -857,13 +861,11 @@ namespace Pez.View
         void FollowBay(EV v)
         {
             var e = v.E;
-            if (!e.IsStructure || !e.Def.DropOff || (Time.frameCount + e.Id) % 30 != 0) return;
-            float before = v.BayYaw;
-            var (bay, _, facing, _) = World.Bay(e);
-            if (Mathf.Approximately(Mathf.Round((-90f - facing * Mathf.Rad2Deg) / 90f) * 90f, before)) return;
+            if (!e.IsStructure || !World.HasDoorSide(e.Def) || (Time.frameCount + e.Id) % 30 != 0) return;
+            if (Mathf.Approximately(YawOfDoor(World.DoorFacing(e)), v.BayYaw)) return;
             TurnToBay(v);
             Plinths.Register(e.Id, v.Rig.Root.position, v.Rig.Plinth, v.BayYaw);
-            if (v.Dock != null) v.Dock.BayPoint = bay;
+            if (v.Dock != null) v.Dock.BayPoint = World.Bay(e).bay;
         }
 
         void UpdateView(EV v, float alpha)

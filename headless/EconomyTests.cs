@@ -30,6 +30,7 @@ namespace Pez.Headless
             BaysFaceTheOre();
             UnitsLeaveByTheDoor();
             BayFollowsABlockedLane();
+            SeatSymmetry();
             MatchClock();
             Derricks();
             SellRules();
@@ -775,7 +776,7 @@ namespace Pez.Headless
                     for (int x = cx - 5; x <= cx + 5; x++)
                     {
                         if (MathF.Sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy)) > r) continue;
-                        foreach (var (tx, ty) in new[] { (x, y), (80 - x, 80 - y) })
+                        foreach (var (tx, ty) in new[] { (x, y), (79 - x, 79 - y) })
                         {
                             int i = m.Idx(tx, ty);
                             m.Ore[i] = m.OreBase[i] = 300; m.OreType[i] = m.OreBaseType[i] = type;
@@ -855,6 +856,128 @@ namespace Pez.Headless
                   $"a snapshot from before bays turned loads with every bay south, and plays on ({oldDropOffs.Count} drop-offs, sides {string.Join(", ", oldDropOffs.Select(e => e.BaySide))}, {oldGame.World.Errors} errors: {oldGame.World.LastError})");
         }
 
+        /// <summary>
+        /// Two seats on opposite corners get the same of everything (#69): base sites (and so how far each is from its ore and from the
+        /// derricks), the tie-breaks that used to go to the first thing the scan met (the lowest y, then x: the south-west corner's side),
+        /// and who strikes first in a fight (units took turns in a fixed order, the first seat's units first). Each is told apart from
+        /// luck by turning a position half a circle about the middle of the map and seeing the other seat do the same.
+        /// </summary>
+        static void SeatSymmetry()
+        {
+            // Base sites on tile centres: each base the half-turned copy of the next, its command center included.
+            var off = new List<string>();
+            foreach (var size in new[] { 56, 80, 96, 128 })
+            {
+                var w = new World(4, 3, size);
+                var s = w.Map.Spawns;
+                bool ok = s.Take(4).All(p => p.X - MathF.Floor(p.X) == 0.5f && p.Y - MathF.Floor(p.Y) == 0.5f)
+                       && Vec2.Dist(s[1], new Vec2(size - s[0].X, size - s[0].Y)) < 1e-3f && Vec2.Dist(s[2], new Vec2(size - s[0].Y, s[0].X)) < 1e-3f && Vec2.Dist(s[3], new Vec2(s[0].Y, size - s[0].X)) < 1e-3f;
+                var hq = Enumerable.Range(0, 4).Select(t => w.Owned(t).First(e => e.Def.Key == "command_center")).ToArray();
+                ok &= hq[1].Origin.Equals(new Int2(size - 3 - hq[0].Origin.X, size - 3 - hq[0].Origin.Y));
+                if (!ok) off.Add($"{size}x{size}");
+            }
+            Check(off.Count == 0, "base sites are on tile centres, each the half-turned copy of the next, command centers too" + (off.Count > 0 ? $" (not on {string.Join(", ", off)})" : ""));
+            double toIron = 0, toDerrick = 0; int maps = 0, derrickMaps = 0;
+            for (int seed = 1; seed <= 40; seed++)
+            {
+                var w = new World(2, seed, 80);
+                var hq = new[] { 0, 1 }.Select(t => w.Owned(t).First(e => e.Def.Key == "command_center")).ToArray();
+                toIron += ToHomeIron(w, 1, hq[1].Center) - ToHomeIron(w, 0, hq[0].Center); maps++;
+                var ds = w.Derricks.ToList();
+                if (ds.Count >= 2) { toDerrick += ds.Min(d => Vec2.Dist(d.Center, w.Teams[1].StartPos)) - ds.Min(d => Vec2.Dist(d.Center, w.Teams[0].StartPos)); derrickMaps++; }
+            }
+            Check(MathF.Abs((float)(toIron / maps)) < 0.5f, $"over 40 maps each seat's command center is as near its iron (seat 1 {toIron / maps:+0.00;-0.00} tiles on average; it was +1.4)");
+            Check(derrickMaps >= 30 && MathF.Abs((float)(toDerrick / derrickMaps)) < 0.4f, $"and each seat's nearest derrick is as far (seat 1 {toDerrick / Math.Max(1, derrickMaps):+0.00;-0.00} tiles on average over {derrickMaps} maps; it was -0.8)");
+
+            // Equal choices go to mirrored picks: the first ore tile a truck turns to, the nearest open tile, a wave's corner, a derrick.
+            var map = new Map(80, 80);
+            foreach (var (x, y) in new[] { (10, 10), (11, 10), (12, 10), (10, 11), (12, 11), (10, 12), (11, 12), (12, 12), (67, 67), (68, 67), (69, 67), (67, 68), (69, 68), (67, 69), (68, 69), (69, 69) })
+            { map.Ore[map.Idx(x, y)] = 100; map.OreBase[map.Idx(x, y)] = 100; }
+            var seat0Tile = map.NearestOre(new Vec2(11.5f, 11.5f), 10, null, -1, new Vec2(9.5f, 9.5f));
+            var seat1Tile = map.NearestOre(new Vec2(68.5f, 68.5f), 10, null, -1, new Vec2(70.5f, 70.5f));
+            Check(seat0Tile.HasValue && seat1Tile.HasValue && seat1Tile.Value.X == 79 - seat0Tile.Value.X && seat1Tile.Value.Y == 79 - seat0Tile.Value.Y,
+                  $"a truck on a mined-out tile turns to the equally near tile the mirrored truck does ({seat0Tile} and {seat1Tile}, not the lowest-numbered one)");
+            var open = new World(2, 1, 80);
+            Array.Clear(open.Map.Tiles, 0, open.Map.Tiles.Length);
+            foreach (var (x, y) in new[] { (20, 20), (59, 59) }) open.Map.Tiles[open.Map.Idx(x, y)] = Terrain.Rock;
+            var p0 = open.Paths.NearestPassable(new Int2(20, 20)); var p1 = open.Paths.NearestPassable(new Int2(59, 59));
+            Check(p1.X == 79 - p0.X && p1.Y == 79 - p0.Y, $"the nearest open tile to a blocked spot is mirrored too ({p0} and {p1})");
+
+            var (mw, _) = (MirroredBases(), 0);
+            foreach (var d in mw.Derricks.ToList()) mw.Remove(d);
+            var da = mw.SpawnStructure(-1, "derrick", new Int2(32, 46), 1f); var db = mw.SpawnStructure(-1, "derrick", new Int2(46, 32), 1f); // equally far from both seats
+            var goals = new Vec2[2]; var captures = new Vec2[2];
+            for (int t = 0; t < 2; t++)
+            {
+                mw.SpawnStructure(t, "barracks", mw.FindPlacement(t, "barracks").Value, 1f);
+                var eng = mw.SpawnUnit(t, "engineer", mw.Owned(t).First(e => e.Def.Key == "command_center")); eng.Order = Order.Idle;
+                var army = Enumerable.Range(0, 6).Select(_ => mw.SpawnUnit(t, "rifleman", mw.Owned(t).First(e => e.Def.Key == "command_center"))).ToList();
+                foreach (var u in army) { u.Order = Order.Idle; }
+                new SimpleAI(t).Update(mw);
+                var target = mw.Get(eng.TargetId);
+                captures[t] = eng.Order == Order.Capture && target != null ? target.Center : new Vec2(-1, -1);
+                goals[t] = army[0].Order == Order.AttackMove ? army[0].OrderPos : new Vec2(-1, -1);
+            }
+            Check(Vec2.Dist(captures[1], new Vec2(80f - captures[0].X, 80f - captures[0].Y)) < 0.5f && captures[0].X > 0 && Vec2.Dist(captures[0], captures[1]) > 5f,
+                  $"the two scripted AIs send their engineers to different, mirrored derricks ({captures[0]} and {captures[1]})");
+            Check(Vec2.Dist(goals[1], new Vec2(80f - goals[0].X, 80f - goals[0].Y)) < 0.5f && goals[0].X > 0 && Vec2.Dist(goals[0], goals[1]) > 5f,
+                  $"and their first waves to different, mirrored corners ({goals[0]} and {goals[1]})");
+
+            // Fights. Two equal laser troopers in range of each other trade volleys every 1.4 s, and the one that acts first in the tick
+            // lands the killing shot before the other's turn, so which seat wins is whose turn comes first. The turns alternate with the
+            // tick: start the same fight a tick apart and the other seat must win.
+            int a0 = Stationary(8), a1 = Stationary(9);
+            Check(a0 >= 0 && a1 >= 0 && a0 != a1, $"two equal troopers in a stand-off: seat {a0} wins when the first volley falls on tick 8 and seat {a1} on tick 9, not the same seat's every time");
+
+            // The opening units stand a little off the middle of their doorway, by a scatter. It was drawn from one shared stream
+            // that began from the same place every game, so seat 0 always got the same luck (its truck on the near side of the
+            // ore, say) and seat 1 the next; now both seats draw alike, measured along the door and across it.
+            int apartGames = 0, scattered = 0; float widest = 0f;
+            for (int seed = 1; seed <= 20; seed++)
+            {
+                var w = new World(2, seed, 80);
+                var seen = new List<float>[2] { new List<float>(), new List<float>() };
+                for (int t = 0; t < 2; t++)
+                {
+                    var hq = w.Owned(t).First(e => e.Def.Key == "command_center");
+                    var door = new Vec2(MathF.Round(MathF.Cos(w.DoorFacing(hq))), MathF.Round(MathF.Sin(w.DoorFacing(hq))));
+                    foreach (var u in w.Owned(t).Where(e => !e.IsStructure))
+                    {
+                        var v = u.Pos - hq.Center;
+                        float along = v.X * door.X + v.Y * door.Y, abeam = v.X * -door.Y + v.Y * door.X;
+                        seen[t].Add(along - MathF.Round(along)); seen[t].Add(abeam - MathF.Round(abeam)); // off the middle of its tile, in tiles
+                    }
+                }
+                float apart = seen[0].Zip(seen[1], (a, b) => MathF.Abs(a - b)).Max();
+                widest = MathF.Max(widest, apart);
+                if (apart > 1e-3f) apartGames++;
+                if (seen[0].Any(x => MathF.Abs(x) > 0.02f)) scattered++;
+            }
+            Check(apartGames == 0 && scattered >= 19, $"both seats' opening units are scattered alike about their door ({apartGames} of 20 games differ, by up to {widest:0.000} tiles; {scattered} of 20 are scattered at all)");
+        }
+
+        /// <summary>
+        /// The survivor (0 or 1; -1 if neither) of two equal laser troopers standing 4 tiles apart on open ground, both ready to fire at once
+        /// (`delayTicks` later, to put the first volley on an odd or an even tick). Their volleys come at the same ticks every time round,
+        /// so whoever acts first in the tick has the last word.
+        /// </summary>
+        static int Stationary(int delayTicks)
+        {
+            var w = new World(2, 1, 80);
+            var m = w.Map;
+            Array.Clear(m.Tiles, 0, m.Tiles.Length); Array.Clear(m.Ore, 0, m.Ore.Length); Array.Clear(m.OreBase, 0, m.OreBase.Length);
+            m.Deep.Clear(); m.FieldsChanged();
+            foreach (var u in w.Entities.Where(e => !e.IsStructure).ToList()) w.Remove(u);
+            var a = w.SpawnUnit(0, "laser_trooper", w.Owned(0).First(e => e.IsStructure));
+            var b = w.SpawnUnit(1, "laser_trooper", w.Owned(1).First(e => e.IsStructure));
+            a.Pos = a.PrevPos = a.GuardPos = new Vec2(38f, 40f); a.Facing = a.TurretFacing = 0;
+            b.Pos = b.PrevPos = b.GuardPos = new Vec2(42f, 40f); b.Facing = b.TurretFacing = MathF.PI;
+            w.SetOrder(a, Order.Idle, a.Pos); w.SetOrder(b, Order.Idle, b.Pos);
+            a.Cooldown = b.Cooldown = delayTicks * World.Dt;
+            for (int i = 0; i < 30 * World.TickRate && !a.Dead && !b.Dead; i++) w.Step();
+            return b.Dead && !a.Dead ? 0 : a.Dead && !b.Dead ? 1 : -1;
+        }
+
         /// <summary>A world with open ground round seat 0's command center, so every side of it has a clear lane.</summary>
         static (World w, Entity hq) OpenBase()
         {
@@ -919,11 +1042,14 @@ namespace Pez.Headless
             }
             Check(wrong.Count == 0, "a command center's new units appear on its bay side, facing out, and roll on away from the door" + (wrong.Count > 0 ? $" (not: {string.Join("; ", wrong)})" : ""));
 
-            // A building without a bay door keeps its south one.
-            hq.BaySide = 3;
+            // A barracks' door faces the middle of the map (the axis it is farthest from the middle on), and its recruits come out there.
             var rax = w.SpawnStructure(0, "barracks", w.FindPlacement(0, "barracks").Value, 1f);
             var recruit = w.SpawnUnit(0, "rifleman", rax);
-            Check(recruit.Pos.Y < rax.Center.Y - 1f && MathF.Abs(recruit.Facing + MathF.PI / 2) < 0.01f, $"a barracks still opens south (a recruit at {recruit.Pos - rax.Center})");
+            var toMiddle = new Vec2(w.Map.W / 2f, w.Map.H / 2f) - rax.Center;
+            var wantDir = MathF.Abs(toMiddle.X) > MathF.Abs(toMiddle.Y) ? new Vec2(MathF.Sign(toMiddle.X), 0) : new Vec2(0, MathF.Sign(toMiddle.Y));
+            var out_ = recruit.Pos - rax.Center;
+            Check(MathF.Cos(w.DoorFacing(rax) - wantDir.Angle) > 0.99f && out_.X * wantDir.X + out_.Y * wantDir.Y > 1f && MathF.Cos(recruit.Facing - wantDir.Angle) > 0.99f,
+                  $"a barracks' door faces the middle of the map and its recruits come out there (a recruit at {out_}, door {w.DoorFacing(rax) * 180 / MathF.PI:0} degrees)");
         }
 
         static void SymmetricPlacement()
@@ -943,12 +1069,12 @@ namespace Pez.Headless
             foreach (var key in keys)
             {
                 var a = placed[0][key]; var b = placed[1][key];
-                var turned = new Vec2(81 - a.Center.X, 81 - a.Center.Y); // seat 0's spot turned about the middle of the two bases
+                var turned = new Vec2(80 - a.Center.X, 80 - a.Center.Y); // seat 0's spot turned about the middle of the two bases
                 bool mirrored = Vec2.Dist(turned, b.Center) < 0.01f;
-                // A drop-off's bay mirrors too: it opens the opposite way.
-                bool bayMirrored = !a.Def.DropOff || MathF.Cos(w.Bay(a).facing + MathF.PI - w.Bay(b).facing) > 0.99f;
+                // A door mirrors too (a drop-off's bay, a barracks' or factory's door): it faces the opposite way.
+                bool bayMirrored = !World.HasDoorSide(a.Def) || MathF.Cos(w.DoorFacing(a) + MathF.PI - w.DoorFacing(b)) > 0.99f;
                 line.Add($"{key} {a.Origin}/{b.Origin}");
-                Check(mirrored && bayMirrored, $"on a mirrored map both seats' {key} are mirror images (seat 0 at {a.Origin}, seat 1 at {b.Origin}{(a.Def.DropOff ? $", bays {a.BaySide} and {b.BaySide}" : "")})");
+                Check(mirrored && bayMirrored, $"on a mirrored map both seats' {key} are mirror images (seat 0 at {a.Origin}, seat 1 at {b.Origin}{(World.HasDoorSide(a.Def) ? $", doors {a.BaySide} and {b.BaySide}" : "")})");
             }
             Console.WriteLine($"      seat 0 / seat 1 origins: {string.Join(", ", line)}");
             Check(new[] { 0, 1 }.All(t => ToHomeIron(w, t, w.Bay(placed[t]["mining_refinery"]).head) <= 1f),
@@ -1307,7 +1433,7 @@ namespace Pez.Headless
         }
 
         /// <summary>Mine a fresh map bare, let it regrow: how much comes back in 10 and 20 minutes, where, and of which ore (iron, copper, crystal, uranium).</summary>
-        static (int total, int middle, int edges, int fieldOre, int[] byOre) RegrowBare(int size, float oreScale, float minutes, int seed = 7)
+        static (int total, int middle, int edges, int fieldOre, int[] byOre) RegrowBare(int size, float oreScale, float minutes, int seed = 1)
         {
             var w = new World(2, seed, size, oreScale);
             foreach (var e in w.Entities.Where(e => e.IsHarvester).ToList()) w.Remove(e);

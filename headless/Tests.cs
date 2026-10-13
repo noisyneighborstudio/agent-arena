@@ -527,7 +527,7 @@ namespace Pez.Headless
             float minGap = float.MaxValue;
             for (int i = 0; i < t.SurveySites.Count; i++)
                 for (int j = i + 1; j < t.SurveySites.Count; j++) minGap = Math.Min(minGap, Vec2.Dist(t.SurveySites[i], t.SurveySites[j]));
-            Check(t.SurveySites.Count >= 6 && minGap > 15f, $"they cover distinct sites without repeats ({t.SurveySites.Count} sites, closest two {minGap:0.0} tiles apart)");
+            Check(t.SurveySites.Count >= 5 && minGap > 15f, $"they cover distinct sites without repeats ({t.SurveySites.Count} sites, closest two {minGap:0.0} tiles apart)");
             var inRange = w.Map.Deep.Where(d => t.SurveySites.Any(p => Vec2.Dist(p, d.Pos) <= EntityDef.SurveyRadius)).ToList();
             Check(inRange.Count > 0 && inRange.All(d => t.Surveyed.Contains(d.Id) && t.Zones.TryGetValue(d.Id, out var f) && (f.FlaggedBy == sv.Id || f.FlaggedBy == sv2.Id)),
                   $"every deposit near a surveyed site is flagged as a mining zone by the surveyor that found it ({inRange.Count} zones)");

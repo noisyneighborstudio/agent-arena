@@ -411,8 +411,12 @@ namespace Pez.Sim
             team.Give("copper_ore", 150);
             var s = Int2.Of(spawn);
             var hq = SpawnStructure(t, "command_center", new Int2(s.X - 1, s.Y - 1), 1f, grantedShare: 1f);
-            SpawnUnit(t, "mining_truck", hq).GrantedShare = 1f;
-            for (int i = 0; i < 2; i++) SpawnUnit(t, "rifleman", hq).GrantedShare = 1f;
+            // The opening units' scatter is drawn from the same numbers for every seat (and laid out relative to the door, so a
+            // half-turned base gets the half-turned scatter). Drawn from the shared stream instead, seat 0 would start with the
+            // same luck in every game, and the first truck would reach its ore a fixed dozen ticks before or after seat 1's.
+            var opening = new SimRng(OpeningScatter);
+            SpawnUnit(t, "mining_truck", hq, opening).GrantedShare = 1f;
+            for (int i = 0; i < 2; i++) SpawnUnit(t, "rifleman", hq, opening).GrantedShare = 1f;
             return team;
         }
 
@@ -751,6 +755,7 @@ namespace Pez.Sim
             e.Pos = e.PrevPos = e.Center;
             e.Hp = def.MaxHp * (progress >= 1 ? 1f : 0.1f);
             if (def.DropOff) e.BaySide = ChooseBaySide(origin, def, NearestOreField(e.Center)); // its trucks back in from the ore's side, for good
+            else if (HasDoorSide(def)) e.BaySide = ChooseDoorSide(origin, def); // its units come out on the side facing the middle of the map
             for (int y = 0; y < def.SizeY; y++)
                 for (int x = 0; x < def.SizeX; x++)
                     Map.Occupant[Map.Idx(origin.X + x, origin.Y + y)] = e.Id;
@@ -772,13 +777,17 @@ namespace Pez.Sim
             }
         }
 
-        public Entity SpawnUnit(int team, string key, Entity at)
+        public Entity SpawnUnit(int team, string key, Entity at, SimRng draws = null)
         {
             var def = Def(key);
             var e = NewEntity(team, def);
-            var jitter = new Vec2((float)(rng.NextDouble() - 0.5) * 0.6f, (float)(rng.NextDouble() - 0.5) * 0.6f);
-            // The doorway: south, where the models' doors are, except a drop-off's, which faces its bay (its model is turned to match).
-            var door = at.IsStructure && at.Def.DropOff ? BaySides[DoorSide(at)] : BaySides[0];
+            var r = draws ?? rng;
+            // The doorway: south, where the models' doors are, except a drop-off's (its bay), a barracks' and a factory's (the side it was
+            // built to face): their models are turned to match.
+            var door = at.IsStructure ? BaySides[DoorSide(at)] : BaySides[0];
+            // A little scatter, measured along the door and across it, so two bases that are half-turns of each other scatter alike.
+            float along = (float)(r.NextDouble() - 0.5) * 0.6f, abeam = (float)(r.NextDouble() - 0.5) * 0.6f;
+            var jitter = door * along + new Vec2(-door.Y, door.X) * abeam;
             if (def.IsAir) e.Pos = e.PrevPos = at.Center + jitter;
             else
             {
@@ -797,7 +806,7 @@ namespace Pez.Sim
             {
                 // Roll a few tiles clear of the door so new units don't park in front of it (or a refinery's dock).
                 var across = new Vec2(-door.Y, door.X);
-                var clear = Paths.NearestPassable(Int2.Of(e.Pos + across * ((float)(rng.NextDouble() - 0.5) * 4f) + door * 3f)).Center;
+                var clear = Paths.NearestPassable(Int2.Of(e.Pos + across * ((float)(r.NextDouble() - 0.5) * 4f) + door * 3f)).Center;
                 SetOrder(e, Order.Move, clear);
                 e.GuardPos = clear;
             }
@@ -805,6 +814,7 @@ namespace Pez.Sim
         }
 
         SimRng rng = new SimRng(42); // serializable, so a resumed game draws the same numbers
+        const ulong OpeningScatter = 7;
 
         void OnStructureComplete(Entity e)
         {
@@ -1061,7 +1071,7 @@ namespace Pez.Sim
         }
 
         /// <summary>Which way is "right" for something at a point facing the map centre (one on the centre faces east): the same turn for every seat.</summary>
-        Vec2 RightOf(Vec2 from)
+        internal Vec2 RightOf(Vec2 from)
         {
             var facing = (new Vec2(Map.W / 2f, Map.H / 2f) - from).Normalized;
             if (facing.LengthSq < 0.5f) facing = new Vec2(1, 0);
@@ -1144,9 +1154,13 @@ namespace Pez.Sim
             Guard("groups", MeasureGroups);
             if (Tick % (TickRate * 10) == 0) Guard("home ore", CheckHomeOre);
             double tu = Profile ? profileClock.Elapsed.TotalSeconds : 0;
-            for (int i = 0; i < Entities.Count; i++)
+            // Units act one after another, and whoever acts later sees the other's move: it fires first as two armies close, and a
+            // hit kills before the dead unit's turn. With a fixed order (the first seat's units have the lower ids) that favoured one
+            // seat (a mirrored fight won about two in three by the later one), so the order runs backwards every other tick.
+            bool backwards = (Tick & 1) == 1;
+            for (int k = 0, n = Entities.Count; k < (backwards ? n : Entities.Count); k++)
             {
-                var e = Entities[i];
+                var e = Entities[backwards ? n - 1 - k : k];
                 if (e.Dead) continue;
                 if (e.Cooldown > 0) e.Cooldown -= Dt;
                 if (e.IsCarried) { var c = Get(e.CarrierId); if (c != null) e.Pos = c.Pos; continue; } // riding along
@@ -2018,9 +2032,11 @@ namespace Pez.Sim
                     bool Leashed(Int2 t) => (hasField && Vec2.DistSq(t.Center, from) <= 144f) || drops.Any(dp => Vec2.DistSq(dp, t.Center) <= LeashDist * LeashDist);
                     // Spread trucks out: avoid tiles another truck is already working.
                     bool Free(Int2 t) => !OreReserved(t, e.Team) && !NearBarredBase(t, barred) && Safe(t) && Leashed(t);
-                    e.HarvestTile = Map.NearestOre(from, 40, t => Free(t) && Wanted(t) && !Entities.Any(o => o != e && !o.Dead && o.IsHarvester && o.HarvestTile.HasValue && o.HarvestTile.Value.Equals(t)), want)
-                                    ?? Map.NearestOre(from, 80, t => Free(t) && Wanted(t), want)
-                                    ?? Map.NearestOre(from, 80, Free, want);
+                    // (Equally near tiles: the one nearer its nearest drop-off, whichever corner it works from.)
+                    Vec2? home = drops.Count > 0 ? drops.OrderBy(dp => Vec2.DistSq(dp, from)).First() : (Vec2?)null;
+                    e.HarvestTile = Map.NearestOre(from, 40, t => Free(t) && Wanted(t) && !Entities.Any(o => o != e && !o.Dead && o.IsHarvester && o.HarvestTile.HasValue && o.HarvestTile.Value.Equals(t)), want, home)
+                                    ?? Map.NearestOre(from, 80, t => Free(t) && Wanted(t), want, home)
+                                    ?? Map.NearestOre(from, 80, Free, want, home);
                     e.Path = null;
                     if (!e.HarvestTile.HasValue)
                     {
@@ -2229,8 +2245,26 @@ namespace Pez.Sim
             return (side, false);
         }
 
-        /// <summary>The side (an index into BaySides) a drop-off's door faces: where its bay opens now.</summary>
-        int DoorSide(Entity s) => OpenBaySide(s.Origin, s.Def, s.BaySide).side;
+        /// <summary>Does the building have a door of its own to turn (and its units to come out of)? A drop-off has its bay; a barracks and a factory their doors.</summary>
+        public static bool HasDoorSide(EntityDef d) => d.IsStructure && (d.DropOff || d.Produces == Producer.Barracks || d.Produces == Producer.Factory);
+
+        /// <summary>The side (an index into BaySides) a building's door faces: where a drop-off's bay opens now, a barracks' or factory's door as built, else south (where the models' doors are).</summary>
+        int DoorSide(Entity s) => s.Def.DropOff ? OpenBaySide(s.Origin, s.Def, s.BaySide).side : HasDoorSide(s.Def) ? Math.Clamp(s.BaySide, 0, BaySides.Length - 1) : 0;
+
+        /// <summary>
+        /// The side a new barracks' or factory's door faces: toward the middle of the map, along the axis it is farthest from the middle on
+        /// (a building on the diagonal takes the right-hand side as it faces the middle). So both seats' armies come out on the side facing
+        /// the enemy, mirrored, instead of one seat's coming out facing the front and the other's behind its building.
+        /// </summary>
+        int ChooseDoorSide(Int2 origin, EntityDef def)
+        {
+            var c = new Vec2(origin.X + def.SizeX / 2f, origin.Y + def.SizeY / 2f);
+            var d = new Vec2(Map.W / 2f, Map.H / 2f) - c;
+            int ex = d.X > 0 ? 1 : 2, ey = d.Y > 0 ? 3 : 0;
+            if (MathF.Abs(MathF.Abs(d.X) - MathF.Abs(d.Y)) > 0.01f) return MathF.Abs(d.X) > MathF.Abs(d.Y) ? ex : ey;
+            var right = RightOf(c);
+            return BaySides[ex].X * right.X + BaySides[ex].Y * right.Y > BaySides[ey].X * right.X + BaySides[ey].Y * right.Y ? ex : ey;
+        }
 
         /// <summary>Choose every drop-off's bay side again, from the map's ore as it is now (for tests that rewrite the ore after the world is built).</summary>
         internal void ChooseBays()
@@ -2270,8 +2304,8 @@ namespace Pez.Sim
             return Math.Max(0, best);
         }
 
-        /// <summary>Which way a structure's door faces, in the sim's radians: its bay for a drop-off, else south, where the models' doors are.</summary>
-        public float DoorFacing(Entity s) => s.IsStructure && s.Def.DropOff ? Bay(s).facing : -MathF.PI / 2f;
+        /// <summary>Which way a structure's door faces, in the sim's radians: its bay for a drop-off, a barracks' or factory's door as built, else south, where the models' doors are.</summary>
+        public float DoorFacing(Entity s) => s.IsStructure ? BaySides[DoorSide(s)].Angle : -MathF.PI / 2f;
 
         /// <summary>The tiles a truck's body sweeps backing from the head of a lane into its bay.</summary>
         static IEnumerable<Int2> LaneTiles(Vec2 bay, Vec2 head)
@@ -2403,7 +2437,8 @@ namespace Pez.Sim
                                      .Select(o => o.Order == Order.Survey ? o.OrderPos : o.ResumePos).ToList();
             var enemy = team.KnownEnemyStructures.Values.Select(k => new Vec2(k.origin.X + 1, k.origin.Y + 1)).ToList();
             const float step = 9f, enemyClearance = 16f;
-            Vec2? best = null; float bestScore = float.MaxValue;
+            Vec2? best = null; float bestScore = float.MaxValue, bestRight = 0;
+            var right = RightOf(e.Pos);
             int n = (int)(radius / step);
             for (int gy = -n; gy <= n; gy++)
                 for (int gx = -n; gx <= n; gx++)
@@ -2420,7 +2455,11 @@ namespace Pez.Sim
                     if (!near) foreach (var s in e.SkipSites) if (Vec2.Dist(s, q) < 3f) { near = true; break; }
                     if (near || taken.Any(o => Vec2.Dist(o, q) < ProspectSpacing) || enemy.Any(x => Vec2.Dist(x, q) < enemyClearance)) continue;
                     float score = Vec2.Dist(e.Pos, q) + 0.25f * Vec2.Dist(centre, q);
-                    if (score < bestScore) { bestScore = score; best = q; }
+                    // (Equally good spots: the one on the right as the surveyor faces the middle, not the first the scan meets.)
+                    float toRight = (q.X - e.Pos.X) * right.X + (q.Y - e.Pos.Y) * right.Y;
+                    int cmp = TieCmp(score, bestScore);
+                    if (cmp == 0) cmp = TieCmp(bestRight, toRight);
+                    if (cmp < 0) { bestScore = score; bestRight = toRight; best = q; }
                 }
             return best;
         }

@@ -94,7 +94,10 @@ namespace Pez.Sim
             float area = w * h / 6400f;
             var rng = new Random(seed);
             var m = new Map(w, h) { OreScale = oreScale };
-            int inset = 9;
+            // Base sites sit on tile centres, 9 tiles in from the edges: a command center is 3x3 round its site's tile, so then each
+            // base is exactly the half-turned copy of the next (Images). On the tile corner (9 and w - 9) the far bases stood a tile
+            // too far out, and their ore a tile farther from them than the near bases'.
+            float inset = 9.5f;
             m.Spawns.Add(new Vec2(inset, inset));
             m.Spawns.Add(new Vec2(w - inset, h - inset));
             m.Spawns.Add(new Vec2(w - inset, inset));
@@ -665,11 +668,18 @@ namespace Pez.Sim
             return true;
         }
 
-        /// <summary>Nearest tile with ore, searching outward from a point.</summary>
-        public Int2? NearestOre(Vec2 from, float maxDist, Func<Int2, bool> filter = null, int type = -1)
+        /// <summary>
+        /// Nearest tile with ore, searching outward from a point. Tiles equally near (a truck standing on a mined-out tile has four at
+        /// one tile's distance) go to the one nearer `prefer` (its drop-off), then to the one on the right as `prefer` faces the middle
+        /// of the map, not to whichever the scan meets first (the lowest y, then x), which led one corner's trucks toward their base
+        /// along the field and the opposite corner's away from it.
+        /// </summary>
+        public Int2? NearestOre(Vec2 from, float maxDist, Func<Int2, bool> filter = null, int type = -1, Vec2? prefer = null)
         {
             Int2? best = null;
-            float bestD = maxDist * maxDist;
+            float maxSq = maxDist * maxDist, bestD = maxSq, bestPref = 0f, bestRight = 0f;
+            var face = prefer.HasValue ? (new Vec2(W / 2f, H / 2f) - prefer.Value).Normalized : new Vec2(0, 0);
+            var right = new Vec2(face.Y, -face.X);
             int r = (int)MathF.Ceiling(maxDist);
             int fx = (int)from.X, fy = (int)from.Y;
             for (int y = Math.Max(0, fy - r); y <= Math.Min(H - 1, fy + r); y++)
@@ -678,7 +688,12 @@ namespace Pez.Sim
                     if (Ore[Idx(x, y)] <= 0 || (type >= 0 && OreType[Idx(x, y)] != type)) continue;
                     var t = new Int2(x, y);
                     float d = Vec2.DistSq(t.Center, from);
-                    if (d < bestD && (filter == null || filter(t))) { bestD = d; best = t; }
+                    if (d >= maxSq || d > bestD + 1e-4f) continue;
+                    float pref = prefer.HasValue ? Vec2.DistSq(t.Center, prefer.Value) : 0f;
+                    float toRight = (t.Center.X - from.X) * right.X + (t.Center.Y - from.Y) * right.Y;
+                    bool nearer = best == null || d < bestD - 1e-4f;
+                    bool tied = !nearer && (pref < bestPref - 1e-4f || (pref <= bestPref + 1e-4f && toRight > bestRight + 1e-4f));
+                    if ((nearer || tied) && (filter == null || filter(t))) { bestD = d; bestPref = pref; bestRight = toRight; best = t; }
                 }
             return best;
         }

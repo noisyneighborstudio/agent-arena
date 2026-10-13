@@ -23,20 +23,30 @@ namespace Pez.Sim
             stamp = new int[map.W * map.H];
         }
 
-        /// <summary>Nearest passable tile to target (spiral search).</summary>
+        /// <summary>
+        /// Nearest passable tile to target (spiral search). Equally near tiles: the one nearer the middle of the map, then the one on the
+        /// right as the target faces it, not the first the scan meets (the lowest y, then x), which pushed every blocked spot toward the
+        /// south-west corner, away from one seat's base and toward the middle for the other's.
+        /// </summary>
         public Int2 NearestPassable(Int2 t, int maxR = 12)
         {
             if (map.Passable(t.X, t.Y)) return t;
+            var centre = new Vec2(map.W / 2f, map.H / 2f);
+            var face = (centre - t.Center).Normalized;
+            var right = new Vec2(face.Y, -face.X);
             for (int r = 1; r <= maxR; r++)
             {
-                Int2? best = null; float bd = float.MaxValue;
+                Int2? best = null; float bd = float.MaxValue, bc = 0, br = 0;
                 for (int y = t.Y - r; y <= t.Y + r; y++)
                     for (int x = t.X - r; x <= t.X + r; x++)
                     {
                         if (Math.Abs(x - t.X) != r && Math.Abs(y - t.Y) != r) continue;
                         if (!map.Passable(x, y)) continue;
                         float d = (x - t.X) * (x - t.X) + (y - t.Y) * (y - t.Y);
-                        if (d < bd) { bd = d; best = new Int2(x, y); }
+                        if (d > bd) continue;
+                        var c = new Int2(x, y).Center;
+                        float toCentre = Vec2.DistSq(c, centre), toRight = (c.X - t.Center.X) * right.X + (c.Y - t.Center.Y) * right.Y;
+                        if (best == null || d < bd || toCentre < bc - 1e-3f || (toCentre <= bc + 1e-3f && toRight > br + 1e-3f)) { bd = d; bc = toCentre; br = toRight; best = new Int2(x, y); }
                     }
                 if (best.HasValue) return best.Value;
             }

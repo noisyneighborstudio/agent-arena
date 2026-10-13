@@ -137,6 +137,12 @@ namespace Pez.Sim
             if (w.Time < nextThink || w.GameOver) return;
             nextThink = w.Time + 1f;
             var t = w.Teams[team];
+            // Choosing the nearest of several things: two equally near (a derrick, field or corner mirrored across the line from this base to
+            // the middle of the map) go to the one on the right as the base faces the middle, so the seats' choices are mirror images and not
+            // both the first in some list (the same derrick, the same corner).
+            var right = w.RightOf(t.StartPos);
+            float Near(Vec2 p) => System.MathF.Round(Vec2.Dist(p, t.StartPos), 2);
+            float Rightward(Vec2 p) => (p.X - t.StartPos.X) * right.X + (p.Y - t.StartPos.Y) * right.Y;
             if (t.Defeated) return;
             var mine = w.Owned(team).ToList();
             var structures = mine.Where(e => e.IsStructure).ToList();
@@ -330,7 +336,7 @@ namespace Pez.Sim
                 {
                     var field = StateView.OreFields(w, t.Explored)
                         .Where(f => !structures.Any(s => Vec2.Dist(s.Center, new Vec2(f.cx, f.cy)) < 12))
-                        .OrderBy(f => Vec2.Dist(new Vec2(f.cx, f.cy), t.StartPos)).FirstOrDefault();
+                        .OrderBy(f => Near(new Vec2(f.cx, f.cy))).ThenByDescending(f => Rightward(new Vec2(f.cx, f.cy))).FirstOrDefault();
                     if (field.tiles == 0) continue;
                     // Park beside the field, not on the ore.
                     var spot = w.FindPlacement(team, "outpost", new Vec2(field.cx, field.cy)) ?? new Int2(field.cx + 3, field.cy);
@@ -390,7 +396,7 @@ namespace Pez.Sim
             {
                 var engineers = mine.Where(e => e.Def.Engineer).ToList();
                 var targets = w.Derricks.Where(d => d.Team != team && (d.Team < 0 || (!Passive && World.Capturable(d) && w.IsVisibleTo(team, d))))
-                                        .OrderBy(d => Vec2.Dist(d.Center, t.StartPos)).ToList();
+                                        .OrderBy(d => Near(d.Center)).ThenByDescending(d => Rightward(d.Center)).ToList();
                 foreach (var d in targets)
                 {
                     if (engineers.Any(en => en.Order == Order.Capture && en.TargetId == d.Id)) continue;
@@ -495,12 +501,12 @@ namespace Pez.Sim
                 // (Not derricks: attack-move leaves a held one alone, so a wave aimed at the nearest derrick stopped beside it and
                 // the next wave did the same, for the rest of the game, while the enemy base behind it stood.)
                 var known = t.KnownEnemyStructures.Values.Where(k => k.team >= 0 && k.key != "derrick").ToList();
-                if (known.Count > 0) { var k = known.OrderBy(x => Vec2.Dist(new Vec2(x.origin.X, x.origin.Y), t.StartPos)).First(); goal = new Vec2(k.origin.X + 1, k.origin.Y + 1); }
+                if (known.Count > 0) { var k = known.OrderBy(x => Near(new Vec2(x.origin.X, x.origin.Y))).ThenByDescending(x => Rightward(new Vec2(x.origin.X, x.origin.Y))).First(); goal = new Vec2(k.origin.X + 1, k.origin.Y + 1); }
                 else
                 {
                     var corners = w.Map.Spawns.Where(s => !t.Explored[w.Map.Idx((int)s.X, (int)s.Y)]).ToList();
                     if (corners.Count == 0) corners = w.Map.Spawns.Where(s => Vec2.Dist(s, t.StartPos) > 5).ToList();
-                    goal = corners.OrderBy(s => Vec2.Dist(s, t.StartPos)).First();
+                    goal = corners.OrderBy(s => Near(s)).ThenByDescending(s => Rightward(s)).First();
                 }
                 foreach (var u in idle) w.SetOrder(u, Order.AttackMove, goal);
                 waveSize = System.Math.Min(10, waveSize + 1);
