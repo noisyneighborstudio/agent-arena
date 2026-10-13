@@ -79,24 +79,27 @@ namespace Pez.Headless
             Check(gapWith < 0.05 && gapWithout > 2 * gapWith, $"the extra fields fill the far gaps: on a 160x160 map {gapWithout:P0} of the open ground is more than 35 tiles from any ore without them, {gapWith:P0} with them");
 
             // The extra fields (the map with them, less the map without) are the same in every quarter of the map, and keep off the base sites.
-            var uneven = new List<string>(); var close = new List<string>(); int maps = 0;
-            foreach (int size in new[] { 128, 160 })
-                foreach (int seed in new[] { 1, 2, 3 })
+            var uneven = new List<string>(); var close = new List<string>(); int maps = 0, tilesTurned = 0;
+            foreach (int size in new[] { 128, 160, 240 })
+                foreach (int seed in Enumerable.Range(1, 20).Append(99))
                 {
                     var with = Map.Generate(size, size, seed); var without = Map.Generate(size, size, seed, 1f, false);
-                    var quarter = new long[4];
+                    var quarter = new long[4]; bool turned = true;
                     for (int y = 0; y < size; y++)
                         for (int x = 0; x < size; x++)
                         {
                             int extra = with.Ore[with.Idx(x, y)] - without.Ore[without.Idx(x, y)];
+                            // The tile a quarter turn about the map's centre carries this one to has exactly the same extra ore.
+                            if (extra != with.Ore[with.Idx(size - 1 - y, x)] - without.Ore[without.Idx(size - 1 - y, x)]) turned = false;
                             if (extra <= 0) continue;
+                            tilesTurned++;
                             quarter[(x < size / 2 ? 0 : 1) + (y < size / 2 ? 0 : 2)] += extra;
                             if (with.Spawns.Any(s => Vec2.Dist(s, new Vec2(x + 0.5f, y + 0.5f)) < 12f)) close.Add($"{seed}/{size}");
                         }
-                    if (quarter[0] == 0 || quarter.Max() - quarter.Min() > 0.05 * quarter.Average()) uneven.Add($"{seed}/{size}: {string.Join(" ", quarter)}");
+                    if (!turned || quarter[0] == 0 || quarter.Distinct().Count() > 1) uneven.Add($"{seed}/{size}: {string.Join(" ", quarter)}");
                     maps++;
                 }
-            Check(uneven.Count == 0 && maps == 6, "the extra surface fields hold the same ore in all four quarters of the map (to within 5%: a field on the middle line is split differently by its turned copy)" + (uneven.Count > 0 ? $"; uneven: {string.Join("; ", uneven)}" : ""));
+            Check(uneven.Count == 0 && maps == 63 && tilesTurned > 0, $"the extra surface fields are exactly alike in all four quarters of the map, tile for tile when turned (63 maps: seeds 1-20 and 99 at 128, 160 and 240; {tilesTurned} ore tiles)" + (uneven.Count > 0 ? $"; uneven: {string.Join("; ", uneven)}" : ""));
             Check(close.Count == 0, "and none lies on a base site");
             Check(Ore(Map.Generate(160, 160, 1, 1f, false)) < 70000, "a map built without them (a game saved before they existed) has only the fixed fields");
 

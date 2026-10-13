@@ -240,9 +240,28 @@ namespace Pez.Sim
                 var (r, min, max) = FieldOf(ore);
                 var spots = BestFieldSpots(() => Images(DeepTile(new Vec2(rng.Next(W), rng.Next(H)))), r, 18f, 400, 12);
                 if (spots == null) continue;
-                int roll = rng.Next();
-                foreach (var p in spots) OreField(new Random(roll), (int)p.X, (int)p.Y, r, min, max, ore);
+                // One field at the first spot, then its tiles (shape and ore) turned onto the other three: exactly alike, whichever quarter they cross.
+                OreField(rng, (int)spots[0].X, (int)spots[0].Y, r, min, max, ore);
+                StampTurned((int)spots[0].X, (int)spots[0].Y, r + 1);
             }
+        }
+
+        /// <summary>Copy the ore tiles within `reach` of (cx, cy) onto the same tiles' turned copies (Images): terrain, ore and what it grows back to.</summary>
+        void StampTurned(int cx, int cy, int reach)
+        {
+            for (int y = cy - reach; y <= cy + reach; y++)
+                for (int x = cx - reach; x <= cx + reach; x++)
+                {
+                    int i = Idx(x, y);
+                    if (Ore[i] <= 0) continue;
+                    var copies = Images(new Vec2(x + 0.5f, y + 0.5f));
+                    for (int k = 1; k < copies.Length; k++)
+                    {
+                        int j = Idx((int)copies[k].X, (int)copies[k].Y);
+                        Tiles[j] = Tiles[i]; Ore[j] = Ore[i]; OreType[j] = OreType[i]; OreBase[j] = OreBase[i]; OreBaseType[j] = OreBaseType[i];
+                    }
+                }
+            fieldsChanged = true;
         }
 
         // ---- Deep deposits. Every base site gets the same ones, so no corner is richer than another: the starting map lays

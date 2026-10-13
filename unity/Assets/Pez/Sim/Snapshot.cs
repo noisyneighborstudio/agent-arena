@@ -327,12 +327,7 @@ namespace Pez.Sim
             // Old chat beyond the last 20 lines isn't worth keeping.
             var oldChat = keep.Where(e => e.Tick < keepFrom).ToList();
             if (oldChat.Count > 20) { var drop = new HashSet<GameEvent>(oldChat.Take(oldChat.Count - 20)); keep.RemoveAll(drop.Contains); }
-            if (keep.Count > MaxEvents)
-            {
-                // The oldest go first, but not the derrick hints: DerrickHint looks back two minutes for one to say it only once a derrick.
-                int drop = keep.Count - MaxEvents;
-                keep = keep.Where(e => e.Type == "derrick_skipped" || drop-- <= 0).ToList();
-            }
+            if (keep.Count > MaxEvents) keep.RemoveRange(0, keep.Count - MaxEvents);
             return keep.Select(e => (object)new JObj().Set("seq", e.Seq).Set("tick", e.Tick).Set("type", e.Type).Put("team", e.Team, -1)
                 .Put("a", e.A).Put("b", e.B).PutV("pos", e.Pos).PutV("pos2", e.Pos2).Put("key", e.Key).Put("text", e.Text)).ToList();
         }
@@ -516,6 +511,7 @@ namespace Pez.Sim
                 .Set("event_counts", EventCounts.Aggregate(new JObj(), (j, kv) => j.Set(kv.Key, kv.Value)))
                 .Set("rate_snapshot", rateSnapshot.Select(kv => (object)new JObj().Set("team", kv.Key).Set("stock", SnapIO.Floats(kv.Value))).ToList())
                 .Set("air_warned", airWarned.Select(kv => (object)new List<object> { kv.Key.team, kv.Key.id, SnapIO.X(kv.Value) }).ToList())
+                .Set("derrick_hinted", derrickHinted.Select(kv => (object)new List<object> { kv.Key.team, kv.Key.id, SnapIO.X(kv.Value) }).ToList())
                 .Set("map", Map.SaveState())
                 .Set("inventions", Inventions.Values.Select(i => (object)Snapshot.WriteInvention(i)).ToList())
                 .Set("teams", Teams.Select(t => (object)Snapshot.WriteTeam(t)).ToList())
@@ -587,6 +583,8 @@ namespace Pez.Sim
             }
             foreach (var x in d.Arr("air_warned"))
                 if (x is List<object> l && l.Count >= 3) w.airWarned[(SnapIO.ToI(l[0]), SnapIO.ToI(l[1]))] = SnapIO.ToF(l[2]);
+            foreach (var x in d.Arr("derrick_hinted"))
+                if (x is List<object> l && l.Count >= 3) w.derrickHinted[(SnapIO.ToI(l[0]), SnapIO.ToI(l[1]))] = SnapIO.ToF(l[2]);
 
             // Counters: from the snapshot, or past everything in it (never reuse an id or a sequence number).
             w.nextId = 1 + Math.Max(w.Entities.Select(e => e.Id).DefaultIfEmpty(0).Max(), w.Projectiles.Select(p => p.Id).DefaultIfEmpty(0).Max());

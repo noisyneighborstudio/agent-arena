@@ -300,6 +300,9 @@ namespace Pez.Sim
         /// <summary>Who may capture it now: anyone's engineer if it's neutral (whatever its health), else below CaptureThreshold.</summary>
         public static bool Capturable(Entity t) => t.Team < 0 || t.Hp <= t.Def.MaxHp * CaptureThreshold;
 
+        /// <summary>When each team was last told about each held derrick its units stopped beside: (team, derrick id) to game time. Saved, so a resumed game doesn't say it again.</summary>
+        readonly Dictionary<(int team, int id), float> derrickHinted = new Dictionary<(int, int), float>();
+
         /// <summary>
         /// Armed units stopping beside an enemy-held derrick leave it alone (AcquireTarget): say so, and how to take or
         /// destroy it, once per derrick every 2 minutes (test players Scarlett and Clark left tanks idle by one).
@@ -309,8 +312,9 @@ namespace Pez.Sim
             if (!e.IsArmed || IsProtected(e.Team)) return;
             var d = Derricks.FirstOrDefault(x => x.Team >= 0 && x.Team != e.Team && x.DistFrom(e.Pos) <= e.Def.Sight && e.Def.Weapon.CanHit(x.Def) && IsVisibleTo(e.Team, x));
             if (d == null) return;
-            for (int i = Events.Count - 1; i >= 0 && (Tick - Events[i].Tick) * Dt < 120f; i--)
-                if (Events[i].Type == "derrick_skipped" && Events[i].Team == e.Team && Events[i].B == d.Id) return;
+            if (derrickHinted.TryGetValue((e.Team, d.Id), out var said) && Time - said < 120f) return;
+            derrickHinted[(e.Team, d.Id)] = Time;
+            if (derrickHinted.Count > 200) foreach (var k in derrickHinted.Where(kv => Time - kv.Value >= 120f).Select(kv => kv.Key).ToList()) derrickHinted.Remove(k);
             Emit("derrick_skipped", e.Team, e.Id, d.Id, d.Center, key: e.Def.Key,
                  text: $"{e.Def.Key} #{e.Id} stopped by {Teams[d.Team].Name}'s derrick #{d.Id} at {(int)d.Center.X},{(int)d.Center.Y} and leaves it alone: units only shoot a held derrick when told to (it's worth capturing). " +
                        $"To take it: attack with \"until\":\"capturable\", then capture it with an engineer. To destroy it (about {DerrickWorth} kill value, and salvage): attack it, or attack_move with \"derricks\":true");
