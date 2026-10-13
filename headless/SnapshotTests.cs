@@ -225,6 +225,7 @@ namespace Pez.Headless
 
             BusyGame();
             FoggedSnapshots();
+            FoggedFusion();
             OlderSnapshotsLoad(json);
             TokensSurviveRestart();
         }
@@ -270,6 +271,46 @@ namespace Pez.Headless
             Check(ms.Count == w.Scores().Count && ms.Count >= 2, $"a player's copy carries the server's scoreboard ({ms.Count} teams), which its fogged world can't count");
             var spec = Json.Write(ApiServer.ViewSnapshot(g));
             Check(Resume(spec).World.Get(hidden.Id) != null && !spec.Contains("Secret: rush"), "a spectator's copy still has everything but the orders");
+        }
+
+        /// <summary>
+        /// Fusion reactors in a player's browser copy: a rival's owed plasma (which says it runs reactors, and how many) and a
+        /// rival reactor's output stay out of it; the player's own, and a spectator's copy, keep them.
+        /// </summary>
+        static void FoggedFusion()
+        {
+            var g = new Game(new GameConfig { Seed = 3, MapSize = 64, Controllers = new[] { "llm", "llm" } });
+            var w = g.World;
+            foreach (var t in w.Teams) t.ProtectedUntil = 0;
+            // One of the rival's reactors stands in the player's sight, one at the rival's own (unscouted) base, and the player has one.
+            var seenR = w.SpawnStructure(1, "fusion_reactor", w.FindPlacement(0, "fusion_reactor").Value, 1f);
+            var hiddenR = w.SpawnStructure(1, "fusion_reactor", w.FindPlacement(1, "fusion_reactor").Value, 1f);
+            var ownR = w.SpawnStructure(0, "fusion_reactor", w.FindPlacement(0, "fusion_reactor").Value, 1f);
+            for (int i = 0; i < 3 * World.TickRate + 7; i++) // half-fed, ending mid-second so some burn is owed
+            {
+                foreach (var t in w.Teams) t.Add("plasma", 0.5f * World.FusionBurn * World.Dt);
+                w.Step();
+            }
+            Check(w.Teams[1].PlasmaOwed > 0 && w.Teams[0].PlasmaOwed > 0 && seenR.Output > 0f && seenR.Output < 1f && ownR.Output > 0f && w.IsVisibleTo(0, seenR) && !w.IsVisibleTo(0, hiddenR),
+                  $"set up: both teams burn plasma on reactors, one rival reactor in sight and one hidden (owed {w.Teams[1].PlasmaOwed:0.0000}/{w.Teams[0].PlasmaOwed:0.0000}, output {seenR.Output:0.00})");
+
+            var world = Snapshot.Parse(Json.Write(ApiServer.ViewSnapshot(g, 0))).Obj("world");
+            var teams = world.Arr("teams");
+            var ents = world.Arr("entities").OfType<Dictionary<string, object>>().ToList();
+            Dictionary<string, object> Ent(Entity e) => ents.FirstOrDefault(x => Convert.ToInt32(x["id"]) == e.Id);
+            Check(!((Dictionary<string, object>)teams[1]).ContainsKey("plasma_owed") && ((Dictionary<string, object>)teams[0]).ContainsKey("plasma_owed"),
+                  "a rival's owed plasma (it says whether they run reactors, and how many) isn't in the player's copy; the player's own is");
+            Check(Ent(seenR) != null && !Ent(seenR).ContainsKey("output") && Ent(hiddenR) == null && Ent(ownR) != null && Ent(ownR).ContainsKey("output"),
+                  "a rival's reactor in sight is in the copy without its output, one at an unscouted base isn't, and the player's own keeps its output");
+            var spec = Snapshot.Parse(Json.Write(ApiServer.ViewSnapshot(g))).Obj("world");
+            var specEnts = spec.Arr("entities").OfType<Dictionary<string, object>>().ToList();
+            Check(((Dictionary<string, object>)spec.Arr("teams")[1]).ContainsKey("plasma_owed") && specEnts.Any(x => Convert.ToInt32(x["id"]) == seenR.Id && x.ContainsKey("output")) && specEnts.Any(x => Convert.ToInt32(x["id"]) == hiddenR.Id),
+                  "a spectator's copy still has every team's owed plasma and every reactor's output");
+            // And the copy still runs.
+            var copy = Resume(Json.Write(ApiServer.ViewSnapshot(g, 0)));
+            copy.World.Mirror = true;
+            Step(copy, 5);
+            Check(copy.World.Errors == 0, $"the copy runs on with a rival's reactor in it ({copy.World.LastError})");
         }
 
         static void BusyGame()
