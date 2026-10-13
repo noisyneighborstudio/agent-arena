@@ -228,7 +228,7 @@ namespace Pez.Sim
         void DerrickHint(Entity e)
         {
             if (!e.IsArmed || IsProtected(e.Team)) return;
-            var d = Derricks.FirstOrDefault(x => x.Team >= 0 && x.Team != e.Team && !IsProtected(x.Team) && x.DistFrom(e.Pos) <= e.Def.Sight && e.Def.Weapon.CanHit(x.Def) && IsVisibleTo(e.Team, x));
+            var d = Derricks.FirstOrDefault(x => x.Team >= 0 && x.Team != e.Team && x.DistFrom(e.Pos) <= e.Def.Sight && e.Def.Weapon.CanHit(x.Def) && IsVisibleTo(e.Team, x));
             if (d == null) return;
             for (int i = Events.Count - 1; i >= 0 && (Tick - Events[i].Tick) * Dt < 120f; i--)
                 if (Events[i].Type == "derrick_skipped" && Events[i].Team == e.Team && Events[i].B == d.Id) return;

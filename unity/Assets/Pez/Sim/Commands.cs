@@ -14,7 +14,8 @@ namespace Pez.Sim
 @"Commands (JSON objects with a ""type"" field):
   {""type"":""build"", ""structure"":KEY, ""x"":X, ""y"":Y}   place a structure (bottom-left tile). Omit x/y to auto-place near your base.
   {""type"":""train"", ""unit"":KEY, ""count"":N}            queue N units (1-10) at the barracks / war factory
-      add ""structure_id"":ID to have them come out of that building (e.g. a forward barracks); otherwise your first one
+      each of your barracks / factories / airfields trains one unit at a time from the shared queue, so two barracks train twice as fast
+      add ""structure_id"":ID to have them built and come out at that building (e.g. a forward barracks), waiting for it if it's busy; otherwise any free one
   {""type"":""move"", ""units"":[IDS], ""x"":X, ""y"":Y}     move, ignoring enemies
   {""type"":""attack_move"", ""units"":[IDS], ""x"":X, ""y"":Y}  move, engaging enemies on the way, except derricks someone holds (worth capturing: attack one to destroy it)
       add ""derricks"":true to attack_move to shoot enemy-held derricks on the way too (never neutral ones: they can't be hurt)
@@ -180,7 +181,12 @@ namespace Pez.Sim
             }
             string saved = queued > 0 && t.Bought(key) ? $" (that was what you were saving for: converters are back to normal)" : "";
             if (queued == 0) return Err($"{key}: {t.Missing(def.Cost)}{ReserveHint(w, team, def.Cost, key)}");
-            return Ok($"queued {queued}x {key}" + (at != null ? $" at {at.Def.Key} #{at.Id}" : "") + (queued < count ? $" (could only afford {queued})" : "") + $"; {t.UnitQueues[def.BuiltBy].Count} in the queue shared by your {Defs.ProducerKey(def.BuiltBy)} buildings" + saved);
+            // Each completed producer works one queued unit at a time, so the queue moves as fast as there are buildings.
+            int sharing = w.Owned(team).Count(s => s.IsStructure && s.IsComplete && s.Def.Produces == def.BuiltBy);
+            var maker = Defs.ProducerKey(def.BuiltBy);
+            string shared = sharing == 1 ? $"for your only {maker}, which trains one at a time (a second {maker} would train two at once)"
+                                         : $"shared by your {sharing} {maker} buildings, each training one at a time";
+            return Ok($"queued {queued}x {key}" + (at != null ? $" at {at.Def.Key} #{at.Id}" : "") + (queued < count ? $" (could only afford {queued})" : "") + $"; {t.UnitQueues[def.BuiltBy].Count} in the queue {shared}" + saved);
         }
 
         static List<Entity> ResolveUnits(World w, int team, Dictionary<string, object> c)
@@ -226,9 +232,15 @@ namespace Pez.Sim
                 int type = oreName == null || oreName == "any" ? -1 : Array.IndexOf(Defs.Ores, oreName);
                 if (oreName != null && oreName != "any" && type < 0) return Err($"unknown ore '{oreName}'. Valid: {string.Join(", ", Defs.Ores)}");
                 var none = new List<Entity>();
+                // Under newcomer protection, ore within HostileOreRadius of another team's structures is off limits (the mirror of the reserved starting ore).
+                var barred = w.BarredBases(team);
+                Func<Int2, bool> allowed = barred.Count == 0 ? (Func<Int2, bool>)null : t => !World.NearBarredBase(t, barred);
+                Int2? Field(Entity h, Func<Int2, bool> ok) => float.IsNaN(x) ? w.Map.NearestOre(h.Pos, 80, ok, type) : w.Map.NearestOre(dest, 12, ok, type);
+                if (allowed != null && hs.All(h => Field(h, allowed) == null) && hs.Any(h => Field(h, null) != null))
+                    return Err($"you're under newcomer protection for {(int)(w.Teams[team].ProtectedUntil - w.Time)}s more, and until it ends your trucks can't mine within {(int)World.HostileOreRadius} tiles of another team's structures (your own starting ore is protected from them the same way). Mine a field farther from other bases, or your own");
                 foreach (var h in hs)
                 {
-                    var tile = float.IsNaN(x) ? w.Map.NearestOre(h.Pos, 80, null, type) : w.Map.NearestOre(dest, 12, null, type);
+                    var tile = Field(h, allowed);
                     if (tile == null) none.Add(h); // it stays on harvest and keeps looking (and raises SURFACE ORE RUNNING OUT)
                     w.SetOrder(h, Order.Harvest, tile?.Center ?? h.Pos);
                     if (oreName != null) h.HarvestType = type;
@@ -360,7 +372,7 @@ namespace Pez.Sim
             if (target == null) return Err($"nothing with id #{(int)c.Num("target", 0)} exists: it was destroyed, or the id is wrong");
             if (target.Team == team) return Err("that is your own unit");
             if (target.Team < 0) return Err($"{target.Def.Key} #{target.Id} is neutral: it can't be hurt; capture it with an engineer instead");
-            if (w.IsProtected(target.Team)) return Err($"that player is under newcomer protection for {(int)(w.Teams[target.Team].ProtectedUntil - w.Time)}s more");
+            if (w.Shielded(target)) return Err($"that player is under newcomer protection for {(int)(w.Teams[target.Team].ProtectedUntil - w.Time)}s more");
             if (!w.IsVisibleTo(team, target) && target.Def.Key != "derrick") return Err("target is not currently visible; use attack_move toward its last known position");
             var able = units.Where(u => u.Def.Weapon.CanHit(target.Def)).ToList();
             if (able.Count == 0) return Err($"none of those units can hit a {(target.IsAir ? "flying" : "ground")} {target.Def.Key}");
@@ -530,7 +542,7 @@ namespace Pez.Sim
                           $"(it pays {World.DerrickSteel} steel/s while you hold it); if someone holds it, it must be below 50% hp");
             }
             if (!w.IsVisibleTo(team, t)) return Err("target is not currently visible");
-            if (w.IsProtected(t.Team)) return Err("that player is under newcomer protection");
+            if (w.Shielded(t)) return Err("that player is under newcomer protection");
             if (t.Team >= 0 && w.IsProtected(team))
                 return Err($"you're under newcomer protection for {(int)(w.Teams[team].ProtectedUntil - w.Time)}s more and can't take other players' buildings yet; neutral derricks are fine");
             if (!t.IsComplete) return Err("can't capture a structure that's still under construction");

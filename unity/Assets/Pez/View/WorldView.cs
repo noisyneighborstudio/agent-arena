@@ -391,7 +391,7 @@ namespace Pez.View
             foreach (var v in Views.Values)
             {
                 var e = v.E;
-                bool want = !e.Dead && !e.IsCarried && sheenTeams.TryGetValue(e.Team, out var st) && st.mat != null && st.fade > 0f;
+                bool want = !e.Dead && !e.IsCarried && e.Def.Key != "derrick" && sheenTeams.TryGetValue(e.Team, out var st) && st.mat != null && st.fade > 0f;
                 if (!want || (v.Sheen != null && v.Sheen.Team != e.Team)) { if (v.Sheen != null) { v.Sheen.Clear(); v.Sheen = null; } if (!want) continue; }
                 if (!v.Rig.Root.gameObject.activeSelf) continue;
                 var sh = v.Sheen ??= new Sheen { Team = e.Team };
@@ -514,7 +514,7 @@ namespace Pez.View
             var t = World.Teams[e.Team];
             if (e.Def.Key == "command_center") return t.StructureQueue.Count > 0;
             if (e.Def.Key == "radar_dome") return e.IsComplete && !t.LowPower;
-            if (e.Def.Produces != Producer.None && t.UnitQueues.TryGetValue(e.Def.Produces, out var q)) return q.Count > 0;
+            if (e.Def.Produces != Producer.None && t.UnitQueues.TryGetValue(e.Def.Produces, out var q)) return q.Exists(p => p.WorkerId == e.Id);
             return e.Working;
         }
 
@@ -1012,12 +1012,13 @@ namespace Pez.View
                 if (show) { var sc = v.Bay.localScale; sc.y = v.DoorHeight * open; v.Bay.localScale = sc; var lp = v.Bay.localPosition; lp.y = v.Door.localPosition.y - v.DoorHeight + sc.y * 0.5f; v.Bay.localPosition = lp; }
             }
             v.Blink = 1f;
-            if (!t.UnitQueues.TryGetValue(e.Def.Produces, out var q) || q.Count == 0) { v.Vents = 0; return; }
-            if (!IsFirstProducer(e)) return;
-            var def = Defs.Get(q[0].Key);
+            // Each building rolls out the unit it is working on itself.
+            var item = t.UnitQueues.TryGetValue(e.Def.Produces, out var q) ? q.Find(p => p.WorkerId == e.Id) : null;
+            if (item == null) { v.Vents = 0; return; }
+            var def = Defs.Get(item.Key);
             if (def == null) return;
             float rate = t.LowPower ? 0.5f : 1f;
-            float T = (def.BuildTime - q[0].Progress) / rate;
+            float T = (def.BuildTime - item.Progress) / rate;
             if (T < 1.5f) v.Blink = (Time.time * 4f + e.Id * 0.731f) % 2f < 1f ? 1.6f : 0.15f; // each factory blinks on its own phase
             if (T > 0.8f) v.Vents = 0;
             else if (v.Vents < 3 && T < 0.8f - v.Vents * 0.2f)
@@ -1060,13 +1061,6 @@ namespace Pez.View
             t.GetComponent<Renderer>().shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             t.gameObject.SetActive(false);
             return t;
-        }
-
-        bool IsFirstProducer(Entity e)
-        {
-            foreach (var o in World.Entities)
-                if (!o.Dead && o.Team == e.Team && o.IsStructure && o.IsComplete && o.Def.Produces == e.Def.Produces) return o == e;
-            return false;
         }
 
         /// <summary>

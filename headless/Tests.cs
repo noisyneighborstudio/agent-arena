@@ -51,6 +51,7 @@ namespace Pez.Headless
             HousePolicy();
             TeamNames();
             NewcomerProtection();
+            NewcomerEconomicPlay();
             SafeSpawn();
             Fuel();
             RetreatOncePerWound();
@@ -1744,6 +1745,89 @@ namespace Pez.Headless
             w.SetOrder(raider, Order.Attack, hq.Center, hq.Id);
             Run(w, 10);
             Check(hq.Hp < hq.Def.MaxHp, "after protection the base can be attacked");
+        }
+
+        /// <summary>Protection covers the newcomer's base, not economic play against others: it can't mine by an enemy base, and a derrick it holds is fair game.</summary>
+        static void NewcomerEconomicPlay()
+        {
+            Console.WriteLine("\n-- newcomer protection and economic play");
+            var w = new World(2, 7, 64) { Open = true, ProtectionSeconds = 600 };
+            Run(w, 60);
+            var hq0 = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var t = w.AddTeam("llm", "Late Joiner", out _);
+            var hq = w.Owned(t.Id).First(e => e.Def.Key == "command_center");
+            foreach (var u in w.Owned(0).Concat(w.Owned(t.Id)).Where(u => !u.IsStructure).ToList()) w.Remove(u);
+            Check(w.IsProtected(t.Id) && !w.IsProtected(0), "the newcomer is protected, the founder is not");
+
+            // Mining: an enemy's home field, two tiles from its base, is off limits to a protected truck; its own is still its own.
+            var theirs = w.Map.NearestOre(hq0.Center, 12).Value;
+            var truck = At(w.SpawnUnit(t.Id, "mining_truck", hq), theirs.Center + new Vec2(0, 1));
+            // Only what the newcomer has seen counts: an unseen base tells it nothing (no refusal), a seen one bars the field.
+            var r = Commands.Execute(w, t.Id, Cmd("type", "harvest", "units", new[] { truck.Id }, "x", theirs.Center.X, "y", theirs.Center.Y));
+            Check(Ok(r), $"ordered to mine by a base it hasn't seen, the truck isn't refused (the order leaks nothing): {Said(r)}");
+            Run(w, 1);
+            Check(w.Teams[t.Id].KnownEnemyStructures.Values.Any(k => k.team == 0), "the truck then sees the enemy base");
+            r = Commands.Execute(w, t.Id, Cmd("type", "harvest", "units", new[] { truck.Id }, "x", theirs.Center.X, "y", theirs.Center.Y));
+            Check(!Ok(r) && r["error"].ToString().Contains("newcomer protection") && r["error"].ToString().Contains("another team's structures"),
+                  $"a protected truck ordered to mine by an enemy base is refused, with why: {Said(r)}");
+            int fieldBefore = w.Map.Ore[w.Map.Idx(theirs.X, theirs.Y)];
+            truck.HarvestTile = theirs; w.SetOrder(truck, Order.Harvest, theirs.Center); truck.HarvestTile = theirs;
+            Run(w, 20);
+            Check(w.Map.Ore[w.Map.Idx(theirs.X, theirs.Y)] >= fieldBefore && (!truck.HarvestTile.HasValue || Vec2.Dist(truck.HarvestTile.Value.Center, hq0.Center) >= World.HostileOreRadius),
+                  $"and a truck already there mines none of it and moves off (field {fieldBefore} -> {w.Map.Ore[w.Map.Idx(theirs.X, theirs.Y)]})");
+            var mine = w.Map.NearestOre(hq.Center, 12).Value;
+            var home = At(w.SpawnUnit(t.Id, "mining_truck", hq), mine.Center + new Vec2(0, 1));
+            r = Commands.Execute(w, t.Id, Cmd("type", "harvest", "units", new[] { home.Id }, "x", mine.Center.X, "y", mine.Center.Y));
+            Check(Ok(r), $"it can mine its own starting field: {Said(r)}");
+            Run(w, 20);
+            Check(home.Cargo > 0 || home.Order == Order.ReturnOre, $"and does (cargo {home.Cargo})");
+            // The newcomer's own field stays reserved from everyone else.
+            var foreign = At(w.SpawnUnit(0, "mining_truck", hq0), mine.Center + new Vec2(0, 1));
+            foreign.HarvestTile = mine; w.SetOrder(foreign, Order.Harvest, mine.Center); foreign.HarvestTile = mine;
+            Check(w.OreReserved(mine, 0), "the protected newcomer's starting ore is still reserved from others");
+            Run(w, 5);
+            Check(!foreign.HarvestTile.HasValue || !w.OreReserved(foreign.HarvestTile.Value, 0), "and a founder's truck sent onto it moves off");
+            // Once protection ends the same order is allowed.
+            t.ProtectedUntil = 0;
+            r = Commands.Execute(w, t.Id, Cmd("type", "harvest", "units", new[] { truck.Id }, "x", theirs.Center.X, "y", theirs.Center.Y));
+            Check(Ok(r), $"after protection ends the truck may mine anywhere: {Said(r)}");
+
+            // Derricks: neutral ones can be taken during protection, but one a protected team holds can be shot and captured.
+            t.ProtectedUntil = w.Time + 600;
+            var d = w.Derricks.First();
+            d.Team = t.Id;
+            var raider = At(w.SpawnUnit(0, "heavy_tank", hq0), d.Center + new Vec2(3, 3));
+            w.UpdateVisibility();
+            float hp = d.Hp;
+            r = Commands.Execute(w, 0, Cmd("type", "attack", "units", new[] { raider.Id }, "target", d.Id));
+            Check(Ok(r), $"a derrick held by a protected team can be attacked: {Said(r)}");
+            w.Hurt(d, 50, raider);
+            Check(d.Hp < hp, "and hurt");
+            w.Hurt(hq, 50, raider);
+            Check(hq.Hp == hq.Def.MaxHp, "while its base is still untouchable");
+            // Protected units never shoot back, however they got the order: not on the alarm, not on a direct attack order.
+            var guard = At(w.SpawnUnit(t.Id, "heavy_tank", hq), d.Center + new Vec2(-3, 0));
+            var guard2 = At(w.SpawnUnit(t.Id, "heavy_tank", hq), d.Center + new Vec2(-3, 2));
+            raider.Hp = raider.Def.MaxHp;
+            w.Hurt(d, 10, raider);
+            Check(guard.Order != Order.Attack && guard.Order != Order.AttackMove, $"protected units nearby don't answer the alarm for a hit derrick (order {guard.Order})");
+            w.SetOrder(raider, Order.Idle, raider.Pos); // the founder only stands there; the derrick keeps its health for the capture below
+            w.SetOrder(guard2, Order.Attack, raider.Center, raider.Id);
+            Run(w, 10);
+            Check(raider.Hp == raider.Def.MaxHp && guard.Hp == guard.Def.MaxHp && guard2.Hp == guard2.Def.MaxHp,
+                  $"and a protected unit with a direct attack order fires nothing (raider {raider.Hp:0}/{raider.Def.MaxHp})");
+            w.Remove(guard); w.Remove(guard2);
+            d.Hp = d.Def.MaxHp * 0.3f;
+            var eng = At(w.SpawnUnit(0, "engineer", hq0), d.Center + new Vec2(1, 1));
+            r = Commands.Execute(w, 0, Cmd("type", "capture", "units", new[] { eng.Id }, "target", d.Id));
+            Check(Ok(r), $"an engineer may capture a derrick a protected team holds (below 50%): {Said(r)}");
+            Run(w, 20);
+            Check(d.Team == 0, $"and takes it (now team {d.Team})");
+            var mineEng = At(w.SpawnUnit(t.Id, "engineer", hq), d.Center + new Vec2(1, 2));
+            d.Hp = d.Def.MaxHp * 0.3f;
+            w.UpdateVisibility();
+            r = Commands.Execute(w, t.Id, Cmd("type", "capture", "units", new[] { mineEng.Id }, "target", d.Id));
+            Check(!Ok(r) && Said(r).Contains("newcomer protection"), $"while a protected team still can't take other players' derricks: {Said(r)}");
         }
     }
 }
