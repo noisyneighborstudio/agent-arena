@@ -62,7 +62,7 @@ namespace Pez.Headless
                 "Visible Explored Left Resigned StalledSince House Seat ProtectedUntil StructureQueue UnitQueues KnownEnemyStructures Surveyed SurveySites Zones " +
                 "SurfaceWarnedAt HomeOreWarned LastActiveAt Reserve SaveFor SaveForCost Stats Granted",
             [typeof(World)] = "Map Paths MapVersion Open MaxPlayers MaxMapSize GrowStep SafeJoinDistance ProtectionSeconds Teams ById Entities Projectiles Events " +
-                "EventCounts Alerts Tick GameOver Winner Errors LastError nextId nextSeq seatCounter rng rateSnapshot airWarned StallGrace ArenaChampion contested Inventions GameId Regrown SuddenDeathAt DerrickRespawns " +
+                "EventCounts Alerts Tick GameOver Winner Errors LastError nextId nextSeq seatCounter rng rateSnapshot airWarned derrickHinted StallGrace ArenaChampion contested Inventions GameId Regrown SuddenDeathAt DerrickRespawns " +
                 "| barredBases ErrorLog loggedErrors cells cellsW cellsH nearTarget nearHelp nearMine nearSep nearSpot nearCrush nearVis Showcase OreVersion oreDirty beingMined regrowNow scoreCache scoreCacheTick NextMatchIn derricksChecked groupSpan Mirror MirrorScores Feed Touched", // Feed: the observation feed starts a new stream on resume (readers get a gap and a snapshot); Showcase: the kitchen sink room is never saved (rebuilt from code); Mirror: set by the browser client on its copy
             [typeof(Invention)] = "Key Name Chassis WeaponFrom Summary Team Def ResearchCost ResearchTime Progress Novelty PriceFactor ProposedAt ResearchedAt Built Lost Kills",
             [typeof(Map)] = "W H Tiles Ore OreType Occupant Spawns Deep OreScale nextDepositId OreBase OreBaseType Salvage | writable fieldsChanged fieldTiles fieldRoots BaseMissing SalvageMissing",
@@ -234,7 +234,9 @@ namespace Pez.Headless
             Check(w.Errors == 0 && b.Errors == 0, $"no sim errors ({w.LastError ?? b.LastError})");
 
             BusyGame();
+            DerrickHintsSurvive();
             FoggedSnapshots();
+            FoggedDerrickHints();
             FoggedFusion();
             FoggedOwnerEvents();
             OlderSnapshotsLoad(json);
@@ -243,6 +245,30 @@ namespace Pez.Headless
 
         /// <summary>Four scripted AIs fighting on a big map for 20 minutes: how big is the save, and does it resume exactly?</summary>
         /// <summary>A player's browser copy (ViewSnapshot with a team): what fog hides stays out, and it still runs.</summary>
+        /// <summary>Which derricks a team's units have stopped beside is that team's to know: a player's copy of the game carries only its own.</summary>
+        static void FoggedDerrickHints()
+        {
+            var g = new Game(new GameConfig { Seed = 7, MapSize = 96, Controllers = new[] { "llm", "llm" } });
+            var w = g.World;
+            foreach (var t in w.Teams) t.ProtectedUntil = 0;
+            foreach (var u in w.Entities.Where(e => !e.IsStructure).ToList()) w.Remove(u);
+            var ds = w.Derricks.ToList();
+            ds[0].Team = 1; ds[1].Team = 0; // each side holds one
+            var hq0 = w.Owned(0).First(e => e.Def.Key == "command_center"); var hq1 = w.Owned(1).First(e => e.Def.Key == "command_center");
+            var tank0 = At(w.SpawnUnit(0, "light_tank", hq0), ds[0].Center + new Vec2(-12, 0)); // ours stops by theirs
+            var tank1 = At(w.SpawnUnit(1, "light_tank", hq1), ds[1].Center + new Vec2(-12, 0)); // theirs stops by ours
+            Commands.Execute(w, 0, Cmd("type", "attack_move", "units", new[] { tank0.Id }, "x", ds[0].Center.X - 3, "y", ds[0].Center.Y));
+            Commands.Execute(w, 1, Cmd("type", "attack_move", "units", new[] { tank1.Id }, "x", ds[1].Center.X - 3, "y", ds[1].Center.Y));
+            Step(g, 15);
+            List<Dictionary<string, object>> Hinted(string json) => Snapshot.Parse(json).Obj("world").Arr("derrick_hinted").OfType<List<object>>().Select(l => new Dictionary<string, object> { ["team"] = l[0], ["id"] = l[1] }).ToList();
+            var whole = Hinted(Snap(g));
+            Check(w.Events.Count(e => e.Type == "derrick_skipped" && e.Team == 0) == 1 && w.Events.Count(e => e.Type == "derrick_skipped" && e.Team == 1) == 1 && whole.Count == 2,
+                  $"set up: each side's tank was told about the other's derrick ({whole.Count} hints in the whole save)");
+            var mine = Hinted(Json.Write(ApiServer.ViewSnapshot(g, 0)));
+            Check(mine.Count == 1 && (double)mine[0]["team"] == 0 && (double)mine[0]["id"] == ds[0].Id, $"a player's copy carries only its own hint, not the rival's ({mine.Count} entries)");
+            Check(Hinted(Json.Write(ApiServer.ViewSnapshot(g, -1))).Count == 2, "and the spectator's copy keeps both");
+        }
+
         static void FoggedSnapshots()
         {
             var g = new Game(new GameConfig { Seed = 3, MapSize = 64, Controllers = new[] { "llm", "ai" } });
@@ -372,6 +398,42 @@ namespace Pez.Headless
             var sight = w.Emit("built", 1, 99, pos: w.Teams[1].StartPos, key: "gun_turret");
             var evs2 = Snapshot.Parse(Json.Write(ApiServer.ViewSnapshot(g, 0))).Obj("world").Arr("events").OfType<Dictionary<string, object>>().ToList();
             Check(evs2.Any(e => Convert.ToInt32(e["seq"]) == sight.Seq), "while what happened in the player's sight (a building finished) still reaches it");
+        }
+
+        /// <summary>
+        /// "Once per derrick every two minutes" is state, not a look back through the event log: a save keeps only the newest 1500
+        /// events (a big fight makes 2500 in two minutes), so a resumed game that read the log would say it again.
+        /// </summary>
+        static void DerrickHintsSurvive()
+        {
+            var game = new Game(new GameConfig { Seed = 7, MapSize = 96, Controllers = new[] { "llm", "llm" } });
+            var w = game.World;
+            foreach (var u in w.Entities.Where(e => !e.IsStructure).ToList()) w.Remove(u);
+            var d = w.Derricks.First();
+            d.Team = 1;
+            var hq0 = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var tank = At(w.SpawnUnit(0, "light_tank", hq0), d.Center + new Vec2(-12, 0));
+            Commands.Execute(w, 0, Cmd("type", "attack_move", "units", new[] { tank.Id }, "x", d.Center.X - 3, "y", d.Center.Y));
+            Step(game, 15);
+            int saidFirst = w.Events.Count(e => e.Type == "derrick_skipped");
+            // A save from before the hints were kept as state (no derrick_hinted) still has the hint event: it counts, so the first resume doesn't repeat it.
+            var old = (Dictionary<string, object>)Json.Parse(Snap(game));
+            ((Dictionary<string, object>)old["world"]).Remove("derrick_hinted");
+            var older = Resume(Json.Write(old));
+            Commands.Execute(older.World, 0, Cmd("type", "attack_move", "units", new[] { tank.Id }, "x", d.Center.X - 3, "y", d.Center.Y + 2));
+            Step(older, 10);
+            Check(saidFirst == 1 && older.World.Events.Count(e => e.Type == "derrick_skipped") == 1, $"a save from before hints were state, resumed within the two minutes, doesn't repeat the hint its events show ({older.World.Events.Count(e => e.Type == "derrick_skipped")} hint events after resuming)");
+            for (int i = 0; i < 2500; i++) w.Emit("shot", 1, 5, 6, pos: new Vec2(40, 40)); // far more than the 1500 events a save holds
+            var back = Resume(Snap(game));
+            Check(Snap(back) == Snap(game), "a game that has given a derrick hint saves and loads back to the same snapshot");
+            var move = Cmd("type", "attack_move", "units", new[] { tank.Id }, "x", d.Center.X - 3, "y", d.Center.Y + 2);
+            Commands.Execute(back.World, 0, move); // the tank stops by the derrick again
+            Step(back, 10);
+            Check(saidFirst == 1 && back.World.Events.Count(e => e.Type == "derrick_skipped") == 0, $"a resumed game doesn't repeat the hint its units already got ({saidFirst} before the save, {back.World.Events.Count(e => e.Type == "derrick_skipped")} after)");
+            Step(back, 120);
+            Commands.Execute(back.World, 0, move);
+            Step(back, 10);
+            Check(back.World.Events.Count(e => e.Type == "derrick_skipped") == 1, "and says it again once the two minutes are up");
         }
 
         static void BusyGame()
