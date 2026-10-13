@@ -2784,7 +2784,7 @@ namespace Pez.Headless
             // a truck would refuse that tile too (the leash applies to the tile it mines), so the lack is starved at once. No map has such a field to
             // hand, so one is made: a field 25 to 30 tiles from the base's drop-offs is the only copper (its ore turned to copper), a newcomer's base
             // sits just behind it, and one more copper tile lies just past the leash on its far side.
-            (World w, SimpleAI ai, Team t, bool found) Straddle(bool protectedSeat)
+            (World w, SimpleAI ai, Team t, bool found) Straddle(bool protectedSeat, bool rootPast = false)
             {
                 for (int seed = 1; seed <= 300; seed++)
                 {
@@ -2801,10 +2801,10 @@ namespace Pez.Headless
                     {
                         var near = drops.OrderBy(dp => Vec2.Dist(dp, C(r))).First();
                         float dR = Vec2.Dist(near, C(r));
-                        if (dR < 25f || dR > 30f) continue;
+                        if (rootPast ? dR < 37f || dR > 42f : dR < 25f || dR > 30f) continue;
                         var dir = (C(r) - near).Normalized;
-                        var tPos = C(r) + dir * (World.LeashDist + 1.5f - dR);
-                        if (!m.InBounds((int)tPos.X, (int)tPos.Y) || In(tPos)) continue;
+                        var tPos = rootPast ? C(r) - dir * (dR - (World.LeashDist - 1.5f)) : C(r) + dir * (World.LeashDist + 1.5f - dR); // (the odd tile: just inside the leash, or just past it)
+                        if (!m.InBounds((int)tPos.X, (int)tPos.Y) || In(tPos) == !rootPast) continue;
                         var seat = C(r) - dir * 9.9f;
                         // the field is the only copper: its ore (the 9x9 around its root) turned to copper, all other copper gone, one tile at tPos
                         for (int i = 0; i < m.Ore.Length; i++) if (m.OreType[i] == Map.Copper) m.Ore[i] = 0;
@@ -2821,7 +2821,7 @@ namespace Pez.Headless
                         int ti = m.Idx((int)tPos.X, (int)tPos.Y);
                         m.Ore[ti] = 200; m.OreType[ti] = (byte)Map.Copper;
                         foreach (var d in m.Deep.OrderBy(d => Vec2.Dist(d.Pos, xt.StartPos)).Take(2)) { d.Type = Map.Copper; xt.Surveyed.Add(d.Id); xt.Zones[d.Id] = new ZoneFlag { ZoneId = d.Id, FlaggedBy = 0, FlaggedAt = x.Time }; }
-                        x.Teams[1].StartPos = seat;
+                        if (!rootPast) x.Teams[1].StartPos = seat;
                         x.Teams[1].ProtectedUntil = protectedSeat ? x.Time + 100000f : 0f;
                         xt.Add("copper", 3000); xt.Add("iron_ore", 1000); xt.Add("steel", 2000); xt.Add("copper_ore", -xt.Amount("copper_ore"));
                         return (x, xai, xt, true);
@@ -2838,6 +2838,14 @@ namespace Pez.Headless
                 var (w1i, ai1i, _, _) = Straddle(false);
                 AiRun(w1i, ai1i, 60);
                 Check(RigsOf(w1i) == 0, $"but with the protection over the field is the trucks' to mine and the wait stands ({RigsOf(w1i)} rigs)");
+                // The mirror: a field whose root is just past the leash but which has a copper tile inside it is copper the trucks can mine (the leash is kept on the tile).
+                var (w1j, ai1j, _, found1j) = Straddle(false, rootPast: true);
+                Check(found1j, "(a map with a field whose root is 37 to 42 tiles from the drop-offs was found)");
+                if (found1j)
+                {
+                    AiRun(w1j, ai1j, 60);
+                    Check(RigsOf(w1j) == 0, $"a field whose root lies past the leash but has an unreserved copper tile inside it is surface copper: the wait stands ({RigsOf(w1j)} rigs)");
+                }
             }
             // The same for a field an enemy base it knows of stands by (its trucks keep World.HostileOreRadius from that).
             var (w1g, ai1g, t1g) = Reserved(false);
