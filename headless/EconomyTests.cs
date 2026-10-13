@@ -1078,6 +1078,7 @@ namespace Pez.Headless
             var t3 = w3.Teams[0];
             AiBase(w3, "power_plant", "mining_refinery", "barracks", "factory", "power_plant", "electronics_plant");
             Array.Fill(t3.Explored, true);
+            foreach (var d in w3.Map.Deep) d.Amount = 0; // nothing to drill: this is about the build order
             t3.Add("iron_ore", 1400); t3.Add("steel", 20000); t3.Add("circuits", 5000); // plenty: the army can't spend it all
             Action noCopper = () => { t3.Add("copper_ore", -t3.Amount("copper_ore")); t3.Add("copper", -t3.Amount("copper")); }; // spent as fast as it comes in
             AiRun(w3, ai3, 45, noCopper);
@@ -1087,8 +1088,8 @@ namespace Pez.Headless
             Check(saved.Contains("\"stuck_since\":[[") && Json.Write(back.SaveState()) == saved, "what it is waiting on is part of the saved game");
             AiRun(w3, ai3, 45, noCopper);
             Check(Have(w3, "gun_turret") == 0 && Have(w3, "optics_lab") == 1, $"then it builds the next step it can pay for ({Have(w3, "optics_lab")} optics lab)");
-            t3.Add("copper", 100);
-            AiRun(w3, ai3, 20);
+            t3.Add("copper", 1000);
+            AiRun(w3, ai3, 40);
             Check(Have(w3, "gun_turret") == 1, "and comes back to the turret as soon as the copper is there");
 
             // Short of circuits, a fusion reactor can't be paid for: plain power plants keep the lights on instead of waiting on it.
@@ -1111,6 +1112,21 @@ namespace Pez.Headless
             t6.Add("crystal", -t6.Amount("crystal"));
             AiRun(w6, ai6, 3);
             Check(trucks.Any(e => e.HarvestType == Map.Crystal) && trucks.Count(e => e.HarvestType == Map.Crystal) <= 2, $"out of it, one does ({trucks.Count(e => e.HarvestType == Map.Crystal)} on crystal)");
+
+            // The attacking AI's waves aim at the enemy's base, not at the nearest derrick it holds: attack-move leaves a held
+            // derrick alone, so every wave used to stop beside it and the enemy base was never touched.
+            var w7 = new World(2, 3, 80);
+            var raider = new SimpleAI(0); // not passive
+            var foe = w7.Owned(1).First(e => e.Def.Key == "command_center");
+            var derrick = w7.Derricks.OrderBy(d => Vec2.Dist(d.Center, w7.Teams[0].StartPos)).First();
+            derrick.Team = 1; // the enemy holds it, and it is nearer than their base
+            w7.Teams[0].KnownEnemyStructures[derrick.Id] = ("derrick", derrick.Origin, 1);
+            w7.Teams[0].KnownEnemyStructures[foe.Id] = ("command_center", foe.Origin, 1);
+            var tanks = Enumerable.Range(0, 8).Select(_ => w7.SpawnUnit(0, "light_tank", w7.Owned(0).First(e => e.Def.Key == "command_center"))).ToList();
+            foreach (var u in w7.Owned(0).Where(e => !e.IsStructure)) w7.SetOrder(u, Order.Idle, u.Pos); // standing about, as a finished army does
+            raider.Update(w7);
+            Check(Vec2.Dist(derrick.Center, w7.Teams[0].StartPos) < Vec2.Dist(foe.Center, w7.Teams[0].StartPos) && tanks.All(u => u.Order == Order.AttackMove && Vec2.Dist(u.OrderPos, foe.Center) < 3),
+                  $"a wave goes for the enemy command center, not the derrick beside it (orders to {tanks[0].OrderPos}, base at {foe.Center})");
         }
 
         static void AiDeepMining()
@@ -1129,8 +1145,11 @@ namespace Pez.Headless
             deps[0].Amount = 0; // and it has run dry
             t.Add("iron_ore", 1000); t.Add("circuits", 300);
             t.Add("copper_ore", -t.Amount("copper_ore")); // short of copper
+            mine.LastHitTime = w.Time; // just hit: a building under fire can't be sold for 10 s
             AiRun(w, ai, 5);
-            Check(mine.Dead && !w.Owned(0).Any(e => e.Def.Key == "deep_mine"), "it sells a mine whose deposit is used up (it draws 50 power for nothing)");
+            Check(!mine.Dead, "a spent mine that was just hit can't be sold yet");
+            AiRun(w, ai, 8);
+            Check(mine.Dead && !w.Owned(0).Any(e => e.Def.Key == "deep_mine"), "it sells a mine whose deposit is used up once it can (it draws 50 power for nothing)");
             // Steel only trickles in (2 a second): the army used to spend every bit of it, so the 800-steel rig was never affordable.
             AiRun(w, ai, 3 * 60, () => t.Add("steel", 2 * World.Dt));
             Check(t.SaveFor == "drill_rig" && t.Reserved("steel") >= 800 && w.Owned(0).Count(e => !e.IsStructure && e.IsArmed) <= 2,
