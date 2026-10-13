@@ -2643,7 +2643,6 @@ namespace Pez.Headless
             var idle = At(w3.SpawnUnit(0, "drill_rig", w3.Owned(0).First(e => e.Def.Key == "command_center")), t3.StartPos + new Vec2(4, 4));
             w3.SetOrder(idle, Order.Idle, idle.Pos);
             t3.Add("copper", 3000); t3.Add("copper_ore", -t3.Amount("copper_ore")); t3.Add("steel", 500); t3.Add("iron_ore", 1000); t3.Add("circuits", 300);
-            AiLacked(w3, ai3);
             AiRun(w3, ai3, 5);
             Check(idle.Order == Order.Drill && idle.ZoneId == d3[4].Id, $"3000 copper but none of the copper ore a refinery is waiting on, four iron mines up: the idle rig goes to the copper zone ({idle.OrderName}, zone {idle.ZoneId})");
         }
@@ -2727,6 +2726,7 @@ namespace Pez.Headless
                 return (w, ai, t, deps);
             }
             bool GoesTo(World x, DeepDeposit d) => x.Owned(0).Any(e => (e.Def.Key == "drill_rig" && e.ZoneId == d.Id) || (e.Def.Key == "deep_mine" && e.DepositId == d.Id));
+            int RigsOf(World x) => x.Owned(0).Count(e => e.Def.Key == "drill_rig" || e.Def.Key == "deep_mine") + x.Teams[0].UnitQueues[Producer.Factory].Count(q => q.Key == "drill_rig"); // (rigs bought: on the way, queued, or already a mine)
             // Copper is only starved once the lack has lasted SimpleAI.CopperStarveHold. The runs below that expect a copper rig start with the lack
             // already that old (see AiLacked) so they stay about the choice of zone.
             const float Hold = SimpleAI.CopperStarveHold;
@@ -2737,11 +2737,24 @@ namespace Pez.Headless
             d1[0].Type = Map.Copper; d1[1].Type = Map.Copper;
             t1.Add("copper", 3000); t1.Add("iron_ore", 1000); t1.Add("steel", 1000); t1.Add("copper_ore", -t1.Amount("copper_ore"));
             bool wentCopper = false; // (the mine is sold again once it has pumped the refinery its 100 copper ore: refined copper is past the surplus)
-            AiLacked(w1, ai1);
             AiRun(w1, ai1, 90, () => wentCopper |= GoesTo(w1, d1[0]));
             Check(wentCopper, $"with 3000 copper but no copper ore for its second refinery and no surface ore left, a rig goes to the copper zone ({w1.Owned(0).Count(e => e.Def.Key == "drill_rig")} rigs, {w1.Owned(0).Count(e => e.Def.Key == "deep_mine")} mines)");
             Check(Have(w1, "mining_refinery") >= 2 && !w1.Owned(0).Any(e => e.Def.Key == "deep_mine"),
                   $"and sells that mine once the refinery has its ore: copper is piling up ({Have(w1, "mining_refinery")} refineries, {w1.Owned(0).Count(e => e.Def.Key == "deep_mine")} mines, {t1.Amount("copper")} copper)");
+            // That lack is the raw ore a purchase waits on, with no surface copper to bring it: no waiting out the hold, the rig goes at once.
+            var (w1c, ai1c, t1c, d1c) = Dry(0);
+            d1c[0].Type = Map.Copper; d1c[1].Type = Map.Copper;
+            t1c.Add("copper", 3000); t1c.Add("iron_ore", 1000); t1c.Add("steel", 2000); t1c.Add("copper_ore", -t1c.Amount("copper_ore"));
+            AiRun(w1c, ai1c, 60);
+            Check(RigsOf(w1c) >= 1, $"a refinery waiting on copper ore with no surface copper within reach is starved at once, not after {Hold:0} s ({RigsOf(w1c)} rigs bought in 60 s)");
+            // With surface copper in reach the trucks bring that ore, so the hold stands (the same base with its ore left on the map).
+            var (w1d, ai1d) = AiWorld();
+            var t1d = w1d.Teams[0];
+            AiBase(w1d, "power_plant", "mining_refinery", "barracks", "factory", "power_plant", "electronics_plant", "gun_turret");
+            foreach (var d in w1d.Map.Deep.OrderBy(d => Vec2.Dist(d.Pos, t1d.StartPos)).Take(2)) { d.Type = Map.Copper; t1d.Surveyed.Add(d.Id); t1d.Zones[d.Id] = new ZoneFlag { ZoneId = d.Id, FlaggedBy = 0, FlaggedAt = w1d.Time }; }
+            t1d.Add("copper", 3000); t1d.Add("iron_ore", 1000); t1d.Add("steel", 2000); t1d.Add("copper_ore", -t1d.Amount("copper_ore"));
+            AiRun(w1d, ai1d, 60);
+            Check(RigsOf(w1d) == 0, $"but with copper ore lying within reach of its drop-offs, the same wait is for the trucks to answer and no rig is bought yet ({RigsOf(w1d)} rigs)");
             var (w1b, ai1b, t1b, d1b) = Dry(1);
             d1b[0].Type = Map.Copper; d1b[1].Type = Map.Copper;
             t1b.Add("copper", 3000); t1b.Add("iron_ore", 1000); t1b.Add("steel", 1000); t1b.Add("copper_ore", -t1b.Amount("copper_ore"));
@@ -2778,7 +2791,6 @@ namespace Pez.Headless
             var (w9, ai9, t9, d9) = Dry(1);
             foreach (var d in w9.Map.Deep) d.Type = Map.Copper; // (so a surveyor's finds make no iron mine to confuse the count)
             void NoCopper(Team x) { x.Add("copper", -x.Amount("copper")); x.Add("copper_ore", -x.Amount("copper_ore")); }
-            int RigsOf(World x) => x.Owned(0).Count(e => e.Def.Key == "drill_rig" || e.Def.Key == "deep_mine") + x.Teams[0].UnitQueues[Producer.Factory].Count(q => q.Key == "drill_rig"); // (rigs bought: on the way, queued, or already a mine)
             t9.Add("iron_ore", 1000); t9.Add("steel", 2000);
             NoCopper(t9);
             AiRun(w9, ai9, Hold - 30);
@@ -3281,7 +3293,7 @@ namespace Pez.Headless
                   $"the harness's surface ore leaves out salvage (100 salvage on the map: field ore stays {EconReport.FieldOreTotal(pm):0}); in a played game with {played.SalvageEnd:0} ore of salvage lying at the end, the last minute's snapshot is the field ore alone ({played.SurfaceByMinute[12]:0})");
 
             // Unmined surface ore by ore and by reach: the per-ore columns sum to the totals the report already gives (minute 45's `left` and the end's surface and beyond-the-leash ore).
-            var long45 = EconReport.PlayGame(1, 48, 1f, true, 45);
+            var long45 = EconReport.PlayGame(2, 48, 1f, true, 45); // (a seed whose two AIs are both still standing at minute 45: on a map this small many games end in a knockout before it)
             double Sum(double[] xs) => xs.Sum();
             Check(long45.Min45 && !played.Min45 && Math.Abs(Sum(long45.Min45Near) + Sum(long45.Min45Far) - long45.SurfaceByMinute[45]) < 1e-6 && long45.SurfaceByMinute[45] > 0
                   && Math.Abs(Sum(long45.EndNear) + Sum(long45.EndFar) - long45.SurfaceEnd) < 1e-6 && Math.Abs(Sum(long45.EndFar) - long45.FarOreEnd) < 1e-6
