@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Pez.Api;
 using Pez.Sim;
 
 namespace Pez.Headless
@@ -26,6 +27,7 @@ namespace Pez.Headless
             SymmetricPlacement();
             BaysFaceTheOre();
             UnitsLeaveByTheDoor();
+            BayFollowsABlockedLane();
             MatchClock();
             Derricks();
             SellRules();
@@ -779,15 +781,49 @@ namespace Pez.Headless
                   $"a snapshot from before bays turned loads with every bay south, and plays on ({oldDropOffs.Count} drop-offs, sides {string.Join(", ", oldDropOffs.Select(e => e.BaySide))}, {oldGame.World.Errors} errors: {oldGame.World.LastError})");
         }
 
-        /// <summary>New ground units appear at their producer's door: a drop-off's is on its bay side (the view turns the model to match), and they head out from it.</summary>
-        static void UnitsLeaveByTheDoor()
+        /// <summary>A world with open ground round seat 0's command center, so every side of it has a clear lane.</summary>
+        static (World w, Entity hq) OpenBase()
         {
-            // Open ground round seat 0's command center, so every side's lane is clear.
             var w = new World(2, 7, 80);
             var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
             for (int y = hq.Origin.Y - 8; y <= hq.Origin.Y + 11; y++)
                 for (int x = hq.Origin.X - 8; x <= hq.Origin.X + 11; x++)
                     if (w.Map.InBounds(x, y) && w.Map.Occupant[w.Map.Idx(x, y)] == 0) { w.Map.Tiles[w.Map.Idx(x, y)] = Terrain.Grass; w.Map.Ore[w.Map.Idx(x, y)] = 0; }
+            return (w, hq);
+        }
+
+        /// <summary>
+        /// Only friendly buildings are kept off a truck lane, so an enemy can build on one; the sim then moves that bay to the next clear
+        /// side (as it always has for blocked lanes). Everything that shows the door follows it: where units appear, the spectator feed's
+        /// facing for the building (the browser viewers turn the model by it every frame), and back again when the blocker goes.
+        /// </summary>
+        static void BayFollowsABlockedLane()
+        {
+            var (w, hq) = OpenBase();
+            hq.BaySide = 3; // north
+            float north = MathF.PI / 2;
+            float FeedFacing() { var row = ((List<object>)D(ApiServer.ViewFrame(w, -1))["entities"]).Cast<List<object>>().First(r => Convert.ToInt32(r[0]) == hq.Id); return Convert.ToSingle(row[6]); }
+            Check(MathF.Abs(w.Bay(hq).facing - north) < 0.001f && MathF.Abs(FeedFacing() - north) < 0.01f, $"a north bay opens north and the spectator feed says so ({FeedFacing():0.00})");
+
+            var (bay, head, _, _) = w.Bay(hq);
+            var onLane = Int2.Of((bay + head) * 0.5f);
+            var blocker = w.SpawnStructure(1, "power_plant", onLane, 1f); // an enemy building up on the lane
+            var (_, _, now, ok) = w.Bay(hq);
+            var truck = w.SpawnUnit(0, "mining_truck", hq);
+            var off = truck.Pos - hq.Center;
+            Check(ok && MathF.Cos(now - north) < 0.99f && MathF.Abs(w.DoorFacing(hq) - now) < 0.001f && MathF.Abs(FeedFacing() - now) < 0.01f,
+                  $"with an enemy building on its lane the bay moves to a clear side ({now * 180 / MathF.PI:0} degrees) and the feed follows ({FeedFacing() * 180 / MathF.PI:0})");
+            var dir = new Vec2(MathF.Round(MathF.Cos(now)), MathF.Round(MathF.Sin(now)));
+            Check(off.X * dir.X + off.Y * dir.Y > 1.5f && MathF.Cos(truck.Facing - now) > 0.99f, $"and new units appear on that side, facing out (a truck {off} from the centre)");
+
+            w.Remove(blocker);
+            Check(MathF.Abs(w.Bay(hq).facing - north) < 0.001f && MathF.Abs(FeedFacing() - north) < 0.01f, "when the blocker is gone the bay is back on its own side, and the feed with it");
+        }
+
+        /// <summary>New ground units appear at their producer's door: a drop-off's is on its bay side (the view turns the model to match), and they head out from it.</summary>
+        static void UnitsLeaveByTheDoor()
+        {
+            var (w, hq) = OpenBase();
             var sides = new[] { (side: 0, name: "south", dx: 0, dy: -1), (side: 1, name: "east", dx: 1, dy: 0), (side: 2, name: "west", dx: -1, dy: 0), (side: 3, name: "north", dx: 0, dy: 1) };
             var wrong = new List<string>();
             foreach (var s in sides)

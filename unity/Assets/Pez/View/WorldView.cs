@@ -839,22 +839,38 @@ namespace Pez.View
         /// <summary>
         /// A drop-off's model faces its bay: the pack's doors face -Z (south), so the model (and the plinth ramp that goes with
         /// the door) turns a quarter turn per side about its centre. Footprints are square, so it still fits. Everything built on
-        /// the model (door, lamps, crane, stacks) turns with it; the sim's bay side is fixed when the building is made, so this
-        /// is done once.
+        /// the model (door, lamps, crane, stacks) turns with it. The bay stays on its own side for life, unless an enemy building
+        /// goes up on its lane and the sim moves it to a clear side (World.Bay), so FollowBay checks for that.
         /// </summary>
         void TurnToBay(EV v)
         {
-            var e = v.E;
-            if (!e.Def.DropOff) return;
-            float yaw = -90f - World.Bay(e).facing * Mathf.Rad2Deg; // the door (-Z) turns from south to the bay's direction
+            if (!v.E.Def.DropOff) return;
+            float yaw = -90f - World.Bay(v.E).facing * Mathf.Rad2Deg; // the door (-Z) turns from south to the bay's direction
             v.BayYaw = Mathf.Round(yaw / 90f) * 90f;
             v.Rig.Body.localRotation = Quaternion.Euler(0f, v.BayYaw, 0f);
+        }
+
+        /// <summary>
+        /// Twice a second, a drop-off whose bay the sim has moved to another side (its lane was built over) turns its model, plinth
+        /// ramp and dock point after it, so the door is always where the trucks and new units are.
+        /// </summary>
+        void FollowBay(EV v)
+        {
+            var e = v.E;
+            if (!e.IsStructure || !e.Def.DropOff || (Time.frameCount + e.Id) % 30 != 0) return;
+            float before = v.BayYaw;
+            var (bay, _, facing, _) = World.Bay(e);
+            if (Mathf.Approximately(Mathf.Round((-90f - facing * Mathf.Rad2Deg) / 90f) * 90f, before)) return;
+            TurnToBay(v);
+            Plinths.Register(e.Id, v.Rig.Root.position, v.Rig.Plinth, v.BayYaw);
+            if (v.Dock != null) v.Dock.BayPoint = bay;
         }
 
         void UpdateView(EV v, float alpha)
         {
             var e = v.E;
             var rig = v.Rig;
+            FollowBay(v);
             if (e.IsStructure && rig.HasModel && v.TeamShown != e.Team)
             {
                 // Captured (an engineer took it; a derrick claimed or released): it wears its new owner's colours.
