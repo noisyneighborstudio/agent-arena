@@ -227,7 +227,8 @@ namespace Pez.Headless
         {
             var game = new Game(new GameConfig { Seed = 7, Controllers = new[] { "llm", "llm" } });
             var w = game.World;
-            var api = new ApiServer(7793);
+            int port = FreePort();
+            var api = new ApiServer(port);
             api.Start();
             var todo = new ConcurrentQueue<Action>();
             bool stop = false;
@@ -246,7 +247,7 @@ namespace Pez.Headless
             T OnGame<T>(Func<T> f) { T r = default; var done = new ManualResetEventSlim(); todo.Enqueue(() => { r = f(); done.Set(); }); done.Wait(); return r; }
             loop.Start();
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(70) };
-            const string B = "http://127.0.0.1:7793";
+            string B = $"http://127.0.0.1:{port}";
             Dictionary<string, object> Get(string url) => (Dictionary<string, object>)Json.Parse(http.GetStringAsync(B + url).Result);
             (int code, Dictionary<string, object> body) Post(string url, string json, string lease = null)
             {

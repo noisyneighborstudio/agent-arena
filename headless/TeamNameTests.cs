@@ -77,7 +77,8 @@ namespace Pez.Headless
         static void TeamNamesOverHttp()
         {
             var game = new Game(new GameConfig { Seed = 3, MapSize = 64, Open = true, Controllers = new[] { "ai" }, HouseAIs = 1 });
-            var api = new ApiServer(7989);
+            int port = FreePort();
+            var api = new ApiServer(port);
             api.Start();
             bool halt = false;
             var loop = new Thread(() =>
@@ -87,8 +88,8 @@ namespace Pez.Headless
             }) { IsBackground = true };
             loop.Start();
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
-            Dictionary<string, object> Post(string path, string body) => (Dictionary<string, object>)Json.Parse(http.PostAsync($"http://127.0.0.1:7989{path}", new StringContent(body)).Result.Content.ReadAsStringAsync().Result);
-            Dictionary<string, object> Get(string path) => (Dictionary<string, object>)Json.Parse(http.GetStringAsync($"http://127.0.0.1:7989{path}").Result);
+            Dictionary<string, object> Post(string path, string body) => (Dictionary<string, object>)Json.Parse(http.PostAsync($"http://127.0.0.1:{port}{path}", new StringContent(body)).Result.Content.ReadAsStringAsync().Result);
+            Dictionary<string, object> Get(string path) => (Dictionary<string, object>)Json.Parse(http.GetStringAsync($"http://127.0.0.1:{port}{path}").Result);
 
             var r1 = Post("/api/register", "{\"name\":\"Claude\",\"team_name\":\"Hive Mind\"}");
             Check(r1.Str("team_name") == "Hive Mind" && r1.Str("flavor") == "Hive Mind" && !r1.ContainsKey("team_name_rejected"), $"register answers with the effective team_name ({r1.Str("team_name")})");

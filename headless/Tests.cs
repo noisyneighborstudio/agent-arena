@@ -31,6 +31,17 @@ namespace Pez.Headless
 
         static bool Ok(JObj r) => r["ok"] is bool b && b;
 
+        /// <summary>A port nothing is listening on, for a test's API server: fixed ports collided when two copies of the suite
+        /// ran on one machine (CI and a developer's run), failing CI with "address already in use".</summary>
+        static int FreePort()
+        {
+            var l = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+            l.Start();
+            int port = ((System.Net.IPEndPoint)l.LocalEndpoint).Port;
+            l.Stop();
+            return port;
+        }
+
         public static int Run()
         {
             RepairTruck();
@@ -508,7 +519,8 @@ namespace Pez.Headless
         {
             var game = new Game(new GameConfig { Seed = 6, MapSize = 64, Open = true, Controllers = new[] { "ai" }, HouseAIs = 1 });
             var w = game.World;
-            var api = new ApiServer(7987);
+            int port = FreePort();
+            var api = new ApiServer(port);
             api.Start();
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
             // One thread: the request is answered by pumping the API here, between game ticks, like the host's loop.
@@ -517,7 +529,7 @@ namespace Pez.Headless
                 while (!req.IsCompleted) { game.Advance(0.01f); api.Pump(game); Thread.Sleep(10); }
                 return (Dictionary<string, object>)Json.Parse(req.Result.Content.ReadAsStringAsync().Result);
             }
-            const string Url = "http://127.0.0.1:7987";
+            string Url = $"http://127.0.0.1:{port}";
             var reg = Call(http.PostAsync($"{Url}/api/register", new StringContent("{\"name\":\"Napper\"}")));
             var tok = reg.Str("token"); int id = (int)(double)reg["team"];
             foreach (var (what, req) in new (string, Func<System.Threading.Tasks.Task<HttpResponseMessage>>)[] {
@@ -1476,7 +1488,8 @@ namespace Pez.Headless
         static void InterruptibleWait()
         {
             var game = new Game(new GameConfig { Seed = 7, Controllers = new[] { "llm", "llm" } });
-            var api = new ApiServer(7799);
+            int port = FreePort();
+            var api = new ApiServer(port);
             api.Start();
             Entity raiderToPlace = null;
             bool stop = false;
@@ -1500,14 +1513,14 @@ namespace Pez.Headless
             loop.Start();
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(40) };
             var t0 = DateTime.UtcNow;
-            var body = http.GetStringAsync("http://127.0.0.1:7799/api/wait?team=0&seconds=25&since=0").Result;
+            var body = http.GetStringAsync($"http://127.0.0.1:{port}/api/wait?team=0&seconds=25&since=0").Result;
             double took = (DateTime.UtcNow - t0).TotalSeconds;
             var r = (Dictionary<string, object>)Json.Parse(body);
             Check(r["interrupted"] is bool b && b && took < 8, $"wait(25s) returns early when the base is attacked ({took:0.0}s)");
             Check(body.Contains("BASE UNDER ATTACK") || body.Contains("ENEMY NEAR BASE"), "the interrupted wait carries the alert");
             t0 = DateTime.UtcNow;
             // Red is fighting too, so only a critical alert should cut its wait short; nothing critical happens to Red here.
-            body = http.GetStringAsync($"http://127.0.0.1:7799/api/wait?team=1&seconds=1.5&min=critical").Result;
+            body = http.GetStringAsync($"http://127.0.0.1:{port}/api/wait?team=1&seconds=1.5&min=critical").Result;
             took = (DateTime.UtcNow - t0).TotalSeconds;
             r = (Dictionary<string, object>)Json.Parse(body);
             Check(r["interrupted"] is bool b2 && !b2 && took >= 1.4 && took < 4, $"with nothing happening, wait runs its full time ({took:0.0}s)");
@@ -1523,7 +1536,8 @@ namespace Pez.Headless
             Check(st.Contains("\"standing_orders\":\"Rush with infantry.\""), "get_state carries standing_orders");
             Check(Json.Write(StateView.TeamState(w, 1)).Contains("\"standing_orders\":\"none\""), "the other team sees only its own (none)");
 
-            var api = new ApiServer(7798);
+            int port = FreePort();
+            var api = new ApiServer(port);
             api.Start();
             bool stop = false, sent = false;
             var loop = new Thread(() =>
@@ -1541,12 +1555,12 @@ namespace Pez.Headless
             loop.Start();
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(40) };
             var t0 = DateTime.UtcNow;
-            var body = http.GetStringAsync("http://127.0.0.1:7798/api/wait?team=1&seconds=20&orders_version=0").Result;
+            var body = http.GetStringAsync($"http://127.0.0.1:{port}/api/wait?team=1&seconds=20&orders_version=0").Result;
             double took = (DateTime.UtcNow - t0).TotalSeconds;
             var r = (Dictionary<string, object>)Json.Parse(body);
             Check(r["interrupted"] is bool b && b && took < 5, $"new orders cut a 20s wait short ({took:0.0}s)");
             Check(r["orders_changed"] is bool oc && oc && body.Contains("Expand to the uranium"), "the wait result carries the new orders");
-            var post = http.PostAsync("http://127.0.0.1:7798/api/admin/orders?team=0", new StringContent("{\"text\":\"Turtle.\"}")).Result.Content.ReadAsStringAsync().Result;
+            var post = http.PostAsync($"http://127.0.0.1:{port}/api/admin/orders?team=0", new StringContent("{\"text\":\"Turtle.\"}")).Result.Content.ReadAsStringAsync().Result;
             Check(post.Contains("\"orders_version\":2") && post.Contains("Turtle."), "POST /api/admin/orders replaces orders and bumps the version");
             stop = true;
             api.Stop();

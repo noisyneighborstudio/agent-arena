@@ -331,7 +331,8 @@ namespace Pez.Headless
         /// <summary>The host saves, stops and starts again: the same seats answer to the same tokens.</summary>
         static void TokensSurviveRestart()
         {
-            var file = Path.Combine(Path.GetTempPath(), $"pezz-test-{Environment.ProcessId}", "rooms", "game-7795.json");
+            int p1 = FreePort(), p2 = FreePort();
+            var file = Path.Combine(Path.GetTempPath(), $"pezz-test-{Environment.ProcessId}", "rooms", $"game-{p1}.json");
             Directory.CreateDirectory(Path.GetDirectoryName(file));
             if (File.Exists(file)) File.Delete(file);
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
@@ -364,34 +365,34 @@ namespace Pez.Headless
                 return d;
             }
 
-            var h1 = Host(7795, false);
-            var joined = Call(7795, "/api/register", body: "{\"name\":\"Claude\"}");
+            var h1 = Host(p1, false);
+            var joined = Call(p1, "/api/register", body: "{\"name\":\"Claude\"}");
             string token = joined.Str("token"), view = joined.Str("view_token");
             int team = (int)joined.Num("team");
             Thread.Sleep(2500); // a join is saved within a couple of seconds, without waiting for the periodic save
             Check(File.Exists(file), "a new seat is saved soon after the join");
-            var saved = Call(7795, "/api/admin/save", body: "{}");
+            var saved = Call(p1, "/api/admin/save", body: "{}");
             var mode = File.GetUnixFileMode(file);
             Check(saved["ok"] is bool ok && ok && mode == (UnixFileMode.UserRead | UnixFileMode.UserWrite) &&
                   !Directory.GetFiles(Path.GetDirectoryName(file)).Any(f => f.Contains(".tmp")), $"POST /api/admin/save writes the snapshot atomically, mode 0600 ({mode}, {saved.Num("bytes")} bytes)");
             int tickSaved = (int)saved.Num("tick");
             h1.stop(); h1.loop.Join(); h1.api.Stop();
 
-            var h2 = Host(7794, true);
+            var h2 = Host(p2, true);
             Thread.Sleep(300);
-            var who = Call(7794, "/api/whoami", token);
-            var vwho = Call(7794, $"/api/view/whoami?view={view}");
+            var who = Call(p2, "/api/whoami", token);
+            var vwho = Call(p2, $"/api/view/whoami?view={view}");
             Check(who["ok"] is bool w1 && w1 && (int)who.Num("team") == team && vwho["ok"] is bool w2 && w2 && (int)vwho.Num("team") == team,
                   $"after the restart the same token and view link still work for the same seat (team {who.Num("team")})");
-            var status = Call(7794, "/api/status");
+            var status = Call(p2, "/api/status");
             Check(status.Str("resumed_from") != null && status.Num("tick") >= tickSaved, $"/api/status says the game was resumed ({status.Str("resumed_from")}, tick {status.Num("tick")} >= {tickSaved})");
-            Check(Convert.ToInt32(Call(7794, "/api/whoami", "not-a-real-token")["_status"]) == 401, "unknown tokens are still refused");
-            var state = Call(7794, "/api/state?format=json", token);
+            Check(Convert.ToInt32(Call(p2, "/api/whoami", "not-a-real-token")["_status"]) == 401, "unknown tokens are still refused");
+            var state = Call(p2, "/api/state?format=json", token);
             Check(state.Obj("you") != null, "the resumed seat can read its state");
             Check(h2.game.World.Events.Any(e => e.Type == "chat" && e.Text.StartsWith("Back online: your game has been resumed")), "the arena chat says the game is back");
             // The browser client's feed: the whole world, loadable by a reader, with no tokens and no orders text.
-            Call(7794, $"/api/admin/orders?team={team}", body: "{\"text\":\"Secret plan: flank west at dawn.\"}");
-            var vreq = new HttpRequestMessage(HttpMethod.Get, "http://127.0.0.1:7794/api/view/snapshot");
+            Call(p2, $"/api/admin/orders?team={team}", body: "{\"text\":\"Secret plan: flank west at dawn.\"}");
+            var vreq = new HttpRequestMessage(HttpMethod.Get, $"http://127.0.0.1:{p2}/api/view/snapshot");
             vreq.Headers.Add("Accept-Encoding", "gzip");
             var vres = http.SendAsync(vreq).Result;
             string vjson;
@@ -404,12 +405,12 @@ namespace Pez.Headless
             Check(!vjson.Contains("\"token\"") && !vjson.Contains("view_token") && !vjson.Contains(token) && !vjson.Contains(view) && !vsnap.ContainsKey("api"), "the spectator snapshot carries no tokens or api section");
             Check(!vjson.Contains("flank west") && vgame.World.Teams.All(t => string.IsNullOrEmpty(t.StandingOrders)) && vsnap.Obj("config").Arr("orders").All(o => string.IsNullOrEmpty(o as string)),
                   "the spectator snapshot carries no standing orders or commander orders");
-            var own = Call(7794, $"/api/view/snapshot?view={view}");
+            var own = Call(p2, $"/api/view/snapshot?view={view}");
             Check(Convert.ToInt32(own["_status"]) == 200 && own.Obj("world") != null && !Json.Write(own).Contains(token),
                   "a view token gets that team's own (fogged) snapshot, still without tokens");
-            Call(7794, "/api/admin/restart", body: "{}");
+            Call(p2, "/api/admin/restart", body: "{}");
             Thread.Sleep(200);
-            Check(!File.Exists(file) && Convert.ToInt32(Call(7794, "/api/whoami", token)["_status"]) == 401, "an admin restart starts a fresh game and drops the saved one (old tokens end)");
+            Check(!File.Exists(file) && Convert.ToInt32(Call(p2, "/api/whoami", token)["_status"]) == 401, "an admin restart starts a fresh game and drops the saved one (old tokens end)");
             h2.stop(); h2.loop.Join(); h2.api.Stop();
 
             // A closed game isn't resumed by an open-arena launch unless asked; -resume brings back any saved game.
