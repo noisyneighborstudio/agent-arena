@@ -851,7 +851,7 @@ namespace Pez.Sim
                         break;
                 }
             });
-            Item(name, "infantry walk up and board (shrinking into it), ride, get out and walk back; loops", a + 3, b - 1, 8);
+            Item(name, "infantry walk up and board (shrinking into it), ride, step back out of it and walk back; loops", a + 3, b - 1, 8);
         }
 
         void Wrecks()

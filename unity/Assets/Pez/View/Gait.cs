@@ -11,8 +11,10 @@ namespace Pez.View
     /// counter-twists, leans into the direction of travel and into turns. Stopped, the legs settle under the hips and the
     /// soldier shifts its weight on a slow sine.
     ///
-    /// Art-pack infantry have no leg nodes, so <see cref="FromModel"/> cuts the two leg boxes out of the body mesh once
-    /// per source mesh (cached) and hangs them from hip pivots. Placeholders build real legs (<see cref="Models"/>).
+    /// Candy troopers (build_models.candy_trooper: the rifleman, and the soldiers built on it) have hips, leg_l and leg_r
+    /// nodes, which <see cref="FromModel"/> drives as they are. Older art-pack infantry have no leg nodes, so it cuts the
+    /// two leg boxes out of the body mesh once per source mesh (cached) and hangs them from hip pivots. Placeholders build
+    /// real legs (<see cref="Models"/>).
     /// Per frame this is a handful of transform writes and no allocations.
     /// </summary>
     public class Gait
@@ -124,6 +126,13 @@ namespace Pez.View
         public static Gait FromModel(Transform body, GameObject model, int seed)
         {
             var root = model.transform;
+            // Candy troopers (build_models.candy_trooper) come rigged: hips over two legs hung from the root at the hip
+            // joints, soles on the ground. Drive those as they are.
+            var rigHips = PezMotion.FindDeep(root, "hips");
+            var rigL = PezMotion.FindDeep(root, "leg_l");
+            var rigR = PezMotion.FindDeep(root, "leg_r");
+            if (rigHips != null && rigL != null && rigR != null && rigL.parent == root && rigR.parent == root)
+                return new Gait(body, rigHips, rigL, rigR, rigL.localPosition.y, root.localScale.y, seed);
             var kids = new List<Transform>();
             foreach (Transform c in root) kids.Add(c);
             var hips = new GameObject("hips").transform;

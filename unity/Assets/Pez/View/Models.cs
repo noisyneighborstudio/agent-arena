@@ -450,6 +450,9 @@ namespace Pez.View
         /// </summary>
         static bool BarrelTip(Transform barrel, out Vector3 tip)
         {
+            // A model can say exactly where: an empty `muzzle` node under the barrel (candy troopers' weapons have one).
+            var muzzle = PezMotion.FindDeep(barrel, "muzzle");
+            if (muzzle != null) { tip = barrel.InverseTransformPoint(muzzle.position); return true; }
             var lo = new Vector3(float.MaxValue, float.MaxValue, float.MaxValue);
             var hi = -lo;
             foreach (var mf in barrel.GetComponentsInChildren<MeshFilter>(true))
@@ -466,6 +469,12 @@ namespace Pez.View
             tip = new Vector3((lo.x + hi.x) * 0.5f, (lo.y + hi.y) * 0.5f, hi.z);
             return hi.z > lo.z;
         }
+
+        /// <summary>How much larger than it's built a unit is drawn (its rig's Body scale): units read better a touch larger
+        /// than their collision radius, and art-pack infantry are built 0.55 tall where the handoff recommends 1.3-1.4x.
+        /// WorldView draws every unit at this; anything standing in for one (the barracks' spat-out soldier) must too.</summary>
+        public static float DrawScale(Pez.Sim.EntityDef def, bool hasModel) =>
+            def == null || def.IsStructure ? 1f : hasModel ? (def.Armor == Pez.Sim.Armor.Infantry ? 1.35f : 1f) : (def.Armor == Pez.Sim.Armor.Infantry ? 1.5f : 1.2f);
 
         /// <summary>The artillery family's models (standard and long-range): spades, deploy, ram, no idle scan.</summary>
         public static bool IsArtillery(string key) => key == "artillery" || key == "long_range_artillery";

@@ -1857,6 +1857,127 @@ def V_stealth_bomber():
     a.box('dark', .16, .04, .2, y=.18, z=.2)
     return a
 
+# ---------------------------------------------------------------- infantry: the candy trooper
+# THE SHARED SOLDIER BASE. Every soldier is one candy figure, a chunky toy like a Pez dispenser's figurine: short legs in
+# licorice boots, a smoke-plastic uniform with kraft webbing, a big cream head with licorice eyes, and the team colour on
+# the helmet (and shoulder pads), on top, where it reads at full zoom-out. The rifleman is the reference.
+#
+#   nodes = candy_trooper(a, pose='rifle', uniform='smoke', trim='kraft', pads=True, helmet=True, bulk=1.0, lower=16,
+#                         weapon=True)
+#
+# Frame: glTF, +Y up, +Z forward, pivot on the ground between the feet, 0.555 to the helmet's crown (WorldView draws
+# infantry 1.35x). The soldier's right hand is -X (the import mirrors x, so in Unity it's +X: still his right).
+# It returns the node names. The other soldiers build ON these nodes; never add a moving part anywhere else:
+#   hips          (0, .19, 0) under the root: pelvis and belt. Gait sways, leans and bobs it. Don't animate it.
+#   leg_l, leg_r  (+-.045, .19, 0) under the root, at the hip joints: a trouser leg and a licorice boot (sole at y=0).
+#                 Gait swings them about x and tucks the swinging one (scale y). Don't animate them.
+#   turret        under hips, at the waist: torso, pads, head, arms, pack. PezMotion yaws it to aim (the body turns for
+#                 more than its yaw limit) and to glance now and then: the soldier twists at the waist.
+#   head          under turret, at the neck (figure y .375): face, eyes, helmet. SoldierWorks turns it to glance about and
+#                 tips it to the sights when the weapon is up.
+#   hat           under head, the helmet's crown (figure y .55): HEADGEAR mount. Keep team on top (a beret, a hard hat's
+#                 brim, a hood, goggles on the brim).
+#   pack          under turret, the middle of the back (0, .29, -.065), +Z still forward: BACK ITEM mount. Build it at
+#                 z <= 0 (the rifleman's kraft pack and bedroll: trooper_pack).
+#   arms          under turret at the shoulder line (figure y .345): both arms and the weapon. Authored LOWERED: the node
+#                 is pitched `lower` degrees down about x. SoldierWorks raises it to identity (level along +Z) when the
+#                 soldier engages, kicks it on each shot and lowers it again after. lower=0 means always up.
+#   barrel        under arms, at the right hand's grip (the pose's weapon mount): WEAPON mount. Build the weapon along +Z
+#                 centred on the node's x and y, and put an empty `muzzle` node at its far end: shots, the flash and the
+#                 tracer leave from it (Models.BarrelTip), and PezMotion recoils the barrel along -Z. None if weapon=False.
+# Poses (where the hands are, and so where `barrel` is, in figure space):
+#   'rifle'     a long gun held at chest height: right hand on the grip (-.055, .33, .05), left on the handguard ahead.
+#   'shoulder'  a tube on the right shoulder (-.075, .41, 0): right hand on the grip under it, left steadying it ahead.
+#   'carry'     arms down, the right hand holding `barrel` at the hip (-.135, .2, .03) (a pistol, a toolbox, a med kit);
+#               with weapon=False both hands just hang.
+# Kit: uniform (the body's material), trim (webbing, belt, pouches), pads (team shoulder pads), helmet (False for
+# headgear of your own, but keep team on top), bulk (torso width: 1.15 reads beefier), lower (the arms' rest pitch).
+# Budget: the base is ~2.3k triangles after rounding (the rifleman with rifle and pack ~3k); keep a soldier under ~3.2k.
+TROOPER_HIP, TROOPER_SHOULDER, TROOPER_NECK = .19, .345, .375
+
+def candy_trooper(a, pose='rifle', uniform='smoke', trim='kraft', pads=True, helmet=True, bulk=1.0, lower=16, weapon=True):
+    H, S, N = TROOPER_HIP, TROOPER_SHOULDER, TROOPER_NECK
+    # Legs, hung from the root at the hips.
+    legs = {}
+    for side, sx in (('leg_l', 1), ('leg_r', -1)):
+        lg = legs[side] = a.node(side, a.key, (sx * .045, H, 0))
+        a.box(uniform, .066, .15, .076, y=-.085, node=lg)
+        a.box('licorice', .076, .05, .1, y=-H + .025, z=.012, node=lg)          # boot, toe forward
+    # Pelvis and belt.
+    hp = a.node('hips', a.key, (0, H, 0))
+    a.box(uniform, .17 * bulk, .07, .12, y=-.005, node=hp)
+    a.box(trim, .186 * bulk, .028, .134, y=.022, node=hp)
+    a.box('cream', .036, .024, .012, y=.022, z=.069, node=hp)                    # buckle
+    # Upper body: the torso twists on the waist.
+    tu = a.node('turret', hp)
+    w = .2 * bulk
+    a.box(uniform, w, .17, .13, y=.095, node=tu)
+    for sx in (-1, 1):
+        a.box(trim, .026, .15, .012, x=sx * .05 * bulk, y=.1, z=.066, node=tu)   # webbing straps
+        a.box(trim, .042, .036, .03, x=sx * .062 * bulk, y=.04, z=.075, node=tu) # belt pouches
+        if pads: a.box('team', .066, .022, .112, x=sx * (w / 2 - .022), y=.186, node=tu, rot=rz(-sx * 14))   # flat shoulder boards
+    # Head: a big cream ball with licorice eyes under the team helmet.
+    hd = a.node('head', tu, (0, N - H, 0))
+    a.sphere('cream', .085, y=.075, z=.006, node=hd, sub=2)                      # a little forward of the helmet: the face shows
+    for sx in (-1, 1): a.sphere('licorice', .014, x=sx * .03, y=.068, z=.08, node=hd, sub=0)
+    if helmet:
+        # The dome is an open shell (its rim hides under the brim), so rounding leaves it alone. It's pushed back 15
+        # degrees on the head, so the face shows under the brim from the high camera.
+        tilt = T((0, .075, 0)) @ rx(-15) @ T((0, -.075, 0))
+        dome = trimesh.creation.icosphere(subdivisions=2, radius=.089)
+        dome.apply_scale((1, .92, 1)); dome.apply_translation((0, .092, 0))
+        dome = dome.slice_plane([0, .094, 0], [0, 1, 0], cap=False); dome.apply_transform(tilt)
+        a.add(hd, 'team', dome)
+        a.cyl('team', .098, .016, y=.094, node=hd)                               # brim
+        a.parts[-1][2].apply_transform(tilt)
+    a.node('hat', hd, (0, .175, 0))
+    a.node('pack', tu, (0, .29 - H, -.065))
+    # Arms (and the weapon) from the shoulder line, authored lowered.
+    ar = a.node('arms', tu, (0, S - H, 0), rot=rx(lower) if lower else None)
+    if pose == 'rifle':
+        grip = (-.055, .33, .05)
+        hands = [((-.112, S, 0), (-.127, .288, -.006), (-.062, .3, .042)),     # right: elbow out, hand on the grip
+                 ((.112, S, 0), (.075, .285, .085), (-.04, .304, .152))]        # left: across, under the handguard
+    elif pose == 'shoulder':
+        grip = (-.075, .41, 0)
+        hands = [((-.112, S, 0), (-.14, .3, .02), (-.075, .37, .06)),
+                 ((.112, S, 0), (.07, .3, .1), (-.045, .37, .17))]
+    else:
+        grip = (-.135, .2, .03)
+        hands = [((-.112, S, 0), (-.135, .27, -.005), (-.135, .21, .02)),
+                 ((.112, S, 0), (.135, .27, -.005), (.135, .21, .02))]
+    for sh, el, wr in hands:
+        loc = [(p[0], p[1] - S, p[2]) for p in (sh, el, wr)]
+        a.tube(uniform, loc, .027, node=ar, sides=8)
+        a.sphere(uniform, .0272, x=loc[1][0], y=loc[1][1], z=loc[1][2], node=ar, sub=1)  # a round elbow
+        a.sphere('cream', .031, x=loc[2][0], y=loc[2][1], z=loc[2][2], node=ar, sub=1)   # hand
+    br = a.node('barrel', ar, (grip[0], grip[1] - S, grip[2])) if weapon else None
+    return dict(hips=hp, leg_l=legs['leg_l'], leg_r=legs['leg_r'], turret=tu, head=hd, hat='hat', pack='pack', arms=ar,
+                barrel=br)
+
+def trooper_rifle(a, br):
+    """The rifleman's rifle on a candy_trooper barrel (+40% for the silhouette): kraft stock and handguard, licorice
+    receiver and a curved magazine, a steel barrel, and the muzzle node at its tip."""
+    a.box('kraft', .036, .05, .09, y=-.008, z=-.085, node=br)                    # stock, into the shoulder
+    a.box('licorice', .042, .052, .12, z=.015, node=br)                          # receiver
+    a.box('licorice', .026, .058, .032, y=-.046, z=.045, node=br, rot=rx(-14))   # magazine
+    a.box('kraft', .036, .036, .085, y=-.004, z=.115, node=br)                   # handguard
+    a.cyl('steel', .012, .1, z=.205, axis='z', node=br, sections=8)
+    a.box('licorice', .01, .022, .012, y=.017, z=.245, node=br)                  # front sight
+    a.node('muzzle', br, (0, 0, .258))
+
+def trooper_pack(a, pk):
+    """A kraft field pack with its flap, on a candy_trooper pack node."""
+    a.box('kraft', .13, .12, .055, z=-.025, node=pk)
+    a.box('kraft', .11, .04, .06, y=.035, z=-.027, node=pk)                      # flap
+
+def V_rifleman():
+    a = Asset('rifleman', 'units', .55)
+    n = candy_trooper(a, pose='rifle')
+    trooper_rifle(a, n['barrel'])
+    trooper_pack(a, n['pack'])
+    return a
+
 def V_infantry(key, kind):
     a = Asset(key, 'units', .55)
     for sx in (-1, 1): a.box('smoke', .06, .22, .07, x=sx * .045, y=.11)
@@ -1910,7 +2031,7 @@ BUILDERS = [S_command_center, S_outpost, S_power_plant, S_mining_refinery, S_bar
             lambda: V_tank('light_tank', .9, .62), lambda: V_tank('heavy_tank', 1.2, .8, twin=True),
             lambda: V_tank('artillery', .9, .62, art=True), lambda: V_tank('laser_tank', 1.1, .7, laser=True),
             V_gunship, V_stealth_bomber,
-            lambda: V_infantry('rifleman', 'rifle'), lambda: V_infantry('rocket_soldier', 'rocket'),
+            V_rifleman, lambda: V_infantry('rocket_soldier', 'rocket'),
             lambda: V_infantry('laser_trooper', 'laser'), lambda: V_infantry('medic', 'medic'),
             lambda: O_ore('iron_ore'), lambda: O_ore('copper_ore'), lambda: O_ore('crystal'), lambda: O_ore('uranium')]
 

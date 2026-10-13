@@ -36,6 +36,7 @@ namespace Pez.View
             public int TeamShown;        // the team colour its model wears (a captured building changes hands)
             public int Born;             // frame the view was made (deploys pair a unit with the structure it became)
             public float BoardT;         // boarding: 0..1 while the passenger shrinks into its carrier
+            public Vector3 BoardedAt;    // ... and where its carrier is drawn (unloaded, it steps back out from there)
             public Bars Bars;            // world-space health and fuel bars (seen by every camera)
             public bool MainShow = true; // the local view's visibility and fade scale, restored after a stream render
             public float MainScale = 1f;
@@ -48,6 +49,7 @@ namespace Pez.View
             public RefineryWorks Works;  // refinery: the ore belt and the stacks' mouths
             public PowerWorks Plant;     // power plant: the springs under load and the flywheel
             public OutpostWorks Depot;   // outpost: the hopper's trapdoors, the belt, the stem and its head, the lookout and its mast
+            public SoldierWorks Troop;   // candy trooper: the weapon raised to fire and its kick, the head's glances
             public EnrichWorks Enrich;   // enrichment plant: the centrifuge cascade, the hopper, the stem and its head
             public CircuitWorks Fab;     // electronics plant: the circuit-candy line, its dispenser and its state lamps
             public FoundryWorks Foundry; // composite foundry: the press, its blanks and the magazine, the vents and the furnace
@@ -325,8 +327,9 @@ namespace Pez.View
                 seen.Add(e.Id);
                 if (!Views.TryGetValue(e.Id, out var v)) Views[e.Id] = v = Create(e);
                 // Boarding: the passenger slides into its carrier and shrinks away instead of vanishing.
+                if (e.IsCarried) v.BoardedAt = Views.TryGetValue(e.CarrierId, out var ride) ? ride.Rig.Root.position : v.Rig.Root.position;
                 if (e.IsCarried && v.BoardT < 1f && v.Rig.Root.gameObject.activeSelf) { Board(v); continue; }
-                if (!e.IsCarried && v.BoardT > 0f) { v.BoardT = 0f; v.Rig.Root.localScale = Vector3.one; }
+                if (!e.IsCarried && v.BoardT > 0f) { v.BoardT = 0f; v.Rig.Root.localScale = Vector3.one; v.SpawnFrom = v.BoardedAt; v.SpawnT = 0f; } // out of its carrier, not out of thin air
                 float vis = Visibility(e, PovTeam);
                 bool show = vis > 0f;
                 v.MainShow = show; v.MainScale = vis;
@@ -816,10 +819,8 @@ namespace Pez.View
             if (e.Def.HighAltitude) rig.Altitude = 5f;
             else if (e.Def.IsAir && rig.Altitude <= 0f && e.Def.ModelAs != null) rig.Altitude = 2.2f;
             rig.Root.SetParent(transform, false);
-            // Units read better a touch larger than their collision radius. Art-pack infantry are built at 0.55 tall;
-            // the handoff recommends 1.3-1.4x so they read at game zoom.
-            if (!e.IsStructure)
-                rig.Body.localScale = Vector3.one * (rig.HasModel ? (e.Def.Armor == Armor.Infantry ? 1.35f : 1f) : (e.Def.Armor == Armor.Infantry ? 1.5f : 1.2f));
+            // Units read better a touch larger than their collision radius (Models.DrawScale: infantry 1.35x).
+            if (!e.IsStructure) rig.Body.localScale = Vector3.one * Models.DrawScale(e.Def, rig.HasModel);
             // Selection rings are cream for every team (HUD kit); ownership already shows on the model.
             var ring = Models.SelectionRing(rig.Root, Mats.Unlit(new Color(Mats.Cream.r, Mats.Cream.g, Mats.Cream.b, 0.9f)));
             ring.localPosition = new Vector3(0, 0.03f, 0);
@@ -995,6 +996,7 @@ namespace Pez.View
                 else if (e.IsAir) rig.Body.localRotation = Quaternion.Euler(e.Moving ? 6f : 0, 0, Mathf.Clamp(Mathf.DeltaAngle(rig.Root.eulerAngles.y, Yaw(e.Facing)) * 0.6f, -25f, 25f));
                 // Infantry walk: the stride follows the ground actually covered this frame, and they settle when they stop.
                 if (rig.Gait != null) rig.Gait.Tick(rig.Root, Time.deltaTime);
+                if (rig.Gait != null && rig.HasModel) (v.Troop ??= SoldierWorks.For(rig.Model, e.Id)).Tick(e, World.Time, v.LastFire, Time.deltaTime);
             }
             if (rig.Barrel != null && !rig.HasModel)
             {
@@ -1480,6 +1482,7 @@ namespace Pez.View
                                               : W(new Vec2(c.X, producer.E.Origin.Y + 0.3f));
                                 tv2.SpawnT = 0;
                                 tv2.Rig.Root.position = tv2.SpawnFrom.Value; // this frame too: it was already drawn where the sim put it
+                                if (producer.Bunks is { HasExit: true }) tv2.Rig.Root.rotation = producer.Bunks.ExitFacing; // and facing the way it stood up
                             }
                         }
                         break;

@@ -108,10 +108,21 @@ UNITS = [
    "The team-colour edge strip pulses 0.6→1.0 emission while it is cloaked.",
    {}, "When it has no orders it loiters in a 3-tile circle at 3.2."),
  U('rifleman', 'Basic infantry.', 'barracks', 'biped', 1.1, 4.0, 360, True,
-   "Biped: it turns in place almost instantly. The body bobs 0.02 at 2× its stride frequency while walking. A 4-soldier squad spreads out in a diamond 0.3 apart. "
-   "The turret node (arms) aims at 400°/s and can aim ±70° from the body heading before the body turns. "
-   "The barrel (rifle) recoils 0.02 per shot in 3-round bursts. When it is shot it goes prone: root lowers 0.25 and pitches 80° over 0.3 s.",
-   dict(**TURRET(400, 70), **BARREL(.02, .02, .05)), "Weight shift: hips sway 0.01 on a 3 s sine; scans with the arms ±20°."),
+   "The candy trooper every soldier is built on (build_models.candy_trooper): a toy on short legs in licorice boots, a smoke-plastic uniform with kraft webbing, "
+   "a big cream head under the team helmet, team shoulder boards, a kraft pack; the rifle is +40% for the silhouette. Biped: it turns in place almost instantly. "
+   "Walking (Gait) drives the leg_l / leg_r nodes from the hips: the stride follows the ground it really covers, the swinging leg tucks, "
+   "the hips drop while both feet are planted (two bobs per stride), sway over the planted foot and lean into the walk and into turns. "
+   "The turret node is the torso: it twists at the waist to aim at 400°/s, up to ±70° from the body heading before the body turns. "
+   "The arms node carries both arms and the rifle, authored lowered (16° down, a low ready). With a target in range (the sim is tracking one) "
+   "it brings the rifle up level in 0.18 s, holds it there 2.5 s after the last shot and lowers it over 0.45 s; the head tips to the sights, cheek on the stock. "
+   "Each shot: the muzzle flash and the tracer leave from the muzzle node at the rifle's tip, the barrel (rifle) slides back 0.025, "
+   "and the arms kick the muzzle up 9° and settle in about 0.2 s. "
+   "From the barracks: spat out of its head tucked into a ball, it somersaults, lands, rolls to its feet and stands up at the exit, "
+   "where the real unit takes over at the same size, facing the same way, and walks off to its rally point. "
+   "Boarding a transport it slides in and shrinks away; unloading it reappears beside it.",
+   dict(**TURRET(400, 70), **BARREL(.025, .02, .1)),
+   "Weight shift: the hips sway 0.008 over the feet on a 3 s sine and breathe. The head glances about (a look to one side for 1.2–2.4 s, "
+   "back to the front for 2–5 s, ±42°, ±18° walking); now and then (every 20–45 s) the torso turns with it, ±24°."),
  U('rocket_soldier', 'Anti-armour, anti-air infantry.', 'barracks', 'biped', 0.9, 3.5, 360, True,
    "Same movement as the rifleman. To fire, it stops (0.3 s), raises the launcher (barrel pitch 0 to −10° for ground targets and −45° for air), fires and recoils 0.06 back. "
    "Reloading takes 1.8 s: the launcher dips to +20° and comes back up.",

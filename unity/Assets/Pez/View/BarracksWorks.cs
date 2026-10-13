@@ -7,7 +7,8 @@ namespace Pez.View
     /// The barracks as a soldier dispenser (MOTION.md barracks). All of it from the sim's training queue, so it never
     /// leads or lags `trained`:
     ///  - the clear case under the head holds four soldiers, stacked like candy: raw dough at the bottom, primed in the
-    ///    middle, finished (team helmet) at the top. While a soldier trains the stack rises with its progress, each one
+    ///    middle, finished (uniform, boots and team helmet) at the top. Each is a figurine of the rifleman (the candy
+    ///    trooper every soldier is built on, at a case figure's size), so they read as the soldiers they become. While a soldier trains the stack rises with its progress, each one
     ///    baking as it climbs, a fresh lump of dough swells in at the bottom, and the oven strip at the case's foot glows.
     ///  - 1.5 s before the soldier is out, the top one rises out of the case up into the flip-top head (head). The head
     ///    snaps open and spits it out of its mouth (pop), full size and tucked into a ball; it somersaults through the air,
@@ -45,10 +46,14 @@ namespace Pez.View
         readonly float phase;
 
         static readonly Vector3 HelmetSize = new Vector3(0.054f, 0.03f, 0.054f) * Fig;
+        const string FigureKey = "rifleman";     // the case figurines are this soldier in miniature
 
         class Soldier
         {
-            public Transform Root, Body, Head, Helmet;
+            public Transform Root, Body, Head, Helmet;   // the primitive figure (no figurine model)
+            public Renderer[] Parts;                     // the figurine: its renderers and their coats (dough, primed, finished)
+            public Material[][] Coats;
+            public int Coat = -1;
             public Transform Ball;               // once spat out: the tuck (squashes about the middle) ...
             public GameObject Unit;              // ... holding the real unit's model, full size
             public float Half;                   // that model's half height
@@ -118,6 +123,11 @@ namespace Pez.View
         /// <summary>Where a trained soldier appears: where it stands up after its roll (world), if this model has one.</summary>
         public bool HasExit => stackRoot != null;
         public Vector3 Exit => model.TransformPoint(exit);
+        /// <summary>Which way it faces when it stands up there (world): the real unit starts out facing the same way.</summary>
+        public Quaternion ExitFacing
+        {
+            get { var d = exit - land; d.y = 0f; return model.rotation * (d.sqrMagnitude > 1e-6f ? Quaternion.LookRotation(d.normalized, Vector3.up) : Quaternion.identity); }
+        }
         /// <summary>Roll-out steam puffs from the head's mouth.</summary>
         public int Heads => head ? 1 : 0;
         public Vector3 Head(int i) => stackRoot != null ? model.TransformPoint(pop) + Vector3.up * 0.1f : head.position + Vector3.up * 0.2f;
@@ -126,16 +136,59 @@ namespace Pez.View
         {
             var s = new Soldier { Root = new GameObject("soldier").transform };
             s.Root.SetParent(stackRoot, false);
+            s.Root.localScale = Vector3.zero;
+            if (Models.ModelFor(FigureKey) != null)
+            {
+                // The rifleman's own rig, still, a case figure tall, facing out of the case (-z).
+                var rig = Models.Build(FigureKey, team);
+                foreach (var c in rig.Root.GetComponentsInChildren<PezMotion>()) Object.Destroy(c);
+                foreach (var c in rig.Root.GetComponentsInChildren<PezEmerge>()) Object.Destroy(c);
+                s.Parts = rig.Root.GetComponentsInChildren<Renderer>(true);
+                float top = 0f;
+                foreach (var r in s.Parts) top = Mathf.Max(top, r.bounds.max.y - rig.Root.position.y);
+                var fig = rig.Root;
+                fig.SetParent(s.Root, false);
+                fig.localRotation = Quaternion.Euler(0f, 180f, 0f);
+                fig.localScale = Vector3.one * (0.13f * Fig / Mathf.Max(0.1f, top));
+                // Raw dough all over; primed (kraft, the face and hands cream, the helmet bare); finished as built.
+                s.Coats = new Material[s.Parts.Length * 3][];
+                for (int i = 0; i < s.Parts.Length; i++)
+                {
+                    var own = s.Parts[i].sharedMaterials;
+                    var raw = new Material[own.Length]; var primed = new Material[own.Length];
+                    for (int m = 0; m < own.Length; m++)
+                    {
+                        string n = own[m] != null ? own[m].name : "";
+                        raw[m] = dough;
+                        primed[m] = n.StartsWith("M_CreamPlastic") || n.StartsWith("M_Team") ? skin : kraft;
+                    }
+                    s.Coats[i * 3] = raw; s.Coats[i * 3 + 1] = primed; s.Coats[i * 3 + 2] = own;
+                }
+                return s;
+            }
             s.Body = Models.Part(s.Root, PrimitiveType.Capsule, new Vector3(0f, 0.042f, 0f) * Fig, new Vector3(0.056f, 0.042f, 0.056f) * Fig, dough);
             s.Head = Models.Part(s.Root, PrimitiveType.Sphere, new Vector3(0f, 0.1f, 0f) * Fig, Vector3.one * 0.043f * Fig, dough);
             s.Helmet = Models.Part(s.Root, PrimitiveType.Sphere, new Vector3(0f, 0.112f, 0f) * Fig, HelmetSize, helmet);
-            s.Root.localScale = Vector3.zero;
             return s;
         }
 
         /// <summary>How baked a soldier looks at slot s (0 bottom .. 3 top): raw dough, primed, finished.</summary>
         void Bake(Soldier s, float slot, float scale)
         {
+            // Raw dough is a squat lump; it stands up as it bakes.
+            float k = Mathf.Clamp01(slot / 2f);
+            var squat = new Vector3(Mathf.Lerp(1.15f, 1f, k), Mathf.Lerp(0.75f, 1f, k), Mathf.Lerp(1.15f, 1f, k));
+            if (s.Parts != null)
+            {
+                int coat = slot > 2.3f ? 2 : slot > 1.2f ? 1 : 0;
+                if (coat != s.Coat)
+                {
+                    for (int i = 0; i < s.Parts.Length; i++) if (s.Parts[i] != null) s.Parts[i].sharedMaterials = s.Coats[i * 3 + coat];
+                    s.Coat = coat;
+                }
+                s.Root.localScale = squat * scale;
+                return;
+            }
             bool primed = slot > 1.2f;
             var body = primed ? kraft : dough;
             var face = primed ? skin : dough;
@@ -144,9 +197,7 @@ namespace Pez.View
             float h = Mathf.SmoothStep(0f, 1f, (slot - 2.2f) / 0.5f);          // the helmet goes on near the top
             s.Helmet.localScale = HelmetSize * h;
             s.Helmet.gameObject.SetActive(h > 0.01f);
-            // Raw dough is a squat lump; it stands up as it bakes.
-            float k = Mathf.Clamp01(slot / 2f);
-            s.Root.localScale = new Vector3(Mathf.Lerp(1.15f, 1f, k), Mathf.Lerp(0.75f, 1f, k), Mathf.Lerp(1.15f, 1f, k)) * scale;
+            s.Root.localScale = squat * scale;
         }
 
         Vector3 SlotPos(float slot) => Vector3.Lerp(lo, hi, slot / (Slots - 1));
@@ -154,14 +205,18 @@ namespace Pez.View
         /// <summary>Swap the figure for the unit it was baking into, full size and tucked, hidden in the head.</summary>
         void Spit(Soldier s, string unit)
         {
-            s.Body.gameObject.SetActive(false); s.Head.gameObject.SetActive(false); s.Helmet.gameObject.SetActive(false);
+            var figure = s.Parts != null ? s.Root.GetChild(0).gameObject : null;
+            if (figure != null) figure.SetActive(false);
+            else { s.Body.gameObject.SetActive(false); s.Head.gameObject.SetActive(false); s.Helmet.gameObject.SetActive(false); }
             s.Root.localScale = Vector3.one;
             s.Ball = new GameObject("tuck").transform;
             s.Ball.SetParent(s.Root, false);
             var rig = unit != null ? Models.Build(unit, team) : null;
             if (rig != null)
             {
-                // The unit's own rig, as WorldView would build it, held still: a stand-in until the real one appears.
+                // The unit's own rig, as WorldView would build and draw it, held still: a stand-in until the real one
+                // appears in its place, the same size.
+                rig.Body.localScale = Vector3.one * Models.DrawScale(Pez.Sim.Defs.Get(unit), rig.HasModel);
                 s.Unit = rig.Root.gameObject;
                 s.Unit.transform.SetParent(s.Ball, false);
                 foreach (var c in s.Unit.GetComponentsInChildren<PezMotion>()) Object.Destroy(c);
@@ -172,7 +227,8 @@ namespace Pez.View
                 // No model for it: the finished figure at a soldier's size.
                 s.Unit = new GameObject("figure");
                 s.Unit.transform.SetParent(s.Ball, false);
-                foreach (var part in new[] { s.Body, s.Head, s.Helmet }) { part.SetParent(s.Unit.transform, false); part.gameObject.SetActive(true); }
+                if (figure != null) { figure.transform.SetParent(s.Unit.transform, false); figure.SetActive(true); }
+                else foreach (var part in new[] { s.Body, s.Head, s.Helmet }) { part.SetParent(s.Unit.transform, false); part.gameObject.SetActive(true); }
                 s.Unit.transform.localScale = Vector3.one * (0.54f / (0.13f * Fig));
             }
             // Pivot about its middle, so it tumbles and squashes round its own centre.
