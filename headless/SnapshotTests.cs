@@ -66,7 +66,7 @@ namespace Pez.Headless
                 "| barredBases ErrorLog loggedErrors cells cellsW cellsH nearTarget nearHelp nearMine nearSep nearSpot nearCrush nearVis Showcase OreVersion oreDirty beingMined regrowNow scoreCache scoreCacheTick NextMatchIn derricksChecked groupSpan Mirror MirrorScores Feed Touched", // Feed: the observation feed starts a new stream on resume (readers get a gap and a snapshot); Showcase: the kitchen sink room is never saved (rebuilt from code); Mirror: set by the browser client on its copy
             [typeof(Invention)] = "Key Name Chassis WeaponFrom Summary Team Def ResearchCost ResearchTime Progress Novelty PriceFactor ProposedAt ResearchedAt Built Lost Kills",
             [typeof(Map)] = "W H Tiles Ore OreType Occupant Spawns Deep OreScale nextDepositId OreBase OreBaseType Salvage | writable fieldsChanged fieldTiles fieldRoots BaseMissing SalvageMissing",
-            [typeof(SimpleAI)] = "team Passive nextThink waveSize outpostTargets nextProspect prospectRadius knownSurface stuckSince wantCopper wantCrystal wantUranium wentDeep oreRate ratedAt ratedMined",
+            [typeof(SimpleAI)] = "team Passive nextThink waveSize outpostTargets nextProspect prospectRadius knownSurface stuckSince wantCopper wantCrystal wantUranium wentDeep oreRate ratedAt ratedMined copperStarvedSince",
             [typeof(Game)] = "World Config Speed Paused ais accumulator nextHouseCheck ResumedFrom LastSaved restartIn Waiting waitedBefore waitedSeen waitingSince | RenderFps Restarted Now",
             [typeof(AlertLog)] = "All open nextSeq",
             [typeof(Alert)] = "Seq Team Kind Priority Pos StartTick LastTick Count Victims Attackers Lost Amount",
