@@ -148,10 +148,33 @@
  {
   "key": "electronics_plant",
   "kind": "structure",
-  "role": "Turns copper into circuits.",
-  "mechanics": "The sour-acid panels scroll a circuit-trace UV pattern while producing. The roof vents spin (no named node; use a UV or shader effect).",
-  "nodes": {},
-  "idle": "Panels flicker softly.",
+  "role": "Turns copper and steel into circuits.",
+  "mechanics": "A circuit-candy line, one cycle per circuit the sim makes (1 s; 2 s on low power, which halves production). Each cycle the pick-and-place carriage (gantry, a little team head) dips its nozzle at the copper feeder, carries the chip (held) along its bridge, pecks it onto the board under it (chip_N appears, with a solder glint) and runs home; then the belt indexes one slot in 0.3 s: a blank drops out of the magazine, the boards (board_N) move on through the reflow oven, whose vent (fume) puffs a wisp of solder fumes, and the last goes into the dispenser stem, where the finished boards stack up behind its window (mag_N). Every fifth board the team flip-top head (head, hinged at its back edge) pops open 40\u00b0 in 0.1 s, the stack empties from the top, a board (candy) flips out over the lip and away, and the head drops shut with a bounce. The copper reel (reel) turns at 40\u00b0/s while the line runs; the roof fan turns at 90 rpm while the plant has power (45 on low power). Starved (Working false: not enough copper or steel), the line finishes the board in hand and parks, and what ran out shows: the reel's copper (winding) runs down to the hub, the magazine's blanks are gone. Glow is state: the clean-room panes and skylight (panes) are lit while it runs, at half on low power, and stand by at 0.22 while it's starved; the signal tower's acid lamp (lamp_run) is steady while it runs and blinks at 2 Hz on low power; its amber lamp (lamp_wait) blinks at 0.9 Hz while it waits for inputs. All dark until it's built; under fog, neutral and still.",
+  "nodes": {
+   "gantry": {
+    "mode": "shuttle_z",
+    "cycle_s": "1 (2 on low power)"
+   },
+   "nozzle": {
+    "mode": "dip",
+    "pick_and_place": true
+   },
+   "head": {
+    "mode": "hinge_pop",
+    "open_deg": 40,
+    "open_s": 0.1,
+    "every_boards": 5
+   },
+   "reel": {
+    "axis": "Z",
+    "deg_per_s": 40
+   },
+   "fan": {
+    "axis": "Y",
+    "rpm": "90 (45 on low power)"
+   }
+  },
+  "idle": "Starved: parked, panes at standby, the amber lamp blinking; the fan still turns while it has power.",
   "produces": [],
   "emerge": "Rises out of its pad in stages; nothing appears instantly. stage_0 (pad) lifts from y=-0.15 to 0 during build progress 0\u201310%. stage_1, stage_2 and stage_3 each start at local y = -(stage height) and rise to 0 with ease-out cubic over progress 10\u201345%, 45\u201375% and 75\u201395%. The opaque terrain and pad hide whatever is still below ground. stage_3 ends with a 4% Y-scale overshoot that settles in 0.15 s (spring-loaded). Functional nodes (turret, spinner, door, lift) come last, at 95\u2013100%: a turret rises 0.3 out of its housing, then a spinner spins up from 0 rpm.",
   "remove": "Destroyed: shake \u00b10.03 for 0.4 s, then poof: a soft cream cloud bursts out of the building while it swells 8% for 0.06 s and pops to nothing in 0.14 s. A rubble decal fades in under it. Sold: dust at the footprint corners, then the same poof. Nothing sinks into the ground."

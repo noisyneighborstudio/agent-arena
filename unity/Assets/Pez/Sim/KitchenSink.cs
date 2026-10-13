@@ -403,6 +403,12 @@ namespace Pez.Sim
             Bldg(Yellow, "power_plant", 31, 4);
             Item("Lemon's power plants", "powered: steady cores and steam under load", 28, 4);
 
+            // The electronics plant's line runs for 12 s, then Lemon is out of copper for 8 s: the line parks, the reel's
+            // copper runs down and the amber lamp blinks.
+            Bldg(Yellow, "electronics_plant", 37, 4);
+            holds.Add(() => { if (T % 20f >= 12f) team.Stock["copper"] = 0; });
+            Item("Electronics plant line", "runs 12 s (pick-and-place, reflow fumes, boards stack, the head pops every 5), then out of copper 8 s (parks, empty reel, amber lamp); looping", 37, 4);
+
             // Units the works produce drive (or fly) to their rally point and are cleared away after a few seconds.
             var born = new Dictionary<int, float>();
             var keep = new HashSet<int>();

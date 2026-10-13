@@ -403,13 +403,138 @@ def S_factory():
     return a
 
 def S_electronics_plant():
+    # A circuit-candy line on a clean-room hall. Blank boards drop out of a steel magazine onto a belt, the pick-and-place
+    # carriage (a little team head on a gantry) brings copper chips from the reel's feeder and pecks one onto each board,
+    # the reflow oven cures them (its vent fumes), and the finished boards stack up in the dispenser stem until its team
+    # flip-top head pops and dispenses the batch. CircuitWorks in Unity runs it all from the sim (Entity.Working): one
+    # board a second, half that on low power, parked with the amber lamp lit when the plant has no copper or steel.
+    # Build stages: the hall is stage_1, the machinery on its roof stage_2, the dispenser stem and the signal tower
+    # stage_3 (given by hand, so each moving part rises with what carries it).
     a = Asset('electronics_plant', 'structures', 2); pad(a, 2)
-    a.box('cream', 1.6, .7, 1.6, y=.43)
-    a.box('team', 1.4, .08, 1.4, y=.82)
-    for x in (-.4, 0, .4): a.box('acid', .25, .3, .03, x=x, y=.45, z=-.81)
-    for z in (-.4, .4): a.box('acid', .03, .3, .25, x=.81, y=.45, z=z)
-    for x in (-.4, .4): a.cyl('steel', .1, .3, x=x, y=1.0, z=.4)
-    door(a, .35, .4, -.82, lights=False)
+    S2, S3 = a.node('stage_2', a.key), a.node('stage_3', a.key)
+    a.node('stage_1', a.key)
+    deck = .5                                                            # the hall's roof
+    a.box('cream', 1.72, deck - .08, 1.58, y=.08 + (deck - .08) / 2, z=-.02)
+    a.box('team', 1.76, .11, 1.62, y=deck - .06, z=-.02)                # wrapper band
+    a.box('cream', 1.6, .03, 1.46, y=deck + .005, z=-.02)                # roof deck
+    # Clean-room windows (the panes node: lit while the line runs, dim when it stands; CircuitWorks) in a dark band on
+    # both faces the camera sees, and the door round the corner from them.
+    pn = a.node('panes', 'stage_1')
+    a.box('dark', .8, .17, .02, x=.36, y=.27, z=-.815)
+    for x in (.62, .36, .1): a.box('acid', .19, .13, .03, x=x, y=.27, z=-.82, node=pn)
+    a.box('dark', .02, .17, 1.27, x=.865, y=.27, z=-.03)
+    for z in (-.55, -.29, -.03, .23, .49): a.box('acid', .03, .13, .19, x=.87, y=.27, z=z, node=pn)
+    a.box('dark', .26, .32, .06, x=-.42, y=.24, z=-.82)                  # door
+    a.box('licorice', .32, .05, .07, x=-.42, y=.425, z=-.82)
+    # The belt along x at z = .2, from the magazine (+x) through the oven into the stem (-x).
+    bz, by = .2, deck + .1
+    a.box('smoke', 1.3, .08, .26, x=-.05, y=deck + .055, z=bz, node=S2)  # belt frame
+    a.box('licorice', 1.26, .02, .2, x=-.05, y=by, z=bz, node=S2)        # belt
+    for x in (.58, -.68): a.cyl('steel', .045, .24, x=x, y=by - .015, z=bz, axis='z', node=S2, sections=10)
+    # Blank-board magazine over the belt's start: four steel posts round a stack of blanks (foil: the steel input; the
+    # blanks node is hidden while the team is out of steel) under a team cap.
+    mx = .47
+    for sx in (-1, 1):
+        for sz in (-1, 1): a.cyl('steel', .016, .3, x=mx + sx * .1, y=by + .18, z=bz + sz * .11, node=S2, sections=6)
+    bl = a.node('blanks', S2, (mx, by, bz))
+    for k in range(5): a.box('foil', .17, .022, .2, y=.1 + k * .04, node=bl)
+    a.box('team', .25, .04, .27, x=mx, y=by + .34, z=bz, node=S2)
+    # Pick-and-place gantry across the belt at the placing station (over the second board slot): a steel bridge on two
+    # legs; the carriage (gantry node: runs along z between the feeder and the board) is a little team head with a
+    # snout, and its nozzle (nozzle node) dips to pick a chip (held) and place it.
+    gx, gy = mx - .23, 1.02
+    for z in (-.66, .5):
+        a.box('steel', .06, gy - deck, .06, x=gx, y=deck + (gy - deck) / 2, z=z, node=S2)
+        a.box('steel', .14, .03, .12, x=gx, y=deck + .02, z=z, node=S2)
+    for sx in (-1, 1): a.box('steel', .03, .05, 1.22, x=gx + sx * .055, y=gy + .02, z=-.08, node=S2)
+    car = a.node('gantry', S2, (gx, gy, -.4))
+    a.box('team', .2, .16, .2, y=-.01, node=car)
+    a.box('team', .16, .05, .06, y=-.07, z=-.12, node=car)               # snout
+    a.box('dark', .14, .03, .01, y=.02, z=-.105, node=car)               # visor
+    a.cyl('steel', .03, .04, y=-.11, node=car, sections=10)
+    nz = a.node('nozzle', car, (0, -.06, 0))
+    a.cyl('steel', .012, .2, y=-.1, node=nz, sections=6)
+    a.cyl('dark', .02, .04, y=-.2, node=nz, sections=8)
+    hc = a.node('held', nz, (0, -.235, 0))
+    a.box('copper', .05, .025, .05, node=hc)
+    # Copper reel and its feeder in front of the gantry: the tape runs off the reel's foot along the feeder with copper
+    # chips to the pick point under the carriage's home. The reel (reel node) turns while the line runs; its copper
+    # (winding) runs down to the hub while the team is out of copper.
+    fz = -.4
+    for sz in (-1, 1): a.box('steel', .05, .26, .03, x=.58, y=deck + .13, z=fz + sz * .065, node=S2)
+    rl = a.node('reel', S2, (.58, deck + .23, fz))
+    wd = a.node('winding', rl)
+    a.cyl('copper', .2, .07, axis='z', node=wd, sections=20)
+    a.cyl('cream', .215, .014, z=.045, axis='z', node=rl, sections=20)   # back flange (the empty spool shows it)
+    a.cyl('cream', .075, .1, axis='z', node=rl, sections=12)             # hub
+    for k in range(3):                                                   # cream spokes on its face, so it reads turning
+        a.box('cream', .022, .19, .012, z=-.04, rot=rz(120 * k) @ T((0, .09, 0)), node=rl)
+    a.box('dark', .5, .035, .1, x=.17, y=deck + .04, z=fz, node=S2)      # feeder track
+    for k in range(3): a.box('copper', .045, .03, .05, x=.33 - k * .085, y=deck + .07, z=fz, node=S2)
+    # Reflow oven: a cream tunnel over the belt with a team band and a dark mouth each end; its vent stack's mouth (fume)
+    # is where the solder fumes leave.
+    ox = -.26
+    a.box('cream', .3, .22, .34, x=ox, y=by + .1, z=bz, node=S2)
+    a.box('team', .32, .05, .36, x=ox, y=by + .2, z=bz, node=S2)
+    for x in (ox + .155, ox - .155): a.box('licorice', .02, .1, .22, x=x, y=by + .045, z=bz, node=S2)
+    a.cyl('steel', .045, .3, x=ox, y=by + .36, z=bz + .08, node=S2, sections=10)
+    a.cyl('steel', .07, .03, x=ox, y=by + .5, z=bz + .08, node=S2, sections=12)
+    a.node('fume', a.key, (ox, by + .54, bz + .08))
+    # Boards on the belt (board_0..4, each with the chip the carriage places on it, chip_N): CircuitWorks indexes them
+    # along the belt one slot a cycle, from under the magazine into the stem.
+    for k in range(5):
+        b = a.node(f'board_{k}', S2, (mx - k * .23, by + .025, bz))
+        a.box('mint', .16, .025, .17, node=b)
+        c = a.node(f'chip_{k}', b, (0, .022, 0))
+        a.box('copper', .06, .025, .06, node=c)
+    # Clean-room air handler in the back corner: a cream box with a team cap and a filter fan (fan node: turns while the
+    # plant has power, half speed on low power).
+    hx, hz = .55, .45
+    a.box('cream', .42, .2, .4, x=hx, y=deck + .1, z=hz, node=S2)
+    a.box('team', .44, .05, .42, x=hx, y=deck + .2, z=hz, node=S2)
+    a.cyl('dark', .15, .02, x=hx, y=deck + .23, z=hz, node=S2, sections=20)
+    fn = a.node('fan', S2, (hx, deck + .25, hz))
+    a.cyl('steel', .035, .03, node=fn, sections=10)
+    for k in range(4): a.box('foil', .27, .012, .055, node=fn, rot=ry(45 * k) @ rx(18))
+    # Clean-room skylight in the front-right quarter: the lit room under frosted glass in a steel grid, part of the panes
+    # (from the high camera it's the plant's biggest light, so it says working or standing from across the map).
+    kx, kz, kw, kd = -.33, -.43, .54, .5
+    a.box('team', kw + .08, .06, kd + .08, x=kx, y=deck + .03, z=kz, node=S2)
+    a.box('acid', kw - .02, .02, kd - .02, x=kx, y=deck + .055, z=kz, node=pn)
+    a.box('glass', kw, .02, kd, x=kx, y=deck + .075, z=kz, node=S2)
+    for k in range(-1, 2): a.box('steel', .022, .025, kd, x=kx + k * kw / 4, y=deck + .085, z=kz, node=S2)
+    a.box('steel', kw, .025, .022, x=kx, y=deck + .085, z=kz, node=S2)
+    # The dispenser stem: smoke-plastic walls round an open window (the finished boards stack inside it, mag_0..4),
+    # grip slats in team colour, and the team flip-top head hinged at its back edge (the head node), popped by
+    # CircuitWorks every five boards to dispense the batch (candy is the board it pops out).
+    sx_, sz_, s0, s1, w = -.62, .2, deck, 1.36, .36
+    a.box('smoke', w, s1 - s0, .05, x=sx_, y=(s0 + s1) / 2, z=sz_ + w / 2 - .025, node=S3)                 # back
+    for s in (-1, 1): a.box('smoke', .05, s1 - s0, w, x=sx_ + s * (w / 2 - .025), y=(s0 + s1) / 2, z=sz_, node=S3)
+    a.box('smoke', w, .18, .05, x=sx_, y=s0 + .09, z=sz_ - w / 2 + .025, node=S3)                           # under the window
+    a.box('smoke', w, .08, .05, x=sx_, y=s1 - .04, z=sz_ - w / 2 + .025, node=S3)                           # over it
+    a.box('licorice', .03, .1, .22, x=sx_ + w / 2 - .01, y=by + .04, z=bz, node=S3)                          # the belt goes in
+    for i in range(3): a.box('team', .03, .06, .26, x=sx_ + w / 2 + .005, y=.86 + i * .13, z=sz_, node=S3)
+    a.box('dark', w - .06, .04, .06, x=sx_, y=s1 + .02, z=sz_ - w / 2 + .04, node=S3)                       # dispensing lip
+    for k in range(5):
+        m = a.node(f'mag_{k}', S3, (sx_, s0 + .23 + k * .065, sz_))
+        a.box('mint', .26, .03, .26, node=m)
+        a.box('copper', .07, .025, .07, x=.04, y=.025, z=-.03, node=m)
+    hd = a.node('head', S3, (sx_, s1 + .02, sz_ + w / 2), rot=rx(8))
+    a.box('team', w + .06, .22, w + .04, y=.12, z=-(w + .04) / 2, node=hd)
+    a.box('team', w - .02, .08, .08, y=.03, z=-(w + .04) + .01, node=hd)                                    # snout over the lip
+    a.cyl('steel', .03, w + .04, axis='x', node=hd, sections=8)                                             # hinge pin
+    cd = a.node('candy', S3, (sx_, s1 + .06, sz_ - w / 2 + .05))
+    a.box('mint', .18, .025, .18, node=cd)
+    a.box('copper', .06, .025, .06, y=.02, node=cd)
+    # Signal tower on the front-right corner: run (acid, lamp_run) over waiting-for-inputs (amber, lamp_wait), on a pole.
+    lx, lz = -.74, -.69
+    a.cyl('steel', .05, .04, x=lx, y=deck + .02, z=lz, node=S3, sections=10)
+    a.cyl('steel', .018, .24, x=lx, y=deck + .14, z=lz, node=S3, sections=6)
+    for name, m, y in (('lamp_wait', 'amber', .31), ('lamp_run', 'acid', .42)):
+        ln = a.node(name, S3, (lx, deck + y, lz))
+        a.cyl(m, .065, .095, node=ln, sections=14)
+        a.cyl('dark', .068, .012, y=-.053, node=ln, sections=14)
+    a.cyl('team', .068, .035, x=lx, y=deck + .485, z=lz, node=S3, sections=14)
     return a
 
 def S_optics_lab():

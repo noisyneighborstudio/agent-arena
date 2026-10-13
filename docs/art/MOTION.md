@@ -65,10 +65,15 @@ Units are tiles (1 tile = 1 Unity unit) and seconds. Rotation speeds are in degr
 - **Idle:** Exhaust stack puffs every 3 s.
 
 ### `electronics_plant`
-*Turns copper into circuits.*
+*Turns copper and steel into circuits.*
 
-- **Mechanics:** The sour-acid panels scroll a circuit-trace UV pattern while producing. The roof vents spin (no named node; use a UV or shader effect).
-- **Idle:** Panels flicker softly.
+- **Mechanics:** A circuit-candy line, one cycle per circuit the sim makes (1 s; 2 s on low power, which halves production). Each cycle the pick-and-place carriage (gantry, a little team head) dips its nozzle at the copper feeder, carries the chip (held) along its bridge, pecks it onto the board under it (chip_N appears, with a solder glint) and runs home; then the belt indexes one slot in 0.3 s: a blank drops out of the magazine, the boards (board_N) move on through the reflow oven, whose vent (fume) puffs a wisp of solder fumes, and the last goes into the dispenser stem, where the finished boards stack up behind its window (mag_N). Every fifth board the team flip-top head (head, hinged at its back edge) pops open 40° in 0.1 s, the stack empties from the top, a board (candy) flips out over the lip and away, and the head drops shut with a bounce. The copper reel (reel) turns at 40°/s while the line runs; the roof fan turns at 90 rpm while the plant has power (45 on low power). Starved (Working false: not enough copper or steel), the line finishes the board in hand and parks, and what ran out shows: the reel's copper (winding) runs down to the hub, the magazine's blanks are gone. Glow is state: the clean-room panes and skylight (panes) are lit while it runs, at half on low power, and stand by at 0.22 while it's starved; the signal tower's acid lamp (lamp_run) is steady while it runs and blinks at 2 Hz on low power; its amber lamp (lamp_wait) blinks at 0.9 Hz while it waits for inputs. All dark until it's built; under fog, neutral and still.
+- **`gantry`:** mode=shuttle_z, cycle_s=1 (2 on low power)
+- **`nozzle`:** mode=dip, pick_and_place=True
+- **`head`:** mode=hinge_pop, open_deg=40, open_s=0.1, every_boards=5
+- **`reel`:** axis=Z, deg_per_s=40
+- **`fan`:** axis=Y, rpm=90 (45 on low power)
+- **Idle:** Starved: parked, panes at standby, the amber lamp blinking; the fan still turns while it has power.
 
 ### `optics_lab`
 *Turns crystal into lenses.*

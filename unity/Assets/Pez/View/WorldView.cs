@@ -47,6 +47,7 @@ namespace Pez.View
             public float[] SteamNext;    // per tower or smokestack: when it next puffs (each on its own irregular rhythm)
             public RefineryWorks Works;  // refinery: the ore belt and the stacks' mouths
             public PowerWorks Plant;     // power plant: the springs under load and the flywheel
+            public CircuitWorks Fab;     // electronics plant: the circuit-candy line, its dispenser and its state lamps
             public bool GlowHidden;
             public Sheen Sheen;          // newcomer protection: the sheen over its parts (null when its team isn't protected)
             public Renderer[] Halos;     // power plant: the light rising out of its open stacks      // the neutral "last seen" glow is applied (a stream render of fogged enemy state)
@@ -855,6 +856,7 @@ namespace Pez.View
                 Construction(v);
                 if (e.Def.Key == "deep_mine") DeepMine(v);
                 if (e.Def.Key == "mining_refinery" && e.IsComplete && e.Team >= 0) Refinery(v);
+                if (e.Def.Key == "electronics_plant" && e.Team >= 0) { Fx.Audience = AudienceFor(e); (v.Fab ??= CircuitWorks.For(rig.Model, e.Id, ref v.Glows)).Tick(World.Teams[e.Team], e.IsComplete, e.Working, SeesState(e, PovTeam), v.FireK < 0.15f, Time.deltaTime); Fx.Audience = null; }
                 if (World.Decaying(e) && Time.time >= v.DustNext)
                 {
                     // The match's decay stage: grit crumbles off the roof every few seconds.
