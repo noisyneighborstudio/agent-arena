@@ -347,14 +347,129 @@ def S_command_center():
     return a
 
 def S_outpost():
+    """A forward ore depot: a dispenser being filled. Trucks back up to the hopper on the south edge and tip their ore
+    into it (its team trapdoors, flap_l and flap_r, swing open while a truck is in the bay); a cleated belt carries the
+    ore up the ramp into the dispenser stem at the back, whose team flip-top head (hinged at its back edge) lifts to take
+    each load, and the pressed ore stacks up behind the stem's window (silo_0..4) and is fed away underground. A
+    blockhouse with a firing slit carries the lookout (vision 9) on a telescoping mast; a fuel tank and pump on the other
+    side make it a refuelling point. OutpostWorks runs all of it from the sim (the docked truck's steps, its ore, enemies
+    in sight), and telescopes the mast up as the outpost finishes deploying from its truck."""
     a = Asset('outpost', 'structures', 2); pad(a, 2)
-    a.box('smoke', 1.4, .5, 1.3, y=.33, z=.2)
-    a.box('team', 1.2, .14, 1.1, y=.65, z=.2)
-    a.box('dark', 1.0, .08, .05, y=.45, z=-.46)              # firing slit
-    a.cyl('steel', .03, 1.1, x=.5, y=1.2, z=.6)
-    a.sphere('amber', .05, x=.5, y=1.77, z=.6)
-    a.box('kraft', .9, .06, .5, y=.11, z=-.68)                 # ore drop pad
-    for sx in (-1, 1): a.box('amber', .05, .05, .05, x=sx * .5, y=.16, z=-.9)
+    S1, S2, S3 = a.node('stage_1', a.key), a.node('stage_2', a.key), a.node('stage_3', a.key)
+    # The hopper on the south edge, where the truck's bin end backs up: a cream rim round a licorice funnel, its two team
+    # trapdoors hinged on the rim's sides (each node's pivot), lying shut. The amber dock lamps (DockView) sit either side
+    # of its front lip, low, so DockView runs its pip row along the lip.
+    hz0, hz1, hw, ry_ = -.9, -.46, .3, .2                          # front, back, half width, rim height
+    a.box('cream', 2 * hw + .1, ry_ - .08, .06, y=(ry_ + .08) / 2, z=hz0 + .03)
+    a.box('cream', 2 * hw + .1, ry_ - .08, .06, y=(ry_ + .08) / 2, z=hz1 - .03)
+    for s in (-1, 1): a.box('cream', .06, ry_ - .08, hz1 - hz0, x=s * (hw + .02), y=(ry_ + .08) / 2, z=(hz0 + hz1) / 2)
+    zc, inset = (hz0 + hz1) / 2, .11                                           # funnel: four sloped licorice plates
+    t = math.degrees(math.atan2(ry_ - .1, inset))
+    for s in (-1, 1):
+        a.box('licorice', .02, math.hypot(ry_ - .1, inset), hz1 - hz0 - .02, x=s * (hw - inset / 2), y=(ry_ + .1) / 2 - .005, z=zc, rot=rz(-s * (90 - t)))
+        a.box('licorice', 2 * hw - .02, math.hypot(ry_ - .1, inset), .02, y=(ry_ + .1) / 2 - .005, z=zc + s * ((hz1 - hz0) / 2 - inset / 2), rot=rx(s * (90 - t)))
+    a.box('dark', 2 * (hw - inset) + .02, .02, hz1 - hz0 - 2 * inset + .02, y=.1, z=zc)
+    for s, nm in ((1, 'flap_l'), (-1, 'flap_r')):
+        f = a.node(nm, S1, (s * hw, ry_ + .02, zc))
+        a.box('team', hw - .01, .025, hz1 - hz0 - .02, x=-s * (hw - .01) / 2, node=f)
+        a.box('licorice', .03, .03, hz1 - hz0 - .06, x=-s * (hw - .03), y=.01, node=f)   # its rubber edge
+        a.cyl('steel', .018, hz1 - hz0 - .04, axis='z', node=f, sections=8)             # hinge
+    for s in (-1, 1): a.box('amber', .06, .06, .06, x=s * .44, y=.16, z=-.93)
+    # The belt: a cleated licorice belt in a team frame, from the hopper's foot up the ramp to the top of the stem; the
+    # drum at its head turns while it runs. The ore riding it is the view's (OutpostWorks), from feed_in to feed_out.
+    P0, P1 = np.array([0, .2, hz1 + .02]), np.array([0, .9, .34])
+    d = P1 - P0; L = float(np.linalg.norm(d)); u = d / L; slope = math.degrees(math.atan2(d[1], d[2]))
+    mid = (P0 + P1) / 2
+    nrm = np.array([0, u[2], -u[1]])                                                         # the belt's up
+    a.box('team', .28, .07, L, y=mid[1], z=mid[2], rot=rx(-slope), node=S2)                  # frame
+    top = mid + nrm * .045
+    a.box('licorice', .2, .025, L - .04, y=top[1], z=top[2], rot=rx(-slope), node=S2)
+    for k in range(1, 7):                                                                    # cleats
+        c = P0 + u * (L * k / 7) + nrm * .065
+        a.box('licorice', .2, .025, .018, y=c[1], z=c[2], rot=rx(-slope), node=S2)
+    for s in (-1, 1):                                                                        # side rails
+        r0, r1 = P0 + nrm * .09, P1 + nrm * .09
+        a.strut('steel', (s * .13, r0[1], r0[2]), (s * .13, r1[1], r1[2]), .012, node=S2, sections=6)
+    for zz in (-.1, .16):                                                                    # trestles under it
+        yy = P0[1] + (zz - P0[2]) * d[1] / d[2] - .04
+        for s in (-1, 1): a.strut('steel', (s * .1, .1, zz), (s * .12, yy, zz), .02, node=S2, sections=6)
+        a.box('steel', .28, .03, .05, y=yy, z=zz, node=S2)
+    dr = a.node('drum', S2, (0, P1[1], P1[2]))
+    a.cyl('steel', .05, .26, axis='x', node=dr, sections=14)
+    for k in range(3): a.box('dark', .27, .018, .1, rot=rx(60 * k), node=dr)
+    fin = P0 + u * .06 + nrm * .09; fout = P1 + nrm * .09
+    a.node('feed_in', a.key, tuple(fin)); a.node('feed_out', a.key, tuple(fout))
+    # The dispenser stem at the back: smoke-plastic walls, a clear window on its +x side where the pressed ore stacks up
+    # (silo_0..4, in crystal by default: the view tints them to the ore delivered), team grip slats on the front, the
+    # licorice lip at the top front edge, and the team flip-top head hinged at its back edge.
+    sz, sw, s0, s1 = .63, .42, .1, 1.0
+    zf, zb = sz - sw / 2, sz + sw / 2
+    a.box('smoke', sw, s1 - s0, .05, y=(s0 + s1) / 2, z=zb - .025, node=S2)                  # back
+    a.box('smoke', sw, s1 - s0, .05, y=(s0 + s1) / 2, z=zf + .025, node=S2)                  # front
+    a.box('smoke', .05, s1 - s0, sw, x=-sw / 2 + .025, y=(s0 + s1) / 2, z=sz, node=S2)       # -x side
+    w0, w1 = .46, .9                                                                         # the window, +x side
+    a.box('smoke', .05, w0 - s0, sw, x=sw / 2 - .025, y=(s0 + w0) / 2, z=sz, node=S2)
+    a.box('smoke', .05, s1 - w1, sw, x=sw / 2 - .025, y=(w1 + s1) / 2, z=sz, node=S2)
+    for s in (-1, 1): a.box('smoke', .05, w1 - w0, .07, x=sw / 2 - .025, y=(w0 + w1) / 2, z=sz + s * (sw / 2 - .035), node=S2)
+    a.box('clear', .012, w1 - w0, sw - .14, x=sw / 2 - .01, y=(w0 + w1) / 2, z=sz, node=S2)
+    a.box('dark', sw - .1, .02, sw - .1, y=s0 + .3, z=sz, node=S2)                          # the stem's floor under the stack
+    for i in range(3):
+        for s in (-1, 1): a.box('team', .1, .05, .03, x=s * .13, y=.36 + i * .12, z=zf - .005, node=S2)
+    a.box('licorice', sw - .04, .04, .06, y=s1 - .01, z=zf + .03, node=S2)                  # the lip
+    silo = a.node('silo', S2, (0, 0, sz))
+    for k in range(5):
+        b = a.node(f'silo_{k}', silo, (0, w0 + .05 + k * .085, 0))
+        a.box('crystal', sw - .14, .07, sw - .14, node=b)
+    hd = a.node('head', S3, (0, s1, zb + .02), rot=rx(4))
+    a.box('team', sw + .08, .24, sw + .06, y=.12, z=-(sw + .06) / 2, node=hd)
+    a.box('team', sw - .02, .08, .09, y=.04, z=-(sw + .06) - .02, node=hd)                    # snout
+    a.cyl('steel', .03, sw + .06, axis='x', node=hd, sections=8)                               # hinge pin
+    a.node('drop', a.key, (0, .9, sz))                                                         # where the ore falls in
+    # The blockhouse on the +x side: cream with a team wrapper band and a cream roof, a firing slit on its two faces and a
+    # door; on its roof the lookout's collar, its mast (lookout_mast: a telescoping steel tube, raised once deployed) and
+    # the lookout (yaws: a little team periscope head with a dark lens and a whip aerial).
+    bx0, bx1, bz0, bz1, bh = .3, .9, -.4, .9, .5
+    bx, bzc = (bx0 + bx1) / 2, (bz0 + bz1) / 2
+    a.box('cream', bx1 - bx0, bh - .08, bz1 - bz0, x=bx, y=.08 + (bh - .08) / 2, z=bzc)
+    a.box('team', bx1 - bx0 + .04, .09, bz1 - bz0 + .04, x=bx, y=bh - .08, z=bzc)
+    a.box('cream', bx1 - bx0 - .08, .05, bz1 - bz0 - .08, x=bx, y=bh, z=bzc)
+    a.box('dark', .36, .06, .03, x=bx, y=.3, z=bz0 - .005)                                    # slits
+    a.box('dark', .03, .06, .5, x=bx1 + .005, y=.3, z=.45)
+    a.box('dark', .03, .26, .24, x=bx1 + .005, y=.21, z=-.05)                                 # door
+    a.box('licorice', .04, .04, .3, x=bx1 + .01, y=.36, z=-.05)
+    a.cyl('licorice', .11, .03, x=.6, y=bh + .03, z=.05, sections=16)                          # roof hatch
+    a.cyl('cream', .09, .04, x=.6, y=bh + .05, z=.05, sections=16)
+    a.box('steel', .03, .03, .1, x=.6, y=bh + .08, z=.05)
+    mx, mz = .7, .7
+    a.cyl('steel', .08, .06, x=mx, y=bh + .05, z=mz, sections=16)
+    a.cyl('smoke', .045, .7, x=mx, y=bh + .38, z=mz, sections=12)                              # the outer tube
+    a.cyl('team', .055, .05, x=mx, y=bh + .71, z=mz, sections=12)
+    ms = a.node('lookout_mast', S3, (mx, bh + .7, mz))
+    a.cyl('steel', .03, .6, node=ms, sections=10)                                              # the inner tube (slides)
+    lk = a.node('lookout', ms, (0, .3, 0))
+    a.cyl('steel', .05, .04, node=lk, sections=12)
+    a.box('team', .16, .14, .18, y=.09, z=-.02, node=lk)
+    a.box('team', .1, .07, .08, y=.11, z=-.14, node=lk)                                        # the snout
+    a.cyl('dark', .035, .02, y=.11, z=-.185, axis='z', node=lk, sections=12)                   # lens
+    a.cyl('steel', .008, .3, x=.05, y=.31, z=.04, node=lk, sections=6)                         # whip
+    a.sphere('dark', .015, x=.05, y=.46, z=.04, node=lk, sub=1)
+    # The fuel tank on the -x side, on two saddles, with team bands; its pump at the front with a licorice hose coiled on
+    # it: vehicles refuel here.
+    tx, ty, tr, tz0, tz1 = -.56, .32, .18, -.12, .78
+    for zz in (tz0 + .15, tz1 - .15): a.box('steel', .34, .2, .08, x=tx, y=.18, z=zz)
+    a.cyl('cream', tr, tz1 - tz0 - tr, x=tx, y=ty, z=(tz0 + tz1) / 2, axis='z', sections=18)
+    for zz in (tz0 + tr * .5, tz1 - tr * .5):
+        cap = trimesh.creation.icosphere(subdivisions=2, radius=tr); cap.apply_scale((1, 1, .5))
+        cap.apply_translation((tx, ty, zz)); a.add(None, 'cream', cap)
+    for zz in (tz0 + .3, tz1 - .3): a.cyl('team', tr + .015, .07, x=tx, y=ty, z=zz, axis='z', sections=18)
+    a.cyl('steel', .04, .05, x=tx, y=ty + tr + .02, z=(tz0 + tz1) / 2 + .1, sections=10)        # filler cap
+    px, pz = -.56, -.33
+    a.box('cream', .2, .3, .14, x=px, y=.08 + .15, z=pz)
+    a.box('team', .22, .05, .16, x=px, y=.4, z=pz)
+    a.box('dark', .12, .07, .01, x=px, y=.3, z=pz - .075)                                     # its dial
+    hose = trimesh.creation.torus(major_radius=.07, minor_radius=.018, major_sections=16, minor_sections=6)
+    hose.apply_transform(axis_rot('x')); hose.apply_translation((px - .12, .22, pz)); a.add(None, 'licorice', hose)
+    a.box('steel', .03, .08, .03, x=px - .12, y=.33, z=pz)
     return a
 
 def S_power_plant():

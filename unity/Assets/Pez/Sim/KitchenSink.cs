@@ -457,7 +457,8 @@ namespace Pez.Sim
             Begin("economy", "Economy loop", "Trucks harvest each ore and dock at each kind of drop-off: queue, line up, reverse, tip, pull out.", 0, 80, 60, 18);
             Loop(Blue, "mining_refinery", Map.Iron, 6, "Iron ore into a refinery");
             Loop(Red, "mining_refinery", Map.Copper, 20, "Copper ore into a refinery");
-            Loop(Blue, "outpost", Map.Crystal, 34, "Crystal into an outpost");
+            Loop(Blue, "outpost", Map.Crystal, 34, "Crystal into an outpost",
+                "harvest, queue, align (the hopper's trapdoors swing open), reverse, unload with an ore-coloured pour into the hopper; the crystal rides the belt up into the stem, whose head lifts to take it, and stacks behind its window; the trapdoors slam shut as the truck pulls out, and the stack is fed away between deliveries");
             Loop(Red, "command_center", Map.Uranium, 48, "Uranium into a command center");
 
             Unit(Blue, "mining_truck", 57, 12);
@@ -466,7 +467,7 @@ namespace Pez.Sim
         }
 
         /// <summary>A drop-off, an ore field below it on screen and three trucks working it.</summary>
-        void Loop(int team, string dropOff, int ore, float a, string name)
+        void Loop(int team, string dropOff, int ore, float a, string name, string states = null)
         {
             var d = Bldg(team, dropOff, a, 13);
             var field = OreField(a + 3.5f, 4, ore, 2.3f, 420);
@@ -482,7 +483,7 @@ namespace Pez.Sim
                 if (w.Tick % World.TickRate != 0) return;
                 foreach (var (idx, amount) in field) { w.Map.Ore[idx] = amount; w.Map.OreType[idx] = (byte)ore; }
             });
-            Item(name, "harvest, queue, align, reverse, unload with an ore-coloured pour, pull out", a + 1.5f, 8.5f, 9);
+            Item(name, states ?? "harvest, queue, align, reverse, unload with an ore-coloured pour, pull out", a + 1.5f, 8.5f, 9);
         }
 
         void Power()
@@ -973,6 +974,24 @@ namespace Pez.Sim
                 else if (truck != null && !truck.Dead && truck.Order == Order.Idle && w.Deploy(truck) != null) { w.Remove(truck); truck = null; again = T + 2f; }
             });
             Item("Construction truck deploying", "drives up, stops and deploys into a command center (the truck sinks as the base rises); loops", 7, 4.5f, 9);
+
+            // An outpost truck (Cherry, whose trucks work far off in the economy loop, so none come here to unload) drives up
+            // and deploys: the bunker rises out of it and the lookout's mast telescopes up. 12 s later the outpost is cleared
+            // and a new truck drives up.
+            var opFrom = P(16.5f, 13); var opTo = P(22.5f, 10.5f);
+            Entity opTruck = null, op = null; float opAt = 0, opAgain = 0;
+            holds.Add(() =>
+            {
+                if (opTruck != null && opTruck.Dead) { opTruck = null; op = w.Entities.LastOrDefault(e => !e.Dead && e.Team == Red && e.Def.Key == "outpost" && Vec2.Dist(e.Center, opTo) < 3f); opAt = T; }
+                if (op != null && (op.Dead || T - opAt > 12f)) { if (!op.Dead) w.Remove(op); op = null; opAgain = T + 2f; }
+                if (opTruck == null && op == null && T >= opAgain)
+                {
+                    opTruck = w.PlaceUnit(Red, "outpost_truck", opFrom, AlongRight);
+                    w.SetOrder(opTruck, Order.Move, opTo);
+                }
+                else if (opTruck != null && !opTruck.Dead && opTruck.Order == Order.Idle && w.Deploy(opTruck) != null) { w.Remove(opTruck); opTruck = null; opAgain = T + 2f; }
+            });
+            Item("Outpost truck deploying", "drives up, stops and deploys: the bunker rises out of the sinking truck, then the lookout's mast telescopes up and the lookout starts its sweep; cleared after 12 s; loops", 21.5f, 11f, 9);
 
             // Decay (the match clock's last half hour): a barracks crumbling, grit falling off it, its health running down
             // from full to 45% over a minute (smoke starts below 50%) and back.

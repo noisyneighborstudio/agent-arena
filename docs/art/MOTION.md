@@ -29,10 +29,16 @@ Units are tiles (1 tile = 1 Unity unit) and seconds. Rotation speeds are in degr
 - **Idle:** The crane idles in a slow ±10° sweep every 8 s, its trolley home and the hook swaying 0.008 on a 3 s sine. The comms dish turns at 30°/s (15 on low power). The amber beacon on the crane's apex blinks once every 1.5 s.
 
 ### `outpost`
-*Forward bunker and ore drop-off.*
+*Forward ore drop-off, refuelling point and lookout (vision 9).*
 
-- **Mechanics:** Created only by deploying an outpost_truck (see that entry). Mining trucks unload on the south drop pad: they reverse onto it and tip their bin. No door.
-- **Idle:** Antenna tip blinks amber once every 2 s.
+- **Mechanics:** A forward ore depot: a dispenser being filled, run by OutpostWorks from the sim's dock steps. Created only by deploying an outpost_truck (see that entry): while its stages rise the lookout's mast is down, and once stage_3 lands it telescopes up 0.24 in 0.6 s with a small overshoot. Mining trucks back up to the hopper on the south edge (no door). When a truck lines up in the bay (Align) the hopper's two team trapdoors (flap_l, flap_r, hinged on the rim's sides) swing open 105° in 0.4 s with a small overshoot; they stay open while it reverses and tips, and slam shut 0.3 s after it starts to pull out. The truck's ore-coloured pour falls into the open hopper. Every 20 ore that leaves the bin (the sim tips 10 every 0.1 s, so about 8 lumps a load) a lump of that ore comes up out of the hopper onto the cleated belt (feed_in) 0.4 s later and rides it up the ramp at 0.7 tiles/s to its head (feed_out); the head drum (drum) turns with the belt, which spins up in 0.3 s and runs down in 0.5 s. At the top each lump is tossed over the stem's lip into the dispenser stem (drop) in 0.35 s. The team flip-top head (head, hinged at its back edge) lifts 55° in 0.2 s as the first lump nears the top, holds open while the ore comes in, and drops shut with two bounces 0.5 s after the last. Every second lump a pressed brick of that ore drops onto the stack behind the stem's window (silo_0..4, pitch 0.085, up to five, tinted to the ore; crystal and uranium glow as they do in the field). Between deliveries the stack is fed away underground: every 3.5 s it slides down a slot in 0.6 s and the bottom brick leaves the window, down to one. The lookout (lookout, on lookout_mast) sweeps ±80° around the bay side at 25°/s with a 1–1.6 s pause at each end; an enemy unit its team can see within 9 tiles draws it round (up to 120°/s) to follow the nearest. The outpost makes its own power (+10), so low power doesn't slow it. Under fog (a render whose team only remembers it) the belt is empty and nothing moves.
+- **`flap_l`:** axis=Z (hinge on the rim side), open_deg=105, open_s=0.4, close_s=0.3, note=flap_r mirrors it; open from Align until 0.3 s into PullOut
+- **`drum`:** axis=X, mode=belt_head, belt_speed=0.7
+- **`head`:** mode=hinge_open_while_fed, open_deg=55, open_s=0.2, close_delay_s=0.5
+- **`silo_0`:** mode=stack, pitch=0.085, note=silo_0..4: a brick per two lumps, fed away every 3.5 s down to one
+- **`lookout`:** axis=Y, mode=sweep_or_track, sweep_deg=80, deg_per_s=25, track_deg_s=120, range=9
+- **`lookout_mast`:** mode=telescope_on_deploy, travel=0.24, s=0.6
+- **Idle:** The trapdoors shut and the belt still; one or two pressed bricks in the stem's window; the lookout sweeping across the bay side and pausing at each end.
 
 ### `power_plant`
 *Generates power.*
