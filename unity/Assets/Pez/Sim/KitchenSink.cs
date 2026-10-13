@@ -612,7 +612,22 @@ namespace Pez.Sim
                 holds.Add(() => { if (sam.Dead || gs.Dead) return; if (gs.Order != Order.Move) Fly(); w.FireFor(sam, gs); });
                 Item("SAM site", "SAM site tracking a gunship that flies to and fro, launching at it", a0 + 3f, 29);
             }
-            Lane("laser_tower", "heavy_tank", a0, 32, 6f, "Laser tower");
+            // The laser tower tracks a heavy tank driving back and forth across its field of fire (3.8 to 6.8 tiles out,
+            // a 60 degree sweep), so its head turns with it and dips as it comes closer.
+            {
+                var tower = Bldg(Blue, "laser_tower", a0, 32);
+                var tank = Unit(Red, "heavy_tank", a0 + 3.5f, 30.5f, AlongLeft, pin: false);
+                var near = P(a0 + 3.5f, 30.5f); var far = P(a0 + 5.5f, 36f);
+                void Drive() { w.SetOrder(tank, Order.Move, far); tank.Waypoints.Add(near); tank.WaypointLoop = true; }
+                Drive();
+                holds.Add(() =>
+                {
+                    if (tower.Dead || tank.Dead) return;
+                    if (tank.Order != Order.Move) Drive();
+                    w.FireFor(tower, tank);
+                });
+                Item("Laser tower", "Laser tower tracking a heavy tank across its field of fire: the head turns with it and dips as it closes, the coils charge bottom to top before each beam", a0 + 3, 33, 8);
+            }
             Lane("reaper_drone", "light_tank", a0 + 14, 2, 5.5f, "Reaper hellfire (flies high)");
         }
 

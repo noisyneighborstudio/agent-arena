@@ -152,10 +152,11 @@ Units are tiles (1 tile = 1 Unity unit) and seconds. Rotation speeds are in degr
 ### `laser_tower`
 *Beam defence.*
 
-- **Mechanics:** The turret (collar) yaws at 180°/s. Charge is 0.3 s, during which the pylon coils light from bottom to top. The beam lasts 0.6 s and the prism tip spins 360° during it. Cooldown is 1.0 s. No recoil.
+- **Mechanics:** A searchlight on a coil pylon. The turret (the yoke on its turntable) yaws at 180°/s to follow the sim's aim. The emitter head (the barrel node, on trunnions between the yoke's arms) pitches toward the target's live position, −30° to +40° at up to 120°/s: down at tanks, up at aircraft; after a fight it holds 3 s, then levels off at 30°/s. The shot charges in the last 0.4 s before it's due (the 1.1 s cooldown after the last shot, while it's engaged): the four pylon coils (coil_0 at the bottom .. coil_3) light one after another from the bottom, to 1.3, and the lens brightens. On the shot the cyan beam leaves the lens, the lens flashes and fades over 0.3 s, the coils drain from the top down in 0.25 s and the head's rear vent breathes out a wisp of heat. A charge that isn't fired bleeds away over 0.4 s. No recoil. Low power halves every glow; an offline tower (upkeep unpaid) is dark and still.
 - **`turret`:** yaw_speed_deg=180, yaw_limit_deg=360, idle_scan=True
-- **`barrel`:** recoil=0, recoil_out_s=0.05, return_s=0.35, pitch_deg=0
-- **Idle:** Coils breathe on a 2.5 s sine; the prism turns at 6 rpm.
+- **`barrel`:** mode=trunnion_pitch, pitch_min_deg=-30, pitch_max_deg=40, deg_per_s=120, recoil=0
+- **`coil`:** mode=charge_glow, charge_s=0.4, peak=1.3, drain_s=0.25
+- **Idle:** The head faces forward and glances now and then (PezMotion's idle turret). The coils breathe on a 2.5 s sine (glow 0.25–0.45) and the lens glows at 0.5.
 
 **Every structure, emerge:** Rises out of its pad in stages; nothing appears instantly. stage_0 (pad) lifts from y=-0.15 to 0 during build progress 0–10%. stage_1, stage_2 and stage_3 each start at local y = -(stage height) and rise to 0 with ease-out cubic over progress 10–45%, 45–75% and 75–95%. The opaque terrain and pad hide whatever is still below ground. stage_3 ends with a 4% Y-scale overshoot that settles in 0.15 s (spring-loaded). Functional nodes (turret, spinner, door, lift) come last, at 95–100%: a turret rises 0.3 out of its housing, then a spinner spins up from 0 rpm.
 

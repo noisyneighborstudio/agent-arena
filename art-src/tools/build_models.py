@@ -1122,15 +1122,47 @@ def S_sam_site():
 
 def S_laser_tower():
     a = Asset('laser_tower', 'structures', 1)
-    a.box('cream', .9, .22, .9, y=.11)
-    a.cyl('smoke', .17, 1.4, y=.92, sections=6)
-    a.cyl('team', .19, .14, y=.4, sections=6)
-    for k in (.8, 1.05, 1.3): a.cyl('cyan', .185, .04, y=k, sections=6)
-    tu = a.node('turret', a.key, (0, 1.62, 0))
-    a.cyl('team', .2, .12, y=.06, node=tu)
-    br = a.node('barrel', tu, (0, .2, 0))
-    a.cyl('steel', .04, .35, z=.12, axis='z', node=br)
-    a.octa('cyan', .09, .14, z=.33, node=br)
+    # The foot: an octagonal cream plinth with a team wrapper band, and the charge bank round the stem's root: three
+    # cream capacitor cans with team caps.
+    a.cyl('cream', .45, .14, y=.07, sections=8)
+    a.cyl('team', .455, .045, y=.115, sections=8)
+    for k in range(3):
+        ang = math.radians(30 + 120 * k)
+        cx, cz = .3 * math.cos(ang), .3 * math.sin(ang)
+        a.cyl('cream', .075, .22, x=cx, y=.25, z=cz, sections=8)
+        a.cyl('team', .082, .05, x=cx, y=.38, z=cz, sections=8)           # its cap
+    # The pylon: a smoke-plastic stem wound with four cyan coils (coil_0 at the bottom .. coil_3 at the top, each its
+    # own node under stage_2 so it rises with the stem) under a cream clamp ring. LaserWorks lights them bottom to
+    # top as the shot charges.
+    a.node('stage_2', a.key)
+    a.cyl('smoke', .13, 1.18, y=.79, sections=12)
+    for k in range(4):
+        c = a.node(f'coil_{k}', 'stage_2', (0, .52 + k * .22, 0))
+        a.coil('cyan', .152, .024, -.045, .045, 2.0, node=c, per_turn=14, sides=5)
+    a.cyl('cream', .19, .07, y=.175, sections=12)                          # the stem's foot flange
+    a.cyl('cream', .175, .04, y=1.26, sections=12)                         # a clamp ring over the coils
+    # The top: a team band and a cream collar the head's bearing sits in.
+    a.cyl('team', .19, .08, y=1.36, sections=14)
+    a.cyl('cream', .22, .06, y=1.43, sections=14)
+    # The head (turret): a steel turntable with a cream yoke, and between its arms the team emitter head (barrel),
+    # pitched on trunnions like a searchlight. The lens at its snout is where the beam leaves (Models.BarrelTip: the far
+    # +Z end of the barrel's meshes).
+    tu = a.node('turret', a.key, (0, 1.46, 0))
+    a.cyl('steel', .2, .05, y=.025, node=tu, sections=12)
+    P = .36                                                                # trunnion height above the turntable
+    for sx in (-1, 1):
+        a.box('cream', .05, P + .0, .14, x=sx * .19, y=.05 + P / 2, node=tu)
+    br = a.node('barrel', tu, (0, P, 0))
+    a.box('team', .32, .26, .42, z=.02, node=br)                           # the head
+    a.box('team', .26, .05, .34, y=.14, z=.0, node=br)                     # its crown
+    for x in (-.075, 0, .075): a.box('foil', .024, .05, .24, x=x, y=.185, z=-.03, node=br)   # heat-sink fins
+    a.box('dark', .2, .09, .02, y=-.01, z=-.19, node=br)                   # the rear vent, where it breathes out heat
+    a.node('vent', br, (0, 0, -.22))
+    a.cyl('steel', .045, .5, axis='x', node=br, sections=10)              # the trunnion pin through the yoke's arms
+    # The lens barrel sits a little high, on the middle of the barrel node's meshes, so the muzzle Models.BarrelTip
+    # finds is the lens's centre.
+    a.cyl('steel', .1, .15, y=.04, z=.295, axis='z', node=br, sections=14)
+    a.cyl('cyan', .075, .03, y=.04, z=.365, axis='z', node=br, sections=14)   # the lens
     return a
 
 # ---------------------------------------------------------------- vehicles

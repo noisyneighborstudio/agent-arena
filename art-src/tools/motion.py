@@ -256,9 +256,16 @@ STRUCTURES = [
         radar=dict(axis='Y', rpm=20, low_power_rpm=10, lock='faces forward while tracking'),
         missile=dict(count=4, hidden_z=-.16, reload_s=2.4, slide_s=.45)),
    "The rack rests at 25° nose-up and the radar sweeps round at 20 rpm; the turret glances aside now and then."),
- S('laser_tower', 'Beam defence.', "The turret (collar) yaws at 180°/s. Charge is 0.3 s, during which the pylon coils light from bottom to top. "
-   "The beam lasts 0.6 s and the prism tip spins 360° during it. Cooldown is 1.0 s. No recoil.",
-   dict(**TURRET(180), **BARREL(0)), "Coils breathe on a 2.5 s sine; the prism turns at 6 rpm."),
+ S('laser_tower', 'Beam defence.', "A searchlight on a coil pylon. The turret (the yoke on its turntable) yaws at 180°/s to follow the sim's aim. "
+   "The emitter head (the barrel node, on trunnions between the yoke's arms) pitches toward the target's live position, −30° to +40° at up to 120°/s: "
+   "down at tanks, up at aircraft; after a fight it holds 3 s, then levels off at 30°/s. "
+   "The shot charges in the last 0.4 s before it's due (the 1.1 s cooldown after the last shot, while it's engaged): the four pylon coils "
+   "(coil_0 at the bottom .. coil_3) light one after another from the bottom, to 1.3, and the lens brightens. On the shot the cyan beam leaves the lens, "
+   "the lens flashes and fades over 0.3 s, the coils drain from the top down in 0.25 s and the head's rear vent breathes out a wisp of heat. "
+   "A charge that isn't fired bleeds away over 0.4 s. No recoil. Low power halves every glow; an offline tower (upkeep unpaid) is dark and still.",
+   dict(**TURRET(180), barrel=dict(mode='trunnion_pitch', pitch_min_deg=-30, pitch_max_deg=40, deg_per_s=120, recoil=0),
+        coil=dict(mode='charge_glow', charge_s=.4, peak=1.3, drain_s=.25)),
+   "The head faces forward and glances now and then (PezMotion's idle turret). The coils breathe on a 2.5 s sine (glow 0.25–0.45) and the lens glows at 0.5."),
 ]
 
 ORES = [dict(key=k, kind='ore', role='Resource field (one tile).', mechanics=(
