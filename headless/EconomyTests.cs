@@ -1730,13 +1730,13 @@ namespace Pez.Headless
         /// </summary>
         static void AiTruckReach()
         {
-            void Field(World wf, int cx, int cy)
+            void Field(World wf, int cx, int cy, byte ore = Map.Iron)
             {
                 for (int y = cy - 2; y <= cy + 2; y++)
                     for (int x = cx - 2; x <= cx + 2; x++)
                     {
                         int i = wf.Map.Idx(x, y);
-                        wf.Map.Tiles[i] = Terrain.Dirt; wf.Map.Ore[i] = wf.Map.OreBase[i] = 200; wf.Map.OreType[i] = wf.Map.OreBaseType[i] = Map.Iron;
+                        wf.Map.Tiles[i] = Terrain.Dirt; wf.Map.Ore[i] = wf.Map.OreBase[i] = 200; wf.Map.OreType[i] = wf.Map.OreBaseType[i] = ore;
                     }
                 wf.Map.FieldsChanged();
             }
@@ -1779,6 +1779,26 @@ namespace Pez.Headless
             AiRun(w3, ai3, 60);
             int near = trucks3.Count(e => e.HarvestTile.HasValue && Vec2.Dist(e.HarvestTile.Value.Center, hq3.Center) <= World.LeashDist);
             Check(near >= 3 && w3.Teams[0].Stats.OreMined > 0, $"and ore by the base is worked ({near} of {trucks3.Count} trucks on it, {w3.Teams[0].Stats.OreMined} ore mined)");
+
+            // A truck whose wanted ore changes (the plan has its first two on iron) with no fair ore of the new kind is stopped, not left mining the old kind.
+            var (w4, ai4, hq4, trucks4) = Bare();
+            Field(w4, (int)hq4.Center.X + 15, (int)hq4.Center.Y, Map.Copper); // copper by the base, no iron anywhere
+            foreach (var e in trucks4.Take(2)) w4.SetOrder(e, Order.Harvest, new Vec2(hq4.Center.X + 15.5f, hq4.Center.Y + 0.5f));
+            Check(trucks4.Take(2).All(e => e.Order == Order.Harvest && e.HarvestType == Map.Copper && e.Cargo == 0), "(set up: two trucks mining copper, which the plan has on iron)");
+            AiRun(w4, ai4, 3);
+            Check(trucks4.Take(2).All(e => e.Order == Order.Idle), $"with no iron to send them to they are stopped, not left on copper ({string.Join(", ", trucks4.Take(2).Select(e => e.OrderName))})");
+
+            // An idle truck is not sent to a tile of a field that is fair only at its root: the root (mined out) is in reach, the ore left is 38 tiles off by the rival's corner.
+            var (w5, ai5, hq5, trucks5) = Bare();
+            for (int x = 43; x <= 47; x++) { int i = w5.Map.Idx(x, 9); w5.Map.Tiles[i] = Terrain.Dirt; w5.Map.OreBase[i] = x == 43 ? 300 : 100; w5.Map.OreBaseType[i] = Map.Iron; }
+            for (int y = 7; y <= 11; y++) { int i = w5.Map.Idx(47, y); w5.Map.Tiles[i] = Terrain.Dirt; w5.Map.OreBase[i] = 100; w5.Map.OreBaseType[i] = Map.Iron; w5.Map.Ore[i] = 100; w5.Map.OreType[i] = Map.Iron; }
+            w5.Map.FieldsChanged();
+            Array.Fill(w5.Teams[0].Explored, true);
+            Check(Vec2.Dist(new Vec2(43.5f, 9.5f), hq5.Center) <= World.LeashDist && Vec2.Dist(new Vec2(47.5f, 9.5f), hq5.Center) > World.LeashDist && Vec2.Dist(new Vec2(47.5f, 9.5f), w5.Map.Spawns[2]) < 24f,
+                  "(set up: the field's root is in reach, its only ore is out of reach and within 24 tiles of a free corner)");
+            float farthest = 0;
+            AiRun(w5, ai5, 60, () => { foreach (var e in trucks5.Where(e => e.Order == Order.Harvest)) farthest = Math.Max(farthest, Vec2.Dist(e.OrderPos, hq5.Center)); });
+            Check(farthest <= World.LeashDist, $"and none of its idle trucks is sent to it (the farthest harvest order was {farthest:0} tiles from the base)");
         }
 
         static void AiRefineries()
@@ -2428,8 +2448,8 @@ namespace Pez.Headless
             var (w5, ai5, t5, hq5) = Thin(1); // corner 1 is an enemy's, corners 2 and 3 are free sites
             var free5 = new[] { w5.Map.Spawns[2], w5.Map.Spawns[3] };
             float nearest5 = float.MaxValue; // the closest any outpost or any outpost truck's destination comes to a free site
-            // (12 minutes: its idle trucks used to find the middle field by driving to the free corners' ore, which they no longer do (#87), so the recon drone finds it.)
-            AiRun(w5, ai5, 12 * 60, () =>
+            // (20 minutes: its idle trucks used to find the middle field by driving to the free corners' ore, or creeping on past it, which they no longer do (#87), so the recon drone finds it.)
+            AiRun(w5, ai5, 20 * 60, () =>
             {
                 foreach (var e in w5.Owned(0).Where(e => e.Def.Key == "outpost" || e.Def.Key == "outpost_truck"))
                     foreach (var s in free5) nearest5 = Math.Min(nearest5, Vec2.Dist(e.Def.Key == "outpost" ? e.Center : e.OrderPos, s));

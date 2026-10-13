@@ -463,13 +463,13 @@ namespace Pez.Sim
                 {
                     // The house AI sends it to the nearest fair ore of its kind that is not by an enemy it knows of; the attacking AI leaves the
                     // pick to the command (the nearest ore of that kind). None within 80 tiles: it goes to the nearest field of that ore its
-                    // drop-offs reach, an outpost's perhaps, to a tile of it that is safe (the first field that has one).
+                    // drop-offs reach, an outpost's perhaps, to a fair tile of it that is safe (the first field that has one).
                     var near = w.Map.NearestOre(tr.Pos, 80, !Passive ? null : (System.Func<Int2, bool>)(tt => Fair(tt.Center) && !foes.Any(h => Vec2.Dist(h, tt.Center) < World.HostileOreRadius)), type, t.StartPos);
                     Vec2? goal = Passive && near.HasValue ? near.Value.Center : (Vec2?)null;
                     if (!near.HasValue && tr.Order == Order.Idle)
-                        goal = fields.Where(f => f.type == type && f.ore >= 100 && Reached(f.at)).OrderBy(f => System.MathF.Round(Vec2.Dist(f.at, tr.Pos), 2)).ThenByDescending(f => Rightward(f.at)).Select(f => SafeOreNear(f.at, type)).FirstOrDefault(p => p.HasValue);
+                        goal = fields.Where(f => f.type == type && f.ore >= 100 && Reached(f.at)).OrderBy(f => System.MathF.Round(Vec2.Dist(f.at, tr.Pos), 2)).ThenByDescending(f => Rightward(f.at)).Select(f => SafeOreNear(f.at, type)).FirstOrDefault(p => p.HasValue && Fair(p.Value));
                     if (goal.HasValue) Do(w, "type", "harvest", "units", new[] { tr.Id }, "ore", Defs.Ores[type], "x", goal.Value.X, "y", goal.Value.Y);
-                    else if (drifted) Do(w, "type", "stop", "units", new[] { tr.Id });
+                    else if (drifted || (Passive && tr.Order != Order.Idle && tr.HarvestType != type)) Do(w, "type", "stop", "units", new[] { tr.Id }); // (no fair ore of the new kind: not left on the old kind, and not sent to unfair ore either; it looks again every 20 s)
                     else if (!Passive) Do(w, "type", "harvest", "units", new[] { tr.Id }, "ore", Defs.Ores[type]);
                 }
             }
