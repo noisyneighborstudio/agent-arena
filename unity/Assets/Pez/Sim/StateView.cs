@@ -583,8 +583,12 @@ namespace Pez.Sim
         ///     error suggests) goes where its south lane is clear, so trucks back into its door side; a spot with a building
         ///     2 tiles south (the 1-tile walkway leaves only the first tile of the 3-tile lane free) used to be taken and
         ///     gave a side bay, about a third of the AI's refineries. Your own x,y is checked as before.
+        /// 42: no stop-go: a parked truck mines ore within 1.5 tiles without moving and, when it must move, drives to where a
+        ///     stop collects most (it hopped tile to tile on thin ore); vehicles drive where they face (no crabwise slide as
+        ///     they turn); a unit as close as it can get to a point another stands on has arrived; a path through something
+        ///     built since is planned again; the dance guard only counts time a unit spends moving.
         /// </summary>
-        public const int RulesVersion = 41;
+        public const int RulesVersion = 42;
 
         public static JObj Rules()
         {

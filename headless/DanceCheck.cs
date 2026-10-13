@@ -57,9 +57,18 @@ namespace Pez.Headless
             else if (file.StartsWith("ai"))
             {
                 // "ai" or "aiMINUTES": two scripted AIs play that long first (default 20 minutes).
-                game = new Game(new GameConfig { Seed = 5, MapSize = 96, Controllers = new[] { "ai", "ai" } });
+                game = new Game(new GameConfig { Seed = int.TryParse(Environment.GetEnvironmentVariable("PEZ_SEED"), out var sd) ? sd : 5, MapSize = 96, Controllers = new[] { "ai", "ai" } });
                 float min = file.Length > 2 ? float.Parse(file.Substring(2)) : 20f;
-                for (int i = 0; i < min * 60 * World.TickRate && !game.World.GameOver; i++) game.Advance(World.Dt);
+                var tr0 = (Environment.GetEnvironmentVariable("PEZ_TRACE") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries).Select(int.Parse).ToList();
+                float tFrom = float.TryParse(Environment.GetEnvironmentVariable("PEZ_TRACE_FROM"), out var tf) ? tf : -1f;
+                for (int i = 0; i < min * 60 * World.TickRate && !game.World.GameOver; i++)
+                {
+                    game.Advance(World.Dt);
+                    var gw = game.World;
+                    if (tFrom >= 0 && gw.Time >= tFrom && gw.Time < tFrom + 6f)
+                        foreach (var id in tr0) if (gw.Get(id) is Entity t) Console.WriteLine($"{gw.Time:0.00} #{id} pos {t.Pos.X:0.00},{t.Pos.Y:0.00} f {t.Facing:0.00} {t.OrderName} dock {t.Dock} at #{t.DockAt} mv {t.Moving} settled {gw.Time < t.SettledUntil} path {(t.Path == null ? "-" : string.Join(" ", t.Path))}");
+                }
+                Console.WriteLine($"settles during the AI run: {game.World.SettleCounts.Values.Sum()} {string.Join(", ", game.World.SettleCounts.Select(kv => $"{kv.Key} x{kv.Value}"))}");
                 var ev = game.World.Events.Where(x => x.Type == "crushed").ToList();
                 Console.WriteLine($"after {min:0} min of AI vs AI: {ev.Count / 1} crushed events, kills {string.Join("/", game.World.Teams.Select(t => t.Stats.Kills))}, game over {game.World.GameOver} at {game.World.Time / 60:0.0} min; units now: {string.Join(", ", game.World.Entities.Where(x => !x.Dead && !x.IsStructure).GroupBy(x => x.Def.Key).Select(g => $"{g.Key}x{g.Count()}"))}");
                 foreach (var x in ev.Take(12)) Console.WriteLine($"  [{x.Tick * World.Dt / 60:0.0}m] {x.Text}");
@@ -81,27 +90,28 @@ namespace Pez.Headless
             w.SettleCounts.Clear();
             var path = new Dictionary<int, float>(); var start = new Dictionary<int, Vec2>(); var last = new Dictionary<int, Vec2>();
             var orders = new Dictionary<int, Dictionary<string, int>>();
-            var moving = new Dictionary<int, int>(); var facingTurn = new Dictionary<int, float>(); var lastFacing = new Dictionary<int, float>(); var flips = new Dictionary<int, int>(); var slid = new Dictionary<int, float>(); var slidStill = new Dictionary<int, float>();
+            var moving = new Dictionary<int, int>(); var facingTurn = new Dictionary<int, float>(); var lastFacing = new Dictionary<int, float>(); var flips = new Dictionary<int, int>(); var runs = new Dictionary<int, List<(bool moving, int ticks)>>(); var slid = new Dictionary<int, float>(); var slidStill = new Dictionary<int, float>();
             int ticks = (int)(seconds * World.TickRate);
             var trace = (Environment.GetEnvironmentVariable("PEZ_TRACE") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries).Select(int.Parse).ToHashSet();
             for (int i = 0; i < ticks; i++)
             {
                 game.Advance(World.Dt);
-                if (trace.Count > 0 && i % (Environment.GetEnvironmentVariable("PEZ_TRACE_EVERY") is string ev0 ? int.Parse(ev0) : 4) == 0 && i < 20 * World.TickRate)
+                if (trace.Count > 0 && i % (Environment.GetEnvironmentVariable("PEZ_TRACE_EVERY") is string ev0 ? int.Parse(ev0) : 4) == 0 && i < (Environment.GetEnvironmentVariable("PEZ_TRACE_SECS") is string ts ? int.Parse(ts) : 20) * World.TickRate)
                     foreach (var id in trace) { var t = w.Get(id); if (t == null) continue;
                         Console.WriteLine($"{w.Time:0.00} #{id} pos {t.Pos.X:0.00},{t.Pos.Y:0.00} f {t.Facing:0.00} {t.OrderName} to {t.OrderPos.X:0.0},{t.OrderPos.Y:0.0} wps {t.Waypoints.Count} loop {t.WaypointLoop} path {(t.Path == null ? "-" : $"{t.PathIdx}/{t.Path.Count} next {t.Path[Math.Min(t.PathIdx, t.Path.Count - 1)].X:0.0},{t.Path[Math.Min(t.PathIdx, t.Path.Count - 1)].Y:0.0}")} ghost {w.Time < t.GhostUntil} tgt {t.TargetId} cd {t.Cooldown:0.0} fired {w.Time - t.LastFiredAt:0.0} grp {t.Group} mv {t.Moving} cap {t.SpeedCap} fuel {t.FuelFraction:P0}"); }
                 foreach (var e in w.Entities)
                 {
                     if (e.Dead || e.IsStructure || e.IsMine || e.IsCarried) continue;
-                    if (!start.ContainsKey(e.Id)) { start[e.Id] = last[e.Id] = e.Pos; path[e.Id] = 0; orders[e.Id] = new(); moving[e.Id] = 0; lastFacing[e.Id] = e.Facing; facingTurn[e.Id] = 0; flips[e.Id] = 0; slid[e.Id] = 0; slidStill[e.Id] = 0; }
+                    if (!start.ContainsKey(e.Id)) { start[e.Id] = last[e.Id] = e.Pos; path[e.Id] = 0; orders[e.Id] = new(); moving[e.Id] = 0; lastFacing[e.Id] = e.Facing; facingTurn[e.Id] = 0; flips[e.Id] = 0; slid[e.Id] = 0; slidStill[e.Id] = 0; runs[e.Id] = new(); }
                     var dp = e.Pos - last[e.Id]; float dl = dp.Length;
-                    if (!e.IsAir && dl > 0.004f)
+                    if (!e.IsAir && dl > 0.004f && e.Dock < DockStep.Align) // backing into a bay is meant
                     {
                         // Sliding: moved while not walking/driving, or crabwise (over 0.8 rad off its facing).
                         float off = MathF.Abs(MathF.Atan2(MathF.Sin(dp.Angle - e.Facing), MathF.Cos(dp.Angle - e.Facing)));
                         if (!e.Moving) slidStill[e.Id] += dl; else if (off > 0.8f) slid[e.Id] += dl;
                     }
                     path[e.Id] += dl; last[e.Id] = e.Pos;
+                    { bool mv = dl > 0.01f; var rl = runs[e.Id]; if (rl.Count > 0 && rl[^1].moving == mv) rl[^1] = (mv, rl[^1].ticks + 1); else rl.Add((mv, 1)); }
                     var o = e.OrderName + (e.Retreating ? "+retreat" : "") + (w.Time < e.GhostUntil ? "+ghost" : "");
                     orders[e.Id][o] = orders[e.Id].TryGetValue(o, out var c) ? c + 1 : 1;
                     if (e.Moving) moving[e.Id]++;
@@ -127,6 +137,14 @@ namespace Pez.Headless
             foreach (var r in spinners.Take(verbose ? 60 : 15))
                 Console.WriteLine($"  #{r.e.Id} t{r.e.Team} {r.e.Def.Key,-20} flips {r.flips,4} path {r.path,5:0.0} net {r.net,4:0.0} moving {r.mv:P0}  {r.top}");
             Console.WriteLine($"settled by the dance guard: {w.SettleCounts.Values.Sum()}" + (w.SettleCounts.Count > 0 ? ": " + string.Join(", ", w.SettleCounts.OrderByDescending(kv => kv.Value).Select(kv => $"{kv.Key} x{kv.Value}")) : ""));
+            // Stop-go: moves a few ticks, stops a few, over and over (a rhythm). Runs of 2-15 ticks each way, 8+ cycles.
+            var stopgo = rows.Select(r => (r, rl: runs[r.e.Id])).Select(x => (x.r, cyc: x.rl.Where(q => q.ticks >= 2 && q.ticks <= 15).Count() / 2,
+                                     move: x.rl.Where(q => q.moving && q.ticks <= 15).Select(q => q.ticks).DefaultIfEmpty(0).Average(),
+                                     stop: x.rl.Where(q => !q.moving && q.ticks <= 15).Select(q => q.ticks).DefaultIfEmpty(0).Average()))
+                              .Where(x => x.cyc >= 8).OrderByDescending(x => x.cyc).ToList();
+            Console.WriteLine($"{stopgo.Count} stop-go (moving and stopping in runs of 2-15 ticks, 8+ cycles)");
+            foreach (var g in stopgo.GroupBy(x => x.r.top.Split(':')[0]).OrderByDescending(g => g.Count())) Console.WriteLine($"  {g.Count(),3} mostly {g.Key}: {string.Join(" ", g.GroupBy(x => x.r.e.Def.Key).Select(k => $"{k.Key}x{k.Count()}"))}");
+            foreach (var x in stopgo.Take(verbose ? 30 : 8)) Console.WriteLine($"  #{x.r.e.Id} t{x.r.e.Team} {x.r.e.Def.Key,-18} {x.cyc} cycles, moves {x.move:0.0} ticks, stops {x.stop:0.0} ticks  {x.r.top}");
             var sliders = rows.Where(r => r.slid + r.still > 1f).OrderByDescending(r => r.slid + r.still).ToList();
             Console.WriteLine($"{sliders.Count} slide over a tile ({sliders.Sum(r => r.slid):0} tiles crabwise while moving, {sliders.Sum(r => r.still):0} while standing)");
             foreach (var g in sliders.GroupBy(r => r.e.Def.Key).OrderByDescending(g => g.Sum(r => r.slid + r.still)))

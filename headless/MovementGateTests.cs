@@ -18,19 +18,18 @@ namespace Pez.Headless
 
         static void MovementGate()
         {
+            GateGuardCatchesADance();
             GateAirfieldRush();
-            GateCrowd(budget: 3);
+            GateCrowd(budget: 0);
             GateEconomy();
-            // 9, not 8: Rules 41 puts drop-offs where their south lane is clear, so this seed's base is laid out differently and
-            // settles 9 (it was 6). Over seeds 1-12 the AI's settles went from 10.9 to 9.1 on average: the budget fits one seed.
-            GateAiGame(minutes: 8, budget: 9);
+            GateAiGame(minutes: 8, budget: 0);
+            GateAiSeeds(new[] { 1, 2, 3, 4 }, minutes: 8, budget: 4); // other base layouts: a rare truck or surveyor (seed 1's three, seed 2's one)
             foreach (var (file, seconds, budget) in new[]
             {
-                // Budgets: just above what's left after phase 2's queues, bands and slots (a few trucks at the outpost, a
-                // unit or two wedged in a crowd). Phase 3 (one writer per tick) takes each to 0.
-                ("room2-refuel-and-outpost-jam.json", 60f, 8),
-                ("room2-after-rules38.json", 60f, 1),
-                ("room2-spinning-soldiers.json", 60f, 2),
+                // Budgets: 0. Any settle here is a new dance (the budgets were ratcheted down from 55-86 as each cause went).
+                ("room2-refuel-and-outpost-jam.json", 60f, 0),
+                ("room2-after-rules38.json", 60f, 0),
+                ("room2-spinning-soldiers.json", 60f, 0),
             })
                 GateFixture(file, seconds, budget);
         }
@@ -84,12 +83,60 @@ namespace Pez.Headless
             Check(w.SettleCounts.Values.Sum() <= budget, $"a 48-unit army sent to one point arrives, within its budget of {budget} settled ({Settles(w)})");
         }
 
-        /// <summary>The starting economy mining and delivering for three minutes: no truck settled.</summary>
+        /// <summary>The guard itself: a soldier an agent keeps sending back and forth every half second (it can only go
+        /// back and forth) is settled within a few seconds, and stands.</summary>
+        static void GateGuardCatchesADance()
+        {
+            var w = new World(2, 7, 80);
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var at = hq.Center + new Vec2(10, 10);
+            var s = At(w.SpawnUnit(0, "rifleman", hq), at);
+            float caught = -1f;
+            for (int i = 0; i < 8 * World.TickRate; i++)
+            {
+                if (i % 10 == 0) w.SetOrder(s, Order.Move, at + new Vec2((i / 10) % 2 == 0 ? 3f : -3f, 0));
+                w.Step();
+                if (caught < 0 && w.Time < s.SettledUntil) caught = w.Time;
+            }
+            Check(caught > 0 && caught < 4f, $"the dance guard catches a soldier sent back and forth every half second (settled at {caught:0.0}s: {Settles(w)})");
+        }
+
+        /// <summary>The starting economy on thin ore, mining and delivering for three minutes: no truck settled, and none goes stop-go
+        /// (drive a tile, stop, drive a tile: the slide-pause rhythm of trucks hopping across thin ore).</summary>
         static void GateEconomy()
         {
             var game = new Game(new GameConfig { Seed = 4, MapSize = 80, Controllers = new[] { "llm", "llm" } });
-            for (int i = 0; i < 180 * World.TickRate; i++) game.Advance(World.Dt);
-            Check(game.World.SettleCounts.Count == 0, $"three minutes of mining and delivering settles no truck ({Settles(game.World)})");
+            var w = game.World;
+            // Thin ore, as a field is late in a game: a few loads' worth per tile, where trucks used to hop tile to tile.
+            for (int k = 0; k < w.Map.Ore.Length; k++) if (w.Map.Ore[k] > 12) w.Map.Ore[k] = 12;
+            // Short stops (2-15 ticks between moves) by unit, with when: a beat is 8 or more of them inside 10 seconds.
+            var runs = new Dictionary<int, (bool moving, int ticks)>();
+            var stops = new Dictionary<int, List<float>>();
+            for (int i = 0; i < 180 * World.TickRate; i++)
+            {
+                game.Advance(World.Dt);
+                foreach (var e in w.Entities)
+                {
+                    if (e.Dead || e.IsStructure || e.IsCarried) continue;
+                    bool mv = Vec2.Dist(e.Pos, e.PrevPos) > 0.01f;
+                    (bool moving, int ticks) r = runs.TryGetValue(e.Id, out var x) ? x : (mv, 0);
+                    if (mv == r.moving) r.ticks++;
+                    else
+                    {
+                        if (!r.moving && r.ticks >= 2 && r.ticks <= 15)
+                        {
+                            if (!stops.TryGetValue(e.Id, out var l)) stops[e.Id] = l = new List<float>(); l.Add(w.Time);
+                            if (Environment.GetEnvironmentVariable("PEZ_BEATDBG") == e.Id.ToString()) Console.WriteLine($"  stop {w.Time:0.00} #{e.Id} {r.ticks}t {e.OrderName} dock {e.Dock} at {e.Pos} tile {e.HarvestTile?.X},{e.HarvestTile?.Y} cargo {e.Cargo} settled {w.Time < e.SettledUntil}");
+                        }
+                        r = (mv, 1);
+                    }
+                    runs[e.Id] = r;
+                }
+            }
+            int Beat(List<float> t) { int best = 0; for (int a = 0, b = 0; b < t.Count; b++) { while (t[b] - t[a] > 10f) a++; best = Math.Max(best, b - a + 1); } return best; }
+            var stopGo = stops.Where(kv => Beat(kv.Value) >= 8).Select(kv => w.Get(kv.Key)).Where(e => e != null).ToList();
+            Check(w.SettleCounts.Count == 0, $"three minutes of mining and delivering settles no truck ({Settles(w)})");
+            Check(stopGo.Count == 0, $"nothing goes stop-go on a beat while mining ({string.Join(", ", stopGo.Select(e => $"{e.Def.Key} #{e.Id}: {Beat(stops[e.Id])} short stops in 10 s"))})");
         }
 
         /// <summary>Two scripted AIs fight for a while: settles within budget (the firing-line edge, phase 2), none of aircraft.</summary>
@@ -100,6 +147,21 @@ namespace Pez.Headless
             var w = game.World;
             int total = w.SettleCounts.Values.Sum();
             Check(total <= budget, $"{minutes:0} minutes of AI against AI: {total} settled, within its budget of {budget} ({Settles(w)})");
+        }
+
+        /// <summary>More AI games on other seeds (other maps and base layouts), with one budget for them all.</summary>
+        static void GateAiSeeds(int[] seeds, float minutes, int budget)
+        {
+            int total = 0; var what = new List<string>();
+            foreach (var seed in seeds)
+            {
+                var game = new Game(new GameConfig { Seed = seed, MapSize = 96, Controllers = new[] { "ai", "ai" } });
+                for (int i = 0; i < minutes * 60 * World.TickRate && !game.World.GameOver; i++) game.Advance(World.Dt);
+                int n = game.World.SettleCounts.Values.Sum();
+                total += n;
+                if (n > 0) what.Add($"seed {seed}: {Settles(game.World)}");
+            }
+            Check(total <= budget, $"{seeds.Length} more AI games ({minutes:0} min each, seeds {string.Join(",", seeds)}): {total} settled, within their budget of {budget} ({(what.Count == 0 ? "none" : string.Join("; ", what))})");
         }
 
         /// <summary>A live room's snapshot from a reported dance, run on: within its budget of settles, and no aircraft settled.</summary>

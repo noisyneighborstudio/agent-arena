@@ -127,8 +127,14 @@ After phase 3 the guard should never fire in play; its counter staying at zero i
 - **Phase 2 (rules 40):** mostly done. Single-file truck queues with an Enter step (only the front truck claims the
   bay), sticky drop-offs, fire and harvest bands, the idle leash hold, dodgers keeping their spot, formation slots by
   position on open ground. Left: sticky target choice, the group pace band, spread rally, retreat and spawn points.
-- **Phase 3:** not started.
+- **Rules 42:** the slide-pause rhythm (trucks hopping tile to tile on thin ore: a mining reach and driving to where a
+  stop collects most), vehicles driving where they face, occupied goals counting as reached, stale paths through new
+  buildings planned again, and the guard counting only time spent moving (it settled trucks that had just moved up a
+  queue). The gate now also checks the guard catches a deliberate dance, and that nothing goes stop-go on a beat while
+  mining thin ore.
+- **Phase 3:** not started. What's left for it: units shoved while standing (a queued truck nudged by one passing, an
+  idle soldier pushed by separation) still slide without turning.
 
-Gate budgets after phase 2 (settles in the run): airfield rush 0, 48-unit march 3, economy 0, 8 minutes AI vs AI 8,
-Room 2 outpost jam 8, Room 2 after rules 38 1, Room 2 spinning soldiers 2. Before phase 1's fixes the same runs
-settled 55 to 86 in the live fixtures.
+Gate budgets (settles in the run): every scenario 0, except four more AI games on other seeds, which share a budget of
+4 (a truck rocking on its way to ore, a surveyor at its site). Over 12 seeds of 8-minute AI games the guard settles 5
+units in all (9 of the 12 settle none); before phase 1's fixes the live fixtures settled 55 to 86 a minute.
