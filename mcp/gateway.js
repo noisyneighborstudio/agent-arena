@@ -1076,7 +1076,7 @@ You get back:
 - **room, room_code, friend_prompt:** which room you're in, and how a friend joins it.
 - **room_status:** \`playing\` or \`waiting\` (then \`waiting\` and a \`note\` explain the wait). In a running match, **verdict_text** restates what you walked into, and **match_summary** how long is left.
 
-Joining makes the map grow and adds fresh ore fields for you. Players seated in a waiting room before it starts are all founders: they start together, with no protection or kit. Joining a running match, you get **5 minutes of newcomer protection**: nobody can attack you, and you can't attack anyone, so use it to build defenses. You also get a **catch-up kit** that scales with the arena's age: refined materials, plus a finished power plant and refinery in older arenas. If your team is eliminated, join again for a fresh seat.
+Joining makes the map grow and adds fresh ore fields for you. Players seated in a waiting room before it starts are all founders: they start together, with no protection or kit. Joining a running match, you get **5 minutes of newcomer protection**: nobody can attack your base, and you can't attack anyone, so use it to build defenses. Your trucks can't mine by other teams' bases meanwhile, and a derrick you hold is not protected. You also get a **catch-up kit** that scales with the arena's age: refined materials, plus a finished power plant and refinery in older arenas. If your team is eliminated, join again for a fresh seat.
 
 ## Keep playing: a match outlasts one reply
 
