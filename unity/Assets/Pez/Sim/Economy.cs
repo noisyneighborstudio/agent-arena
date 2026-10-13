@@ -282,13 +282,12 @@ namespace Pez.Sim
         /// <summary>At most this much salvage per tile from one kill: a big wreck scatters over several tiles.</summary>
         public const int SalvagePerTile = 300;
 
-        /// <summary>What a command center is worth when nothing builds it (the same figure a leaving player's base uses).</summary>
-        static readonly Dictionary<string, int> HqValue = new Dictionary<string, int> { { "iron_ore", 1500 }, { "copper_ore", 500 } };
-
         /// <summary>
-        /// What a thing is worth in materials: its cost, or for things that aren't bought (deployed structures), the cost of
-        /// the unit that deploys into it (an outpost is an outpost truck, a deep mine a drill rig).
+        /// The share of its value a team's base leaves as salvage when the team leaves or is knocked out (Dismantle): 60% of a
+        /// structure's, half a unit's. Its stockpile goes in full.
         /// </summary>
+        public const float DismantleStructureShare = 0.6f, DismantleUnitShare = 0.5f;
+
         /// <summary>
         /// Value counted for each kill that predates kill-value tracking: the median ore value of the standard armed units
         /// (a fair stand-in when we know how many things a team destroyed but not what).
@@ -320,19 +319,47 @@ namespace Pez.Sim
             }
         }
 
+        /// <summary>
+        /// What a thing is worth in materials, the one price list behind kill value, kill salvage, a leaving team's base and
+        /// the showcase: its cost, or for things that aren't bought (deployed structures), the cost of the unit that deploys
+        /// into it (an outpost is an outpost truck, a deep mine a drill rig, a command center a construction truck). A
+        /// derrick is DerrickWorth.
+        /// </summary>
         public Dictionary<string, int> ValueOf(EntityDef d)
         {
             if (d.Cost.Count > 0) return d.Cost;
             if (d.Key == "derrick") return DerrickValue;
             foreach (var u in Defs.All.Values) if (u.DeploysInto == d.Key && u.Cost.Count > 0) return u.Cost;
-            if (d.Key == "command_center") return HqValue;
             return d.Cost;
         }
 
-        /// <summary>Ore value of a cost, per ore type, using the salvage conversion (circuits are worth two copper ore, and so on).</summary>
+        /// <summary>Add an amount of one item, as the raw ores it's made from (OreMix), to a per-ore total.</summary>
+        static void AddOre(float[] into, string item, float amount)
+        {
+            if (!OreMix.TryGetValue(item, out var mix)) return;
+            for (int k = 0; k < mix.Length; k++) into[k] += amount * mix[k];
+        }
+
+        /// <summary>Ore value of a cost, per ore type (circuits are two copper ore and an iron ore, and so on), times `factor`.</summary>
         static void AddValue(float[] into, Dictionary<string, int> cost, float factor)
         {
-            foreach (var kv in cost) if (SalvageOf.TryGetValue(kv.Key, out var s)) into[s.ore] += kv.Value * s.mult * factor;
+            foreach (var kv in cost) AddOre(into, kv.Key, kv.Value * factor);
+        }
+
+        /// <summary>
+        /// Add `share` of what an entity is worth as ore: the one place a unit or structure is priced, for kill value, kill
+        /// salvage and a dismantled base alike. A structure counts at its full price however far it got: its owner paid all of
+        /// it when placing it.
+        /// </summary>
+        void AddWorth(float[] into, Entity e, float share) => AddValue(into, ValueOf(e.Def), share);
+
+        /// <summary>A team's whole stockpile as ore, emptying it: what a spill or a dismantled base gives up.</summary>
+        float[] TakeStockpile(Team t)
+        {
+            var value = new float[4];
+            foreach (var kv in t.Stock) if (kv.Value > 0) AddOre(value, kv.Key, kv.Value);
+            t.Stock.Clear();
+            return value;
         }
 
         /// <summary>
@@ -347,10 +374,8 @@ namespace Pez.Sim
             if (t.IsMine) return null;
             void Victim(Entity v)
             {
-                float progress = v.IsStructure ? v.BuildProgress : 1f;
-                var cost = ValueOf(v.Def);
-                AddValue(full, cost, progress);
-                AddValue(share, cost, progress * (v.Def.Armor == Armor.Infantry ? InfantrySalvageShare : KillSalvageShare));
+                AddWorth(full, v, 1f);
+                AddWorth(share, v, v.Def.Armor == Armor.Infantry ? InfantrySalvageShare : KillSalvageShare);
             }
             Victim(t);
             foreach (var pid in t.Passengers) { var p = Get(pid); if (p != null) Victim(p); }

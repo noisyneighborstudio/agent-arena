@@ -473,12 +473,19 @@ namespace Pez.Sim
             EnsureDerricks(); // a bigger map gets more, around its new middle
         }
 
-        static readonly Dictionary<string, (byte ore, float mult)> SalvageOf = new Dictionary<string, (byte, float)>
+        /// <summary>
+        /// The raw ores one unit of each item is made from, as [iron, copper, crystal, uranium] (the Map.Iron... order): what a
+        /// unit of it is worth in kill value, salvage, spills and leaves. Every conversion reads this table, and a test keeps it
+        /// in step with the converters' recipes.
+        /// </summary>
+        internal static readonly Dictionary<string, float[]> OreMix = new Dictionary<string, float[]>
         {
-            { "iron_ore", (Map.Iron, 1f) }, { "steel", (Map.Iron, 1f) },
-            { "copper_ore", (Map.Copper, 1f) }, { "copper", (Map.Copper, 1f) }, { "circuits", (Map.Copper, 2f) },
-            { "crystal", (Map.Crystal, 1f) }, { "lenses", (Map.Crystal, 2f) }, { "composite", (Map.Crystal, 2f) },
-            { "uranium", (Map.Uranium, 1f) }, { "plasma", (Map.Uranium, 2f) },
+            { "iron_ore", new float[] { 1, 0, 0, 0 } }, { "steel", new float[] { 1, 0, 0, 0 } },
+            { "copper_ore", new float[] { 0, 1, 0, 0 } }, { "copper", new float[] { 0, 1, 0, 0 } },
+            { "circuits", new float[] { 1, 2, 0, 0 } },  // 2 copper + 1 steel
+            { "crystal", new float[] { 0, 0, 1, 0 } }, { "lenses", new float[] { 0, 0, 2, 0 } },
+            { "composite", new float[] { 2, 0, 1, 0 } }, // 2 steel + 1 crystal
+            { "uranium", new float[] { 0, 0, 0, 1 } }, { "plasma", new float[] { 0, 0, 0, 2 } },
         };
 
         /// <summary>
@@ -578,12 +585,10 @@ namespace Pez.Sim
             var t = Teams[owner];
             // A team that's already out is taken apart whole, stockpile and all (Dismantle).
             if (t.Left || t.Defeated || Entities.Any(o => !o.Dead && o.Team == owner && o.Def.Key == "command_center")) return;
-            var value = new float[4];
-            foreach (var kv in t.Stock) if (SalvageOf.TryGetValue(kv.Key, out var sv) && kv.Value > 0) value[sv.ore] += kv.Value * sv.mult;
+            var value = TakeStockpile(t);
             var tiles = new List<Int2>();
             for (int y = 0; y < cc.Def.SizeY; y++) for (int x = 0; x < cc.Def.SizeX; x++) tiles.Add(new Int2(cc.Origin.X + x, cc.Origin.Y + y));
             float total = SpillSalvage(value, tiles);
-            t.Stock.Clear();
             if (total <= 0) return;
             var where = StateView.Sector(cc.Center);
             string msg = $"{t.Name}'s last command center {how} at sector {where}: its stockpile spilled out as about {(int)total} units of salvage ore. First come, first served.";
@@ -597,32 +602,30 @@ namespace Pez.Sim
 
         /// <summary>
         /// A team that's out for good (left, or knocked out) is taken apart: its derricks go back to neutral, and every
-        /// building, unit and the whole stockpile turn to salvage ore on its old base (60% of a building's cost, 50% of a
-        /// unit's). Returns the ore placed and where it landed (the structures' footprints, so not always the first base).
+        /// building, unit and the whole stockpile turn to salvage ore on its old base (DismantleStructureShare of a
+        /// building's value, DismantleUnitShare of a unit's, all of the stockpile). Returns the ore placed and where it landed
+        /// (the structures' footprints, so not always the first base).
         /// </summary>
         (float total, string where, Vec2 at) Dismantle(Team t)
         {
             ReleaseDerricks(t.Id);
             t.Defeated = true; // first: a command center going with the rest isn't a "last one fell" spill (ReleaseStockpile)
-            var value = new float[4];
-            void AddCost(Dictionary<string, int> cost, float f) { foreach (var kv in cost) if (SalvageOf.TryGetValue(kv.Key, out var s)) value[s.ore] += kv.Value * s.mult * f; }
-            foreach (var kv in t.Stock) if (SalvageOf.TryGetValue(kv.Key, out var s) && kv.Value > 0) value[s.ore] += kv.Value * s.mult;
+            var value = TakeStockpile(t);
             var tiles = new List<Int2>();
             foreach (var e in Entities.Where(e => !e.Dead && e.Team == t.Id).ToList())
             {
                 if (e.IsStructure)
                 {
-                    AddCost(e.Def.Key == "command_center" ? new Dictionary<string, int> { { "iron_ore", 1500 }, { "copper_ore", 500 } } : e.Def.Cost, 0.6f * e.BuildProgress);
+                    AddWorth(value, e, DismantleStructureShare);
                     for (int y = 0; y < e.Def.SizeY; y++) for (int x = 0; x < e.Def.SizeX; x++) tiles.Add(new Int2(e.Origin.X + x, e.Origin.Y + y));
                 }
-                else if (!e.IsMine) AddCost(e.Def.Cost, 0.5f);
+                else if (!e.IsMine) AddWorth(value, e, DismantleUnitShare);
                 Emit("salvaged", e.Team, e.Id, 0, e.Center, key: e.Def.Key); // dismantled, not destroyed: no wreck
                 Remove(e);
             }
             if (tiles.Count == 0) tiles.Add(Int2.Of(t.StartPos));
             var landed = new List<(Int2 tile, int ore)>();
             float total = SpillSalvage(value, tiles, landed);
-            t.Stock.Clear();
             var (where, at) = SpillSite(landed, t.StartPos);
             return (total, where, at);
         }

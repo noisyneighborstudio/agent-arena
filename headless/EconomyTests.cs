@@ -19,6 +19,7 @@ namespace Pez.Headless
         static void EconomyAndEndgame()
         {
             SalvageFromKills();
+            OneValuation();
             OreRegrowth();
             ParallelProduction();
             ConstructionTruck();
@@ -1014,6 +1015,98 @@ namespace Pez.Headless
             throw new Exception("no open ground");
         }
 
+        /// <summary>One price list: kill value, kill salvage, a leaving team's base and a stockpile spill value things the same way.</summary>
+        static void OneValuation()
+        {
+            Console.WriteLine("\n-- one valuation: kill value, salvage, leaves and spills");
+            long[] OreByType(World x) { var n = new long[4]; for (int i = 0; i < x.Map.Ore.Length; i++) if (x.Map.Ore[i] > 0) n[x.Map.OreType[i]] += x.Map.Ore[i]; return n; }
+
+            // The table every conversion reads is what the converters really do: a material's ores are its recipe's inputs' ores.
+            var bad = new List<string>();
+            foreach (var item in Defs.Items) if (!World.OreMix.ContainsKey(item)) bad.Add($"{item} has no ore mix");
+            foreach (var r in Defs.All.Values.SelectMany(d => d.Recipes).Where(r => r.Outputs.Count == 1 && r.Inputs.Count > 0))
+            {
+                var made = r.Outputs.First();
+                var sum = new float[4];
+                foreach (var inp in r.Inputs) for (int k = 0; k < 4; k++) sum[k] += inp.Value * World.OreMix[inp.Key][k];
+                for (int k = 0; k < 4; k++) if (Math.Abs(sum[k] / made.Value - World.OreMix[made.Key][k]) > 1e-4f) bad.Add($"{made.Key} is not {string.Join("+", sum)} per unit");
+            }
+            Check(bad.Count == 0, $"every item's ore mix matches its converter recipe ({string.Join("; ", bad)})");
+
+            // The same value in a kill and in a leave, for every kind of deployed structure.
+            void Bare(World x) // team 1 with nothing: no stockpile, no buildings, no units
+            {
+                x.Teams[0].ProtectedUntil = 0; x.Teams[1].ProtectedUntil = 0;
+                x.Teams[1].Stock.Clear();
+                foreach (var e in x.Owned(1).ToList()) x.Remove(e);
+            }
+            Entity Setup(World x, string key)
+            {
+                Bare(x);
+                if (key == "derrick") { var d = x.Derricks.First(); d.Team = 1; return d; }
+                return x.SpawnStructure(1, key, Int2.Of(OpenGround(x)), 1f);
+            }
+            // What each is worth, from the cost of what deploys into it: construction truck 1500 steel + 200 circuits (a circuit is
+            // 2 copper ore + 1 iron ore), outpost truck 400 steel + 100 copper + 50 circuits, drill rig 800 steel; a derrick is 600.
+            foreach (var (key, worth) in new[] { ("command_center", 2100), ("outpost", 650), ("deep_mine", 800), ("derrick", 600) })
+            {
+                var wk = new World(2, 7, 96);
+                var victim = Setup(wk, key);
+                var shooter = wk.SpawnUnit(0, "heavy_tank", wk.Owned(0).First(e => e.IsStructure));
+                int kv = wk.Teams[0].Stats.KillValue;
+                wk.Hurt(victim, 1e6f, shooter);
+                int killValue = wk.Teams[0].Stats.KillValue - kv;
+                var wl = new World(2, 7, 96);
+                var mine = Setup(wl, key);
+                long before = OreByType(wl).Sum();
+                wl.Leave(1);
+                long left = OreByType(wl).Sum() - before;
+                if (key == "derrick") Check(killValue == worth && mine.Team == -1 && left == 0, $"a derrick is worth {killValue} when killed; leaving hands it back neutral, whole, not as salvage ({left} ore)");
+                else Check(killValue == worth && left >= 0.6f * worth - 8 && left <= 0.6f * worth, $"a {key} is worth {killValue} when killed and a leave dismantles 60% of the same ({left} of {worth})");
+            }
+
+            // A building nobody finished counts at the price its owner paid: all of it.
+            var wu = new World(2, 7, 96);
+            Bare(wu);
+            var unfinished = wu.SpawnStructure(1, "power_plant", Int2.Of(OpenGround(wu)), 0.08f);
+            var killer = wu.SpawnUnit(0, "heavy_tank", wu.Owned(0).First(e => e.IsStructure));
+            int kv0 = wu.Teams[0].Stats.KillValue, sl0 = wu.Teams[0].Stats.SalvageLeft;
+            wu.Hurt(unfinished, 1e6f, killer);
+            Check(unfinished.Dead && wu.Teams[0].Stats.KillValue - kv0 == 250 && wu.Teams[0].Stats.SalvageLeft - sl0 == 62,
+                  $"killing a power plant 8% built credits its full 250 as kill value and a quarter as salvage ({wu.Teams[0].Stats.KillValue - kv0}, {wu.Teams[0].Stats.SalvageLeft - sl0})");
+            var wv = new World(2, 7, 96);
+            Bare(wv);
+            wv.SpawnStructure(1, "power_plant", Int2.Of(OpenGround(wv)), 0.08f);
+            long beforeV = OreByType(wv).Sum();
+            wv.Leave(1);
+            long leftV = OreByType(wv).Sum() - beforeV;
+            Check(leftV >= 146 && leftV <= 150, $"and a leave counts it the same way: 60% of the 250 ({leftV})");
+
+            // Killing a heavy tank (400 steel + 80 circuits): the circuits come back as their copper AND the iron in them.
+            var wh = new World(2, 7, 96);
+            var spot = OpenGround(wh);
+            var tank = At(wh.SpawnUnit(1, "heavy_tank", wh.Owned(1).First(e => e.Def.Key == "command_center")), spot);
+            var gun = At(wh.SpawnUnit(0, "heavy_tank", wh.Owned(0).First(e => e.Def.Key == "command_center")), spot + new Vec2(-4, 0));
+            wh.Hurt(tank, 1e6f, gun);
+            var ore = OreNear(wh, spot, 4);
+            Check(wh.Teams[0].Stats.KillValue == 640 && ore[Map.Iron] == 120 && ore[Map.Copper] == 40 && ore[Map.Crystal] == 0 && ore[Map.Uranium] == 0,
+                  $"a heavy tank is worth 640 ore and leaves a quarter: 120 iron ore, 40 copper ore ({ore[0]} iron, {ore[1]} copper; kill value {wh.Teams[0].Stats.KillValue})");
+
+            // A stockpile of every material spills as the raw ores they're made from.
+            var ws = new World(2, 7, 80);
+            ws.Teams[1].ProtectedUntil = 0;
+            ws.Teams[1].Stock.Clear();
+            foreach (var item in new[] { ("circuits", 100), ("composite", 100), ("lenses", 50), ("plasma", 10), ("copper", 30), ("steel", 20) }) ws.Teams[1].Add(item.Item1, item.Item2);
+            ws.SpawnStructure(1, "power_plant", ws.FindPlacement(1, "power_plant").Value, 1f);
+            var beforeS = OreByType(ws);
+            Commands.Execute(ws, 1, Cmd("type", "sell", "structure_id", ws.Owned(1).First(e => e.Def.Key == "command_center").Id, "confirm", true));
+            var spill = OreByType(ws).Select((v, i) => v - beforeS[i]).ToArray();
+            // 100 circuits = 100 iron + 200 copper; 100 composite = 200 iron + 100 crystal; 50 lenses = 100 crystal; 10 plasma = 20 uranium; plus 30 copper, 20 steel.
+            Check(spill[Map.Iron] >= 316 && spill[Map.Iron] <= 320 && spill[Map.Copper] >= 226 && spill[Map.Copper] <= 230 && spill[Map.Crystal] >= 198 && spill[Map.Crystal] <= 200 && spill[Map.Uranium] == 20,
+                  $"a stockpile spills as its raw ores: iron {spill[0]}/320, copper {spill[1]}/230, crystal {spill[2]}/200, uranium {spill[3]}/20");
+            Check(wh.Errors == 0 && wu.Errors == 0 && wv.Errors == 0 && ws.Errors == 0, "no sim errors");
+        }
+
         static void SalvageFromKills()
         {
             var w = new World(2, 7, 96);
@@ -1119,7 +1212,7 @@ namespace Pez.Headless
                 int o0 = w6.Map.Ore.Sum();
                 var v = At(w6.SpawnUnit(1, key, h6), s6);
                 w6.Hurt(v, 100000, k6);
-                float paid = Defs.Get(key).Cost.Sum(kv => kv.Value * (kv.Key is "circuits" or "lenses" or "plasma" or "composite" ? 2 : 1));
+                float paid = Defs.Get(key).Cost.Sum(kv => kv.Value * World.OreMix[kv.Key].Sum()); // in raw ore, as salvage counts it
                 float got = w6.Map.Ore.Sum() - o0;
                 if (got > paid * 0.26f) { cheap = false; worst = $"{key}: {got}/{paid}"; }
             }
