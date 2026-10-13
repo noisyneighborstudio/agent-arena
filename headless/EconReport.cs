@@ -38,6 +38,8 @@ namespace Pez.Headless
     {
         static readonly CultureInfo IC = CultureInfo.InvariantCulture;
         static string F(double v, string fmt = "0.##") => v.ToString(fmt, IC);
+        /// <summary>A richness as written in a group name and the CSVs: exactly (the shortest text that reads back as the same number), with at least one decimal, so 0.26 and 0.34 stay two groups.</summary>
+        internal static string OreLabel(float ore) { string t = ore.ToString("R", IC); return t.Contains(".") || t.Contains("E") ? t : t + ".0"; }
 
         public sealed class Options
         {
@@ -91,6 +93,16 @@ namespace Pez.Headless
         }
 
         public static string Build(Options o, Action<string> progress, out List<GameRun> games)
+        {
+            // --profile adds to one shared, unlocked table of timings (World.Timings): worlds played side by side would corrupt it.
+            bool profile = World.Profile;
+            if (profile) progress("--profile is off for --econ-report: its worlds run side by side and share one timing table.");
+            World.Profile = false;
+            try { return BuildReport(o, progress, out games); }
+            finally { World.Profile = profile; }
+        }
+
+        static string BuildReport(Options o, Action<string> progress, out List<GameRun> games)
         {
             var sb = new StringBuilder();
             sb.AppendLine("# Economy report");
@@ -434,7 +446,7 @@ namespace Pez.Headless
                 double Type(int k, int to) => Avg(r => r.ByOre[to][k] / (to * 60.0));
                 rows.Add(new[]
                 {
-                    $"{size}x{size}", F(ore), F(Avg(r => r.FieldOre), "0"), F(Rate(0, 20), "0.0"), F(Rate(0, 10), "0.0"), F(Rate(20, 30), "0.0"),
+                    $"{size}x{size}", OreLabel(ore), F(Avg(r => r.FieldOre), "0"), F(Rate(0, 20), "0.0"), F(Rate(0, 10), "0.0"), F(Rate(20, 30), "0.0"),
                     $"{Type(0, 20):0.0} / {Type(1, 20):0.0} / {Type(2, 20):0.0} / {Type(3, 20):0.0}",
                     F(100 * Avg(r => (double)r.Middle[20] / Math.Max(1, r.Total[20])), "0") + "%",
                     F(100 * Avg(r => (double)r.Total[30] / r.FieldOre), "0") + "%",
@@ -464,7 +476,7 @@ namespace Pez.Headless
                     double deep = maps.Average(m => m.Deep.Sum(d => (double)d.Initial));
                     double deepKit = maps.Average(m => m.Deep.Where(d => Vec2.Dist(d.Pos, m.Spawns[0]) <= Map.DeepKitReach).Sum(d => (double)d.Initial));
                     var derricks = new World(2, 1, size, ore).Derricks.Count();
-                    rows.Add(new[] { $"{size}x{size}", F(ore), F(total / 1000, "0.0") + "k", F((total - baseOnly) / 1000, "0.0") + "k", F(home / 1000, "0.0") + "k", F(100 * spread, "0") + "%",
+                    rows.Add(new[] { $"{size}x{size}", OreLabel(ore), F(total / 1000, "0.0") + "k", F((total - baseOnly) / 1000, "0.0") + "k", F(home / 1000, "0.0") + "k", F(100 * spread, "0") + "%",
                         F(maps.Average(m => (double)m.Deep.Count), "0.0"), F(deep / 1000, "0") + "k", F(deepKit / 1000, "0.0") + "k", derricks.ToString() });
                 }
             Table(sb, new[] { "map", "richness", "surface ore", "of it neutral extra fields", "home ore per base (iron + copper)", "home spread", "deep deposits", "deep ore", "deep ore in one base's kit", "derricks" }, rows);
@@ -503,7 +515,7 @@ namespace Pez.Headless
                 foreach (var kv in perPlayers.OrderBy(k => k.Key))
                 {
                     double surface = kv.Value.Average(x => x.surface), deep = kv.Value.Average(x => x.deep);
-                    join.Add(new[] { F(ore), kv.Key.ToString(), F(kv.Value.Average(x => x.size), "0") + "x" + F(kv.Value.Average(x => x.size), "0"), F(surface / 1000, "0.0") + "k", F(surface / kv.Key / 1000, "0.0") + "k", F(deep / 1000, "0") + "k", F(deep / kv.Key / 1000, "0.0") + "k", F(kv.Value.Average(x => x.derricks), "0.#") });
+                    join.Add(new[] { OreLabel(ore), kv.Key.ToString(), F(kv.Value.Average(x => x.size), "0") + "x" + F(kv.Value.Average(x => x.size), "0"), F(surface / 1000, "0.0") + "k", F(surface / kv.Key / 1000, "0.0") + "k", F(deep / 1000, "0") + "k", F(deep / kv.Key / 1000, "0.0") + "k", F(kv.Value.Average(x => x.derricks), "0.#") });
                 }
             }
             Table(sb, new[] { "richness", "players", "map", "surface ore", "per player", "deep ore", "per player", "derricks" }, join);
@@ -625,11 +637,11 @@ namespace Pez.Headless
             public double SurfaceStart, DeepStart;
             public double DeepLeft;
             public double[] DeepStartByType = new double[4], DeepLeftByType = new double[4];
-            public double[] SurfaceByMinute, RegrownByMinute;   // world totals after each minute
-            public double FarOreEnd, SurfaceEnd;                 // at the end: surface field ore (salvage excluded) farther than LeashDist from every drop-off, and all of it
+            public double[] SurfaceByMinute, RegrownByMinute;   // world totals after each minute: field ore (salvage excluded), ore regrown
+            public double FarOreEnd, SurfaceEnd, SalvageEnd;                 // at the end: surface field ore (salvage excluded) farther than LeashDist from every drop-off, and all of it
             public double WallSeconds;
             public List<TeamRun> Teams = new List<TeamRun>();
-            public string Group => $"{Mode} {Size}x{Size} ore {F(Ore, "0.0")}";
+            public string Group => $"{Mode} {Size}x{Size} ore {OreLabel(Ore)}";
         }
 
         static List<GameRun> PlayMatrix(Options o, Action<string> progress)
@@ -660,7 +672,7 @@ namespace Pez.Headless
             var ais = new List<SimpleAI>();
             for (int i = 0; i < 2; i++) { w.Teams[i].Controller = "ai"; w.Teams[i].PlayerName = "Scripted AI"; ais.Add(new SimpleAI(i, passive)); }
             var m = w.Map;
-            g.SurfaceStart = m.Ore.Sum(x => (double)x);
+            g.SurfaceStart = FieldOreTotal(m);
             g.DeepStart = m.Deep.Sum(d => (double)d.Initial);
             foreach (var d in m.Deep) g.DeepStartByType[d.Type] += d.Initial;
             var items = Defs.Items.ToArray();
@@ -701,7 +713,7 @@ namespace Pez.Headless
                 }
                 if (w.Tick % ticksPerMin != 0) continue;
                 int min = w.Tick / ticksPerMin;
-                g.SurfaceByMinute[min] = w.Map.Ore.Sum(x => (double)x);
+                g.SurfaceByMinute[min] = FieldOreTotal(w.Map);
                 g.RegrownByMinute[min] = w.Regrown;
                 for (int i = 0; i < 2; i++)
                 {
@@ -728,6 +740,7 @@ namespace Pez.Headless
             var drops = w.Entities.Where(e => !e.Dead && e.IsStructure && e.IsComplete && e.Def.DropOff).Select(e => e.Center).ToList();
             for (int i = 0; i < m.Ore.Length; i++)
             {
+                g.SalvageEnd += m.SalvageOn(i);
                 int field = m.FieldOre(i);
                 if (field <= 0) continue;
                 g.SurfaceEnd += field;
@@ -746,6 +759,14 @@ namespace Pez.Headless
         }
 
         /// <summary>Iron and copper still in a team's home fields: the field ore (not salvage) of every iron or copper field tile within HomeOreRadius of its start.</summary>
+        /// <summary>The ore the fields hold: the map's ore less the salvage lying on it (kills and spills put salvage down on any ground, and it is counted when a truck delivers it).</summary>
+        internal static double FieldOreTotal(Map m)
+        {
+            double sum = 0;
+            for (int i = 0; i < m.Ore.Length; i++) sum += m.FieldOre(i);
+            return sum;
+        }
+
         static double HomeOre(World w, Team t)
         {
             var m = w.Map;
@@ -785,7 +806,7 @@ namespace Pez.Headless
         static void MatrixSection(StringBuilder sb, List<GameRun> games, Options o)
         {
             Heading(sb, $"Scripted AI against scripted AI: {games.Count} games");
-            sb.AppendLine($"Seeds {string.Join(",", o.Seeds.Take(3))}{(o.Seeds.Length > 3 ? "..." + o.Seeds.Last() : "")}, sizes {string.Join("/", o.Sizes)}, richness {string.Join("/", o.Ores.Select(x => F(x, "0.0")))}, modes {string.Join("/", o.Modes)}, up to {o.Minutes} game-minutes each. \"war\" is the scripted AI (attacks in waves), \"passive\" the house AI (builds and defends).");
+            sb.AppendLine($"Seeds {string.Join(",", o.Seeds.Take(3))}{(o.Seeds.Length > 3 ? "..." + o.Seeds.Last() : "")}, sizes {string.Join("/", o.Sizes)}, richness {string.Join("/", o.Ores.Select(OreLabel))}, modes {string.Join("/", o.Modes)}, up to {o.Minutes} game-minutes each. \"war\" is the scripted AI (attacks in waves), \"passive\" the house AI (builds and defends).");
             sb.AppendLine($"Sim errors in these games: {games.Sum(g => g.Errors)}{(games.Any(g => g.Errors > 0) ? " (" + string.Join("; ", games.Where(g => g.Errors > 0).Take(3).Select(g => $"{g.Group} seed {g.Seed}: {g.LastError}")) + ")" : "")}. Wall time {F(games.Sum(g => g.WallSeconds) / 60, "0.0")} min of CPU.");
             sb.AppendLine();
             var groups = games.GroupBy(g => g.Group).ToList();
@@ -913,17 +934,18 @@ namespace Pez.Headless
             Table(sb, new[] { "group", "built by min 10 (ore value)", "by min 20", "by min 30", "trucks at 30", "refineries at 30", "deep mines at 30", "units at 30", "structures at 30" }, built);
         }
 
-        static void WriteCsv(string dir, List<GameRun> games)
+        internal static void WriteCsv(string dir, List<GameRun> games)
         {
+            Directory.CreateDirectory(dir);
             var g = new StringBuilder("mode,size,ore,seed,game_over,winner,end_min,errors,surface_start,deep_start,deep_left,far_ore_end,surface_end\n");
-            foreach (var x in games) g.AppendLine(string.Join(",", x.Mode, x.Size, F(x.Ore, "0.0"), x.Seed, x.GameOver ? 1 : 0, x.Winner, F(x.EndMinute, "0.0"), x.Errors, F(x.SurfaceStart, "0"), F(x.DeepStart, "0"), F(x.DeepLeft, "0"), F(x.FarOreEnd, "0"), F(x.SurfaceEnd, "0")));
+            foreach (var x in games) g.AppendLine(string.Join(",", x.Mode, x.Size, OreLabel(x.Ore), x.Seed, x.GameOver ? 1 : 0, x.Winner, F(x.EndMinute, "0.0"), x.Errors, F(x.SurfaceStart, "0"), F(x.DeepStart, "0"), F(x.DeepLeft, "0"), F(x.FarOreEnd, "0"), F(x.SurfaceEnd, "0")));
             File.WriteAllText(Path.Combine(dir, "games.csv"), g.ToString());
             var items = Defs.Items.ToArray();
             var m = new StringBuilder("mode,size,ore,seed,team,min,mined,deep,salvage,derrick_steel,cc_trickle,upkeep,lowpower_s,spent,trucks,deep_mines,derricks,refineries,power_made,power_used,units,structures,kills,home_ore," + string.Join(",", items) + "\n");
             foreach (var x in games)
                 foreach (var t in x.Teams)
                     foreach (var r in t.Rows)
-                        m.AppendLine(string.Join(",", x.Mode, x.Size, F(x.Ore, "0.0"), x.Seed, t.Id, r.Min, r.Mined, r.Deep, r.Salvage, F(r.Derrick), F(r.Trickle), F(r.Upkeep), F(r.LowPowerS), F(r.Spent, "0"), r.Trucks, r.DeepMines, r.DerricksHeld, r.Refineries, r.PowerProduced, r.PowerUsed, r.Units, r.Structures, r.Kills, F(r.HomeOre, "0"), string.Join(",", r.Stock.Select(v => F(v, "0")))));
+                        m.AppendLine(string.Join(",", x.Mode, x.Size, OreLabel(x.Ore), x.Seed, t.Id, r.Min, r.Mined, r.Deep, r.Salvage, F(r.Derrick), F(r.Trickle), F(r.Upkeep), F(r.LowPowerS), F(r.Spent, "0"), r.Trucks, r.DeepMines, r.DerricksHeld, r.Refineries, r.PowerProduced, r.PowerUsed, r.Units, r.Structures, r.Kills, F(r.HomeOre, "0"), string.Join(",", r.Stock.Select(v => F(v, "0")))));
             File.WriteAllText(Path.Combine(dir, "minutes.csv"), m.ToString());
         }
     }

@@ -2861,6 +2861,32 @@ namespace Pez.Headless
             Check(full > 7 && full < 9 && scarce > full * 0.45 && scarce < full * 0.6,
                   $"a mined-bare 80-tile map earns back about 8 ore/s at full richness and about half that on a scarce one, as the rules text says ({full:0.0} and {scarce:0.0})");
 
+            // Surface snapshots count the fields' own ore: salvage from kills lies on the map's ore layer too, and isn't field ore.
+            var probe = new World(2, 1, 80);
+            var pm = probe.Map;
+            double fieldBefore = EconReport.FieldOreTotal(pm);
+            int bare = Enumerable.Range(0, pm.Ore.Length).First(i => pm.Ore[i] == 0 && pm.OreBase[i] == 0 && pm.TerrainPassable(i % pm.W, i / pm.W));
+            pm.Ore[bare] = 100; pm.Salvage[bare] = 100; pm.OreType[bare] = Map.Iron;
+            var played = EconReport.PlayGame(1, 80, 1f, true, 12);
+            Check(EconReport.FieldOreTotal(pm) == fieldBefore && pm.Ore.Sum() == (int)fieldBefore + 100 && played.SalvageEnd > 0 && played.SurfaceByMinute[12] == played.SurfaceEnd,
+                  $"the harness's surface ore leaves out salvage (100 salvage on the map: field ore stays {EconReport.FieldOreTotal(pm):0}); in a played game with {played.SalvageEnd:0} ore of salvage lying at the end, the last minute's snapshot is the field ore alone ({played.SurfaceByMinute[12]:0})");
+
+            // Richness is kept exact in group names and exports, and --profile can't corrupt a sweep of parallel worlds.
+            Check(EconReport.OreLabel(0.26f) == "0.26" && EconReport.OreLabel(0.34f) == "0.34" && EconReport.OreLabel(1f) == "1.0" && EconReport.OreLabel(0.3f) == "0.3"
+                  && new EconReport.GameRun { Mode = "war", Size = 80, Ore = 0.26f }.Group != new EconReport.GameRun { Mode = "war", Size = 80, Ore = 0.34f }.Group,
+                  "richness 0.26 and 0.34 are two groups, not both 0.3");
+            bool profiled = World.Profile;
+            World.Profile = true;
+            string sweep; List<EconReport.GameRun> sweepGames;
+            try { sweep = EconReport.Build(new EconReport.Options { Seeds = new[] { 1, 2 }, Sizes = new[] { 80 }, Ores = new[] { 0.26f, 0.34f }, Modes = new[] { "war" }, Minutes = 2, Jobs = 4, Sections = new HashSet<string> { "matrix" } }, _ => { }, out sweepGames); }
+            finally { profiled = World.Profile; World.Profile = false; }
+            string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "econ-report-test-" + Guid.NewGuid().ToString("N"));
+            EconReport.WriteCsv(dir, sweepGames);
+            string csv = System.IO.File.ReadAllText(System.IO.Path.Combine(dir, "games.csv")) + System.IO.File.ReadAllText(System.IO.Path.Combine(dir, "minutes.csv"));
+            System.IO.Directory.Delete(dir, true);
+            Check(profiled && sweepGames.Count == 4 && sweep.Contains("war 80x80 ore 0.26") && sweep.Contains("war 80x80 ore 0.34") && csv.Contains(",0.26,") && csv.Contains(",0.34,"),
+                  $"a sweep of two richnesses with --profile on groups, prints and exports them exactly ({sweepGames.Count} games, profile flag restored: {profiled})");
+
             // The seat win split's test, and the flag parser.
             Check(Math.Abs(EconReport.BinomialP(18, 23) - 0.0106) < 0.0005 && EconReport.BinomialP(5, 10) > 0.999 && Math.Abs(EconReport.BinomialP(0, 10) - 2 * Math.Pow(0.5, 10)) < 1e-9 && EconReport.BinomialP(0, 0) == 1,
                   $"the exact binomial test gives 18 of 23 decisive games to one seat p = {EconReport.BinomialP(18, 23):0.0000}");
