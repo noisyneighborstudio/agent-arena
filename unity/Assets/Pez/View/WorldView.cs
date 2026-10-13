@@ -391,7 +391,7 @@ namespace Pez.View
             foreach (var v in Views.Values)
             {
                 var e = v.E;
-                bool want = !e.Dead && !e.IsCarried && sheenTeams.TryGetValue(e.Team, out var st) && st.mat != null && st.fade > 0f;
+                bool want = !e.Dead && !e.IsCarried && e.Def.Key != "derrick" && sheenTeams.TryGetValue(e.Team, out var st) && st.mat != null && st.fade > 0f;
                 if (!want || (v.Sheen != null && v.Sheen.Team != e.Team)) { if (v.Sheen != null) { v.Sheen.Clear(); v.Sheen = null; } if (!want) continue; }
                 if (!v.Rig.Root.gameObject.activeSelf) continue;
                 var sh = v.Sheen ??= new Sheen { Team = e.Team };
