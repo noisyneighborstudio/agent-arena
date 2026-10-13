@@ -170,6 +170,30 @@ namespace Pez.Sim
         }
 
         public bool IsProtected(int team) => team >= 0 && team < Teams.Count && Teams[team].ProtectedUntil > Time;
+
+        /// <summary>Protection covers a newcomer's base, not the contested middle: a derrick it holds can be shot and captured like anyone's.</summary>
+        public bool Shielded(Entity t) => t.Def.Key != "derrick" && IsProtected(t.Team);
+
+        /// <summary>The centres of the enemy structures a team knows of (derricks aside, as in the trucks' own Safe rule), which a protected
+        /// team's trucks keep HostileOreRadius from: the mirror of OreReserved, so protection can't be used to mine an enemy's home field
+        /// untouched. Only what the team has seen counts, so a refusal tells it nothing about fogged buildings. Empty when the team isn't
+        /// protected; built once a tick per team.</summary>
+        static readonly List<Vec2> NoBases = new List<Vec2>();
+        readonly Dictionary<int, (int tick, List<Vec2> bases)> barredBases = new Dictionary<int, (int, List<Vec2>)>();
+        public List<Vec2> BarredBases(int team)
+        {
+            if (!IsProtected(team)) return NoBases;
+            if (barredBases.TryGetValue(team, out var c) && c.tick == Tick) return c.bases;
+            var bases = Teams[team].KnownEnemyStructures.Values.Where(k => k.team >= 0 && k.team != team && k.key != "derrick").Select(k => k.origin.Center).ToList();
+            barredBases[team] = (Tick, bases);
+            return bases;
+        }
+
+        public static bool NearBarredBase(Int2 tile, List<Vec2> bases)
+        {
+            foreach (var b in bases) if (Vec2.DistSq(b, tile.Center) < HostileOreRadius * HostileOreRadius) return true;
+            return false;
+        }
         /// <summary>The default team names, by seat. An agent can name its own team instead (NameTeam); the colour stays with the seat.</summary>
         public static readonly string[] Flavors = { "Blueberry", "Cherry", "Lime", "Lemon", "Grape", "Blackberry", "Spearmint", "Plum" };
         /// <summary>Names that would pass for the game itself in chat ("arena: ...") or in the lobby.</summary>
@@ -1339,7 +1363,7 @@ namespace Pez.Sim
             Near(victim.Center, 10f, nearHelp);
             foreach (var u in nearHelp)
             {
-                if (u.Dead || u.Team != victim.Team || u.IsStructure || !u.IsArmed || u.IsCarried || u.Order != Order.Idle) continue;
+                if (u.Dead || u.Team != victim.Team || u.IsStructure || !u.IsArmed || u.IsCarried || u.Order != Order.Idle || IsProtected(u.Team)) continue; // protected units don't retaliate
                 if (!u.Def.Weapon.CanHit(attacker.Def)) continue;
                 if (Vec2.Dist(u.Pos, victim.Center) > 10f) continue;
                 var home = u.GuardPos;
@@ -1449,7 +1473,7 @@ namespace Pez.Sim
             if (!t.IsStructure || t.Team == e.Team) { CaptureStopped(e, t.Team == e.Team ? $"{t.Def.Key} #{t.Id} is already yours" : "that can't be captured"); return; }
             // An engineer can set out for a derrick it can't see; what it finds is judged once it's in sight.
             if (t.Def.Key == "derrick" && !IsVisibleTo(e.Team, t)) { Chase(e, t); return; }
-            if (!t.IsComplete || !Capturable(t) || (t.Team >= 0 && (IsProtected(e.Team) || IsProtected(t.Team))))
+            if (!t.IsComplete || !Capturable(t) || (t.Team >= 0 && (IsProtected(e.Team) || Shielded(t))))
             {
                 CaptureStopped(e, t.Team < 0 ? $"the neutral {t.Def.Key} #{t.Id} isn't finished"
                     : !Capturable(t) ? $"{Teams[t.Team].Name} holds {t.Def.Key} #{t.Id} at {(int)(100 * t.Hp / t.Def.MaxHp)}% health: damage it below 50% first"
@@ -1515,6 +1539,7 @@ namespace Pez.Sim
         /// <summary>An enemy ground unit on top of a mine sets it off: splash damage, then it's gone.</summary>
         void MineTick(Entity m)
         {
+            if (IsProtected(m.Team)) return; // a protected team's mines are inert until protection ends
             Entity trigger = null;
             Near(m.Pos, 1.5f, nearMine);
             foreach (var o in nearMine)
@@ -1588,7 +1613,7 @@ namespace Pez.Sim
                 if (o.Dead || o.Team == e.Team || o.IsCarried || o.Team < 0) continue; // neutral derricks aren't enemies
                 // Nor are held ones a threat: worth capturing, so only shot when ordered (attack, or attack_move with "derricks":true).
                 if (o.Def.Key == "derrick" && !(e.Order == Order.AttackMove && e.EngageDerricks)) continue;
-                if (IsProtected(o.Team) || IsProtected(e.Team)) continue; // newcomer protection: no fighting either way
+                if (Shielded(o) || IsProtected(e.Team)) continue; // newcomer protection: no fighting either way
                 if (e.Def.Weapon != null && !e.Def.Weapon.CanHit(o.Def)) continue;
                 float d = o.DistFrom(e.Pos);
                 if (d > radius) continue;
@@ -1608,6 +1633,9 @@ namespace Pez.Sim
 
         void FireAt(Entity e, Entity t)
         {
+            // Newcomer protection: a protected team can't attack, whatever order its units are on. Not in the showcase, whose teams are
+            // protected for good (ProtectedUntil = MaxValue, which a restored copy keeps though it has no Showcase) so nothing takes damage.
+            if (IsProtected(e.Team) && Showcase == null && Teams[e.Team].ProtectedUntil < float.MaxValue) return;
             e.LastFiredAt = Time;
             var dir = t.Center - e.Pos;
             float want = dir.Angle;
@@ -1673,7 +1701,7 @@ namespace Pez.Sim
                 if (e.Burning) { e.Burning = false; Emit("fire_out", e.Team, e.Id, 0, e.Center, key: e.Def.Key, text: $"the fire at your {e.Def.Key} #{e.Id} is out"); }
                 return;
             }
-            if (IsProtected(e.Team)) return;
+            if (Shielded(e)) return;
             if (!e.Burning)
             {
                 e.Burning = true;
@@ -1692,7 +1720,7 @@ namespace Pez.Sim
         {
             if (t.Dead) return;
             if (t.Team < 0) return; // neutral (an unclaimed derrick): can't be hurt
-            if (IsProtected(t.Team)) return; // newcomer protection
+            if (Shielded(t)) return; // newcomer protection (not for a derrick it holds)
             int team = src?.Team ?? srcTeam;
             t.Hp -= amount;
             if (src != null) t.LastAttackerId = src.Id;
@@ -1758,9 +1786,10 @@ namespace Pez.Sim
                 if (e.Cargo >= cap) { e.Order = Order.ReturnOre; e.Path = null; return; }
                 // A partly loaded truck can only take more of the same ore.
                 int want = e.Cargo > 0 ? e.CargoType : e.HarvestType;
+                var barred = BarredBases(e.Team); // while protected: no mining by other teams' structures
                 bool tileGood = e.HarvestTile.HasValue && Map.OreAt(e.HarvestTile.Value.X, e.HarvestTile.Value.Y) > 0 &&
                                 (want < 0 || Map.OreType[Map.Idx(e.HarvestTile.Value.X, e.HarvestTile.Value.Y)] == want) &&
-                                !OreReserved(e.HarvestTile.Value, e.Team);
+                                !OreReserved(e.HarvestTile.Value, e.Team) && !NearBarredBase(e.HarvestTile.Value, barred);
                 if (!tileGood)
                 {
                     var from = e.HarvestTile.HasValue ? e.HarvestTile.Value.Center : e.Pos;
@@ -1778,7 +1807,7 @@ namespace Pez.Sim
                     bool hasField = e.HarvestTile.HasValue;
                     bool Leashed(Int2 t) => (hasField && Vec2.DistSq(t.Center, from) <= 144f) || drops.Any(dp => Vec2.DistSq(dp, t.Center) <= LeashDist * LeashDist);
                     // Spread trucks out: avoid tiles another truck is already working.
-                    bool Free(Int2 t) => !OreReserved(t, e.Team) && Safe(t) && Leashed(t);
+                    bool Free(Int2 t) => !OreReserved(t, e.Team) && !NearBarredBase(t, barred) && Safe(t) && Leashed(t);
                     e.HarvestTile = Map.NearestOre(from, 40, t => Free(t) && Wanted(t) && !Entities.Any(o => o != e && !o.Dead && o.IsHarvester && o.HarvestTile.HasValue && o.HarvestTile.Value.Equals(t)), want)
                                     ?? Map.NearestOre(from, 80, t => Free(t) && Wanted(t), want)
                                     ?? Map.NearestOre(from, 80, Free, want);
@@ -2352,7 +2381,8 @@ namespace Pez.Sim
             team.SurfaceWarnedAt = Time;
             string what = type >= 0 ? Defs.Ores[type] : "surface ore";
             Alerts.Raise(this, truck.Team, "surface_ore_exhausted", Priority.Medium, truck.Pos, hit: false)
-                  .Lost.Add($"mining truck #{truck.Id} can't find any {what} within {(int)LeashDist} tiles of your drop-offs and is waiting. Your call: " + OreWaysOn);
+                  .Lost.Add($"mining truck #{truck.Id} can't find any {what} within {(int)LeashDist} tiles of your drop-offs and is waiting" +
+                          (IsProtected(truck.Team) ? $" (under newcomer protection your trucks also keep {(int)HostileOreRadius} tiles from other teams' structures)" : "") + ". Your call: " + OreWaysOn);
         }
 
         // ------------------------------------------------------------------ fuel
