@@ -1782,21 +1782,27 @@ namespace Pez.Headless
                 return () => { owed += rate * World.Dt; int n = (int)owed; owed -= n; if (!spent) t.Add("iron_ore", n); t.Add("copper_ore", 3 * World.Dt); t.Stats.OreMined += n; };
             }
 
-            // The old cap was four. With 40 ore a second coming in and 3,000 waiting it goes past four, to the eight that ore could keep busy.
+            // The old cap was four. With 39 ore a second mined, the command center's 1 on top, and 3,000 waiting it goes past four, to the eight that
+            // 40 a second could keep busy.
             var (w1, ai1, t1) = Base(4);
-            AiRun(w1, ai1, 4 * 60, Income(t1, 40));
-            Check(Have(w1, "mining_refinery") == 8, $"with 40 ore a second coming in and iron ore backing up, it builds refineries past four, up to the 8 that income could keep busy ({Have(w1, "mining_refinery")}, {t1.Amount("iron_ore")} iron ore waiting)");
+            AiRun(w1, ai1, 4 * 60, Income(t1, 39));
+            Check(Have(w1, "mining_refinery") == 8, $"with 39 ore a second mined and iron ore backing up, it builds refineries past four, up to the 8 that income could keep busy ({Have(w1, "mining_refinery")}, {t1.Amount("iron_ore")} iron ore waiting)");
             var saved = Json.Write(ai1.SaveState());
             var back = SimpleAI.LoadState((Dictionary<string, object>)Json.Parse(saved));
             Check(saved.Contains("\"ore_rate\":") && Json.Write(back.SaveState()) == saved, "and what it has measured of the ore coming in is part of the saved game");
 
             // Half the income, half the refineries; a quarter of it, a quarter. The bound is the income, not the backlog.
             var (w2, ai2, t2) = Base(2);
-            AiRun(w2, ai2, 4 * 60, Income(t2, 20));
-            Check(Have(w2, "mining_refinery") == 4, $"with 20 ore a second coming in it stops at the 4 that could keep busy ({Have(w2, "mining_refinery")})");
+            AiRun(w2, ai2, 4 * 60, Income(t2, 19));
+            Check(Have(w2, "mining_refinery") == 4, $"with 19 ore a second mined (20 with the command center's) it stops at the 4 that could keep busy ({Have(w2, "mining_refinery")})");
             var (w3, ai3, t3) = Base(2);
-            AiRun(w3, ai3, 4 * 60, Income(t3, 10));
-            Check(Have(w3, "mining_refinery") == 2, $"with 10 a second, its two are enough however much is waiting ({Have(w3, "mining_refinery")})");
+            AiRun(w3, ai3, 4 * 60, Income(t3, 9));
+            Check(Have(w3, "mining_refinery") == 2, $"with 9 a second (10 with the command center's), its two are enough however much is waiting ({Have(w3, "mining_refinery")})");
+            // The command center's own iron ore (1 a second, half in low power) is income the ore mined leaves out: 9.5 mined is 10.5 in all, more than two
+            // refineries' 10, so a third goes up (it stayed at two when only the mined ore was counted).
+            var (w3b, ai3b, t3b) = Base(2);
+            AiRun(w3b, ai3b, 6 * 60, Income(t3b, 9.5f));
+            Check(Have(w3b, "mining_refinery") == 3, $"with 9.5 ore a second mined and the command center's 1 more, it needs a third refinery ({Have(w3b, "mining_refinery")})");
 
             // No ore coming in at all: nothing to build for, so the backlog alone adds none.
             var (w4, ai4, t4) = Base(2);
@@ -2590,6 +2596,17 @@ namespace Pez.Headless
             AiRun(w7, ai7, 90, () => wentCopper7 |= GoesTo(w7, d7[0]));
             Check(Have(w7, "mining_refinery") == 1 && t7.Reserved("copper_ore") >= 100 && wentCopper7,
                   $"with its refinery held back for want of room, 100 copper ore reserved for it and no copper to use, a rig goes to the copper zone ({w7.Owned(0).Count(e => e.Def.Key == "drill_rig")} rigs, {w7.Owned(0).Count(e => e.Def.Key == "deep_mine")} mines, reserve {t7.Reserved("copper_ore")} copper ore)");
+            // The same with refined copper: 100 of the 150 there is held back (as save_for does for an outpost truck that lacks its circuits; the
+            // electronics plant can't touch it, so no circuits are made and the truck is never bought) is not copper it can use either.
+            var (w8, ai8, t8, d8) = Dry(1);
+            d8[0].Type = Map.Copper; t8.Surveyed.Remove(d8[1].Id);
+            var hq8 = w8.Owned(0).First(e => e.Def.Key == "command_center");
+            for (int i = 0; i < 2; i++) { w8.SpawnUnit(0, "repair_truck", hq8); w8.SpawnUnit(0, "medic", hq8); } // (its upkeep units are there: it buys none, which would spend copper)
+            t8.Add("copper", 150 - t8.Amount("copper")); t8.Add("copper_ore", -t8.Amount("copper_ore")); t8.Add("iron_ore", 1000); t8.Add("steel", 1000);
+            t8.Reserve["copper"] = 100;
+            bool wentCopper8 = false;
+            AiRun(w8, ai8, 90, () => wentCopper8 |= GoesTo(w8, d8[0]));
+            Check(wentCopper8 && t8.Reserved("copper") == 100, $"with 100 of its 150 refined copper reserved, a rig goes to the copper zone ({w8.Owned(0).Count(e => e.Def.Key == "drill_rig")} rigs, {w8.Owned(0).Count(e => e.Def.Key == "deep_mine")} mines, {t8.Amount("copper")} copper)");
 
             // A crystal rig that was stopped keeps its old zone but isn't drilling: its ore is free again, and the rig gets a zone.
             var (w2, ai2, t2, d2) = Dry(0);

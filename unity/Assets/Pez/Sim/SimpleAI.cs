@@ -36,6 +36,8 @@ namespace Pez.Sim
         const int CopperSurplus = 1500; // refined copper past this is more than anything uses: its deep mines are sold
         /// <summary>Iron ore a second one refinery converts (its recipe's cycles a second times the iron ore a cycle takes): the ore coming in is measured against it.</summary>
         static readonly float RefineryRate = Defs.Get("mining_refinery").Recipes.Where(r => r.Inputs.ContainsKey("iron_ore")).Sum(r => r.Rate * r.Inputs["iron_ore"]);
+        /// <summary>Iron ore a second one command center makes on its own (its recipe with no inputs): income that Stats.OreMined, the trucks' and mines' count, leaves out.</summary>
+        static readonly float TrickleRate = Defs.Get("command_center").Recipes.Where(r => r.Inputs.Count == 0 && r.Outputs.ContainsKey("iron_ore")).Sum(r => r.Rate * r.Outputs["iron_ore"]);
         float oreRate; // ore a second the trucks and deep mines bring in, averaged over IncomeWindow
         float ratedAt = -1f; // when it was last worked out, and the team's Stats.OreMined then
         int ratedMined;
@@ -208,14 +210,15 @@ namespace Pez.Sim
             // something to refine them). Each switches on below a low mark and off above a higher one, so trucks don't flap. (Copper's
             // marks are low: little but circuits use it, and steel is what limits them.)
             int copperOnHand = t.Amount("copper") + t.Amount("copper_ore"), ironOnHand = t.Amount("steel") + t.Amount("iron_ore");
-            // (Copper it can use: copper ore held back for a purchase isn't, since the converters can't touch it; if the purchase can't be made, a
-            // refinery with no room, it is held for good.)
-            int copperSpendable = t.Amount("copper") + System.Math.Max(0, t.Amount("copper_ore") - t.Reserved("copper_ore"));
+            // (Copper it can use: copper, refined or ore, held back for a purchase isn't, since the converters can't touch it; if the purchase
+            // can't be made, a refinery with no room or an outpost truck short of circuits, it is held for good.)
+            int copperSpendable = System.Math.Max(0, t.Amount("copper") - t.Reserved("copper")) + System.Math.Max(0, t.Amount("copper_ore") - t.Reserved("copper_ore"));
             // Trucks queueing for the bays (each bay takes one truck at a time), or iron ore piling up unrefined: another refinery. Not more
-            // than the ore coming in could keep busy (all of it may be iron, and a refinery converts RefineryRate of it a second), and only
-            // where there is room for one.
+            // than the ore coming in could keep busy (all of it may be iron, and a refinery converts RefineryRate of it a second; the command
+            // centers' own trickle counts, at half in low power as in World.UpdateEconomy), and only where there is room for one.
+            float trickle = TrickleRate * structures.Count(s => s.IsComplete && s.Def.Key == "command_center") * (t.LowPower ? 0.5f : 1f);
             bool moreRefineries = (!surfaceDry && trucks0.Count(e => e.Dock == DockStep.Queue) >= 2 || t.Amount("iron_ore") > OreBacklog) && Count("mining_refinery") is int nr && nr >= 1 &&
-                                  nr < System.MathF.Ceiling(oreRate / RefineryRate) && w.FindPlacement(team, "mining_refinery").HasValue;
+                                  nr < System.MathF.Ceiling((oreRate + trickle) / RefineryRate) && w.FindPlacement(team, "mining_refinery").HasValue;
             // Raw ore that a purchase it is waiting on (the first step of the build order, a refinery it wants more of) costs and it
             // lacks: worth mining, by truck or deep mine, whatever refined copper or steel it has in hand.
             var waiting = FirstUnbuilt(Count);
