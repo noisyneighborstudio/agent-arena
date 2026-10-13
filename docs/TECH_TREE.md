@@ -31,7 +31,7 @@ plasma 0.1/s --[Fusion Reactor]--> +500 power
 
 The surface runs out and deep deposits run dry, so a long game is decided by who holds ground, not who hoards it.
 
-- **Salvage from kills.** Anything an enemy destroys (with a unit, turret, mine, or a fire it set) leaves about 25% of its cost as ore on and around the spot: 10% for infantry, and a mining truck also spills its load. Costs convert as for any salvage (steel and iron ore to iron ore, circuits to two copper ore, plasma to two uranium; deployed structures count as the truck that made them). Nothing is left for selling, crashes, your own side's fire, or deaths with no enemy cause. Piles merge (a squad killed together leaves one pile), respect the 1,000-per-tile cap and never land on another ore. Anyone's trucks can collect it, so the winner has to hold the ground to profit. Both sides get one SALVAGE ON THE FIELD alert per area with the running total.
+- **Salvage from kills.** Anything an enemy destroys (with a unit, turret, mine, or a fire it set) leaves about 25% of its cost as ore on and around the spot: 10% for infantry, and a mining truck also spills its load. Costs convert as for any salvage, to the raw ore each item is made from (steel and iron ore to iron ore, a circuit to two copper ore and an iron ore, lenses to two crystal, plasma to two uranium, composite to two iron ore and a crystal; deployed structures, command centers included, count as the truck that made them, and a building never finished still counts at its full price, which its owner paid when placing it). Nothing is left for selling, crashes, your own side's fire, or deaths with no enemy cause. Piles merge (a squad killed together leaves one pile), respect the 1,000-per-tile cap and never land on another ore. Anyone's trucks can collect it, so the winner has to hold the ground to profit. Both sides get one SALVAGE ON THE FIELD alert per area with the running total.
 
 - **Ore regrowth.** Mined surface fields slowly grow back toward their original amounts (the map remembers each field tile's original ore, `Map.OreBase`): from ore a field still has, spreading into its neighbouring tiles, and from the field's root (its richest tile) once it's mined to nothing. The rate per tile is 0.12 ore/s × √(ore richness) at the map's centre, falling steeply to 4% of that in the corners; nothing regrows under a structure, on a tile a truck is working, past the original amount, or after sudden death (the match clock). A mined-bare 96-tile map earns back about 7 ore/s (3.5 at richness 0.3), about 70% of it in the middle; a deep mine pumps 4/s, so deep mining stays the mid-game economy.
 
@@ -42,6 +42,8 @@ The surface runs out and deep deposits run dry, so a long game is decided by who
 ## Structures
 
 The Command Center builds every structure. A new structure must be placed within 6 tiles of one of your existing structures, so you take territory by building outward or by deploying Outposts.
+
+Production runs in parallel. Each finished Barracks, Factory, Airfield and Command Center (trucks) trains one unit at a time from your queue for that kind, so two barracks train infantry twice as fast as one; low power halves each. `train` with `structure_id` sends a unit to one building, and it waits there if that building is busy. Structures are still built one at a time for the whole team, however many Command Centers it has.
 
 | Structure | Cost | Requires | Produces |
 |---|---|---|---|
@@ -98,8 +100,8 @@ Mines are hidden unless an enemy is within 1.5 tiles or inside its radar range, 
 
 A player can design a variant of an armed unit they can already build, with `propose_tech` (rules_version 9; the full design and numbers are in `docs/spikes/AGENT_INVENTED_TECH.md`):
 
-- **What can change:** hp, speed, damage, range, cooldown, sight and fuel, each within limits around the base unit. The unit can also mount another buildable unit's weapon (`weapon_from`), e.g. a light tank with rocket-soldier rockets that can hit aircraft. It can't gain abilities: a ground unit can't fly, and nothing gains stealth.
-- **Price:** computed relative to the base unit, never set by the player. No design out-fights its base unit per unit of cost, so inventions are counters and side-grades, not upgrades.
+- **What can change:** hp, speed, damage, range, cooldown, sight and fuel, each within limits around the base unit. The unit can also mount another buildable unit's weapon (`weapon_from`), e.g. a light tank with rocket-soldier rockets that can hit aircraft (the commando's C4 only goes on infantry, and a borrowed weapon brings its unit's materials). It can't gain abilities: a ground unit can't fly, and nothing gains stealth.
+- **Price:** computed relative to the base unit, never set by the player. No design out-fights its base unit, or the unit whose weapon it carries, per unit of cost (slowing a unit down is never a discount), so inventions are counters and side-grades, not upgrades.
 - **Research:** the research bill (steel and circuits, growing with how different the design is) is paid up front. Research happens at an `electronics_plant`, and the design is then trained by its key (`t<team>:<name>`) at its base unit's producer.
 - **Limits:** 3 per player, one in research at a time, 24 per game. Only the inventing team can build a design; enemies see its stats when they meet it.
 - **Looks:** an invention is drawn with its base unit's model and icon, plus an amber badge, and the selection panel says INVENTED.

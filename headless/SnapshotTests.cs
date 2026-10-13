@@ -62,7 +62,7 @@ namespace Pez.Headless
                 "SurfaceWarnedAt HomeOreWarned LastActiveAt Reserve SaveFor SaveForCost Stats",
             [typeof(World)] = "Map Paths MapVersion Open MaxPlayers MaxMapSize GrowStep SafeJoinDistance ProtectionSeconds Teams ById Entities Projectiles Events " +
                 "EventCounts Alerts Tick GameOver Winner Errors LastError nextId nextSeq seatCounter rng rateSnapshot airWarned StallGrace ArenaChampion contested Inventions GameId Regrown SuddenDeathAt DerrickRespawns " +
-                "| ErrorLog loggedErrors cells cellsW cellsH nearTarget nearHelp nearMine nearSep nearSpot nearCrush nearVis Showcase OreVersion oreDirty beingMined regrowNow scoreCache scoreCacheTick NextMatchIn derricksChecked groupSpan Mirror MirrorScores Feed Touched", // Feed: the observation feed starts a new stream on resume (readers get a gap and a snapshot); Showcase: the kitchen sink room is never saved (rebuilt from code); Mirror: set by the browser client on its copy
+                "| barredBases ErrorLog loggedErrors cells cellsW cellsH nearTarget nearHelp nearMine nearSep nearSpot nearCrush nearVis Showcase OreVersion oreDirty beingMined regrowNow scoreCache scoreCacheTick NextMatchIn derricksChecked groupSpan Mirror MirrorScores Feed Touched", // Feed: the observation feed starts a new stream on resume (readers get a gap and a snapshot); Showcase: the kitchen sink room is never saved (rebuilt from code); Mirror: set by the browser client on its copy
             [typeof(Invention)] = "Key Name Chassis WeaponFrom Summary Team Def ResearchCost ResearchTime Progress Novelty PriceFactor ProposedAt ResearchedAt Built Lost Kills",
             [typeof(Map)] = "W H Tiles Ore OreType Occupant Spawns Deep OreScale nextDepositId OreBase OreBaseType | writable fieldsChanged fieldTiles fieldRoots BaseMissing",
             [typeof(SimpleAI)] = "team Passive nextThink waveSize outpostTargets nextProspect prospectRadius knownSurface stuckSince wantCopper wantCrystal wantUranium wentDeep",
@@ -72,7 +72,7 @@ namespace Pez.Headless
             [typeof(GameEvent)] = "Seq Tick Type Team A B Pos Pos2 Key Text | SeenBy",
             [typeof(Projectile)] = "Id Team SourceId TargetId Pos PrevPos TargetPos Weapon",
             [typeof(DeepDeposit)] = "Id Pos Type Amount Initial MineId",
-            [typeof(ProdItem)] = "Key Progress StructureId | CmdId",
+            [typeof(ProdItem)] = "Key Progress StructureId WorkerId | CmdId",
             [typeof(ZoneFlag)] = "ZoneId FlaggedBy FlaggedAt",
             [typeof(TeamStats)] = "UnitsBuilt StructuresBuilt UnitsLost StructuresLost Kills OreMined Built KillValue KillsValued SalvageLeft DeepMined DerricksCaptured DerrickSteel SalvageMined UpkeepPaid",
             [typeof(GameConfig)] = "Seed MapSize Speed Controllers Orders Open MaxPlayers MaxMapSize OreScale HouseAIs HouseResignAbove MatchHours MinPlayers | KitchenSink",
@@ -191,7 +191,8 @@ namespace Pez.Headless
             var site = tb.StructureQueue.FirstOrDefault();
             Check(site != null && b.Get(site.StructureId) != null && !b.Get(site.StructureId).IsComplete && b.Get(site.StructureId).BuildProgress == w.Get(site.StructureId).BuildProgress,
                   $"a structure under construction keeps its progress ({site?.Key} {b.Get(site?.StructureId ?? 0)?.BuildProgress:P0})");
-            Check(tb.UnitQueues[Producer.Barracks].Count == 3 && tb.UnitQueues[Producer.Barracks][0].Progress == t2.UnitQueues[Producer.Barracks][0].Progress, "unit production queues survive");
+            Check(tb.UnitQueues[Producer.Barracks].Count == 3 && tb.UnitQueues[Producer.Barracks][0].Progress == t2.UnitQueues[Producer.Barracks][0].Progress &&
+                  tb.UnitQueues[Producer.Barracks][0].WorkerId == t2.UnitQueues[Producer.Barracks][0].WorkerId && t2.UnitQueues[Producer.Barracks][0].WorkerId != 0, "unit production queues survive, with the building working each unit");
             var dep2 = b.Map.DepositById(dep.Id);
             Check(dep2 != null && dep2.MineId == mine.Id && dep2.Amount == dep.Amount && b.Get(mine.Id)?.DepositId == dep.Id && tb.Surveyed.Contains(dep.Id), "deep mines, their deposits and survey results survive");
             var sv2 = b.Get(surveyor.Id);

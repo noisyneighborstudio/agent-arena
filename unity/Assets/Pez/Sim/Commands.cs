@@ -14,7 +14,8 @@ namespace Pez.Sim
 @"Commands (JSON objects with a ""type"" field):
   {""type"":""build"", ""structure"":KEY, ""x"":X, ""y"":Y}   place a structure (bottom-left tile). Omit x/y to auto-place near your base.
   {""type"":""train"", ""unit"":KEY, ""count"":N}            queue N units (1-10) at the barracks / war factory
-      add ""structure_id"":ID to have them come out of that building (e.g. a forward barracks); otherwise your first one
+      each of your barracks / factories / airfields trains one unit at a time from the shared queue, so two barracks train twice as fast
+      add ""structure_id"":ID to have them built and come out at that building (e.g. a forward barracks), waiting for it if it's busy; otherwise any free one
   {""type"":""move"", ""units"":[IDS], ""x"":X, ""y"":Y}     move, ignoring enemies
   {""type"":""attack_move"", ""units"":[IDS], ""x"":X, ""y"":Y}  move, engaging enemies on the way, except derricks someone holds (worth capturing: attack one to destroy it)
       add ""derricks"":true to attack_move to shoot enemy-held derricks on the way too (never neutral ones: they can't be hurt)
@@ -180,7 +181,12 @@ namespace Pez.Sim
             }
             string saved = queued > 0 && t.Bought(key) ? $" (that was what you were saving for: converters are back to normal)" : "";
             if (queued == 0) return Err($"{key}: {t.Missing(def.Cost)}{ReserveHint(w, team, def.Cost, key)}");
-            return Ok($"queued {queued}x {key}" + (at != null ? $" at {at.Def.Key} #{at.Id}" : "") + (queued < count ? $" (could only afford {queued})" : "") + $"; {t.UnitQueues[def.BuiltBy].Count} in the queue shared by your {Defs.ProducerKey(def.BuiltBy)} buildings" + saved);
+            // Each completed producer works one queued unit at a time, so the queue moves as fast as there are buildings.
+            int sharing = w.Owned(team).Count(s => s.IsStructure && s.IsComplete && s.Def.Produces == def.BuiltBy);
+            var maker = Defs.ProducerKey(def.BuiltBy);
+            string shared = sharing == 1 ? $"for your only {maker}, which trains one at a time (a second {maker} would train two at once)"
+                                         : $"shared by your {sharing} {maker} buildings, each training one at a time";
+            return Ok($"queued {queued}x {key}" + (at != null ? $" at {at.Def.Key} #{at.Id}" : "") + (queued < count ? $" (could only afford {queued})" : "") + $"; {t.UnitQueues[def.BuiltBy].Count} in the queue {shared}" + saved);
         }
 
         static List<Entity> ResolveUnits(World w, int team, Dictionary<string, object> c)
@@ -226,9 +232,15 @@ namespace Pez.Sim
                 int type = oreName == null || oreName == "any" ? -1 : Array.IndexOf(Defs.Ores, oreName);
                 if (oreName != null && oreName != "any" && type < 0) return Err($"unknown ore '{oreName}'. Valid: {string.Join(", ", Defs.Ores)}");
                 var none = new List<Entity>();
+                // Under newcomer protection, ore within HostileOreRadius of another team's structures is off limits (the mirror of the reserved starting ore).
+                var barred = w.BarredBases(team);
+                Func<Int2, bool> allowed = barred.Count == 0 ? (Func<Int2, bool>)null : t => !World.NearBarredBase(t, barred);
+                Int2? Field(Entity h, Func<Int2, bool> ok) => float.IsNaN(x) ? w.Map.NearestOre(h.Pos, 80, ok, type) : w.Map.NearestOre(dest, 12, ok, type);
+                if (allowed != null && hs.All(h => Field(h, allowed) == null) && hs.Any(h => Field(h, null) != null))
+                    return Err($"you're under newcomer protection for {(int)(w.Teams[team].ProtectedUntil - w.Time)}s more, and until it ends your trucks can't mine within {(int)World.HostileOreRadius} tiles of another team's structures (your own starting ore is protected from them the same way). Mine a field farther from other bases, or your own");
                 foreach (var h in hs)
                 {
-                    var tile = float.IsNaN(x) ? w.Map.NearestOre(h.Pos, 80, null, type) : w.Map.NearestOre(dest, 12, null, type);
+                    var tile = Field(h, allowed);
                     if (tile == null) none.Add(h); // it stays on harvest and keeps looking (and raises SURFACE ORE RUNNING OUT)
                     w.SetOrder(h, Order.Harvest, tile?.Center ?? h.Pos);
                     if (oreName != null) h.HarvestType = type;
@@ -360,7 +372,7 @@ namespace Pez.Sim
             if (target == null) return Err($"nothing with id #{(int)c.Num("target", 0)} exists: it was destroyed, or the id is wrong");
             if (target.Team == team) return Err("that is your own unit");
             if (target.Team < 0) return Err($"{target.Def.Key} #{target.Id} is neutral: it can't be hurt; capture it with an engineer instead");
-            if (w.IsProtected(target.Team)) return Err($"that player is under newcomer protection for {(int)(w.Teams[target.Team].ProtectedUntil - w.Time)}s more");
+            if (w.Shielded(target)) return Err($"that player is under newcomer protection for {(int)(w.Teams[target.Team].ProtectedUntil - w.Time)}s more");
             if (!w.IsVisibleTo(team, target) && target.Def.Key != "derrick") return Err("target is not currently visible; use attack_move toward its last known position");
             var able = units.Where(u => u.Def.Weapon.CanHit(target.Def)).ToList();
             if (able.Count == 0) return Err($"none of those units can hit a {(target.IsAir ? "flying" : "ground")} {target.Def.Key}");
@@ -401,24 +413,42 @@ namespace Pez.Sim
                                        (used >= 0.5f ? " and may turn back to refuel before it arrives; rally nearer, or at a refuel point (outpost)" : "") : ""));
         }
 
+        /// <summary>A structure an enemy hit this recently (seconds) can't be sold.</summary>
+        const float SellHitCooldown = 10f;
+
         static JObj Sell(World w, int team, Dictionary<string, object> c)
         {
             var s = OwnStructure(w, team, c);
             if (s == null) return Err("structure_id must be one of your structures");
+            if (s.Def.Key == "derrick")
+                return Err($"derrick #{s.Id} can't be sold: it's a landmark, not something you built. Hold it to keep its +{World.DerrickSteel} steel/s; if you can't, an enemy engineer can take it or their fire can destroy it (a fresh neutral one rises on the site {World.DerrickRespawn / 60:0} minutes later)");
+            // A building under fire can't be sold out from under the attacker: that would deny the kill (and its salvage).
+            float sinceHit = w.Time - s.LastHitTime;
+            if (sinceHit < SellHitCooldown)
+                return Err($"{s.Def.Key} #{s.Id} was hit {sinceHit:0} s ago: a building that's under fire can't be sold. Defend or repair it, and you can sell it in {MathF.Ceiling(SellHitCooldown - sinceHit):0} s if nobody hits it again");
+            // The same for a burning one: it's dying to whoever set the fire, who gets the kill and the salvage.
+            if (s.Burning)
+                return Err($"{s.Def.Key} #{s.Id} is on fire ({StateView.Pct(s.Hp / s.Def.MaxHp)}% health) and can't be sold while it burns. Repair it above {StateView.Pct(World.BurnBelow)}% health (repair truck) to put the fire out, then you can sell it");
             // Selling the last of a tech building locks out what needs it: ask first (it's easy to sell your own tech gate).
             var lost = w.Owned(team).Any(o => o != s && o.IsStructure && o.Def.Key == s.Def.Key) ? new List<string>()
                 : Defs.All.Values.Where(d => d.Buildable && d.OwnerTeam < 0 && (d.Requires.Contains(s.Def.Key) || Defs.ProducerKey(d.BuiltBy) == s.Def.Key)).Select(d => d.Key).ToList();
             string lockout = lost.Count == 0 ? "" : $"{string.Join(", ", lost.Take(8))}{(lost.Count > 8 ? $" and {lost.Count - 8} more" : "")} can't be built until you have one again";
+            // Your last command center takes the stockpile with it, however it goes (sold, destroyed or captured).
+            bool spills = s.Def.Key == "command_center" && lost.Count > 0 && w.Teams[team].Stock.Any(kv => kv.Value > 0);
+            string spill = spills ? $"your whole stockpile spills out as salvage at sector {StateView.Sector(s.Center)} for anyone to mine" : "";
             if (lost.Count > 0 && !(c.TryGetValue("confirm", out var cf) && cf is bool yes && yes))
-                return Err($"{s.Def.Key} #{s.Id} is your only {s.Def.Key}: without it {lockout}. Send the sell again with \"confirm\":true to sell it anyway");
-            // Complete: half back, scaled by health. Unfinished: unbuilt share back in full.
-            float factor = s.IsComplete ? 0.5f * (s.Hp / s.Def.MaxHp) : 1f - 0.5f * s.BuildProgress;
+                return Err($"{s.Def.Key} #{s.Id} is your only {s.Def.Key}: without it {lockout}{(spills ? $", and {spill}" : "")}. Send the sell again with \"confirm\":true to sell it anyway");
+            // Complete: half back, scaled by health. Unfinished: the unbuilt share back, scaled by how much of the health
+            // it should have at this point of the build is left (it starts at 10% and gains the rest as it goes up).
+            float factor = s.IsComplete ? 0.5f * (s.Hp / s.Def.MaxHp)
+                : (1f - 0.5f * s.BuildProgress) * MathF.Min(1f, s.Hp / (s.Def.MaxHp * (0.1f + 0.9f * s.BuildProgress)));
             w.Teams[team].Pay(s.Def.Cost, -factor);
             string refund = string.Join(", ", s.Def.Cost.Select(kv => $"{(int)(kv.Value * factor)} {kv.Key}"));
             w.Emit("sold", team, s.Id, pos: s.Center, key: s.Def.Key);
             w.Emit("destroyed", team, s.Id, 0, s.Center, key: s.Def.Key);
-            w.Remove(s);
+            w.Remove(s, "was sold"); // your last command center spills the stockpile as it goes
             string locked = lost.Count > 0 ? $". That was your only {s.Def.Key}: {lockout}" : "";
+            if (spills) locked += $". Your whole stockpile spilled out as salvage at sector {StateView.Sector(s.Center)}: anyone can mine it, so get your trucks there first";
             // Aircraft that just lost their last place to land: say so now, not when they crash.
             var grounded = w.Owned(team).Where(u => u.IsAir && u.Def.UsesFuel && !w.Owned(team).Any(p => World.IsFuelPoint(u, p))).ToList();
             if (grounded.Count > 0) locked += $". Warning: {string.Join(", ", grounded.Take(6).Select(u => $"{u.Def.Key} #{u.Id}"))} now {(grounded.Count == 1 ? "has" : "have")} nowhere to refuel and will crash when the fuel runs out: build an airfield (or a factory, for drones)";
@@ -530,7 +560,7 @@ namespace Pez.Sim
                           $"(it pays {World.DerrickSteel} steel/s while you hold it); if someone holds it, it must be below 50% hp");
             }
             if (!w.IsVisibleTo(team, t)) return Err("target is not currently visible");
-            if (w.IsProtected(t.Team)) return Err("that player is under newcomer protection");
+            if (w.Shielded(t)) return Err("that player is under newcomer protection");
             if (t.Team >= 0 && w.IsProtected(team))
                 return Err($"you're under newcomer protection for {(int)(w.Teams[team].ProtectedUntil - w.Time)}s more and can't take other players' buildings yet; neutral derricks are fine");
             if (!t.IsComplete) return Err("can't capture a structure that's still under construction");

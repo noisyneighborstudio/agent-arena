@@ -861,7 +861,21 @@ namespace Pez.Api
             return w.Teams[team].Visible[m.Idx(x, y)];
         }
 
-        static JObj ViewFrame(World w, int team)
+        /// <summary>
+        /// A unit queue as the viewer's production list: a row for each unit a building is working on (each barracks has its own),
+        /// or the head of a queue nothing is working on. The first row of a unit says how many of it are queued.
+        /// </summary>
+        static List<object> UnitProduction(Team t, Producer kind)
+        {
+            var q = t.UnitQueues[kind];
+            var now = t.Working(kind);
+            if (now.Count == 0 && q.Count > 0) now.Add(q[0]);
+            var counted = new HashSet<string>();
+            return now.Select(p => (object)new JObj().Set("type", p.Key).Set("count", counted.Add(p.Key) ? q.Count(x => x.Key == p.Key) : 1)
+                .Set("pct", (int)(p.Progress / Defs.Get(p.Key).BuildTime * 100)).Set("building", p.WorkerId != 0 ? (object)p.WorkerId : null)).ToList();
+        }
+
+        internal static JObj ViewFrame(World w, int team)
         {
             var m = w.Map;
             string shroud = null;
@@ -929,8 +943,7 @@ namespace Pez.Api
                     .Set("structures", w.Entities.Count(e => !e.Dead && e.Team == team && e.IsStructure))
                     .Set("kills", t.Stats.Kills).Set("protected_for_s", w.IsProtected(team) ? (int)(t.ProtectedUntil - w.Time) : 0)
                     .Set("production", t.StructureQueue.Select(p => { var s0 = w.Get(p.StructureId); return (object)new JObj().Set("type", p.Key).Set("pct", (int)((s0?.BuildProgress ?? 0) * 100)); })
-                        .Concat(t.UnitQueues.Values.Where(q => q.Count > 0).Select(q => (object)new JObj().Set("type", q[0].Key)
-                            .Set("count", q.Count(x => x.Key == q[0].Key)).Set("pct", (int)(q[0].Progress / Defs.Get(q[0].Key).BuildTime * 100)))).ToList()));
+                        .Concat(t.UnitQueues.Where(kv => kv.Value.Count > 0).SelectMany(kv => UnitProduction(t, kv.Key))).ToList()));
                 o.Set("alerts", w.Alerts.Active(w, team).Take(4).Select(a => AlertLog.Describe(w, a)).ToList());
                 o.Set("alert_items", w.Alerts.Active(w, team).Take(4).Select(a => (object)new JObj().Set("priority", a.Priority.ToString().ToLowerInvariant())
                     .Set("label", AlertLog.Label(a.Kind)).Set("sector", StateView.Sector(a.Pos)).Set("x", (int)a.Pos.X).Set("y", (int)a.Pos.Y)).ToList());

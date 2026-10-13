@@ -318,6 +318,8 @@ namespace Pez.Sim
         readonly Dictionary<string, float> rates = new Dictionary<string, float>();
         readonly Dictionary<string, ProdItem> heads = new Dictionary<string, ProdItem>();
         readonly Dictionary<ProdItem, int> milestones = new Dictionary<ProdItem, int>();
+        /// <summary>Units being trained: the building each was last announced at (training_started), so every unit is announced once.</summary>
+        readonly Dictionary<ProdItem, int> working = new Dictionary<ProdItem, int>();
         readonly HashSet<string> blocked = new HashSet<string>();
         readonly HashSet<int> congested = new HashSet<int>();
         int power0, power1, nextFight = 1, samples;
@@ -574,6 +576,14 @@ namespace Pez.Sim
                         break;
                     case "boarded": case "unloaded": case "mine_laid": case "derrick_skipped": case "salvaged":
                         if (mine) Add("orders", ev.Type, Sev.Info, "own", new JObj().Set("unit", ev.A).Set("key", ev.Key).Set("pos", P(ev.Pos)), ev.Text, cmd: CmdOf(ev.A));
+                        else if (ev.Type == "salvaged" && SeenBy(ev))
+                        {
+                            // Another team's thing dismantled in plain sight (it left, or was knocked out): gone for sure, so no
+                            // contact or remembered structure lingers for it. Nobody killed it, so it isn't an enemy_destroyed.
+                            seenDead.Add(ev.A);
+                            confirmedDead.Add(ev.A);
+                            if (confirmedDead.Count > 5000) confirmedDead.Clear();
+                        }
                         break;
                     case "captured":
                         if (mine) Add("economy", "captured", Sev.Notice, "own", new JObj().Set("id", ev.A).Set("key", ev.Key).Set("pos", P(ev.Pos)), ev.Text ?? $"captured {ev.Key} #{ev.A}");
@@ -1041,43 +1051,57 @@ namespace Pez.Sim
         void Production()
         {
             var t = T;
-            var queues = new List<(string name, List<ProdItem> q, Func<ProdItem, float> pct, string blockedBy)>();
+            var queues = new List<(string name, List<ProdItem> q, bool units, string blockedBy)>();
             bool hq = w.HasComplete(Team, "command_center");
-            queues.Add(("construction", t.StructureQueue, p => w.Get(p.StructureId)?.BuildProgress ?? 0, hq ? null : "needs a completed command_center"));
+            queues.Add(("construction", t.StructureQueue, false, hq ? null : "needs a completed command_center"));
+            // A unit queue is stuck only when no building of its kind is left to work on it.
             foreach (var kv in t.UnitQueues)
-            {
-                var def = kv.Value.Count > 0 ? w.Def(kv.Value[0].Key) : null;
-                string why = kv.Value.Count > 0 && w.FirstProducer(Team, kv.Key) == null && !(kv.Value[0].StructureId != 0 && w.Get(kv.Value[0].StructureId) is Entity ch && ch.Team == Team && ch.IsComplete)
-                    ? $"needs a completed {ProducerName(kv.Key)}" : null;
-                queues.Add((ProducerName(kv.Key), kv.Value, p => def != null && def.BuildTime > 0 ? p.Progress / def.BuildTime : 0, why));
-            }
+                queues.Add((ProducerName(kv.Key), kv.Value, true, kv.Value.Count > 0 && w.FirstProducer(Team, kv.Key) == null ? $"needs a completed {ProducerName(kv.Key)}" : null));
             var progress = new List<JObj>();
+            var active = new HashSet<ProdItem>();
             float rate = t.LowPower ? 0.5f : 1f;
-            foreach (var (name, q, pct, why) in queues)
+            foreach (var (name, q, units, why) in queues)
             {
                 var head = q.Count > 0 ? q[0] : null;
                 heads.TryGetValue(name, out var was);
                 if (head != was)
                 {
-                    if (head != null)
+                    // Units announce themselves below, each as a building takes it up; structures go one at a time, so the head is the one.
+                    if (head != null && !units)
                     {
                         var def = w.Def(head.Key);
-                        float eta = def == null ? 0 : (def.BuildTime - (name == "construction" ? (w.Get(head.StructureId)?.BuildProgress ?? 0) * def.BuildTime : head.Progress)) / rate;
-                        Add("production", name == "construction" ? "construction_started" : "training_started", Sev.Info, "own",
+                        float eta = def == null ? 0 : (def.BuildTime - (w.Get(head.StructureId)?.BuildProgress ?? 0) * def.BuildTime) / rate;
+                        Add("production", "construction_started", Sev.Info, "own",
                             new JObj().Set("producer", name).Set("key", head.Key).Set("eta_s", (int)Math.Ceiling(eta)).Set("queued", q.Count), $"{name}: started {head.Key} (~{eta:0}s, {q.Count} queued)", cmd: head.CmdId);
                     }
-                    else Add("production", "queue_empty", Sev.Notice, "own", new JObj().Set("producer", name), $"{name} queue is empty");
+                    else if (head == null) Add("production", "queue_empty", Sev.Notice, "own", new JObj().Set("producer", name), $"{name} queue is empty");
                     heads[name] = head;
                 }
                 if (why != null && head != null) { if (blocked.Add(name)) Add("production", "queue_blocked", Sev.Warning, "own", new JObj().Set("producer", name).Set("key", head.Key).Set("reason", why), $"{name} queue is stuck: {why}"); }
                 else if (blocked.Remove(name)) Add("production", "queue_unblocked", Sev.Info, "own", new JObj().Set("producer", name), $"{name} queue is moving again");
-                if (head != null && w.Def(head.Key) is EntityDef hd && hd.BuildTime >= 20)
+                // Everything being worked on: each completed building of a kind trains one unit at once.
+                foreach (var item in units ? q.Where(p => p.WorkerId != 0 && w.Get(p.WorkerId) != null) : q.Take(1))
                 {
-                    int quarter = Math.Min(3, (int)(pct(head) * 4));
-                    milestones.TryGetValue(head, out var had);
-                    if (quarter > had) { milestones[head] = quarter; progress.Add(new JObj().Set("producer", name).Set("key", head.Key).Set("pct", quarter * 25)); }
+                    active.Add(item);
+                    var def = w.Def(item.Key);
+                    if (units && (!working.TryGetValue(item, out var by) || by != item.WorkerId))
+                    {
+                        working[item] = item.WorkerId; // a building took it up (a different one, if the first was lost)
+                        float eta = def == null ? 0 : (def.BuildTime - item.Progress) / rate;
+                        Add("production", "training_started", Sev.Info, "own",
+                            new JObj().Set("producer", name).Set("building", item.WorkerId).Set("key", item.Key).Set("eta_s", (int)Math.Ceiling(eta)).Set("queued", q.Count),
+                            $"{name} #{item.WorkerId}: started {item.Key} (~{eta:0}s, {q.Count} queued)", cmd: item.CmdId);
+                    }
+                    if (def != null && def.BuildTime >= 20)
+                    {
+                        float pct = units ? item.Progress / def.BuildTime : (w.Get(item.StructureId)?.BuildProgress ?? 0);
+                        int quarter = Math.Min(3, (int)(pct * 4));
+                        milestones.TryGetValue(item, out var had);
+                        if (quarter > had) { milestones[item] = quarter; progress.Add(new JObj().Set("producer", name).Set("key", item.Key).Set("pct", quarter * 25)); }
+                    }
                 }
             }
+            foreach (var p in working.Keys.Where(p => !active.Contains(p)).ToList()) working.Remove(p);
             foreach (var p in milestones.Keys.Where(p => !queues.Any(q => q.q.Contains(p))).ToList()) milestones.Remove(p);
             if (progress.Count > 0) Add("production", "production_progress", Sev.Info, "own", new JObj().Set("items", progress.Cast<object>().ToList()), string.Join(", ", progress.Select(p => $"{p["key"]} {p["pct"]}%")));
         }
@@ -1135,10 +1159,17 @@ namespace Pez.Sim
             var rateObj = new JObj();
             foreach (var item in Defs.Items) if (t.Rates.TryGetValue(item, out var r) && Math.Abs(r) >= 0.05f) rateObj.Set(item, (float)Math.Round(r, 2));
             var building = t.StructureQueue.Take(3).Select(p => (object)new JObj().Set("key", p.Key).Set("pct", StateView.Pct(w.Get(p.StructureId)?.BuildProgress ?? 0))).ToList();
-            var training = t.UnitQueues.Where(kv => kv.Value.Count > 0).Select(kv =>
+            // One entry per unit being worked on (each completed building trains one), or the head of a queue nothing is working on.
+            var training = t.UnitQueues.Where(kv => kv.Value.Count > 0).SelectMany(kv =>
             {
-                var d = w.Def(kv.Value[0].Key);
-                return (object)new JObj().Set("producer", ProducerName(kv.Key)).Set("key", kv.Value[0].Key).Set("pct", d != null && d.BuildTime > 0 ? StateView.Pct(kv.Value[0].Progress / d.BuildTime) : 0).Set("queued", kv.Value.Count);
+                var now = t.Working(kv.Key);
+                if (now.Count == 0) now.Add(kv.Value[0]);
+                return now.Select(p =>
+                {
+                    var d = w.Def(p.Key);
+                    return (object)new JObj().Set("producer", ProducerName(kv.Key)).Set("building", p.WorkerId != 0 ? (object)p.WorkerId : null).Set("key", p.Key)
+                        .Set("pct", d != null && d.BuildTime > 0 ? StateView.Pct(p.Progress / d.BuildTime) : 0).Set("queued", kv.Value.Count);
+                });
             }).ToList();
             Add("heartbeat", "heartbeat", Sev.Info, "own", new JObj()
                 .Set("units", us.Count).Set("idle", idle.Take(15).Cast<object>().ToList()).Set("idle_n", idle.Count)
