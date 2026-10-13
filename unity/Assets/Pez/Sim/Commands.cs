@@ -409,16 +409,20 @@ namespace Pez.Sim
             var lost = w.Owned(team).Any(o => o != s && o.IsStructure && o.Def.Key == s.Def.Key) ? new List<string>()
                 : Defs.All.Values.Where(d => d.Buildable && d.OwnerTeam < 0 && (d.Requires.Contains(s.Def.Key) || Defs.ProducerKey(d.BuiltBy) == s.Def.Key)).Select(d => d.Key).ToList();
             string lockout = lost.Count == 0 ? "" : $"{string.Join(", ", lost.Take(8))}{(lost.Count > 8 ? $" and {lost.Count - 8} more" : "")} can't be built until you have one again";
+            // Your last command center takes the stockpile with it, however it goes (sold, destroyed or captured).
+            bool spills = s.Def.Key == "command_center" && lost.Count > 0 && w.Teams[team].Stock.Any(kv => kv.Value > 0);
+            string spill = spills ? $"your whole stockpile spills out as salvage at sector {StateView.Sector(s.Center)} for anyone to mine" : "";
             if (lost.Count > 0 && !(c.TryGetValue("confirm", out var cf) && cf is bool yes && yes))
-                return Err($"{s.Def.Key} #{s.Id} is your only {s.Def.Key}: without it {lockout}. Send the sell again with \"confirm\":true to sell it anyway");
+                return Err($"{s.Def.Key} #{s.Id} is your only {s.Def.Key}: without it {lockout}{(spills ? $", and {spill}" : "")}. Send the sell again with \"confirm\":true to sell it anyway");
             // Complete: half back, scaled by health. Unfinished: unbuilt share back in full.
             float factor = s.IsComplete ? 0.5f * (s.Hp / s.Def.MaxHp) : 1f - 0.5f * s.BuildProgress;
             w.Teams[team].Pay(s.Def.Cost, -factor);
             string refund = string.Join(", ", s.Def.Cost.Select(kv => $"{(int)(kv.Value * factor)} {kv.Key}"));
             w.Emit("sold", team, s.Id, pos: s.Center, key: s.Def.Key);
             w.Emit("destroyed", team, s.Id, 0, s.Center, key: s.Def.Key);
-            w.Remove(s);
+            w.Remove(s, "was sold"); // your last command center spills the stockpile as it goes
             string locked = lost.Count > 0 ? $". That was your only {s.Def.Key}: {lockout}" : "";
+            if (spills) locked += $". Your whole stockpile spilled out as salvage at sector {StateView.Sector(s.Center)}: anyone can mine it, so get your trucks there first";
             // Aircraft that just lost their last place to land: say so now, not when they crash.
             var grounded = w.Owned(team).Where(u => u.IsAir && u.Def.UsesFuel && !w.Owned(team).Any(p => World.IsFuelPoint(u, p))).ToList();
             if (grounded.Count > 0) locked += $". Warning: {string.Join(", ", grounded.Take(6).Select(u => $"{u.Def.Key} #{u.Id}"))} now {(grounded.Count == 1 ? "has" : "have")} nowhere to refuel and will crash when the fuel runs out: build an airfield (or a factory, for drones)";

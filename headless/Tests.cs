@@ -1230,6 +1230,108 @@ namespace Pez.Headless
             int salvage = 0; for (int y = 0; y < 3; y++) for (int x = 0; x < 3; x++) salvage += w.Map.Ore[w.Map.Idx(hq.Origin.X + x, hq.Origin.Y + y)];
             Check(salvage > 500 && w.Map.Ore[w.Map.Idx(foot.X, foot.Y)] > oreBefore, $"and lies on the footprint as salvage ore anyone can mine ({salvage} units)");
             Check(w.Alerts.Active(w, 0).Any(a => a.Kind == "salvage_available") && w.Alerts.Active(w, 1).Any(a => a.Kind == "stockpile_lost"), "everyone is told: the loser and the would-be scavengers");
+            LastHqSpillsAnyRoute();
+        }
+
+        /// <summary>The stockpile spills however the last command center goes (sold, captured), and a team knocked out leaves salvage.</summary>
+        static void LastHqSpillsAnyRoute()
+        {
+            long OreOnMap(World x) => x.Map.Ore.Sum(o => (long)o);
+            Entity Hq(World x, int team) => x.Owned(team).First(e => e.Def.Key == "command_center");
+            void Rich(World x, int team) { x.Teams[team].Stock.Clear(); x.Teams[team].Add("steel", 5000); x.Teams[team].Add("circuits", 500); } // 6000 ore worth
+            void Quiet(World x) { foreach (var u in x.Entities.Where(e => !e.IsStructure).ToList()) x.Remove(u); } // no trucks mining the ore we count
+
+            // Sold: needs the confirm, which says the stockpile goes with it; then it spills like a kill, with its own wording.
+            var w = new World(2, 7, 80);
+            Rich(w, 1);
+            w.SpawnStructure(1, "power_plant", w.FindPlacement(1, "power_plant").Value, 1f); // the team has something else left
+            var hq = Hq(w, 1);
+            var refused = Commands.Execute(w, 1, Cmd("type", "sell", "structure_id", hq.Id));
+            Check(!Ok(refused) && Said(refused).Contains("stockpile") && !hq.Dead && w.Teams[1].Amount("steel") == 5000, $"selling your only command center asks first and warns about the stockpile: {Said(refused)}");
+            long before = OreOnMap(w);
+            var sold = Commands.Execute(w, 1, Cmd("type", "sell", "structure_id", hq.Id, "confirm", true));
+            long gained = OreOnMap(w) - before;
+            Check(Ok(sold) && hq.Dead && Said(sold).Contains("stockpile spilled"), $"the sale says so: {Said(sold)}");
+            Check(w.Teams[1].Stock.Count == 0 && gained >= 5900 && gained <= 6000, $"selling the last command center spills the stockpile as salvage ({gained} ore on the map, {w.Teams[1].Stock.Count} items left)");
+            Check(w.Events.Any(e => e.Type == "chat" && e.Text.Contains("last command center was sold") && e.Text.Contains("spilled")), "the arena chat says it was sold, not that it fell");
+            var lostAlert = w.Alerts.Active(w, 1).FirstOrDefault(a => a.Kind == "stockpile_lost");
+            Check(lostAlert != null && lostAlert.Lost.Any(l => l.Contains("was sold")) && w.Alerts.Active(w, 0).Any(a => a.Kind == "salvage_available"), "the seller is told what happened and the others where the salvage is");
+
+            // A team with a second command center selling one keeps its stockpile; selling the last then spills it.
+            var w2 = new World(2, 7, 80);
+            w2.Teams[1].ProtectedUntil = 0;
+            Rich(w2, 1);
+            var hqA = Hq(w2, 1);
+            var hqB = w2.SpawnStructure(1, "command_center", w2.FindPlacement(1, "command_center", hqA.Center + new Vec2(14, 0), requireNear: false).Value, 1f);
+            long before2 = OreOnMap(w2);
+            var firstSale = Commands.Execute(w2, 1, Cmd("type", "sell", "structure_id", hqA.Id));
+            Check(Ok(firstSale) && hqA.Dead && w2.Teams[1].Amount("steel") == 5000 && OreOnMap(w2) == before2 && !w2.Alerts.Active(w2, 1).Any(a => a.Kind == "stockpile_lost"),
+                  $"selling one of two command centers keeps the stockpile: {Said(firstSale)}");
+            var lastSale = Commands.Execute(w2, 1, Cmd("type", "sell", "structure_id", hqB.Id, "confirm", true));
+            Check(Ok(lastSale) && hqB.Dead && w2.Teams[1].Stock.Count == 0 && OreOnMap(w2) - before2 >= 5900, $"selling the other one then spills it ({OreOnMap(w2) - before2} ore)");
+
+            // Captured: the stockpile spills on the open ground around the building, which now belongs to the capturer.
+            var w3 = new World(2, 7, 80);
+            w3.Teams[0].ProtectedUntil = 0; w3.Teams[1].ProtectedUntil = 0;
+            Rich(w3, 1);
+            w3.SpawnStructure(1, "power_plant", w3.FindPlacement(1, "power_plant").Value, 1f);
+            var hq3 = Hq(w3, 1);
+            Quiet(w3);
+            hq3.Hp = hq3.Def.MaxHp * 0.3f;
+            var eng = At(w3.SpawnUnit(0, "engineer", Hq(w3, 0)), hq3.Center + new Vec2(2.5f, 0));
+            long before3 = OreOnMap(w3);
+            w3.UpdateVisibility();
+            var order3 = Commands.Execute(w3, 0, Cmd("type", "capture", "units", new[] { eng.Id }, "target", hq3.Id));
+            Run(w3, 20);
+            long gained3 = OreOnMap(w3) - before3;
+            Check(Ok(order3) && hq3.Team == 0 && !hq3.Dead && eng.Dead, $"the engineer captured the command center ({Said(order3)})");
+            Check(w3.Teams[1].Stock.Count == 0 && gained3 >= 5900 && gained3 <= 6000, $"capturing the last command center spills the stockpile ({gained3} ore on the map, {w3.Teams[1].Stock.Count} items left)");
+            int under = 0; for (int y = 0; y < 3; y++) for (int x = 0; x < 3; x++) under += w3.Map.Ore[w3.Map.Idx(hq3.Origin.X + x, hq3.Origin.Y + y)];
+            Check(under == 0, $"none of it lies under the building, where trucks couldn't reach it ({under})");
+            Check(w3.Events.Any(e => e.Type == "chat" && e.Text.Contains("last command center was captured by") && e.Text.Contains("spilled")) && w3.Alerts.Active(w3, 1).Any(a => a.Kind == "stockpile_lost" && a.Lost.Any(l => l.Contains("was captured by"))),
+                  "chat and the loser's alert say it was captured");
+
+            // Capturing one of two doesn't spill.
+            var w4 = new World(2, 7, 80);
+            w4.Teams[0].ProtectedUntil = 0; w4.Teams[1].ProtectedUntil = 0;
+            Rich(w4, 1);
+            var h4 = Hq(w4, 1);
+            w4.SpawnStructure(1, "command_center", w4.FindPlacement(1, "command_center", h4.Center + new Vec2(14, 0), requireNear: false).Value, 1f);
+            Quiet(w4);
+            h4.Hp = h4.Def.MaxHp * 0.3f;
+            var eng4 = At(w4.SpawnUnit(0, "engineer", Hq(w4, 0)), h4.Center + new Vec2(2.5f, 0));
+            w4.UpdateVisibility();
+            Commands.Execute(w4, 0, Cmd("type", "capture", "units", new[] { eng4.Id }, "target", h4.Id));
+            Run(w4, 20);
+            Check(h4.Team == 0 && w4.Teams[1].Amount("circuits") == 500, "capturing a team's other command center leaves its stockpile alone");
+
+            // Knocked out (closed game): the stockpile and the units left are dismantled into salvage, not deleted.
+            var w5 = new World(3, 7, 96);
+            Quiet(w5);
+            foreach (var s in w5.Owned(2).Where(e => e.IsStructure).ToList()) w5.Remove(s);
+            w5.Teams[2].Stock.Clear(); w5.Teams[2].Add("steel", 3000);
+            var base5 = w5.Owned(0).First(e => e.IsStructure);
+            for (int i = 0; i < 2; i++) At(w5.SpawnUnit(2, "heavy_tank", base5), w5.Teams[2].StartPos + new Vec2(4 + i, 4));
+            long before5 = OreOnMap(w5);
+            Run(w5, 1);
+            long gained5 = OreOnMap(w5) - before5;
+            Check(w5.Teams[2].Defeated && !w5.Teams[2].Left && !w5.Owned(2).Any() && w5.Teams[2].Stock.Count == 0, "a team with no structures left is out, and nothing of it stands");
+            Check(gained5 >= 3000 + 2 * 270 && gained5 <= 3000 + 2 * 280, $"its stockpile (3000) and two heavy tanks (half of 560 each) became salvage ({gained5} ore)");
+            Check(!w5.Events.Any(e => e.Type == "destroyed" && e.Team == 2 && e.Key == "heavy_tank") && w5.Events.Count(e => e.Type == "salvaged" && e.Team == 2 && e.Key == "heavy_tank") == 2, "the units were dismantled, not shot");
+            var out5 = w5.Events.Last(e => e.Type == "defeated" && e.Team == 2);
+            Check(out5.Text.Contains("salvage ore") && w5.Alerts.Active(w5, 0).Any(a => a.Kind == "salvage_available"), $"the announcement and the others' alerts say where it is: {out5.Text}");
+
+            // The same in an open arena, where everyone else plays on.
+            var w6 = new World(3, 7, 96) { Open = true };
+            Quiet(w6);
+            foreach (var s in w6.Owned(2).Where(e => e.IsStructure).ToList()) w6.Remove(s);
+            w6.Teams[2].Stock.Clear(); w6.Teams[2].Add("steel", 3000);
+            At(w6.SpawnUnit(2, "heavy_tank", w6.Owned(0).First(e => e.IsStructure)), w6.Teams[2].StartPos + new Vec2(4, 4));
+            long before6 = OreOnMap(w6);
+            Run(w6, 1);
+            long gained6 = OreOnMap(w6) - before6;
+            Check(w6.Teams[2].Defeated && !w6.GameOver && w6.Owned(2).Count() == 0 && gained6 >= 3000 + 270, $"an eliminated team in an open arena leaves salvage too ({gained6} ore)");
+            Check(w.Errors == 0 && w2.Errors == 0 && w3.Errors == 0 && w4.Errors == 0 && w5.Errors == 0 && w6.Errors == 0, "no sim errors");
         }
 
         static void FieldRefuelling()
