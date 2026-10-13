@@ -33,20 +33,42 @@ namespace Pez.Headless
             SurfaceOreScalesWithArea();
         }
 
-        /// <summary>Surface ore grows with the map's area at a fixed richness, with the extra fields turned round the centre; joins add their share too.</summary>
+        /// <summary>Share of the map's open ground (sampled every 4th tile) that is more than `far` tiles from any surface ore.</summary>
+        static double FarFromOre(Map m, float far)
+        {
+            var ore = new List<Vec2>();
+            for (int i = 0; i < m.Ore.Length; i++) if (m.Ore[i] > 0) ore.Add(new Vec2(i % m.W + 0.5f, i / m.W + 0.5f));
+            int open = 0, gap = 0;
+            for (int y = 0; y < m.H; y += 4)
+                for (int x = 0; x < m.W; x += 4)
+                {
+                    if (m.Tiles[m.Idx(x, y)] > Terrain.Dirt) continue;
+                    open++;
+                    var p = new Vec2(x + 0.5f, y + 0.5f);
+                    if (!ore.Any(o => Vec2.Dist(o, p) <= far)) gap++;
+                }
+            return open == 0 ? 0 : (double)gap / open;
+        }
+
+        /// <summary>
+        /// Surface ore grows with the map's area at a fixed richness, but only by a modest share on top of the corner fields (the
+        /// ore per base stays near an 80x80 map's), in sets turned round the centre that fill the gaps; joins add a base's worth
+        /// plus a little.
+        /// </summary>
         static void SurfaceOreScalesWithArea()
         {
             long Ore(Map m) => m.Ore.Sum(o => (long)o);
             foreach (float richness in new[] { 1f, 0.3f })
             {
                 var seeds = new[] { 1, 2, 3 };
-                var sizes = new[] { 80, 96, 112, 128, 160, 240 };
+                var sizes = new[] { 80, 96, 128, 160, 240, 320 };
                 var ore = sizes.Select(size => seeds.Average(seed => (double)Ore(Map.Generate(size, size, seed, richness)))).ToList();
-                var perArea = sizes.Select((size, i) => ore[i] / (size * size / 6400.0)).ToList();
-                bool grows = Enumerable.Range(1, sizes.Length - 1).All(i => ore[i] > ore[i - 1] * 1.1);
-                bool proportional = perArea.Skip(1).All(a => a > perArea[0] * 0.8 && a < perArea[0] * 1.4);
-                Check(grows && proportional, $"at richness {richness} surface ore grows with map area (80 to 240 tiles: {string.Join(", ", ore.Select(o => $"{o / 1000:0}k"))}; per 80x80 {string.Join(", ", perArea.Select(a => $"{a / 1000:0}k"))})");
+                bool grows = ore[1] > ore[0] * 1.05 && ore[2] > ore[1] * 1.05;
+                bool modest = ore.All(o => o < ore[0] * 1.6) && ore.Skip(2).All(o => o > ore[0] * 1.15);
+                Check(grows && modest, $"at richness {richness} surface ore grows with map area, by a modest share of the corner fields' (80 to 320 tiles: {string.Join(", ", ore.Select(o => $"{o / 1000:0.0}k"))})");
             }
+            double gapWith = new[] { 1, 2, 3 }.Average(seed => FarFromOre(Map.Generate(160, 160, seed), 35f)), gapWithout = new[] { 1, 2, 3 }.Average(seed => FarFromOre(Map.Generate(160, 160, seed, 1f, false), 35f));
+            Check(gapWith < 0.05 && gapWithout > 2 * gapWith, $"the extra fields fill the far gaps: on a 160x160 map {gapWithout:P0} of the open ground is more than 35 tiles from any ore without them, {gapWith:P0} with them");
 
             // The extra fields (the map with them, less the map without) are the same in every quarter of the map, and keep off the base sites.
             var uneven = new List<string>(); var close = new List<string>(); int maps = 0;
@@ -63,23 +85,26 @@ namespace Pez.Headless
                             quarter[(x < size / 2 ? 0 : 1) + (y < size / 2 ? 0 : 2)] += extra;
                             if (with.Spawns.Any(s => Vec2.Dist(s, new Vec2(x + 0.5f, y + 0.5f)) < 12f)) close.Add($"{seed}/{size}");
                         }
-                    if (quarter[0] == 0 || quarter.Distinct().Count() > 1) uneven.Add($"{seed}/{size}: {string.Join(" ", quarter)}");
+                    if (quarter[0] == 0 || quarter.Max() - quarter.Min() > 0.05 * quarter.Average()) uneven.Add($"{seed}/{size}: {string.Join(" ", quarter)}");
                     maps++;
                 }
-            Check(uneven.Count == 0 && maps == 6, "the extra surface fields hold the same ore in all four quarters of the map" + (uneven.Count > 0 ? $"; uneven: {string.Join("; ", uneven)}" : ""));
+            Check(uneven.Count == 0 && maps == 6, "the extra surface fields hold the same ore in all four quarters of the map (to within 5%: a field on the middle line is split differently by its turned copy)" + (uneven.Count > 0 ? $"; uneven: {string.Join("; ", uneven)}" : ""));
             Check(close.Count == 0, "and none lies on a base site");
             Check(Ore(Map.Generate(160, 160, 1, 1f, false)) < 70000, "a map built without them (a game saved before they existed) has only the fixed fields");
 
-            // A join's new ground gets its share too.
+            // A join adds the new base's own fields and a few neutral ones: about one base's worth of ore each time, however wide the strip.
             var added = new List<double>();
             foreach (int seed in new[] { 3, 7, 1337 })
             {
                 var w = new World(2, seed, 80) { Open = true };
-                long before = Ore(w.Map);
-                w.AddTeam("llm", "Joiner", out _);
-                added.Add(Ore(w.Map) - before);
+                for (int j = 0; j < 6; j++)
+                {
+                    long before = Ore(w.Map);
+                    if (w.AddTeam("llm", "Joiner" + j, out _) == null) break;
+                    added.Add(Ore(w.Map) - before);
+                }
             }
-            Check(added.All(a => a > 40000), $"a join adds a strip's worth of surface ore along with the new base's own fields ({string.Join(", ", added.Select(a => $"{a / 1000:0}k"))} on 80x80 at richness 1)");
+            Check(added.Count == 18 && added.All(a => a > 12000 && a < 40000), $"a join adds about a base's worth of surface ore, one strip or a wide one (18 joins on 3 maps, richness 1: {added.Min() / 1000:0.0}k to {added.Max() / 1000:0.0}k, {added.Average() / 1000:0.0}k on average)");
         }
 
         /// <summary>A base site's deep deposits within `within` tiles as a string: ore, starting amount and distance, sorted.</summary>
