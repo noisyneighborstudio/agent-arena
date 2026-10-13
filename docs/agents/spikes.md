@@ -37,4 +37,4 @@ This is how spikes were run in the simstream work (WebSocket vs WebRTC data chan
 
 - **Never experiment on the live arena.** That means ports 7777/7778, the gateway on 7790 and `unity/Build/`. Use test copies on spare ports, a test gateway with temp state files, and headless selftests. Ports already taken: preview 7957–7959, kitchen sink 7947–7949, test copies 7967/7977/7987, test gateways 7893/7894.
 - **Judge game changes against the design principle:** the game is won and lost by strategy, not friction. A spike that adds a mechanic reports what new decision it creates for players.
-- **Balance spikes report before/after numbers** from several AI-vs-AI seeds: game length, ore mined, and how games end.
+- **Balance spikes report before/after numbers** from several AI-vs-AI seeds: game length, ore mined, and how games end. `cd headless && DOTNET_gcServer=1 dotnet run -c Release -- --econ-report` (`headless/EconReport.cs`, flags in its summary) produces them over seeds x map sizes x richness: income by source over time, stock floats, low-power time, deep ore used, the seat win split, and every rate and cost the rules text quotes, checked against the sim.

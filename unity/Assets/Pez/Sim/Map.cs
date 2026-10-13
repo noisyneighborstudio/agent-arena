@@ -146,8 +146,9 @@ namespace Pez.Sim
         // ---- Neutral surface fields. The corners, the crystal ring and the centre hold about 54k ore at richness 1 whatever the
         // map's size. A bigger map gets a few small stepping-stone fields on top, in sets of four turned round the centre, placed
         // to fill the gaps between the corners and toward the middle (so there is ore an outpost can reach from the last): a
-        // modest share, up to about 40% of the corner fields' ore, so the ore per base stays near an 80x80 map's. A join's strip
-        // gets one set's worth, on top of the new base's own fields.
+        // modest share, about 45% of the corner fields' ore at the most (about 20k at richness 1), so a map of 96 tiles or more
+        // holds 20-40% more ore than an 80x80 one (65k to 77k, whatever its size above 128). A join's strip gets one set's worth,
+        // on top of the new base's own fields, so as joins grow the map the ore per player stays near 25k (richness 1).
 
         /// <summary>The most sets of four neutral fields a new map gets (about 10k ore at richness 1 a set, so about 20k in all).</summary>
         public const int ExtraSetsMax = 2;

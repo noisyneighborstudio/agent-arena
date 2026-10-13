@@ -41,6 +41,7 @@ namespace Pez.Headless
             DeepDepositKits();
             DeepKitForJoiners();
             SurfaceOreScalesWithArea();
+            EconReportHarness();
         }
 
         /// <summary>Share of the map's open ground (sampled every 4th tile) that is more than `far` tiles from any surface ore.</summary>
@@ -2815,6 +2816,120 @@ namespace Pez.Headless
                 if (got > paid * 0.26f) { cheap = false; worst = $"{key}: {got}/{paid}"; }
             }
             Check(cheap, $"no kill leaves more than about a quarter of what the victim cost {worst}");
+        }
+
+        /// <summary>
+        /// The economy harness (EconReport.cs, --econ-report): every rate and cost it measures matches what the rules, the defs and
+        /// the docs say, a game it plays is the same whenever and wherever it runs, its income by source accounts for the
+        /// stockpile, and its report builds. (The full matrix is run by hand; see the flags in EconReport.)
+        /// </summary>
+        static void EconReportHarness()
+        {
+            var rates = EconReport.MeasureRates();
+            var off = rates.Where(r => !r.Ok).ToList();
+            Check(rates.Count >= 40 && off.Count == 0,
+                  $"the economy harness measures {rates.Count} rates and costs, and every one matches what the rules, defs and docs say" + (off.Count == 0 ? "" : ": " + string.Join("; ", off.Select(r => $"{r.Name} is {r.Measured:0.###}, said {r.Claimed}"))));
+
+            // A game is a pure function of its seed, size, richness and mode: played twice at once on two threads, and once alone.
+            EconReport.GameRun a = null, b = null;
+            System.Threading.Tasks.Parallel.Invoke(() => a = EconReport.PlayGame(3, 80, 1f, false, 6), () => b = EconReport.PlayGame(3, 80, 1f, false, 6));
+            var c = EconReport.PlayGame(3, 80, 1f, false, 6);
+            string Digest(EconReport.GameRun g) => string.Join("|", g.Teams.Select(t => string.Join(",", t.Rows.Select(r => $"{r.Mined}/{r.Deep}/{r.Salvage}/{r.Derrick:0.###}/{r.Trickle:0.###}/{r.Trucks}/{r.Stock.Sum():0.###}"))));
+            Check(a.Teams[0].Rows.Count == 6 && Digest(a) == Digest(b) && Digest(a) == Digest(c) && a.Errors == 0,
+                  $"a harness game is the same played twice at once and once alone ({a.Teams[0].Rows.Count} minutes, {a.Teams[0].Mined} and {a.Teams[1].Mined} ore mined, {a.Errors} sim errors)");
+
+            // Ore in = ore out: what a team started with (650) plus what it mined, its derricks paid and the command center trickled, less upkeep,
+            // is what it holds (as raw ore) plus what it has built, give or take what is still in a queue or was spilled.
+            double Mix(string item, double n) => World.OreMix[item].Sum() * n;
+            bool balanced = true; string worst = "";
+            foreach (var t in a.Teams)
+            {
+                var r = t.Rows.First(x => x.Min == 5);
+                double held = Defs.Items.Select((item, k) => Mix(item, r.Stock[k])).Sum(), income = 650 + r.Mined + r.Derrick + r.Trickle - r.Upkeep, diff = (held + r.Spent - income) / income;
+                if (Math.Abs(diff) > 0.12) { balanced = false; worst = $"team {t.Id} off by {diff:P0}"; }
+            }
+            Check(balanced, $"the harness's income by source accounts for each team's stock and spending at minute 5 {worst}");
+
+            // What the rules text says about the catch-up kit and about regrowth, as numbers.
+            var kits = EconReport.MeasureKits(new[] { 0.5, 2.9, 10.0, 30.0, 60.0 });
+            Check(kits[0].Plants == 0 && kits[1].Plants == 0 && kits[1].Refineries == 0 && kits[2].Plants == 1 && kits[2].Refineries == 1
+                  && kits[2].Stock["steel"] == 600 && kits[2].Stock["copper"] == 300 && kits[2].Stock["circuits"] == 80 && kits[2].Stock["iron_ore"] == 700
+                  && kits[3].Stock["steel"] == 1800 && kits[4].Stock["steel"] == 1800 && kits[4].Stock["iron_ore"] == 1100,
+                  $"the catch-up kit is 60 steel, 30 copper, 8 circuits and 20 iron ore a minute of arena age, up to 30 minutes, with a power plant and refinery from minute 3 (at 10 min: {kits[2].Stock["steel"]:0} steel; at 60 min: {kits[4].Stock["steel"]:0})");
+            double Regrown(float richness, int seed) => EconReport.RegrowBare(80, richness, seed, 20).Total[20] / 1200.0;
+            double full = (Regrown(1f, 1) + Regrown(1f, 2)) / 2, scarce = (Regrown(0.3f, 1) + Regrown(0.3f, 2)) / 2;
+            Check(full > 7 && full < 9 && scarce > full * 0.45 && scarce < full * 0.6,
+                  $"a mined-bare 80-tile map earns back about 8 ore/s at full richness and about half that on a scarce one, as the rules text says ({full:0.0} and {scarce:0.0})");
+
+            // Surface snapshots count the fields' own ore: salvage from kills lies on the map's ore layer too, and isn't field ore.
+            var probe = new World(2, 1, 80);
+            var pm = probe.Map;
+            double fieldBefore = EconReport.FieldOreTotal(pm);
+            int bare = Enumerable.Range(0, pm.Ore.Length).First(i => pm.Ore[i] == 0 && pm.OreBase[i] == 0 && pm.TerrainPassable(i % pm.W, i / pm.W));
+            pm.Ore[bare] = 100; pm.Salvage[bare] = 100; pm.OreType[bare] = Map.Iron;
+            var played = EconReport.PlayGame(1, 80, 1f, true, 12);
+            Check(EconReport.FieldOreTotal(pm) == fieldBefore && pm.Ore.Sum() == (int)fieldBefore + 100 && played.SalvageEnd > 0 && played.SurfaceByMinute[12] == played.SurfaceEnd,
+                  $"the harness's surface ore leaves out salvage (100 salvage on the map: field ore stays {EconReport.FieldOreTotal(pm):0}); in a played game with {played.SalvageEnd:0} ore of salvage lying at the end, the last minute's snapshot is the field ore alone ({played.SurfaceByMinute[12]:0})");
+
+            // Richness is kept exact in group names and exports, and --profile can't corrupt a sweep of parallel worlds.
+            Check(EconReport.OreLabel(0.26f) == "0.26" && EconReport.OreLabel(0.34f) == "0.34" && EconReport.OreLabel(1f) == "1.0" && EconReport.OreLabel(0.3f) == "0.3"
+                  && new EconReport.GameRun { Mode = "war", Size = 80, Ore = 0.26f }.Group != new EconReport.GameRun { Mode = "war", Size = 80, Ore = 0.34f }.Group,
+                  "richness 0.26 and 0.34 are two groups, not both 0.3");
+            bool profiled = World.Profile;
+            World.Profile = true;
+            string sweep; List<EconReport.GameRun> sweepGames;
+            try { sweep = EconReport.Build(new EconReport.Options { Seeds = new[] { 1, 2 }, Sizes = new[] { 80 }, Ores = new[] { 0.26f, 0.34f }, Modes = new[] { "war" }, Minutes = 2, Jobs = 4, Sections = new HashSet<string> { "matrix" } }, _ => { }, out sweepGames); }
+            finally { profiled = World.Profile; World.Profile = false; }
+            string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "econ-report-test-" + Guid.NewGuid().ToString("N"));
+            EconReport.WriteCsv(dir, sweepGames);
+            string csv = System.IO.File.ReadAllText(System.IO.Path.Combine(dir, "games.csv")) + System.IO.File.ReadAllText(System.IO.Path.Combine(dir, "minutes.csv"));
+            System.IO.Directory.Delete(dir, true);
+            Check(profiled && sweepGames.Count == 4 && sweep.Contains("war 80x80 ore 0.26") && sweep.Contains("war 80x80 ore 0.34") && csv.Contains(",0.26,") && csv.Contains(",0.34,"),
+                  $"a sweep of two richnesses with --profile on groups, prints and exports them exactly ({sweepGames.Count} games, profile flag restored: {profiled})");
+
+            // Sizes and richness the World would clamp are refused (a clamped game would be labelled with what was asked for).
+            string bigSize = EconReport.Invalid(new EconReport.Options { Sizes = new[] { 320, 400 } }), smallOre = EconReport.Invalid(new EconReport.Options { Ores = new[] { 0.05f, 0.01f } });
+            bool refused = false;
+            try { EconReport.Build(new EconReport.Options { Sizes = new[] { 400 }, Sections = new HashSet<string> { "matrix" } }, _ => { }, out _); } catch (ArgumentException) { refused = true; }
+            Check(EconReport.Invalid(new EconReport.Options()) == null && bigSize != null && bigSize.Contains("48 to 320") && bigSize.Contains("400") && smallOre != null && smallOre.Contains("0.05") && smallOre.Contains("0.01")
+                  && EconReport.Invalid(new EconReport.Options { Ores = new[] { 5f } }) != null && EconReport.Invalid(new EconReport.Options { Minutes = 0 }) != null && refused,
+                  $"--econ-sizes 400 and --econ-ores 0.01 are errors that name the allowed range ({bigSize}; {smallOre})");
+            Check(new World(2, 1, 400).Map.W == Map.MaxSize && new World(2, 1, 10).Map.W == Map.MinSize && new World(2, 1, 80, 0.01f).Map.OreScale == EconReport.MinOre && new World(2, 1, 80, 9f).Map.OreScale == EconReport.MaxOre,
+                  "and those ranges are the ones the World clamps to");
+
+            // How a game ended: a knockout, the match clock (on points, or a draw), or neither.
+            var endw = new World(2, 1, 48);
+            string endedRun = EconReport.HowEnded(endw);
+            endw.GameOver = true; endw.Winner = 0;
+            string endedKnock = EconReport.HowEnded(endw);
+            endw.Winner = -1;
+            string endedBoth = EconReport.HowEnded(endw);
+            endw.SuddenDeathAt = 1f; endw.Tick = (int)((1f + World.EndAfter + 1f) * World.TickRate); endw.Winner = 1;
+            string endedPoints = EconReport.HowEnded(endw);
+            // End to end: the match clock moved to a few minutes off, so the game ends on points with both teams standing.
+            var clock = EconReport.PlayGame(2, 80, 1f, true, 62, w => { w.Tick = 57 * 60 * World.TickRate; w.SuddenDeathAt = 1f; });
+            var knock = EconReport.PlayGame(1, 80, 1f, false, 30);
+            var tables = new System.Text.StringBuilder();
+            EconReport.MatrixSection(tables, new List<EconReport.GameRun> { clock }, new EconReport.Options { Seeds = new[] { 2 }, Sizes = new[] { 80 }, Ores = new[] { 1f }, Modes = new[] { "passive" }, Minutes = 62 });
+            string csvDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "econ-report-test-" + Guid.NewGuid().ToString("N"));
+            EconReport.WriteCsv(csvDir, new List<EconReport.GameRun> { clock, knock });
+            string gamesCsv = System.IO.File.ReadAllText(System.IO.Path.Combine(csvDir, "games.csv"));
+            System.IO.Directory.Delete(csvDir, true);
+            Check(endedRun == "unfinished" && endedKnock == "knockout" && endedBoth == "draw" && endedPoints == "points"
+                  && (clock.Ended == "points" || clock.Ended == "draw") && clock.GameOver && clock.Teams.All(t => !t.Defeated) && clock.EndMinute > 59.9 && clock.EndMinute < 60.2
+                  && knock.Ended == "knockout" && tables.ToString().Contains("| passive 80x80 ore 1.0 | 1 | 0 / 0 | - |") && gamesCsv.Contains(",ended,") && gamesCsv.Contains("," + clock.Ended + ",") && gamesCsv.Contains(",knockout,"),
+                  $"a game the match clock ends is not a knockout: {endedRun}, {endedKnock}, {endedBoth}, {endedPoints}; with the clock moved a game ends '{clock.Ended}' at {clock.EndMinute:0.0} min with both teams standing, counts 0 knockouts, and games.csv says so");
+
+            // The seat win split's test, and the flag parser.
+            Check(Math.Abs(EconReport.BinomialP(18, 23) - 0.0106) < 0.0005 && EconReport.BinomialP(5, 10) > 0.999 && Math.Abs(EconReport.BinomialP(0, 10) - 2 * Math.Pow(0.5, 10)) < 1e-9 && EconReport.BinomialP(0, 0) == 1,
+                  $"the exact binomial test gives 18 of 23 decisive games to one seat p = {EconReport.BinomialP(18, 23):0.0000}");
+            Check(string.Join(",", EconReport.ParseInts("1-3,7,10")) == "1,2,3,7,10", "--econ-seeds reads ranges and lists");
+
+            // The report builds, with every table of the matrix section filled in and nothing missing or not a number.
+            var o = new EconReport.Options { Seeds = new[] { 2 }, Sizes = new[] { 80 }, Ores = new[] { 1f }, Modes = new[] { "war" }, Minutes = 4, Jobs = 1, Sections = new HashSet<string> { "matrix" } };
+            string report = EconReport.Build(o, _ => { }, out var games);
+            Check(games.Count == 1 && new[] { "seat win split", "Income by source", "Low power", "Unspent stock", "Deep ore used", "Surface ore" }.All(report.Contains) && !report.Contains("NaN") && !report.Contains("Infinity"),
+                  $"the economy report builds its matrix tables ({report.Length} characters)");
         }
     }
 }
