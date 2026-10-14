@@ -87,7 +87,7 @@ Rows about a death carry `at_t`, the exact game time it happened.
   derricks), `structures_missing` (you see the spot and it's gone: not seen destroyed), `structures_changed_hands`,
   `ore_fields_discovered`, `zones_flagged`, and the `derrick` kinds.
 - **Production and logistics:** `construction_placed`, `construction_started`, `construction_completed`,
-  `training_started` (with `eta_s`), `production_progress` (25/50/75% for items of 20 s or more), `unit_trained`
+  `training_started` (one for each unit as a building takes it up, with that `building` and `eta_s`), `production_progress` (25/50/75% for each item of 20 s or more), `unit_trained`
   (with `spawn` and `rally`), `queue_empty`, `queue_blocked` and `queue_unblocked`, `research_started` and
   `researched`, `fuel_low` (crossing 50/25/10%), `refuel_trip`, `refuelled`, `landing`, `stranded`, `crashed`,
   `no_landing_pad` and `landing_available`.
@@ -105,7 +105,7 @@ Rows about a death carry `at_t`, the exact game time it happened.
 - **Alerts:** every new priority alert the game raises for the team (`cat: alert`, `kind` = the alert kind,
   severity from its priority).
 - **Heartbeat:** every `heartbeat_s` (default 5) even when nothing changes. It carries unit count, idle ids, moving,
-  firing, structures, what's building and training with percentages, stockpile, rates, power, visible and remembered
+  firing, structures, what's building and training (a line for each unit a building is working on) with percentages, stockpile, rates, power, visible and remembered
   contacts, engagements, open commands, stranded units, `orders_version` and `rules_version`.
 
 Movement and damage are coalesced: one `damage` event per sample listing every hit entity, a contact reported moving

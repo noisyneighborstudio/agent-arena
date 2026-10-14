@@ -25,6 +25,9 @@ namespace Pez.Sim
         };
         /// <summary>Reaches high-altitude aircraft (the Reaper): SAM sites, flak and laser towers only.</summary>
         public bool HitsHighAir;
+        /// <summary>A charge that has to be planted (C4): the shooter must stand in range of the same target, still, for this
+        /// many seconds before its first shot goes off (World.FireAt, Entity.Arming). 0 = fires as soon as it's ready.</summary>
+        public float ArmTime;
         public bool CanHit(EntityDef d) => (d.IsAir ? HitsAir && (!d.HighAltitude || HitsHighAir) : HitsGround) && Multiplier(d.Armor) > 0;
     }
 
@@ -129,7 +132,7 @@ namespace Pez.Sim
         static readonly WeaponDef Sam = new WeaponDef { Name = "sam", Damage = 90, Range = 8f, Cooldown = 1.6f, ProjectileSpeed = 16f, HitsGround = false, HitsAir = true, HitsHighAir = true, VsAir = 1f };
         static readonly WeaponDef Hellfire = new WeaponDef { Name = "hellfire", Damage = 140, Range = 7f, Cooldown = 5f, ProjectileSpeed = 14f, SplashRadius = 0.6f, VsInfantry = 0.8f, VsVehicle = 1.2f, VsStructure = 0.8f };
         static readonly WeaponDef SniperRifle = new WeaponDef { Name = "sniper", Damage = 150, Range = 9f, Cooldown = 3f, VsInfantry = 1f, VsVehicle = 0.08f, VsStructure = 0.03f };
-        static readonly WeaponDef C4 = new WeaponDef { Name = "c4", Damage = 900, Range = 1.0f, Cooldown = 5f, VsInfantry = 0f, VsVehicle = 0.6f, VsStructure = 1f };
+        static readonly WeaponDef C4 = new WeaponDef { Name = "c4", Damage = 900, Range = 1.0f, Cooldown = 5f, VsInfantry = 0f, VsVehicle = 0.6f, VsStructure = 1f, ArmTime = 1.5f };
         static readonly WeaponDef Flak = new WeaponDef { Name = "flak", Damage = 35, Range = 8f, Cooldown = 0.8f, ProjectileSpeed = 22f, SplashRadius = 1.0f, HitsGround = false, HitsAir = true, HitsHighAir = true, VsAir = 1f };
         static readonly WeaponDef MammothCannon = new WeaponDef { Name = "mammoth_cannon", Damage = 120, Range = 6f, Cooldown = 2.2f, ProjectileSpeed = 16f, SplashRadius = 1.0f, HitsAir = true, VsInfantry = 0.7f, VsVehicle = 1f, VsStructure = 1f, VsAir = 0.6f };
         static readonly WeaponDef TowerLaser = new WeaponDef { Name = "laser", Damage = 90, Range = 7.5f, Cooldown = 1.1f, HitsAir = true, HitsHighAir = true, VsInfantry = 1f, VsVehicle = 1.1f, VsStructure = 0.6f, VsAir = 1f };
@@ -143,7 +146,7 @@ namespace Pez.Sim
                 Recipes = new[] { R(5, C("iron_ore", 1), C("steel", 1)), R(5, C("copper_ore", 1), C("copper", 1)) } });
             Add(new EntityDef { Key = "barracks", Name = "Barracks", Description = "Trains infantry.", IsStructure = true, Cost = C("steel", 150), BuildTime = 6, MaxHp = 1000, Armor = Armor.Structure, SizeX = 2, SizeY = 2, Power = -20, BuiltBy = Producer.CommandCenter, Produces = Producer.Barracks, Requires = new[] { "mining_refinery" } });
             Add(new EntityDef { Key = "factory", Name = "Factory", Description = "Builds ground vehicles and Outpost Trucks.", IsStructure = true, Cost = C("steel", 300, "copper", 100), BuildTime = 12, MaxHp = 2000, Armor = Armor.Structure, SizeX = 3, SizeY = 3, Power = -40, BuiltBy = Producer.CommandCenter, Produces = Producer.Factory, Requires = new[] { "mining_refinery" } });
-            Add(new EntityDef { Key = "gun_turret", Name = "Gun Turret", Description = "Ground defense. Can't hit aircraft. Upkeep: your first 4 armed defenses are free, each one past that costs 3 steel/min.", IsStructure = true, Cost = C("steel", 150, "copper", 30), BuildTime = 6, MaxHp = 900, Armor = Armor.Structure, Power = -15, Sight = 7, Weapon = TurretGun, BuiltBy = Producer.CommandCenter, Requires = new[] { "barracks" } });
+            Add(new EntityDef { Key = "gun_turret", Name = "Gun Turret", Description = "Ground defense. Can't hit aircraft.", IsStructure = true, Cost = C("steel", 150, "copper", 30), BuildTime = 6, MaxHp = 900, Armor = Armor.Structure, Power = -15, Sight = 7, Weapon = TurretGun, BuiltBy = Producer.CommandCenter, Requires = new[] { "barracks" } });
             Add(new EntityDef { Key = "electronics_plant", Name = "Electronics Plant", Description = "Makes circuits from copper and steel.", IsStructure = true, Cost = C("steel", 250, "copper", 150), BuildTime = 10, MaxHp = 1000, Armor = Armor.Structure, SizeX = 2, SizeY = 2, Power = -40, BuiltBy = Producer.CommandCenter, Requires = new[] { "factory" },
                 Recipes = new[] { R(1, C("copper", 2, "steel", 1), C("circuits", 1)) } });
             Add(new EntityDef { Key = "radar_dome", Name = "Radar Dome", Description = "Reveals 16 tiles around it and detects stealth units in that range.", IsStructure = true, Cost = C("steel", 200, "circuits", 60), BuildTime = 10, MaxHp = 1000, Armor = Armor.Structure, SizeX = 2, SizeY = 2, Power = -40, Sight = 16, BuiltBy = Producer.CommandCenter, Requires = new[] { "electronics_plant" } });
@@ -155,10 +158,10 @@ namespace Pez.Sim
             Add(new EntityDef { Key = "laser_tower", Name = "Laser Tower", Description = "Heavy beam defense; hits ground and air.", IsStructure = true, Cost = C("steel", 250, "lenses", 60, "circuits", 60), BuildTime = 9, MaxHp = 1200, Armor = Armor.Structure, Power = -50, Sight = 8, Weapon = TowerLaser, BuiltBy = Producer.CommandCenter, Requires = new[] { "optics_lab" } });
             Add(new EntityDef { Key = "composite_foundry", Name = "Composite Foundry", Description = "Fuses steel and crystal into stealth composite.", IsStructure = true, Cost = C("steel", 400, "circuits", 120), BuildTime = 12, MaxHp = 1200, Armor = Armor.Structure, SizeX = 2, SizeY = 2, Power = -50, BuiltBy = Producer.CommandCenter, Requires = new[] { "optics_lab" },
                 Recipes = new[] { R(0.5f, C("steel", 2, "crystal", 1), C("composite", 1)) } });
-            Add(new EntityDef { Key = "fusion_reactor", Name = "Fusion Reactor", Description = "+500 power while it has plasma to burn (0.1/s).", IsStructure = true, Cost = C("steel", 600, "circuits", 200, "plasma", 50), BuildTime = 16, MaxHp = 2000, Armor = Armor.Structure, SizeX = 3, SizeY = 3, Power = 500, BuiltBy = Producer.CommandCenter, Requires = new[] { "enrichment_plant" } });
+            Add(new EntityDef { Key = "fusion_reactor", Name = "Fusion Reactor", Description = $"+500 power: five power plants' worth in under half the room, for less ore, but it burns {World.FusionBurn} plasma/s at full output ({World.FusionBurn * 3600:0} plasma an hour, from an enrichment_plant). Short of plasma it makes proportionally less power rather than none, and it leaves plasma you hold back with reserve or save_for alone.", IsStructure = true, Cost = C("steel", 400, "circuits", 100, "plasma", 25), BuildTime = 16, MaxHp = 2000, Armor = Armor.Structure, SizeX = 3, SizeY = 3, Power = 500, BuiltBy = Producer.CommandCenter, Requires = new[] { "enrichment_plant" } });
             Add(new EntityDef { Key = "airfield", Name = "Airfield", Description = "Builds aircraft.", IsStructure = true, Cost = C("steel", 500, "circuits", 200), BuildTime = 14, MaxHp = 1800, Armor = Armor.Structure, SizeX = 3, SizeY = 3, Power = -60, BuiltBy = Producer.CommandCenter, Produces = Producer.Airfield, Requires = new[] { "enrichment_plant" } });
             // Neutral derricks near the middle (World.EnsureDerricks): nobody's until an engineer takes one.
-            Add(new EntityDef { Key = "derrick", Name = "Derrick", Description = $"A neutral derrick near the middle of the map. Nobody owns it at first and it can't be hurt; any engineer captures it, whatever its health. Once owned it pays its holder {World.DerrickSteel} steel/s (no power needed) and can be taken back like any building (an engineer once it's below 50%) or destroyed: it leaves salvage, and a fresh neutral derrick rises on the spot {World.DerrickRespawn / 60:0} minutes later.", IsStructure = true, BuildTime = 1, MaxHp = 1600, Armor = Armor.Structure, SizeX = 2, SizeY = 2, Sight = 5, Buildable = false });
+            Add(new EntityDef { Key = "derrick", Name = "Derrick", Description = $"A neutral derrick near the middle of the map. Nobody owns it at first and it can't be hurt; any engineer captures it, whatever its health. Once owned it pays its holder {World.DerrickSteel} steel/s (no power needed) and can be taken back like any building (an engineer once it's below 50%) or destroyed (it can't be sold): it leaves salvage, and a fresh neutral derrick rises on the spot {World.DerrickRespawn / 60:0} minutes later.", IsStructure = true, BuildTime = 1, MaxHp = 1600, Armor = Armor.Structure, SizeX = 2, SizeY = 2, Sight = 5, Buildable = false });
             Add(new EntityDef { Key = "outpost", Name = "Outpost", Description = "Forward base: ore drop-off, territory anchor for building, vision 9.", IsStructure = true, BuildTime = 1, MaxHp = 1500, Armor = Armor.Structure, SizeX = 2, SizeY = 2, Power = 10, Sight = 9, DropOff = true, Buildable = false });
 
             // ---- Units
@@ -216,6 +219,9 @@ namespace Pez.Sim
                 else if (!d.IsStructure && !d.IsMine && (d.IsAir || d.Armor == Armor.Vehicle)) d.Fuel = 200; // any vehicle added later
                 if (d.Key is "command_center" or "outpost" or "mining_refinery" or "factory") d.FuelDepot = true;
                 if (d.Key == "airfield") d.Helipad = true;
+                // Armed defences pay upkeep (World.Upkeep): a share of their steel price, so say what it comes to for each.
+                if (d.IsStructure && d.Weapon != null)
+                    d.Description += $" Upkeep: free as one of your first {World.FreeDefences} armed defenses; past those it costs {World.UpkeepPercent:0.#}% of its steel price a minute ({World.UpkeepPerMinute(d):0.#} steel/min), and it draws no power and holds fire while offline (upkeep unpaid).";
             }
         }
 

@@ -83,10 +83,12 @@ namespace Pez.Sim
             var o = new JObj().Set("id", t.Id).Set("name", t.Name).Set("controller", t.Controller).Put("player", t.PlayerName)
                 .Put("standing_orders", t.StandingOrders).Put("orders_version", t.OrdersVersion)
                 .Set("stock", SnapIO.Floats(t.Stock)).Set("rates", SnapIO.Floats(t.Rates))
-                .Set("power_produced", t.PowerProduced).Set("power_used", t.PowerUsed)
+                .Set("power_produced", t.PowerProduced).Set("power_used", t.PowerUsed).Put("plasma_owed", t.PlasmaOwed)
                 .Set("start", SnapIO.V(t.StartPos)).Put("defeated", t.Defeated).Put("left", t.Left).Put("resigned", t.Resigned)
                 .Put("stalled_since", t.StalledSince, -1f).Put("house", t.House).Set("seat", t.Seat).Put("protected_until", t.ProtectedUntil)
-                .Put("surface_warned_at", t.SurfaceWarnedAt, -999f).Put("home_ore_warned", t.HomeOreWarned, 0).Set("last_active_at", t.LastActiveAt);
+                .Put("surface_warned_at", t.SurfaceWarnedAt, -999f).Put("home_ore_warned", t.HomeOreWarned, 0).Set("last_active_at", t.LastActiveAt)
+                .Set("scatter", t.Scatter.State.ToString("x16"));
+            if (t.Granted.Count > 0) o.Set("granted", SnapIO.Floats(t.Granted));
             if (t.Visible != null) o.Set("visible", SnapIO.PackBits(t.Visible));
             if (t.Explored != null) o.Set("explored", SnapIO.PackBits(t.Explored));
             if (t.Detected.Count > 0) o.Set("detected", t.Detected.Cast<object>().ToList());
@@ -111,12 +113,12 @@ namespace Pez.Sim
             return o;
         }
 
-        static JObj WriteItem(ProdItem p) => new JObj().Set("key", p.Key).Put("progress", p.Progress).Put("structure_id", p.StructureId);
+        static JObj WriteItem(ProdItem p) => new JObj().Set("key", p.Key).Put("progress", p.Progress).Put("structure_id", p.StructureId).Put("worker_id", p.WorkerId).Put("granted_share", p.GrantedShare);
 
         static ProdItem ReadItem(D d)
         {
             var p = new ProdItem();
-            d.Load("key", ref p.Key); d.Load("progress", ref p.Progress); d.Load("structure_id", ref p.StructureId);
+            d.Load("key", ref p.Key); d.Load("progress", ref p.Progress); d.Load("structure_id", ref p.StructureId); d.Load("worker_id", ref p.WorkerId); d.Load("granted_share", ref p.GrantedShare);
             return Defs.Get(p.Key) == null ? null : p;
         }
 
@@ -127,10 +129,12 @@ namespace Pez.Sim
             d.Load("name", ref t.Name); d.Load("controller", ref t.Controller); d.Load("player", ref t.PlayerName);
             d.Load("standing_orders", ref t.StandingOrders); d.Load("orders_version", ref t.OrdersVersion);
             SnapIO.LoadFloats(d.Obj("stock"), t.Stock); SnapIO.LoadFloats(d.Obj("rates"), t.Rates);
-            d.Load("power_produced", ref t.PowerProduced); d.Load("power_used", ref t.PowerUsed);
+            SnapIO.LoadFloats(d.Obj("granted"), t.Granted); // a save from before gifts counted: nothing is a gift, as before
+            d.Load("power_produced", ref t.PowerProduced); d.Load("power_used", ref t.PowerUsed); d.Load("plasma_owed", ref t.PlasmaOwed);
             d.Load("start", ref t.StartPos); d.Load("defeated", ref t.Defeated); d.Load("left", ref t.Left); d.Load("resigned", ref t.Resigned);
             d.Load("stalled_since", ref t.StalledSince); d.Load("house", ref t.House); d.Load("seat", ref t.Seat);
             d.Load("protected_until", ref t.ProtectedUntil); d.Load("surface_warned_at", ref t.SurfaceWarnedAt); d.Load("home_ore_warned", ref t.HomeOreWarned); d.Load("last_active_at", ref t.LastActiveAt);
+            if (d.Str("scatter") is string sc && ulong.TryParse(sc, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var scState)) t.Scatter.State = scState; // (a save from before: from the start)
             t.Visible = SnapIO.UnpackBits(d.Str("visible"), map.W * map.H);
             t.Explored = SnapIO.UnpackBits(d.Str("explored"), map.W * map.H);
             foreach (var x in d.Arr("detected")) if (x is double id) t.Detected.Add((int)id);
@@ -185,14 +189,14 @@ namespace Pez.Sim
             o.Put("cooldown", e.Cooldown).Put("speed_cap", e.SpeedCap).Put("group", e.Group, 0)
              .PutV("progress_pos", e.ProgressPos).Put("progress_at", e.ProgressAt).Put("ghost_until", e.GhostUntil).Put("progress_dist", e.ProgressDist);
             if (e.Waypoints.Count > 0) o.Set("waypoints", SnapIO.Vs(e.Waypoints));
-            o.Put("waypoint_loop", e.WaypointLoop).Put("retreat_below", e.RetreatBelow).Put("retreating", e.Retreating).Put("retreat_spent", e.RetreatSpent).Put("giving_way", e.GivingWay).Put("own_blocked_since", e.OwnBlockedSince)
+            o.Put("waypoint_loop", e.WaypointLoop).Put("retreat_below", e.RetreatBelow).Put("retreating", e.Retreating).Put("retreat_spent", e.RetreatSpent).Put("giving_way", e.GivingWay).Put("own_blocked_since", e.OwnBlockedSince).Put("dodge_until", e.DodgeUntil).PutV("dance_vel", e.DanceVel).PutV("dance_step", e.DanceStep).PutV("dance_heading", e.DanceHeading).Put("dance_speed", e.DanceSpeed).Put("dance_for", e.DanceFor).Put("dance_flips", e.DanceFlips).Put("settled_until", e.SettledUntil).Put("queued_at", e.QueuedAt)
              .Put("repath_timer", e.RepathTimer).Put("moving", e.Moving).Put("last_attacker", e.LastAttackerId).Put("last_attacker_team", e.LastAttackerTeam, -1)
              .Put("last_hit_time", e.LastHitTime, -999f).Put("last_call_for_help", e.LastCallForHelp, -999f)
              .Put("responding", e.Responding).PutV("home_pos", e.HomePos)
-             .Put("cargo", e.Cargo).Put("cargo_type", e.CargoType, -1).Put("harvest_type", e.HarvestType, -1);
+             .Put("cargo", e.Cargo).Put("cargo_salvage", e.CargoSalvage).Put("cargo_type", e.CargoType, -1).Put("harvest_type", e.HarvestType, -1);
             if (e.HarvestTile.HasValue) o.Set("harvest_tile", new List<object> { e.HarvestTile.Value.X, e.HarvestTile.Value.Y });
-            o.PutEnum("dock", e.Dock, DockStep.None).Put("dock_at", e.DockAt).Put("burning", e.Burning);
-            o.Put("work_timer", e.WorkTimer).Put("deposit", e.DepositId).Put("working", e.Working).Put("carrier", e.CarrierId).Put("offline", e.Offline);
+            o.PutEnum("dock", e.Dock, DockStep.None).Put("dock_at", e.DockAt).Put("bay", e.BaySide).Put("burning", e.Burning).Put("granted_share", e.GrantedShare);
+            o.Put("work_timer", e.WorkTimer).Put("deposit", e.DepositId).Put("working", e.Working).Put("output", e.Output).Put("carrier", e.CarrierId).Put("offline", e.Offline);
             if (e.Passengers.Count > 0) o.Set("passengers", e.Passengers.Cast<object>().ToList());
             o.Put("fuel", e.Fuel).Put("fuel_cap", e.FuelCap).Put("landed", e.Landed).Put("stranded", e.Stranded).Put("at_depot", e.AtDepot).Put("fuel_warned", e.FuelWarned)
              .Put("no_auto_refuel_until", e.NoAutoRefuelUntil).PutEnum("resume_order", e.ResumeOrder, Order.Idle)
@@ -200,7 +204,7 @@ namespace Pez.Sim
              .Put("resume_speed_cap", e.ResumeSpeedCap);
             if (e.ResumeWaypoints.Count > 0) o.Set("resume_waypoints", SnapIO.Vs(e.ResumeWaypoints));
             if (e.MineQueue.Count > 0) o.Set("mine_queue", SnapIO.Vs(e.MineQueue));
-            o.Put("last_fired_at", e.LastFiredAt, -999f)
+            o.Put("last_fired_at", e.LastFiredAt, -999f).Put("arming", e.Arming).Put("arming_target", e.ArmingTarget)
              .Put("prospecting", e.Prospecting).PutV("prospect_center", e.ProspectCenter).Put("prospect_radius", e.ProspectRadius)
              .Put("survey_failure", e.SurveyFailure).Put("survey_failed_at", e.SurveyFailedAt).Put("zone", e.ZoneId);
             if (e.SkipSites.Count > 0) o.Set("skip_sites", SnapIO.Vs(e.SkipSites));
@@ -225,14 +229,18 @@ namespace Pez.Sim
             d.Load("cooldown", ref e.Cooldown); d.Load("speed_cap", ref e.SpeedCap); d.Load("group", ref e.Group);
             d.Load("progress_pos", ref e.ProgressPos); d.Load("progress_at", ref e.ProgressAt); d.Load("ghost_until", ref e.GhostUntil); d.Load("progress_dist", ref e.ProgressDist);
             e.Waypoints.AddRange(SnapIO.ToVecs(d.Arr("waypoints")));
-            d.Load("waypoint_loop", ref e.WaypointLoop); d.Load("retreat_below", ref e.RetreatBelow); d.Load("retreating", ref e.Retreating); d.Load("retreat_spent", ref e.RetreatSpent); d.Load("giving_way", ref e.GivingWay); d.Load("own_blocked_since", ref e.OwnBlockedSince);
+            d.Load("waypoint_loop", ref e.WaypointLoop); d.Load("retreat_below", ref e.RetreatBelow); d.Load("retreating", ref e.Retreating); d.Load("retreat_spent", ref e.RetreatSpent); d.Load("giving_way", ref e.GivingWay); d.Load("own_blocked_since", ref e.OwnBlockedSince); d.Load("dodge_until", ref e.DodgeUntil); d.Load("dance_vel", ref e.DanceVel); d.Load("dance_step", ref e.DanceStep); d.Load("dance_heading", ref e.DanceHeading); d.Load("dance_speed", ref e.DanceSpeed); d.Load("dance_for", ref e.DanceFor); d.Load("dance_flips", ref e.DanceFlips); d.Load("settled_until", ref e.SettledUntil); d.Load("queued_at", ref e.QueuedAt);
             d.Load("repath_timer", ref e.RepathTimer); d.Load("moving", ref e.Moving); d.Load("last_attacker", ref e.LastAttackerId); d.Load("last_attacker_team", ref e.LastAttackerTeam);
             d.Load("last_hit_time", ref e.LastHitTime); d.Load("last_call_for_help", ref e.LastCallForHelp);
             d.Load("responding", ref e.Responding); d.Load("home_pos", ref e.HomePos);
-            d.Load("cargo", ref e.Cargo); d.Load("cargo_type", ref e.CargoType); d.Load("harvest_type", ref e.HarvestType);
+            d.Load("cargo", ref e.Cargo); d.Load("cargo_salvage", ref e.CargoSalvage); d.Load("cargo_type", ref e.CargoType); d.Load("harvest_type", ref e.HarvestType);
             if (d.Has("harvest_tile", out var ht) && ht is List<object> hl && hl.Count >= 2) e.HarvestTile = new Int2(SnapIO.ToI(hl[0]), SnapIO.ToI(hl[1]));
-            d.LoadEnum("dock", ref e.Dock); d.Load("dock_at", ref e.DockAt); d.Load("burning", ref e.Burning);
+            d.LoadEnum("dock", ref e.Dock); d.Load("dock_at", ref e.DockAt); d.Load("bay", ref e.BaySide); d.Load("burning", ref e.Burning); d.Load("granted_share", ref e.GrantedShare);
+            e.BaySide = Math.Clamp(e.BaySide, 0, World.BaySides.Length - 1); // a save from before bays turned has none: south
             d.Load("work_timer", ref e.WorkTimer); d.Load("deposit", ref e.DepositId); d.Load("working", ref e.Working); d.Load("carrier", ref e.CarrierId); d.Load("offline", ref e.Offline);
+            // A reactor saved before partial output made all of its power or none.
+            if (def.Key == "fusion_reactor") e.Output = e.Working ? 1f : 0f;
+            d.Load("output", ref e.Output);
             foreach (var x in d.Arr("passengers")) if (x is double pid) e.Passengers.Add((int)pid);
             // A snapshot from before fuel existed: start full rather than stranded.
             e.Fuel = def.Fuel; d.Load("fuel", ref e.Fuel); d.Load("fuel_cap", ref e.FuelCap);
@@ -242,7 +250,7 @@ namespace Pez.Sim
             d.Load("resume_speed_cap", ref e.ResumeSpeedCap);
             e.ResumeWaypoints.AddRange(SnapIO.ToVecs(d.Arr("resume_waypoints")));
             e.MineQueue.AddRange(SnapIO.ToVecs(d.Arr("mine_queue")));
-            d.Load("last_fired_at", ref e.LastFiredAt);
+            d.Load("last_fired_at", ref e.LastFiredAt); d.Load("arming", ref e.Arming); d.Load("arming_target", ref e.ArmingTarget);
             d.Load("prospecting", ref e.Prospecting); d.Load("prospect_center", ref e.ProspectCenter); d.Load("prospect_radius", ref e.ProspectRadius);
             d.Load("survey_failure", ref e.SurveyFailure); d.Load("survey_failed_at", ref e.SurveyFailedAt); d.Load("zone", ref e.ZoneId);
             e.SkipSites.AddRange(SnapIO.ToVecs(d.Arr("skip_sites")));
@@ -375,6 +383,7 @@ namespace Pez.Sim
                 foreach (var t in world.Teams.Where(t => t.Controller == "ai" && !t.Left && !t.Defeated)) ais.Add(new SimpleAI(t.Id, passive: cfg.Open));
             ResumedFrom = root.Str("saved_at");
             if (world.Map.BaseMissing) world.Map.RebuildBase(cfg.Seed, cfg.MapSize, cfg.OreScale);
+            if (world.Map.SalvageMissing) { world.Map.DeriveSalvage(); world.MigrateSalvageCount(); }
             // From before the match clock: it starts now. Sudden death comes at the configured hour, or (a game already
             // past it, or nearly) half an hour from now, so the players get their warnings and time to act on them.
             if (!root.Obj("world").ContainsKey("sudden_death_at") && cfg.MatchHours > 0 && !cfg.KitchenSink)
@@ -388,6 +397,10 @@ namespace Pez.Sim
         internal JObj SaveState() => new JObj()
             .Set("team", team).Put("passive", Passive).Set("next_think", SnapIO.X(nextThink)).Set("wave_size", waveSize).Set("known_surface", knownSurface)
             .Set("next_prospect", SnapIO.X(nextProspect)).Set("prospect_radius", prospectRadius)
+            .Set("want_copper", wantCopper).Put("want_crystal", wantCrystal).Put("want_uranium", wantUranium).Put("went_deep", wentDeep)
+            .Set("ore_rate", SnapIO.X(oreRate)).Set("rated_at", SnapIO.X(ratedAt)).Set("rated_mined", ratedMined)
+            .Set("copper_starved_since", SnapIO.X(copperStarvedSince))
+            .Set("stuck_since", stuckSince.OrderBy(kv => kv.Key).Select(kv => (object)new List<object> { kv.Key, SnapIO.X(kv.Value) }).ToList())
             .Set("outpost_targets", outpostTargets.Select(kv => (object)new List<object> { kv.Key, SnapIO.X(kv.Value.X), SnapIO.X(kv.Value.Y) }).ToList());
 
         internal static SimpleAI LoadState(D d)
@@ -397,6 +410,11 @@ namespace Pez.Sim
             var ai = new SimpleAI(d.In("team"), passive);
             d.Load("next_think", ref ai.nextThink); d.Load("wave_size", ref ai.waveSize); d.Load("known_surface", ref ai.knownSurface);
             d.Load("next_prospect", ref ai.nextProspect); d.Load("prospect_radius", ref ai.prospectRadius);
+            d.Load("want_copper", ref ai.wantCopper); d.Load("want_crystal", ref ai.wantCrystal); d.Load("want_uranium", ref ai.wantUranium); d.Load("went_deep", ref ai.wentDeep);
+            d.Load("ore_rate", ref ai.oreRate); d.Load("rated_at", ref ai.ratedAt); d.Load("rated_mined", ref ai.ratedMined);
+            d.Load("copper_starved_since", ref ai.copperStarvedSince);
+            foreach (var x in d.Arr("stuck_since"))
+                if (x is List<object> s && s.Count >= 2) ai.stuckSince[SnapIO.ToI(s[0])] = SnapIO.ToF(s[1]);
             foreach (var x in d.Arr("outpost_targets"))
                 if (x is List<object> l && l.Count >= 3) ai.outpostTargets[SnapIO.ToI(l[0])] = new Vec2(SnapIO.ToF(l[1]), SnapIO.ToF(l[2]));
             return ai;
@@ -445,7 +463,7 @@ namespace Pez.Sim
             .Set("w", W).Set("h", H).Set("ore_scale", SnapIO.X(OreScale)).Set("next_deposit_id", nextDepositId)
             .Set("tiles", SnapIO.Pack(Tiles.Select(t => (byte)t).ToArray()))
             .Set("ore", SnapIO.PackInts(Ore)).Set("ore_type", SnapIO.Pack(OreType)).Set("occupant", SnapIO.PackInts(Occupant))
-            .Set("ore_base", SnapIO.PackInts(OreBase)).Set("ore_base_type", SnapIO.Pack(OreBaseType))
+            .Set("ore_base", SnapIO.PackInts(OreBase)).Set("ore_base_type", SnapIO.Pack(OreBaseType)).Set("salvage", SnapIO.PackInts(Salvage))
             .Set("spawns", SnapIO.Vs(Spawns))
             .Set("deep", Deep.Select(d => (object)new JObj().Set("id", d.Id).Set("pos", SnapIO.V(d.Pos)).Set("type", d.Type)
                 .Set("amount", SnapIO.X(d.Amount)).Set("initial", SnapIO.X(d.Initial)).Put("mine", d.MineId)).ToList());
@@ -471,6 +489,8 @@ namespace Pez.Sim
                 Array.Copy(bt, m.OreBaseType, Math.Min(bt.Length, m.OreBaseType.Length));
             }
             else m.BaseMissing = true;
+            if (d.Has("salvage", out _)) SnapIO.UnpackInts(d.Str("salvage"), m.Salvage);
+            else m.SalvageMissing = true; // worked out once the fields' original amounts are known (Game.Restore)
             m.Spawns.AddRange(SnapIO.ToVecs(d.Arr("spawns")));
             foreach (var x in d.Objs("deep"))
             {
@@ -500,8 +520,10 @@ namespace Pez.Sim
                 .Put("errors", Errors).Put("last_error", LastError).Put("arena_champion", ArenaChampion).Put("contested", contested).Put("regrown", Regrown).Set("sudden_death_at", SnapIO.X(SuddenDeathAt))
                 .Set("derrick_respawns", DerrickRespawns.Select(r => (object)new List<object> { r.origin.X, r.origin.Y, SnapIO.X(r.at) }).ToList())
                 .Set("event_counts", EventCounts.Aggregate(new JObj(), (j, kv) => j.Set(kv.Key, kv.Value)))
+                .Set("settle_counts", SettleCounts.Aggregate(new JObj(), (j, kv) => j.Set(kv.Key, kv.Value)))
                 .Set("rate_snapshot", rateSnapshot.Select(kv => (object)new JObj().Set("team", kv.Key).Set("stock", SnapIO.Floats(kv.Value))).ToList())
                 .Set("air_warned", airWarned.Select(kv => (object)new List<object> { kv.Key.team, kv.Key.id, SnapIO.X(kv.Value) }).ToList())
+                .Set("derrick_hinted", derrickHinted.Select(kv => (object)new List<object> { kv.Key.team, kv.Key.id, SnapIO.X(kv.Value) }).ToList())
                 .Set("map", Map.SaveState())
                 .Set("inventions", Inventions.Values.Select(i => (object)Snapshot.WriteInvention(i)).ToList())
                 .Set("teams", Teams.Select(t => (object)Snapshot.WriteTeam(t)).ToList())
@@ -538,12 +560,11 @@ namespace Pez.Sim
 
             foreach (var id in d.Objs("inventions")) { var inv = Snapshot.ReadInvention(id); if (inv != null) w.Inventions[inv.Key] = inv; }
 
-            bool rebuildPower = false, rebuildVision = false;
+            bool rebuildVision = false;
             int i = 0;
             foreach (var td in d.Objs("teams"))
             {
                 var t = Snapshot.ReadTeam(td, i++, w.Map, w.Time);
-                rebuildPower |= !td.ContainsKey("power_produced");
                 rebuildVision |= !td.ContainsKey("visible");
                 w.Teams.Add(t);
             }
@@ -566,6 +587,7 @@ namespace Pez.Sim
             foreach (var ev in d.Objs("events")) { var e = Snapshot.ReadEvent(ev); if (e != null) w.Events.Add(e); }
             var counts = d.Obj("event_counts");
             if (counts != null) foreach (var kv in counts) if (kv.Value is double n) w.EventCounts[kv.Key] = (int)n;
+            if (d.Obj("settle_counts") is D settles) foreach (var kv in settles) if (kv.Value is double n) w.SettleCounts[kv.Key] = (int)n;
             foreach (var x in d.Objs("rate_snapshot"))
             {
                 var stock = new Dictionary<string, float>();
@@ -574,6 +596,12 @@ namespace Pez.Sim
             }
             foreach (var x in d.Arr("air_warned"))
                 if (x is List<object> l && l.Count >= 3) w.airWarned[(SnapIO.ToI(l[0]), SnapIO.ToI(l[1]))] = SnapIO.ToF(l[2]);
+            foreach (var x in d.Arr("derrick_hinted"))
+                if (x is List<object> l && l.Count >= 3) w.derrickHinted[(SnapIO.ToI(l[0]), SnapIO.ToI(l[1]))] = SnapIO.ToF(l[2]);
+            // A save from before the hints were kept as state: the ones still in its events count, so the first resume doesn't repeat one.
+            if (!d.ContainsKey("derrick_hinted"))
+                foreach (var e in w.Events)
+                    if (e.Type == "derrick_skipped") w.derrickHinted[(e.Team, e.B)] = Math.Max(w.derrickHinted.TryGetValue((e.Team, e.B), out var seen) ? seen : 0f, e.Tick * World.Dt);
 
             // Counters: from the snapshot, or past everything in it (never reuse an id or a sequence number).
             w.nextId = 1 + Math.Max(w.Entities.Select(e => e.Id).DefaultIfEmpty(0).Max(), w.Projectiles.Select(p => p.Id).DefaultIfEmpty(0).Max());
@@ -584,7 +612,7 @@ namespace Pez.Sim
             d.Load("seat_counter", ref w.seatCounter);
             if (d.Str("rng") is string r && ulong.TryParse(r, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var state)) w.rng.State = state;
 
-            if (rebuildPower) w.UpdatePower();
+            w.UpdatePower(); // always: a save from before a power rule changed (offline defences, reactor output) still holds the old sums
             if (rebuildVision) w.UpdateVisibility();
         }
     }

@@ -60,18 +60,19 @@ namespace Pez.View
 
         public static DerrickWorks For(GameObject model, int team, int seed) => new DerrickWorks(model.transform, team, seed);
 
-        /// <summary>`sees`: the local view sees its live state. Effects go to Fx.Audience, which the caller sets.</summary>
-        public void Tick(Entity e, bool sees, float dt)
+        /// <summary>`shown`: the team whose colours WorldView has put on it (an engineer's capture lands with his last blow,
+        /// after the sim's). `sees`: the local view sees its live state. Effects go to Fx.Audience, which the caller sets.</summary>
+        public void Tick(Entity e, int shown, bool sees, float dt)
         {
             // A new owner: the head flips over into their colours. WorldView has tinted everything already; the head shows
             // the old colours until it's turned over.
-            if (e.Team != teamShown)
+            if (shown != teamShown)
             {
-                if (e.Team < 0) Grey(model);
+                if (shown < 0) Grey(model);
                 if (head) Wear(head.gameObject, teamShown);
-                flipTo = e.Team; teamShown = e.Team; flipT = 0f; flipped = false;
+                flipTo = shown; teamShown = shown; flipT = 0f; flipped = false;
             }
-            bool held = sees && e.Team >= 0 && e.IsComplete;
+            bool held = sees && shown >= 0 && e.IsComplete;
             float now = Time.time;
 
             // The flywheel spins up while it's held and coasts down when it isn't.
@@ -96,7 +97,7 @@ namespace Pez.View
             if (pile) pile.localPosition = pileRest + Vector3.up * 0.015f * Mathf.Sin(Mathf.PI * pileBob);
 
             // Neutral: grit sifts off the old head now and then.
-            if (sees && e.Team < 0 && e.IsComplete && now >= nextDust)
+            if (sees && shown < 0 && e.IsComplete && now >= nextDust)
             {
                 if (head) Fx.DecayDust(head.position + Vector3.up * 0.2f, 1.2f);
                 nextDust = now + Random.Range(5f, 9f);

@@ -26,12 +26,22 @@ namespace Pez.Sim
 
         /// <summary>
         /// Ore regrowth, per field tile, in ore a second at the map's centre, scaled by RegrowWeight (1 in the middle,
-        /// RegrowEdge in the corners) and the square root of the map's ore richness (a scarce map regrows less, but not
-        /// in proportion: its stalemates need the long tail most). A mined-bare 96-tile map earns back about 7 ore/s at
-        /// richness 1 and 3.5 at 0.3, about 70% of it in the middle: a deep mine pumps 4/s, so deep mining stays the
-        /// mid-game economy and regrowth is the long tail that makes the middle worth fighting for.
+        /// RegrowEdge in the corners), RegrowByOre (iron and copper regrow faster than crystal and uranium: crystal's fields
+        /// ring the middle, where regrowth is fastest, and it used to take over) and the square root of the map's ore
+        /// richness (a scarce map regrows less, but not in proportion: its stalemates need the long tail most).
+        /// Measured (headless --econ-report, mean of seeds 1-4) on a mined-bare 96-tile map, over the first 20 minutes:
+        ///   richness 1:   7.7 ore/s (iron 3.2, copper 1.3, crystal 2.3, uranium 0.8), 37% of it in the middle;
+        ///                 7.4 in minutes 20-30, when the middle's crystal and uranium have refilled and iron and copper keep coming;
+        ///   richness 0.3: 3.8 ore/s (iron 1.6, copper 0.7, crystal 1.2, uranium 0.3), 36% of it in the middle.
+        /// An 80-tile map earns 7.9 and 4.0 (iron 3.5 and 1.8, 34% in the middle), a 128-tile one 8.8 and 4.4 (41%): the neutral
+        /// fields of the bigger maps (Map.SeedExtraFields) regrow too, and 96 tiles without them earned 6.6 and 3.2.
+        /// (Before RegrowByOre: 6.9 and 2.9 ore/s, of which iron 1.6 and copper 0.6 at richness 1, 68% in the middle.)
+        /// A deep mine pumps 4/s, so deep mining stays the mid-game economy and regrowth is the long tail that keeps a
+        /// base's iron and copper trickling and makes the middle worth fighting for.
         /// </summary>
         public const float RegrowRate = 0.12f, RegrowEdge = 0.04f, RegrowFalloff = 2.5f;
+        /// <summary>Regrowth speed of each ore relative to the rest, per tile (in Defs.Ores order: iron_ore, copper_ore, crystal, uranium).</summary>
+        public static readonly float[] RegrowByOre = { 1.5f, 2f, 0.5f, 0.5f };
         public const int RegrowEvery = TickRate * 2;
         /// <summary>Selftest baseline only: no regrowth at all.</summary>
         public static bool RegrowthDisabled;
@@ -60,14 +70,15 @@ namespace Pez.Sim
             float scale = RegrowRate * MathF.Sqrt(Map.OreScale) * RegrowEvery * Dt;
             foreach (int i in tiles)
             {
-                int target = Map.OreBase[i], ore = Map.Ore[i];
-                if (ore >= target || Map.Occupant[i] != 0 || beingMined.Contains(i) || !Map.TerrainPassable(i % Map.W, i / Map.W)) continue;
+                // The field's own ore grows back toward its original amount whatever salvage lies on it (salvage isn't field ore).
+                int target = Map.OreBase[i], ore = Map.Ore[i], field = Map.FieldOre(i);
+                if (field >= target || ore >= Map.MaxOrePerTile || Map.Occupant[i] != 0 || beingMined.Contains(i) || !Map.TerrainPassable(i % Map.W, i / Map.W)) continue;
                 if (ore > 0 && Map.OreType[i] != Map.OreBaseType[i]) continue; // salvage of another ore lies on it
-                if (ore == 0 && !roots[i] && !Map.FieldNeighbourHasOre(i)) continue;
-                float amount = scale * Map.RegrowWeight(i);
+                if (field == 0 && !roots[i] && !Map.FieldNeighbourHasOre(i)) continue;
+                float amount = scale * Map.RegrowWeight(i) * RegrowByOre[Map.OreBaseType[i]];
                 uint h = (uint)i * 2654435761u ^ (uint)Tick * 40503u;
                 int add = (int)(amount + ((h >> 8) & 0xFFFF) / 65536f);
-                if (add > 0) regrowNow.Add((i, Math.Min(add, target - ore)));
+                if (add > 0) regrowNow.Add((i, Math.Min(Math.Min(add, target - field), Map.MaxOrePerTile - ore)));
             }
             foreach (var (i, add) in regrowNow)
             {
@@ -79,19 +90,24 @@ namespace Pez.Sim
 
         // ------------------------------------------------------------------ defence upkeep
 
-        /// <summary>Armed defences a team keeps for free; each one beyond these costs UpkeepPerMinute steel.</summary>
+        /// <summary>Armed defences a team keeps for free; each one beyond these costs UpkeepPercent of its steel price a minute.</summary>
         public const int FreeDefences = 4;
-        public const float UpkeepPerMinute = 3f;
+        public const float UpkeepPercent = 4f;
+
+        /// <summary>Steel a minute one defence costs once it's past the free ones: UpkeepPercent of its steel price (a gun turret 6, a SAM site 8, a laser tower 10).</summary>
+        public static float UpkeepPerMinute(EntityDef d) => UpkeepPerMinute(d.Cost.TryGetValue("steel", out var steel) ? steel : 0);
+        public static float UpkeepPerMinute(int steelPrice) => steelPrice * UpkeepPercent / 100f;
 
         /// <summary>A team's finished armed defences (turrets, SAM sites, laser towers), oldest first.</summary>
         public List<Entity> Defences(int team) =>
             Entities.Where(e => !e.Dead && e.Team == team && e.IsStructure && e.IsArmed && e.IsComplete).OrderBy(e => e.Id).ToList();
 
         /// <summary>
-        /// Light upkeep for defences, every second: a team's first FreeDefences armed defences are free, and each one past
-        /// those costs UpkeepPerMinute steel a minute (an 11-tower wall: 21 steel a minute). What the stockpile can't pay
-        /// for goes offline, newest first: it stands but doesn't fire until the steel is there again. So a base can always
-        /// defend itself, and walling up for good costs a trickle.
+        /// Upkeep for defences, every second: a team's first FreeDefences armed defences are free, and each one past
+        /// those costs UpkeepPercent of its steel price a minute, so a big wall of expensive towers costs something real
+        /// (11 laser towers: 70 steel a minute, 11 gun turrets: 42). What the stockpile can't pay for goes offline, newest
+        /// first: it stands and draws no power, but doesn't fire until the steel is there again. So a base can always
+        /// defend itself, and walling up for good has a running cost.
         /// </summary>
         void Upkeep()
         {
@@ -100,28 +116,93 @@ namespace Pez.Sim
             {
                 if (t.Left || t.Defeated) continue;
                 var defs = Defences(t.Id);
-                float each = UpkeepPerMinute / 60f;
-                int paying = Math.Max(0, defs.Count - FreeDefences);
-                float steel = t.Stock.TryGetValue("steel", out var s) ? s : 0;
-                int afford = Math.Min(paying, (int)(steel / each + 1e-4f));
-                if (afford > 0) { t.Add("steel", -afford * each); t.Stats.UpkeepPaid += afford * each; }
+                float steel = t.Stock.TryGetValue("steel", out var s) ? s : 0, paid = 0;
                 var wentOff = new List<Entity>();
-                bool cameBack = false;
+                bool cameBack = false, changed = false, broke = false;
                 for (int i = 0; i < defs.Count; i++)
                 {
-                    bool off = i >= FreeDefences + afford; // the newest beyond what's paid for
+                    bool off = false;
+                    if (i >= FreeDefences)
+                    {
+                        float due = UpkeepPerMinute(defs[i].Def) / 60f;
+                        if (!broke && steel + 1e-4f >= due) { due = MathF.Min(due, steel); steel -= due; paid += due; }
+                        else { broke = true; off = true; } // the newer ones can't be paid either
+                    }
                     if (off && !defs[i].Offline) wentOff.Add(defs[i]);
                     if (!off && defs[i].Offline) cameBack = true;
-                    defs[i].Offline = off;
+                    if (defs[i].Offline != off) { defs[i].Offline = off; changed = true; }
                 }
+                if (paid > 0) { t.Add("steel", -paid); t.Stats.UpkeepPaid += paid; }
+                if (changed) UpdatePower(); // offline defences draw no power
                 if (wentOff.Count > 0)
                 {
                     var a = Alerts.Raise(this, t.Id, "defences_offline", Priority.High, wentOff[0].Center, hit: false);
-                    a.Lost.Add($"{string.Join(", ", wentOff.Select(e => $"{e.Def.Key} #{e.Id}"))} offline: upkeep is {UpkeepPerMinute:0} steel/min for each defence past your first {FreeDefences}, and you're out of steel. They hold fire until it's paid (newest go offline first)");
-                    Emit("defences_offline", t.Id, wentOff[0].Id, 0, wentOff[0].Center, text: $"{wentOff.Count} defence(s) went offline: no steel for their upkeep ({UpkeepPerMinute:0} steel/min each past the first {FreeDefences})");
+                    a.Lost.Add($"{string.Join(", ", wentOff.Select(e => $"{e.Def.Key} #{e.Id}"))} offline: upkeep is {UpkeepPercent:0.#}% of a defence's steel price a minute for each defence past your first {FreeDefences}, and you're out of steel. They hold fire and draw no power until it's paid (newest go offline first)");
+                    Emit("defences_offline", t.Id, wentOff[0].Id, 0, wentOff[0].Center, text: $"{wentOff.Count} defence(s) went offline: no steel for their upkeep ({UpkeepPercent:0.#}% of their steel price a minute each past the first {FreeDefences})");
                 }
                 if (cameBack && defs.All(e => !e.Offline)) Emit("defences_online", t.Id, text: "all your defences are back online: their upkeep is paid");
             }
+        }
+
+        // ------------------------------------------------------------------ fusion reactor
+
+        /// <summary>
+        /// Plasma a fusion reactor burns a second at full output (+500 power): 108 plasma an hour, from 216 uranium.
+        /// Its price is about 750 ore (400 steel, 100 circuits, 25 plasma: 500 iron, 200 copper and 50 uranium) against
+        /// 1,250 iron ore for the five power plants that make the same power, in 9 tiles instead of 20. Counting its fuel
+        /// it stays cheaper in ore than the plants for the first 2.3 hours (750 + 216 an hour, against 1,250); what you
+        /// pay for that is one building carrying all the power, and fuel to find.
+        /// </summary>
+        public const float FusionBurn = 0.03f;
+
+        /// <summary>The power a reactor makes at this share of full output.</summary>
+        public static int ReactorPower(Entity e, float share) => (int)MathF.Round(e.Def.Power * share);
+
+        /// <summary>
+        /// A reactor burns each tick's plasma from what the stockpile holds above 'reserve' and 'save_for' (they hold it
+        /// back from reactors as from converters), and makes the share of its power that burn pays for: short of plasma
+        /// it makes less power rather than none. Returns whether its power changed, so the team's power is added up again.
+        /// A tick's burn (0.0015) is less than half the gap between floats once a stockpile holds tens of thousands, so
+        /// taking it straight off the stock would change nothing there (free fuel). The team keeps what its reactors have
+        /// burned in PlasmaOwed instead, and SettleFusionBurn takes it off the stockpile once a second (0.03 a reactor:
+        /// well above the gap at any stock a game reaches). Every reactor's check, and Team.Amount, count the owed part
+        /// as already spent, so reactors can't burn plasma that isn't there and a purchase can't spend plasma that's burned.
+        /// </summary>
+        bool FusionTick(Entity e, Team team)
+        {
+            float burn = FusionBurn * Dt;
+            float free = (team.Stock.TryGetValue("plasma", out var pl) ? pl : 0) - team.Reserved("plasma") - team.PlasmaOwed;
+            float paid = MathF.Max(0f, MathF.Min(burn, free));
+            team.PlasmaOwed += paid;
+            float share = paid / burn;
+            bool changed = ReactorPower(e, share) != ReactorPower(e, e.Output);
+            e.Output = share;
+            e.Working = ReactorPower(e, share) > 0;
+            return changed;
+        }
+
+        /// <summary>Once a second: take the plasma the team's reactors have burned off its stockpile (never more than it holds).</summary>
+        void SettleFusionBurn()
+        {
+            foreach (var t in Teams)
+            {
+                if (t.PlasmaOwed <= 0) continue;
+                float take = MathF.Min(t.PlasmaOwed, MathF.Max(0f, t.Stock.TryGetValue("plasma", out var pl) ? pl : 0));
+                t.SettleOwed(take);
+            }
+        }
+
+        /// <summary>A reactor that has just been finished or captured starts at the share its new team can pay now, so its power counts from the first sum (not the old owner's, and not none).</summary>
+        void StartReactor(Entity e)
+        {
+            if (e.Def.Key == "fusion_reactor" && e.Team >= 0) FusionTick(e, Teams[e.Team]);
+        }
+
+        /// <summary>For the low-power alert (the owner's only: events can reach other players' copies): when a fusion reactor is making less than its full power for want of plasma, say so and what to do.</summary>
+        string ReactorShortNote(Team t)
+        {
+            var r = Entities.FirstOrDefault(e => !e.Dead && e.Team == t.Id && e.Def.Key == "fusion_reactor" && e.IsComplete && e.Output < 0.995f);
+            return r == null ? "" : $". Your fusion_reactor #{r.Id} is short of plasma and makes only {StateView.Pct(r.Output)}% of its {r.Def.Power} power: enrich more uranium, or lift the reserve/save_for on plasma";
         }
 
         // ------------------------------------------------------------------ neutral derricks
@@ -167,22 +248,41 @@ namespace Pez.Sim
                 float a = 3 * MathF.PI / 4 + (k < want ? k : k - want + 0.5f) * 2 * MathF.PI / want;
                 var site = centre + new Vec2(MathF.Cos(a), MathF.Sin(a)) * radius;
                 if (have.Any(h => Vec2.Dist(h, site) < 8f)) continue;
-                var spot = DerrickSpot(Int2.Of(site));
+                var spot = DerrickSpot(site);
                 if (!spot.HasValue) continue;
                 var d = PlaceDerrick(spot.Value);
                 have.Add(d.Center);
             }
         }
 
-        Int2? DerrickSpot(Int2 near)
+        /// <summary>
+        /// The open 2x2 nearest a site, a ring at a time. Its middle is meant to be the site's nearest whole point (a 2x2's middle is a
+        /// corner), so the sites of a map turned half a circle are the same turn of each other. Of equally near spots, the one nearer the
+        /// middle of the map, then the one on the right as the site faces it; not the first the scan meets (the lowest y, then x), which
+        /// drew every derrick toward the south-west corner whenever its exact site was blocked.
+        /// </summary>
+        Int2? DerrickSpot(Vec2 site)
         {
+            var mid = new Vec2(MathF.Floor(site.X + 0.5f), MathF.Floor(site.Y + 0.5f));
+            var near = new Int2((int)mid.X - 1, (int)mid.Y - 1);
+            var centre = new Vec2(Map.W / 2f, Map.H / 2f);
+            var right = RightOf(mid);
             for (int r = 0; r <= 10; r++)
+            {
+                Int2? best = null; float bestD = 0, bestC = 0, bestR = 0;
                 for (int y = near.Y - r; y <= near.Y + r; y++)
                     for (int x = near.X - r; x <= near.X + r; x++)
                     {
-                        if (Math.Max(Math.Abs(x - near.X), Math.Abs(y - near.Y)) != r) continue;
-                        if (DerrickFits(new Int2(x, y))) return new Int2(x, y);
+                        if (Math.Max(Math.Abs(x - near.X), Math.Abs(y - near.Y)) != r || !DerrickFits(new Int2(x, y))) continue;
+                        var c = new Vec2(x + 1, y + 1);
+                        float d = Vec2.Dist(c, mid), toCentre = Vec2.Dist(c, centre), toRight = (c.X - mid.X) * right.X + (c.Y - mid.Y) * right.Y;
+                        int cmp = best == null ? -1 : TieCmp(d, bestD);
+                        if (cmp == 0) cmp = TieCmp(toCentre, bestC);
+                        if (cmp == 0) cmp = TieCmp(bestR, toRight);
+                        if (cmp < 0) { best = new Int2(x, y); bestD = d; bestC = toCentre; bestR = toRight; }
                     }
+                if (best.HasValue) return best;
+            }
             return null;
         }
 
@@ -221,6 +321,9 @@ namespace Pez.Sim
         /// <summary>Who may capture it now: anyone's engineer if it's neutral (whatever its health), else below CaptureThreshold.</summary>
         public static bool Capturable(Entity t) => t.Team < 0 || t.Hp <= t.Def.MaxHp * CaptureThreshold;
 
+        /// <summary>When each team was last told about each held derrick its units stopped beside: (team, derrick id) to game time. Saved, so a resumed game doesn't say it again.</summary>
+        readonly Dictionary<(int team, int id), float> derrickHinted = new Dictionary<(int, int), float>();
+
         /// <summary>
         /// Armed units stopping beside an enemy-held derrick leave it alone (AcquireTarget): say so, and how to take or
         /// destroy it, once per derrick every 2 minutes (test players Scarlett and Clark left tanks idle by one).
@@ -228,10 +331,11 @@ namespace Pez.Sim
         void DerrickHint(Entity e)
         {
             if (!e.IsArmed || IsProtected(e.Team)) return;
-            var d = Derricks.FirstOrDefault(x => x.Team >= 0 && x.Team != e.Team && !IsProtected(x.Team) && x.DistFrom(e.Pos) <= e.Def.Sight && e.Def.Weapon.CanHit(x.Def) && IsVisibleTo(e.Team, x));
+            var d = Derricks.FirstOrDefault(x => x.Team >= 0 && x.Team != e.Team && x.DistFrom(e.Pos) <= e.Def.Sight && e.Def.Weapon.CanHit(x.Def) && IsVisibleTo(e.Team, x));
             if (d == null) return;
-            for (int i = Events.Count - 1; i >= 0 && (Tick - Events[i].Tick) * Dt < 120f; i--)
-                if (Events[i].Type == "derrick_skipped" && Events[i].Team == e.Team && Events[i].B == d.Id) return;
+            if (derrickHinted.TryGetValue((e.Team, d.Id), out var said) && Time - said < 120f) return;
+            derrickHinted[(e.Team, d.Id)] = Time;
+            if (derrickHinted.Count > 200) foreach (var k in derrickHinted.Where(kv => Time - kv.Value >= 120f).Select(kv => kv.Key).ToList()) derrickHinted.Remove(k);
             Emit("derrick_skipped", e.Team, e.Id, d.Id, d.Center, key: e.Def.Key,
                  text: $"{e.Def.Key} #{e.Id} stopped by {Teams[d.Team].Name}'s derrick #{d.Id} at {(int)d.Center.X},{(int)d.Center.Y} and leaves it alone: units only shoot a held derrick when told to (it's worth capturing). " +
                        $"To take it: attack with \"until\":\"capturable\", then capture it with an engineer. To destroy it (about {DerrickWorth} kill value, and salvage): attack it, or attack_move with \"derricks\":true");
@@ -282,13 +386,12 @@ namespace Pez.Sim
         /// <summary>At most this much salvage per tile from one kill: a big wreck scatters over several tiles.</summary>
         public const int SalvagePerTile = 300;
 
-        /// <summary>What a command center is worth when nothing builds it (the same figure a leaving player's base uses).</summary>
-        static readonly Dictionary<string, int> HqValue = new Dictionary<string, int> { { "iron_ore", 1500 }, { "copper_ore", 500 } };
-
         /// <summary>
-        /// What a thing is worth in materials: its cost, or for things that aren't bought (deployed structures), the cost of
-        /// the unit that deploys into it (an outpost is an outpost truck, a deep mine a drill rig).
+        /// The share of its value a team's base leaves as salvage when the team leaves or is knocked out (Dismantle): 60% of a
+        /// structure's, half a unit's. Its stockpile goes in full.
         /// </summary>
+        public const float DismantleStructureShare = 0.6f, DismantleUnitShare = 0.5f;
+
         /// <summary>
         /// Value counted for each kill that predates kill-value tracking: the median ore value of the standard armed units
         /// (a fair stand-in when we know how many things a team destroyed but not what).
@@ -320,19 +423,68 @@ namespace Pez.Sim
             }
         }
 
+        /// <summary>
+        /// What a thing is worth in materials, the one price list behind kill value, kill salvage, a leaving team's base and
+        /// the showcase: its cost, or for things that aren't bought (deployed structures), the cost of the unit that deploys
+        /// into it (an outpost is an outpost truck, a deep mine a drill rig, a command center a construction truck). A
+        /// derrick is DerrickWorth.
+        /// </summary>
         public Dictionary<string, int> ValueOf(EntityDef d)
         {
             if (d.Cost.Count > 0) return d.Cost;
             if (d.Key == "derrick") return DerrickValue;
             foreach (var u in Defs.All.Values) if (u.DeploysInto == d.Key && u.Cost.Count > 0) return u.Cost;
-            if (d.Key == "command_center") return HqValue;
             return d.Cost;
         }
 
-        /// <summary>Ore value of a cost, per ore type, using the salvage conversion (circuits are worth two copper ore, and so on).</summary>
+        /// <summary>Add an amount of one item, as the raw ores it's made from (OreMix), to a per-ore total.</summary>
+        static void AddOre(float[] into, string item, float amount)
+        {
+            if (!OreMix.TryGetValue(item, out var mix)) return;
+            for (int k = 0; k < mix.Length; k++) into[k] += amount * mix[k];
+        }
+
+        /// <summary>Ore value of a cost, per ore type (circuits are two copper ore and an iron ore, and so on), times `factor`.</summary>
         static void AddValue(float[] into, Dictionary<string, int> cost, float factor)
         {
-            foreach (var kv in cost) if (SalvageOf.TryGetValue(kv.Key, out var s)) into[s.ore] += kv.Value * s.mult * factor;
+            foreach (var kv in cost) AddOre(into, kv.Key, kv.Value * factor);
+        }
+
+        /// <summary>
+        /// Add `share` of what an entity is worth as ore: the one place a unit or structure is priced, for kill value, kill
+        /// salvage and a dismantled base alike. A structure counts at its full price however far it got: its owner paid all of
+        /// it when placing it. What the arena's gift paid for (Entity.GrantedShare: all of it, for the starting base and units) isn't
+        /// worth anything: not the team's own value, so there's no kill value and no salvage in that share, whoever holds it by then.
+        /// </summary>
+        void AddWorth(float[] into, Entity e, float share)
+        {
+            if (e.GrantedShare < 1f) AddValue(into, ValueOf(e.Def), share * (1f - e.GrantedShare));
+        }
+
+        /// <summary>
+        /// A save from before salvage counted as mined when it's delivered (SalvageMined went up at pickup): the salvage still aboard
+        /// a truck at save time is already in the count, and off the economy score, though it was never delivered (if that truck is
+        /// lost it would stay off for good). A load can't be told from field ore there, so each truck's whole load comes back out of
+        /// its team's count, not below zero. A guess, and it errs toward the player: a little too much comes back out, so the
+        /// score ends a little too high rather than too low.
+        /// </summary>
+        internal void MigrateSalvageCount()
+        {
+            foreach (var e in Entities)
+                if (!e.Dead && e.IsHarvester && e.Cargo > 0 && e.Team >= 0 && e.Team < Teams.Count)
+                    Teams[e.Team].Stats.SalvageMined = Math.Max(0, Teams[e.Team].Stats.SalvageMined - e.Cargo);
+        }
+
+        /// <summary>
+        /// A team's stockpile as ore, emptying it: what a spill or a dismantled base gives up. Only what the team holds above
+        /// what it was given (Team.Own) counts; the gift goes with the rest of the stockpile, and nothing is left owing.
+        /// </summary>
+        float[] TakeStockpile(Team t)
+        {
+            var value = new float[4];
+            foreach (var kv in t.Stock) AddOre(value, kv.Key, t.Own(kv.Key)); // (Own leaves out the plasma its reactors have burned: that's gone)
+            t.Stock.Clear(); t.Granted.Clear(); t.PlasmaOwed = 0;
+            return value;
         }
 
         /// <summary>
@@ -347,10 +499,8 @@ namespace Pez.Sim
             if (t.IsMine) return null;
             void Victim(Entity v)
             {
-                float progress = v.IsStructure ? v.BuildProgress : 1f;
-                var cost = ValueOf(v.Def);
-                AddValue(full, cost, progress);
-                AddValue(share, cost, progress * (v.Def.Armor == Armor.Infantry ? InfantrySalvageShare : KillSalvageShare));
+                AddWorth(full, v, 1f);
+                AddWorth(share, v, v.Def.Armor == Armor.Infantry ? InfantrySalvageShare : KillSalvageShare);
             }
             Victim(t);
             foreach (var pid in t.Passengers) { var p = Get(pid); if (p != null) Victim(p); }
@@ -426,6 +576,7 @@ namespace Pez.Sim
                     Map.OreType[i] = (byte)k;
                     if (Map.Ore[i] == 0) oreDirty = true;
                     Map.Ore[i] += put;
+                    Map.Salvage[i] = Map.SalvageOn(i) + put; // all of it is salvage
                     left -= put; placed += put;
                 }
             }
@@ -453,6 +604,18 @@ namespace Pez.Sim
         /// <summary>Loaded from a snapshot older than regrowth: Game.Restore rebuilds OreBase from the game's seed.</summary>
         public bool BaseMissing;
 
+        /// <summary>Loaded from a snapshot older than the salvage layer: DeriveSalvage reads it off the map instead.</summary>
+        public bool SalvageMissing;
+        /// <summary>
+        /// For a game saved before the salvage layer: ore on ground that was never a field was all salvage (and field tiles' ore
+        /// was the field's own, as the old count had it).
+        /// </summary>
+        public void DeriveSalvage()
+        {
+            for (int i = 0; i < Ore.Length; i++) Salvage[i] = OreBase[i] == 0 ? Ore[i] : 0;
+            SalvageMissing = false;
+        }
+
         /// <summary>
         /// For a game saved before regrowth: the fields' original amounts, rebuilt. The map as first generated (same seed,
         /// size and richness) gives the starting area's fields exactly, if its terrain still matches; each base site added
@@ -466,7 +629,10 @@ namespace Pez.Sim
             int size = Math.Clamp(initialSize, MinSize, MaxSize);
             if (size <= W && size <= H)
             {
-                var g = Generate(size, size, seed, oreScale);
+                // As it was made: the neutral fields came later, and the base sites sat on tile corners (9 tiles in) until they moved to
+                // tile centres, so a map whose sites are on corners is rebuilt with the generator it was made with.
+                bool corners = Spawns.Count > 0 && Spawns[0].X == MathF.Floor(Spawns[0].X) && Spawns[0].Y == MathF.Floor(Spawns[0].Y);
+                var g = Generate(size, size, seed, oreScale, extraFields: false, inset: corners ? LegacySiteInset : SiteInset);
                 int same = 0, total = size * size;
                 for (int y = 0; y < size; y++)
                     for (int x = 0; x < size; x++)
@@ -571,7 +737,7 @@ namespace Pez.Sim
                     int nx = x + dx, ny = y + dy;
                     if (!InBounds(nx, ny)) continue;
                     int j = Idx(nx, ny);
-                    if (OreBase[j] > 0 && OreBaseType[j] == type && Ore[j] > 0 && OreType[j] == type) return true;
+                    if (OreBase[j] > 0 && OreBaseType[j] == type && FieldOre(j) > 0 && OreType[j] == type) return true;
                 }
             return false;
         }

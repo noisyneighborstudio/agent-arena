@@ -655,9 +655,6 @@ namespace Pez.View
                 case "rocket_soldier":
                 case "laser_trooper":
                 case "medic":
-                case "engineer":
-                case "sniper":
-                case "commando":
                     {
                         float s = 0.85f;
                         // Smoke-plastic torso on licorice legs; the team colour sits on the helmet, on top, where it reads at full zoom-out.
@@ -667,26 +664,6 @@ namespace Pez.View
                         rig.Turret = Empty(b, "arms", new Vector3(0, 0.32f * s, 0));
                         if (key == "rifleman")
                             rig.Barrel = Part(rig.Turret, PrimitiveType.Cube, new Vector3(0.06f, 0, 0.12f), new Vector3(0.03f, 0.04f, 0.26f), dark);
-                        else if (key == "engineer")
-                        {
-                            // Hard hat and toolbox.
-                            Part(b, PrimitiveType.Sphere, new Vector3(0, 0.55f * s, 0), new Vector3(0.14f, 0.07f, 0.14f) * s, teamMat);
-                            rig.Barrel = Part(rig.Turret, PrimitiveType.Cube, new Vector3(0.1f, -0.1f, 0.03f), new Vector3(0.07f, 0.06f, 0.12f), Mats.Lit(Kraft, 0.2f, 0f));
-                        }
-                        else if (key == "sniper")
-                        {
-                            // Ghillie-dark body overlay and a long scoped rifle.
-                            Part(b, PrimitiveType.Capsule, new Vector3(0, 0.3f * s, 0), new Vector3(0.17f, 0.135f, 0.13f) * s, Mats.Lit(Kraft * 0.6f, 0.05f, 0));
-                            rig.Barrel = Part(rig.Turret, PrimitiveType.Cube, new Vector3(0.06f, 0, 0.2f), new Vector3(0.025f, 0.035f, 0.46f), dark);
-                            Part(rig.Barrel, PrimitiveType.Cylinder, new Vector3(0, 1.4f, 0.05f), new Vector3(0.9f, 0.12f, 0.9f), Mats.Glow(PezPalette.EmissiveCyanLaserOptics, 1.5f), new Vector3(90, 0, 0));
-                        }
-                        else if (key == "commando")
-                        {
-                            // Beret and a satchel of charges.
-                            Part(b, PrimitiveType.Sphere, new Vector3(0.02f, 0.55f * s, 0), new Vector3(0.13f, 0.04f, 0.13f) * s, Mats.Lit(Track, 0.4f, 0));
-                            Part(b, PrimitiveType.Cube, new Vector3(0, 0.26f * s, -0.09f), new Vector3(0.14f, 0.12f, 0.07f) * s, Mats.Lit(Kraft, 0.2f, 0));
-                            rig.Barrel = Part(rig.Turret, PrimitiveType.Cube, new Vector3(0.08f, 0, 0.08f), new Vector3(0.06f, 0.05f, 0.08f), Mats.Glow(PezPalette.EmissiveAmberIndustryDocking, 2f));
-                        }
                         else if (key == "medic")
                         {
                             // White pack with a red cross on the back, no weapon.
@@ -702,7 +679,7 @@ namespace Pez.View
                         }
                         else
                             rig.Barrel = Part(rig.Turret, PrimitiveType.Cylinder, new Vector3(0.08f, 0.07f, 0.02f), new Vector3(0.07f, 0.17f, 0.07f), Mats.Lit(Kraft, 0.3f, 0f), new Vector3(90, 0, 0));
-                        Legs(rig, s, key == "sniper" ? Mats.Lit(Kraft * 0.45f, 0.05f, 0) : Mats.Lit(Track, 0.2f, 0));
+                        Legs(rig, s, Mats.Lit(Track, 0.2f, 0));
                         break;
                     }
                 case "command_center":

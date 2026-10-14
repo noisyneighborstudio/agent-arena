@@ -487,7 +487,8 @@ scene.onBeforeRenderObservable.add(() => {
     const span = Math.max(1, s.b.t - s.a.t), t = Math.min(1, Math.max(0, (at - s.a.t) / span));
     const x = s.a.x + (s.b.x - s.a.x) * t, y = s.a.y + (s.b.y - s.a.y) * t, f = lerpAngle(s.a.f, s.b.f, t);
     s.root.position.set(x, AIR.has(s.key) ? 2.2 : 0, y);
-    s.root.rotation.y = s.size > 0 ? 0 : Math.PI / 2 - f; // Unity: Euler(0, 90° − facing); structures never turn
+    // Unity: Euler(0, 90° − facing). A structure's "facing" is where its door faces (south unless it is a drop-off turned to its bay), and the model's door is on -Z: yaw −90° − facing.
+    s.root.rotation.y = s.size > 0 ? -Math.PI / 2 - f : Math.PI / 2 - f;
     if (s.stages) {
       const target = s.build < 0 ? 1 : s.build / 100; s.shown = s.shown == null ? target : s.shown + (target - s.shown) * Math.min(1, dt * 4);
       s.stages.forEach((st, i) => { if (!st) return; const [a, b] = WINDOWS[i], k = Math.min(1, Math.max(0, (s.shown - a) / (b - a))); st.n.position.y = st.y0 - st.h * (1 - easeOut(k)); st.n.setEnabled(k > 0 || i === 0); });

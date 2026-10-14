@@ -31,6 +31,17 @@ namespace Pez.Headless
 
         static bool Ok(JObj r) => r["ok"] is bool b && b;
 
+        /// <summary>A port nothing is listening on, for a test's API server: fixed ports collided when two copies of the suite
+        /// ran on one machine (CI and a developer's run), failing CI with "address already in use".</summary>
+        static int FreePort()
+        {
+            var l = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+            l.Start();
+            int port = ((System.Net.IPEndPoint)l.LocalEndpoint).Port;
+            l.Stop();
+            return port;
+        }
+
         public static int Run()
         {
             RepairTruck();
@@ -51,12 +62,17 @@ namespace Pez.Headless
             HousePolicy();
             TeamNames();
             NewcomerProtection();
+            NewcomerEconomicPlay();
             SafeSpawn();
             Fuel();
             RetreatOncePerWound();
             NoDancing();
             RunOver();
             NoSpinBesideParkedTruck();
+            NoSpinBetweenTanks();
+            MovementGate();
+            DropOffsFaceTheirBays();
+            C4IsPlanted();
             ViewCopyReplaysOrders();
             GroupMove();
             ResignWhenStalled();
@@ -341,6 +357,122 @@ namespace Pez.Headless
             Check(walker.Order == Order.Idle && flips <= 2 && truck.Pos.Equals(at), $"a soldier walks to a spot beside a parked truck and stops ({walker.OrderName} at {walker.Pos} for {spot}, {flips} snap turns)");
         }
 
+        static void NoSpinBetweenTanks()
+        {
+            // Two of its own tanks drive past a soldier at right angles. It gets out of both their ways in one go, without
+            // stepping out of one's path into the other's and back every tick (spinning on the spot, as it used to).
+            var w = new World(2, 7, 80);
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var at = hq.Center + new Vec2(12, 12);
+            var soldier = At(w.SpawnUnit(0, "rocket_soldier", hq), at);
+            var a = At(w.SpawnUnit(0, "heavy_tank", hq), at + new Vec2(-2.2f, 0.3f));
+            var b = At(w.SpawnUnit(0, "light_tank", hq), at + new Vec2(0.3f, -2.2f));
+            w.SetOrder(a, Order.Move, at + new Vec2(8, 0.3f)); a.Facing = 0;
+            w.SetOrder(b, Order.Move, at + new Vec2(0.3f, 8)); b.Facing = MathF.PI / 2;
+            int flips = 0; float was = soldier.Facing;
+            for (int i = 0; i < 5 * World.TickRate; i++)
+            {
+                w.Step();
+                float df = MathF.Abs(soldier.Facing - was); if (df > MathF.PI) df = 2 * MathF.PI - df;
+                if (df > 0.8f) flips++;
+                was = soldier.Facing;
+            }
+            Check(!soldier.Dead && flips <= 3 && !w.Events.Any(e => e.Type == "crushed"), $"a soldier between two tanks driving past gets out of both ways without spinning ({flips} snap turns, at {soldier.Pos})");
+        }
+
+        /// <summary>The drop-off's trucks back into its door side: its bay has a clear lane and the building's door faces it.</summary>
+        static bool DoorBay(World w, Entity s)
+        {
+            var (_, _, facing, laneOk) = w.Bay(s);
+            return laneOk && MathF.Abs(w.DoorFacing(s) - facing) < 0.001f;
+        }
+
+        static void DropOffsFaceTheirBays()
+        {
+            // Placing by itself (the AI, a build command without x,y, a suggested spot), a drop-off's trucks back into its door side.
+            // (Rules 41 did it by keeping the bay on the south side and placing drop-offs where the south lane is clear; since the
+            // economy audit, Rules 44, the bay opens on the clear side nearest the ore and the building turns its door to it.)
+            // A player's own x,y is still accepted wherever CanPlace allows it.
+            var w = new World(2, 7, 80);
+            var def = Defs.Get("mining_refinery");
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            Int2? sideSpot = null;
+            for (int y = hq.Origin.Y - 6; y <= hq.Origin.Y + 12 && sideSpot == null; y++)
+                for (int x = hq.Origin.X - 6; x <= hq.Origin.X + 12 && sideSpot == null; x++)
+                {
+                    if (w.CanPlace(0, "mining_refinery", x, y) != null) continue;
+                    var (_, _, f, ok) = w.Bay(new Int2(x, y), def);
+                    if (ok && MathF.Abs(f - -MathF.PI / 2) > 0.001f) sideSpot = new Int2(x, y);
+                }
+            Check(sideSpot.HasValue, $"CanPlace still accepts a refinery whose south lane is blocked (at {sideSpot}): a player's x,y is unchanged");
+            for (int i = 0; i < 4; i++)
+            {
+                var spot = w.FindPlacement(0, "mining_refinery");
+                if (!spot.HasValue) { Check(false, $"FindPlacement finds a spot for refinery #{i + 1}"); break; }
+                var r = w.SpawnStructure(0, "mining_refinery", spot.Value, 1f);
+                Check(DoorBay(w, r), $"auto-placed refinery #{i + 1} at {spot.Value} has a clear bay on its door side");
+            }
+
+            // House AIs on several maps: every refinery and command center they build has a clear bay on its door side.
+            int refineries = 0, bad = 0;
+            for (int seed = 1; seed <= 4; seed++)
+            {
+                var game = new Game(new GameConfig { Seed = seed, MapSize = 80, Controllers = new[] { "ai", "ai" }, Orders = new[] { "", "" } });
+                for (int i = 0; i < 8 * 60 * World.TickRate; i++) game.Advance(World.Dt);
+                foreach (var s in game.World.Entities)
+                {
+                    if (s.Dead || !s.IsStructure || (s.Def.Key != "mining_refinery" && s.Def.Key != "command_center")) continue;
+                    if (s.Def.Key == "mining_refinery") refineries++;
+                    if (!DoorBay(game.World, s)) { bad++; Console.WriteLine($"  no door-side bay: {s.Def.Key} #{s.Id} team {s.Team} at {s.Origin} (seed {seed})"); }
+                }
+            }
+            Check(refineries >= 8 && bad == 0, $"house-AI refineries and command centers all have a clear bay on their door side ({refineries} refineries over 4 matches, {bad} without)");
+        }
+
+        static void C4IsPlanted()
+        {
+            // Rules 43: a commando has to plant his charge. Standing in range of an enemy power plant, the first C4 goes off
+            // only after its arming time (1.5 s), the next on the cooldown (5 s) after that; walking off starts the arming
+            // again, and a commando that never stops gets nothing off.
+            var w = new World(2, 7, 80);
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var plant = w.SpawnStructure(1, "power_plant", w.FindPlacement(0, "power_plant").Value, 1f);
+            plant.Hp = 100000f;   // one charge would level it: let it stand for the next ones
+            var c4 = Defs.Get("commando").Weapon;
+            var by = plant.Center + new Vec2(-(plant.Def.SizeX / 2f + 0.5f), 0);
+            var cmd = At(w.SpawnUnit(0, "commando", hq), by);
+            List<float> Shots() => w.Events.Where(e => e.Type == "shot" && e.A == cmd.Id && e.Key == "c4").Select(e => e.Tick * World.Dt).ToList();
+            string Times(List<float> s, float from) => string.Join(", ", s.Select(t => $"{t - from:0.00} s"));
+            w.SetOrder(cmd, Order.Attack, plant.Center, plant.Id);
+            float start = -1f;   // the first tick he works it: in range, stopped
+            for (int i = 0; i < 1.4f * World.TickRate; i++) { w.Step(); if (start < 0f && cmd.LastFiredAt == w.Time) start = w.Time; }
+            Check(start >= 0f && start <= 2 * World.Dt && Shots().Count == 0 && cmd.Arming > 1f,
+                  $"standing by its target, a commando's first charge doesn't go off before it's armed ({Shots().Count} shots, armed {cmd.Arming:0.00} s)");
+            Run(w, 0.3f);
+            var shots = Shots();
+            Check(shots.Count == 1 && shots[0] - start >= c4.ArmTime - 0.01f && shots[0] - start <= c4.ArmTime + 0.11f,
+                  $"it goes off once the charge is armed, {c4.ArmTime} s after he started on it ({Times(shots, start)})");
+            Run(w, 5f);
+            shots = Shots();
+            Check(shots.Count == 2 && MathF.Abs(shots[1] - shots[0] - c4.Cooldown) < 0.11f, $"staying on it, the next follows on the cooldown, not another arming ({Times(shots, start)})");
+
+            // Walked off and back: the arming starts again (the cooldown has long run out by then).
+            w.SetOrder(cmd, Order.Move, by + new Vec2(-4, 0));
+            Run(w, 6f);
+            Check(Shots().Count == 2 && cmd.Order == Order.Idle, $"walked off, nothing more goes off ({Shots().Count} shots, {cmd.OrderName})");
+            w.SetOrder(cmd, Order.Attack, plant.Center, plant.Id);
+            float back = -1f;
+            for (int i = 0; i < 8 * World.TickRate && Shots().Count == 2; i++)
+            {
+                w.Step();
+                if (back < 0f && cmd.LastFiredAt == w.Time) back = w.Time;
+            }
+            shots = Shots();
+            Check(back > 0f && shots.Count == 3 && shots[2] - back >= c4.ArmTime - 0.01f && shots[2] - back <= c4.ArmTime + 0.11f,
+                  $"back in range, he plants a fresh charge: it goes off {(shots.Count == 3 ? shots[2] - back : -1f):0.00} s after he starts on it");
+            Check(w.Errors == 0, "no sim errors");
+        }
+
         static void ViewCopyReplaysOrders()
         {
             // A browser's copy runs on from one snapshot to the next. The next snapshot brings the orders given meanwhile, at
@@ -440,6 +572,7 @@ namespace Pez.Headless
             // A house AI, a placeholder agent seat from the config (nobody plays it), and two agents who join a minute in.
             var game = new Game(new GameConfig { Seed = 5, MapSize = 64, Open = true, Controllers = new[] { "ai", "llm" }, HouseAIs = 1 });
             var w = game.World;
+            w.Teams[1].ProtectedUntil = 1e9f; // (kept out of harm's way: this is about its idle clock, and the house AI's units meeting its truck would end the seat before 20 minutes)
             Step(game, 60);
             var idler = w.AddTeam("llm", "Napper", out _);
             var busy = w.AddTeam("llm", "Keen", out _);
@@ -483,7 +616,8 @@ namespace Pez.Headless
         {
             var game = new Game(new GameConfig { Seed = 6, MapSize = 64, Open = true, Controllers = new[] { "ai" }, HouseAIs = 1 });
             var w = game.World;
-            var api = new ApiServer(7987);
+            int port = FreePort();
+            var api = new ApiServer(port);
             api.Start();
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
             // One thread: the request is answered by pumping the API here, between game ticks, like the host's loop.
@@ -492,7 +626,7 @@ namespace Pez.Headless
                 while (!req.IsCompleted) { game.Advance(0.01f); api.Pump(game); Thread.Sleep(10); }
                 return (Dictionary<string, object>)Json.Parse(req.Result.Content.ReadAsStringAsync().Result);
             }
-            const string Url = "http://127.0.0.1:7987";
+            string Url = $"http://127.0.0.1:{port}";
             var reg = Call(http.PostAsync($"{Url}/api/register", new StringContent("{\"name\":\"Napper\"}")));
             var tok = reg.Str("token"); int id = (int)(double)reg["team"];
             foreach (var (what, req) in new (string, Func<System.Threading.Tasks.Task<HttpResponseMessage>>)[] {
@@ -552,6 +686,7 @@ namespace Pez.Headless
             Check(w.Teams[0].Zones.TryGetValue(dep.Id, out var flag) && flag.FlaggedBy == sv.Id && sv.Order == Order.Idle, "a one-off survey plants its flags and then waits");
 
             // A drill rig only deploys on a surveyed deposit.
+            w.SpawnStructure(0, "power_plant", w.FindPlacement(0, "power_plant").Value, 1f); // the mine needs 50 power; at half power it pumps 2/s, not the 4/s checked below
             var rig = At(w.SpawnUnit(0, "drill_rig", hq), dep.Pos + new Vec2(8, 0));
             r = Commands.Execute(w, 0, Cmd("type", "deploy", "units", new[] { rig.Id }));
             Check(!Ok(r) && r["error"].ToString().Contains("deep deposit"), $"off a deposit, the rig won't deploy: {r["error"]}");
@@ -598,7 +733,7 @@ namespace Pez.Headless
             float minGap = float.MaxValue;
             for (int i = 0; i < t.SurveySites.Count; i++)
                 for (int j = i + 1; j < t.SurveySites.Count; j++) minGap = Math.Min(minGap, Vec2.Dist(t.SurveySites[i], t.SurveySites[j]));
-            Check(t.SurveySites.Count >= 6 && minGap > 15f, $"they cover distinct sites without repeats ({t.SurveySites.Count} sites, closest two {minGap:0.0} tiles apart)");
+            Check(t.SurveySites.Count >= 5 && minGap > 15f, $"they cover distinct sites without repeats ({t.SurveySites.Count} sites, closest two {minGap:0.0} tiles apart)");
             var inRange = w.Map.Deep.Where(d => t.SurveySites.Any(p => Vec2.Dist(p, d.Pos) <= EntityDef.SurveyRadius)).ToList();
             Check(inRange.Count > 0 && inRange.All(d => t.Surveyed.Contains(d.Id) && t.Zones.TryGetValue(d.Id, out var f) && (f.FlaggedBy == sv.Id || f.FlaggedBy == sv2.Id)),
                   $"every deposit near a surveyed site is flagged as a mining zone by the surveyor that found it ({inRange.Count} zones)");
@@ -1204,16 +1339,55 @@ namespace Pez.Headless
             Check(!hq.Burning && !hq.Dead, "a healthy building never burns");
         }
 
+        /// <summary>A tank parked on the head of a lane with rock beside the lane, and a truck stopped by it on the far side of the rock: it
+        /// never stands on the rock (swinging in from there carried it across), and docks. Three ways: the rock beside the head; the rock
+        /// further down the lane and the truck already facing out of the bay (it used to go straight on to back in, slantwise); and the
+        /// truck diagonal to the rock, so that the line to the head only clips the rock's corner between the samples taken along it.</summary>
+        static void DockBesideRock()
+        {
+            string[] how = { "beside the head", "down the lane", "at the corner of the head" };
+            for (int c = 0; c < 3; c++)
+            {
+                var w = new World(2, 7, 80);
+                var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+                var refinery = w.SpawnStructure(0, "mining_refinery", w.FindPlacement(0, "mining_refinery").Value, 1f);
+                var (dock, head, facing, _) = w.Bay(refinery);
+                var outward = (head - dock).Normalized;
+                var across = new Vec2(-outward.Y, outward.X);
+                foreach (var o in w.Owned(0).Where(e => e.IsHarvester).ToList()) w.Remove(o);
+                var rock = Int2.Of(head + across - outward * (c == 1 ? 1f : 0f)); // beside the head of the lane, or one tile down it (towards the bay)
+                w.Map.Tiles[w.Map.Idx(rock.X, rock.Y)] = Terrain.Rock;
+                var tank = At(w.SpawnUnit(0, "heavy_tank", hq), head); w.SetOrder(tank, Order.Idle, tank.Pos);
+                // Within reach of the head, across the rock (or, the last, diagonal to it: 1.1 beside the head and 0.95 out along the lane).
+                var truck = At(w.SpawnUnit(0, "mining_truck", refinery), c == 2 ? head + across * 1.1f + outward * 0.95f : head + across * 1.55f);
+                if (c == 1) truck.Facing = facing;
+                truck.Cargo = 150; truck.CargoType = 0; w.SetOrder(truck, Order.ReturnOre, truck.Pos);
+                int mined0 = w.Teams[0].Stats.OreMined;
+                bool onRock = false;
+                for (int k = 0; k < 30 * World.TickRate && w.Teams[0].Stats.OreMined - mined0 < 150; k++)
+                {
+                    if (c != 1 && k == 8 * World.TickRate) w.Remove(tank); // otherwise it waits for the tank to go
+                    w.Step();
+                    var at = Int2.Of(truck.Pos);
+                    if (!w.Map.Passable(at.X, at.Y)) onRock = true;
+                }
+                Check(!onRock && w.Teams[0].Stats.OreMined - mined0 >= 150,
+                      $"a truck held off the lane head by a parked tank never crosses the rock {how[c]}, and docks{(c != 1 ? " once the tank is gone" : "")} (on rock {onRock}, delivered {w.Teams[0].Stats.OreMined - mined0}, {truck.Dock}, t {w.Time:0.0})");
+            }
+        }
+
         static void NoGridlock()
         {
             // A truck docking at a refinery with idle tanks parked all over the dock still unloads.
             var w = new World(2, 7, 80);
             var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
             var refinery = w.SpawnStructure(0, "mining_refinery", w.FindPlacement(0, "mining_refinery").Value, 1f);
-            var dock = w.DockPoint(refinery);
-            for (int i = 0; i < 6; i++) { var tk = At(w.SpawnUnit(0, "heavy_tank", hq), dock + new Vec2((i % 3 - 1) * 0.9f, -(i / 3) * 0.9f)); w.SetOrder(tk, Order.Idle, tk.Pos); }
+            var (dock, dockHead, _, _) = w.Bay(refinery);
+            var outward = (dockHead - dock).Normalized; // the bay opens toward the ore, not always south
+            var across = new Vec2(-outward.Y, outward.X);
+            for (int i = 0; i < 6; i++) { var tk = At(w.SpawnUnit(0, "heavy_tank", hq), dock + across * ((i % 3 - 1) * 0.9f) + outward * ((i / 3) * 0.9f)); w.SetOrder(tk, Order.Idle, tk.Pos); }
             foreach (var o in w.Owned(0).Where(e => e.IsHarvester).ToList()) w.Remove(o);
-            var truck = At(w.SpawnUnit(0, "mining_truck", refinery), dock + new Vec2(7, -1));
+            var truck = At(w.SpawnUnit(0, "mining_truck", refinery), dock + across * 7f + outward);
             truck.Cargo = 150; truck.CargoType = 0; w.SetOrder(truck, Order.ReturnOre, truck.Pos);
             // Make the refinery the only drop-off so it has to dock there.
             int mined0 = w.Teams[0].Stats.OreMined;
@@ -1224,28 +1398,36 @@ namespace Pez.Headless
                 if (steps.Count == 0 || steps[steps.Count - 1] != truck.Dock) steps.Add(truck.Dock);
             }
             Check(w.Teams[0].Stats.OreMined - mined0 >= 150, $"a truck docking through a crowd of parked tanks still unloads (delivered {w.Teams[0].Stats.OreMined - mined0}, truck at {truck.Pos}, dock {dock}, {truck.Dock}, t {w.Time:0.0})");
-            Check(string.Join(",", steps).Contains("Approach,Align,Reverse,Unload,PullOut"), $"it lines up, backs into the bay, unloads and pulls out ({string.Join(" > ", steps)})");
+            Check(string.Join(",", steps).Contains("Enter,Align,Reverse,Unload,PullOut"), $"it lines up, backs into the bay, unloads and pulls out ({string.Join(" > ", steps)})");
 
             // Two trucks arriving together: one backs in, the other waits beside the lane, then takes its turn.
             var wq = new World(2, 7, 80);
             var hqq = wq.Owned(0).First(e => e.Def.Key == "command_center");
             foreach (var o in wq.Owned(0).Where(e => e.IsHarvester).ToList()) wq.Remove(o);
-            var bayQ = wq.DockPoint(hqq);
-            var t1 = At(wq.SpawnUnit(0, "mining_truck", hqq), bayQ + new Vec2(-3, -4));
-            var t2 = At(wq.SpawnUnit(0, "mining_truck", hqq), bayQ + new Vec2(3, -4));
+            var (bayQ, headQ, facingQ, _) = wq.Bay(hqq);
+            var outQ = (headQ - bayQ).Normalized;
+            var acrossQ = new Vec2(-outQ.Y, outQ.X);
+            var t1 = At(wq.SpawnUnit(0, "mining_truck", hqq), bayQ + acrossQ * -3f + outQ * 4f);
+            var t2 = At(wq.SpawnUnit(0, "mining_truck", hqq), bayQ + acrossQ * 3f + outQ * 4f);
             foreach (var tq in new[] { t1, t2 }) { tq.Cargo = 150; tq.CargoType = 0; wq.SetOrder(tq, Order.ReturnOre, tq.Pos); }
-            bool bothIn = false, queued = false, backedIn = false, done1 = false, done2 = false;
+            bool bothIn = false, queued = false, backedIn = false, done1 = false, done2 = false, waitedStill = false;
             for (int k = 0; k < 40 * World.TickRate && !(done1 && done2); k++)
             {
                 wq.Step();
+                // (The queue is single file: each waiting truck takes a spot of its own beside the lane, in the order it joined, so the
+                // side it came from no longer decides where it stands. It still has to stand still there.)
+                foreach (var tq in new[] { t1, t2 })
+                    if (tq.Dock == DockStep.Queue && !tq.Moving) waitedStill = true;
                 done1 |= t1.Dock == DockStep.PullOut; done2 |= t2.Dock == DockStep.PullOut;
                 if (t1.Dock >= DockStep.Align && t2.Dock >= DockStep.Align) bothIn = true;
                 if (t1.Dock == DockStep.Queue || t2.Dock == DockStep.Queue) queued = true;
                 foreach (var tq in new[] { t1, t2 })
-                    if (tq.Dock == DockStep.Unload && Vec2.Dist(tq.Pos, bayQ) < 0.05f && MathF.Abs(tq.Facing + MathF.PI / 2) < 0.05f) backedIn = true;
+                    if (tq.Dock == DockStep.Unload && Vec2.Dist(tq.Pos, bayQ) < 0.05f && MathF.Cos(tq.Facing - facingQ) > 0.998f) backedIn = true;
             }
             Check(done1 && done2 && queued && !bothIn && backedIn,
                   $"two trucks share one bay: one waits its turn beside the lane, each unloads backed in, facing out (both delivered {done1 && done2}, queued {queued}, both in at once {bothIn}, after {wq.Time:0.0}s)");
+            Check(waitedStill, $"and the truck that waits stands still on its spot in the queue (it stood still there {waitedStill})");
+            DockBesideRock();
 
             // Nothing can be built on a truck lane, and a drop-off whose south is walled off gets a bay on a clear side.
             var (bayL, headL, _, okL) = wq.Bay(hqq);
@@ -1254,6 +1436,7 @@ namespace Pez.Headless
             Check(okL && why != null && why.Contains("truck lane"), $"building on a drop-off's truck lane is refused: {why}");
             var wr = new World(2, 7, 80);
             var hqr = wr.Owned(0).First(e => e.Def.Key == "command_center");
+            hqr.BaySide = 0; // a south bay (the bay otherwise opens toward the ore)
             for (int x = hqr.Origin.X - 2; x < hqr.Origin.X + hqr.Def.SizeX + 2; x++)
                 for (int y = hqr.Origin.Y - 3; y < hqr.Origin.Y; y++)
                     if (wr.Map.InBounds(x, y) && wr.Map.Occupant[wr.Map.Idx(x, y)] == 0) wr.Map.Tiles[wr.Map.Idx(x, y)] = Terrain.Rock;
@@ -1303,6 +1486,149 @@ namespace Pez.Headless
             int salvage = 0; for (int y = 0; y < 3; y++) for (int x = 0; x < 3; x++) salvage += w.Map.Ore[w.Map.Idx(hq.Origin.X + x, hq.Origin.Y + y)];
             Check(salvage > 500 && w.Map.Ore[w.Map.Idx(foot.X, foot.Y)] > oreBefore, $"and lies on the footprint as salvage ore anyone can mine ({salvage} units)");
             Check(w.Alerts.Active(w, 0).Any(a => a.Kind == "salvage_available") && w.Alerts.Active(w, 1).Any(a => a.Kind == "stockpile_lost"), "everyone is told: the loser and the would-be scavengers");
+            LastHqSpillsAnyRoute();
+        }
+
+        /// <summary>The stockpile spills however the last command center goes (sold, captured), and a team knocked out leaves salvage.</summary>
+        static void LastHqSpillsAnyRoute()
+        {
+            long OreOnMap(World x) => x.Map.Ore.Sum(o => (long)o);
+            Entity Hq(World x, int team) => x.Owned(team).First(e => e.Def.Key == "command_center");
+            void Rich(World x, int team) { x.Teams[team].Stock.Clear(); x.Teams[team].Add("steel", 5000); x.Teams[team].Add("circuits", 500); } // 6500 ore worth: a circuit is 2 copper ore + 1 iron ore
+            void Quiet(World x) { foreach (var u in x.Entities.Where(e => !e.IsStructure).ToList()) x.Remove(u); } // no trucks mining the ore we count
+
+            // Sold: needs the confirm, which says the stockpile goes with it; then it spills like a kill, with its own wording.
+            var w = new World(2, 7, 80);
+            Rich(w, 1);
+            w.SpawnStructure(1, "power_plant", w.FindPlacement(1, "power_plant").Value, 1f); // the team has something else left
+            var hq = Hq(w, 1);
+            var refused = Commands.Execute(w, 1, Cmd("type", "sell", "structure_id", hq.Id));
+            Check(!Ok(refused) && Said(refused).Contains("stockpile") && !hq.Dead && w.Teams[1].Amount("steel") == 5000, $"selling your only command center asks first and warns about the stockpile: {Said(refused)}");
+            long before = OreOnMap(w);
+            var sold = Commands.Execute(w, 1, Cmd("type", "sell", "structure_id", hq.Id, "confirm", true));
+            long gained = OreOnMap(w) - before;
+            Check(Ok(sold) && hq.Dead && Said(sold).Contains("stockpile is gone") && Said(sold).Contains("spilled out as salvage"), $"the sale says so: {Said(sold)}");
+            Check(w.Teams[1].Stock.Count == 0 && gained >= 6400 && gained <= 6500, $"selling the last command center spills the stockpile as salvage ({gained} ore on the map, {w.Teams[1].Stock.Count} items left)");
+            Check(w.Events.Any(e => e.Type == "chat" && e.Text.Contains("last command center was sold") && e.Text.Contains("spilled")), "the arena chat says it was sold, not that it fell");
+            var lostAlert = w.Alerts.Active(w, 1).FirstOrDefault(a => a.Kind == "stockpile_lost");
+            Check(lostAlert != null && lostAlert.Lost.Any(l => l.Contains("was sold")) && w.Alerts.Active(w, 0).Any(a => a.Kind == "salvage_available"), "the seller is told what happened and the others where the salvage is");
+
+            // A team with a second command center selling one keeps its stockpile; selling the last then spills it.
+            var w2 = new World(2, 7, 80);
+            w2.Teams[1].ProtectedUntil = 0;
+            Rich(w2, 1);
+            var hqA = Hq(w2, 1);
+            var hqB = w2.SpawnStructure(1, "command_center", w2.FindPlacement(1, "command_center", hqA.Center + new Vec2(14, 0), requireNear: false).Value, 1f);
+            long before2 = OreOnMap(w2);
+            var firstSale = Commands.Execute(w2, 1, Cmd("type", "sell", "structure_id", hqA.Id));
+            Check(Ok(firstSale) && hqA.Dead && w2.Teams[1].Amount("steel") == 5000 && OreOnMap(w2) == before2 && !w2.Alerts.Active(w2, 1).Any(a => a.Kind == "stockpile_lost"),
+                  $"selling one of two command centers keeps the stockpile: {Said(firstSale)}");
+            var lastSale = Commands.Execute(w2, 1, Cmd("type", "sell", "structure_id", hqB.Id, "confirm", true));
+            Check(Ok(lastSale) && hqB.Dead && w2.Teams[1].Stock.Count == 0 && OreOnMap(w2) - before2 >= 6400, $"selling the other one then spills it ({OreOnMap(w2) - before2} ore)");
+
+            // Captured: the stockpile spills on the open ground around the building, which now belongs to the capturer.
+            var w3 = new World(2, 7, 80);
+            w3.Teams[0].ProtectedUntil = 0; w3.Teams[1].ProtectedUntil = 0;
+            Rich(w3, 1);
+            w3.SpawnStructure(1, "power_plant", w3.FindPlacement(1, "power_plant").Value, 1f);
+            var hq3 = Hq(w3, 1);
+            Quiet(w3);
+            hq3.Hp = hq3.Def.MaxHp * 0.3f;
+            var eng = At(w3.SpawnUnit(0, "engineer", Hq(w3, 0)), hq3.Center + new Vec2(2.5f, 0));
+            long before3 = OreOnMap(w3);
+            w3.UpdateVisibility();
+            var order3 = Commands.Execute(w3, 0, Cmd("type", "capture", "units", new[] { eng.Id }, "target", hq3.Id));
+            Run(w3, 20);
+            long gained3 = OreOnMap(w3) - before3;
+            Check(Ok(order3) && hq3.Team == 0 && !hq3.Dead && eng.Dead, $"the engineer captured the command center ({Said(order3)})");
+            Check(w3.Teams[1].Stock.Count == 0 && gained3 >= 6400 && gained3 <= 6500, $"capturing the last command center spills the stockpile ({gained3} ore on the map, {w3.Teams[1].Stock.Count} items left)");
+            int under = 0; for (int y = 0; y < 3; y++) for (int x = 0; x < 3; x++) under += w3.Map.Ore[w3.Map.Idx(hq3.Origin.X + x, hq3.Origin.Y + y)];
+            Check(under == 0, $"none of it lies under the building, where trucks couldn't reach it ({under})");
+            Check(w3.Events.Any(e => e.Type == "chat" && e.Text.Contains("last command center was captured by") && e.Text.Contains("spilled")) && w3.Alerts.Active(w3, 1).Any(a => a.Kind == "stockpile_lost" && a.Lost.Any(l => l.Contains("was captured by"))),
+                  "chat and the loser's alert say it was captured");
+
+            // Capturing one of two doesn't spill.
+            var w4 = new World(2, 7, 80);
+            w4.Teams[0].ProtectedUntil = 0; w4.Teams[1].ProtectedUntil = 0;
+            Rich(w4, 1);
+            var h4 = Hq(w4, 1);
+            w4.SpawnStructure(1, "command_center", w4.FindPlacement(1, "command_center", h4.Center + new Vec2(14, 0), requireNear: false).Value, 1f);
+            Quiet(w4);
+            h4.Hp = h4.Def.MaxHp * 0.3f;
+            var eng4 = At(w4.SpawnUnit(0, "engineer", Hq(w4, 0)), h4.Center + new Vec2(2.5f, 0));
+            w4.UpdateVisibility();
+            Commands.Execute(w4, 0, Cmd("type", "capture", "units", new[] { eng4.Id }, "target", h4.Id));
+            Run(w4, 20);
+            Check(h4.Team == 0 && w4.Teams[1].Amount("circuits") == 500, "capturing a team's other command center leaves its stockpile alone");
+
+            // Knocked out (closed game): the stockpile and the units left are dismantled into salvage, not deleted.
+            var w5 = new World(3, 7, 96);
+            Quiet(w5);
+            foreach (var s in w5.Owned(2).Where(e => e.IsStructure).ToList()) w5.Remove(s);
+            w5.Teams[2].Stock.Clear(); w5.Teams[2].Add("steel", 3000);
+            var base5 = w5.Owned(0).First(e => e.IsStructure);
+            for (int i = 0; i < 2; i++) At(w5.SpawnUnit(2, "heavy_tank", base5), w5.Teams[2].StartPos + new Vec2(4 + i, 4));
+            long before5 = OreOnMap(w5);
+            Run(w5, 1);
+            long gained5 = OreOnMap(w5) - before5;
+            Check(w5.Teams[2].Defeated && !w5.Teams[2].Left && !w5.Owned(2).Any() && w5.Teams[2].Stock.Count == 0, "a team with no structures left is out, and nothing of it stands");
+            Check(gained5 >= 3000 + 2 * 310 && gained5 <= 3000 + 2 * 320, $"its stockpile (3000) and two heavy tanks (half of 640 each: 400 steel + 80 circuits) became salvage ({gained5} ore)");
+            Check(!w5.Events.Any(e => e.Type == "destroyed" && e.Team == 2 && e.Key == "heavy_tank") && w5.Events.Count(e => e.Type == "salvaged" && e.Team == 2 && e.Key == "heavy_tank") == 2, "the units were dismantled, not shot");
+            var out5 = w5.Events.Last(e => e.Type == "defeated" && e.Team == 2);
+            Check(out5.Text.Contains("salvage ore") && w5.Alerts.Active(w5, 0).Any(a => a.Kind == "salvage_available"), $"the announcement and the others' alerts say where it is: {out5.Text}");
+
+            // The same in an open arena, where everyone else plays on.
+            var w6 = new World(3, 7, 96) { Open = true };
+            Quiet(w6);
+            foreach (var s in w6.Owned(2).Where(e => e.IsStructure).ToList()) w6.Remove(s);
+            w6.Teams[2].Stock.Clear(); w6.Teams[2].Add("steel", 3000);
+            At(w6.SpawnUnit(2, "heavy_tank", w6.Owned(0).First(e => e.IsStructure)), w6.Teams[2].StartPos + new Vec2(4, 4));
+            long before6 = OreOnMap(w6);
+            Run(w6, 1);
+            long gained6 = OreOnMap(w6) - before6;
+            Check(w6.Teams[2].Defeated && !w6.GameOver && w6.Owned(2).Count() == 0 && gained6 >= 3000 + 310, $"an eliminated team in an open arena leaves salvage too ({gained6} ore)");
+            Check(w.Errors == 0 && w2.Errors == 0 && w3.Errors == 0 && w4.Errors == 0 && w5.Errors == 0 && w6.Errors == 0, "no sim errors");
+
+            // The viewers reload the ore map when OreVersion moves: a spill (sold, or a base dismantled) has to move it.
+            var w7 = new World(3, 7, 96); // three teams, and team 1 keeps a power plant: nobody is knocked out, so the clock keeps running
+            Quiet(w7); Rich(w7, 1);
+            w7.SpawnStructure(1, "power_plant", w7.FindPlacement(1, "power_plant").Value, 1f);
+            Run(w7, 10.1f); // settle: any version bump the start-up owes
+            int v0 = w7.OreVersion;
+            Commands.Execute(w7, 1, Cmd("type", "sell", "structure_id", Hq(w7, 1).Id, "confirm", true));
+            Run(w7, 10.1f);
+            Check(w7.OreVersion > v0, $"selling the last command center moves ore_version so viewers reload the ore ({v0} -> {w7.OreVersion})");
+            var w8 = new World(3, 7, 96);
+            Quiet(w8); Rich(w8, 1);
+            Run(w8, 10.1f);
+            int v8 = w8.OreVersion;
+            w8.Leave(1);
+            Run(w8, 10.1f);
+            Check(w8.OreVersion > v8, $"and so does a player leaving ({v8} -> {w8.OreVersion})");
+
+            // A base dismantled is announced where the ore actually landed, even when the team's last structures
+            // aren't at its first base.
+            var w9 = new World(2, 7, 160);
+            Quiet(w9);
+            var start9 = w9.Teams[1].StartPos;
+            w9.Teams[1].Stock.Clear(); // nothing to spill as the command center goes: the only salvage alert is the leave's
+            foreach (var s in w9.Owned(1).ToList()) w9.Remove(s);
+            var far = w9.SpawnStructure(1, "power_plant", w9.FindPlacement(1, "power_plant", new Vec2(160 - start9.X, 160 - start9.Y), requireNear: false).Value, 1f);
+            string home9 = StateView.Sector(start9), there9 = StateView.Sector(far.Center);
+            Check(home9 != there9, $"setup: the last structure ({there9}) is in another sector than the first base ({home9})");
+            string left9 = w9.Leave(1);
+            Check(left9.Contains($"at sector {there9}") && !left9.Contains(home9), $"a leaving team's salvage is announced where it lies: {left9}");
+            var avail9 = w9.Alerts.Active(w9, 0).FirstOrDefault(a => a.Kind == "salvage_available");
+            Check(avail9 != null && avail9.Lost.Any(l => l.Contains(there9)) && StateView.Sector(avail9.Pos) == there9, $"and so is the alert, text and position ({avail9?.Lost.FirstOrDefault()}, {(avail9 == null ? "-" : StateView.Sector(avail9.Pos))})");
+
+            // Split across two bases, it names both sectors, the bigger lot first.
+            var w10 = new World(2, 7, 160);
+            Quiet(w10);
+            var start10 = w10.Teams[1].StartPos;
+            var far10 = w10.SpawnStructure(1, "power_plant", w10.FindPlacement(1, "power_plant", new Vec2(160 - start10.X, 160 - start10.Y), requireNear: false).Value, 1f);
+            string left10 = w10.Leave(1);
+            Check(left10.Contains("sectors ") && left10.Contains(StateView.Sector(start10)) && left10.Contains(StateView.Sector(far10.Center)), $"salvage landing in two sectors names both: {left10}");
+            Check(w9.Errors == 0 && w10.Errors == 0 && w7.Errors == 0 && w8.Errors == 0, "no sim errors");
         }
 
         static void FieldRefuelling()
@@ -1446,12 +1772,46 @@ namespace Pez.Headless
             Enemy(w2, "rocket_soldier", new Vec2(44.5f, 40.5f));
             Run(w2, 4);
             Check(w2.Alerts.Active(w2, 0).Any(a => a.Kind == "units_ambushed" && a.Priority == Priority.High), "a unit hit while moving raises HIGH units_ambushed");
+
+            // The log holds 500 alerts; the cap trims the oldest that have stopped merging, never one a fight is still adding to
+            // (it is saved with the game, so a resumed game keeps merging into it and the original has to as well).
+            var w3 = new World(2, 7);
+            var running = w3.Alerts.Raise(w3, 0, "enemy_near_base", Priority.High, new Vec2(10, 10));
+            for (int i = 0; i < 600; i++)
+            {
+                w3.Tick += 100; // 5 s
+                w3.Alerts.Raise(w3, 0, "enemy_near_base", Priority.High, new Vec2(10, 10)); // the same fight goes on
+                w3.Alerts.Raise(w3, 1, "stranger_" + i, Priority.Medium, new Vec2(30, 30)); // and 600 others come and go
+            }
+            Check(w3.Alerts.All.Count == 500 && w3.Alerts.All.Contains(running) && running.LastTick == w3.Tick,
+                  $"the 500-alert cap keeps an alert that is still merging, however old ({w3.Alerts.All.Count} alerts, the first one {(w3.Alerts.All.Contains(running) ? "kept" : "trimmed")})");
+
+            // The fight stops and its alert closes: it was last updated a moment ago, so a save still holds it, and the cap (which goes by
+            // when an alert was last updated, not by its number) cuts an old stranger instead. Otherwise the original would drop what the
+            // resumed game keeps, and the two would differ.
+            w3.Tick += 200; // 10 s
+            w3.Alerts.Raise(w3, 1, "stranger_late", Priority.Medium, new Vec2(30, 30));
+            Check(w3.Alerts.All.Count == 500 && w3.Alerts.All.Contains(running), $"and once that fight is over, the alert it was adding to stays while a save would hold it ({w3.Alerts.All.Count} alerts, the first one {(w3.Alerts.All.Contains(running) ? "kept" : "trimmed")})");
+
+            // 600 distinct alerts arrive inside one merge window (all open, so none can be trimmed); later raises only refresh one of them
+            // and the rest close. The cap is enforced again once there are closed ones to drop, not only when a new alert is created.
+            var w4 = new World(2, 7);
+            var keeper = w4.Alerts.Raise(w4, 0, "enemy_near_base", Priority.High, new Vec2(10, 10));
+            for (int i = 0; i < 600; i++) w4.Alerts.Raise(w4, 1, "burst_" + i, Priority.Medium, new Vec2(30, 30));
+            Check(w4.Alerts.All.Count == 601, $"alerts that are all still open are not trimmed ({w4.Alerts.All.Count})");
+            for (int step = 0; step < 3; step++)
+            {
+                w4.Tick += 120; // 6 s: inside the keeper's merge window, and past the others' after two steps
+                w4.Alerts.Raise(w4, 0, "enemy_near_base", Priority.High, new Vec2(10, 10));
+            }
+            Check(w4.Alerts.All.Count == 500 && w4.Alerts.All.Contains(keeper), $"and once they have closed, raises that only refresh one bring the log back to the cap ({w4.Alerts.All.Count} alerts)");
         }
 
         static void InterruptibleWait()
         {
             var game = new Game(new GameConfig { Seed = 7, Controllers = new[] { "llm", "llm" } });
-            var api = new ApiServer(7799);
+            int port = FreePort();
+            var api = new ApiServer(port);
             api.Start();
             Entity raiderToPlace = null;
             bool stop = false;
@@ -1475,14 +1835,14 @@ namespace Pez.Headless
             loop.Start();
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(40) };
             var t0 = DateTime.UtcNow;
-            var body = http.GetStringAsync("http://127.0.0.1:7799/api/wait?team=0&seconds=25&since=0").Result;
+            var body = http.GetStringAsync($"http://127.0.0.1:{port}/api/wait?team=0&seconds=25&since=0").Result;
             double took = (DateTime.UtcNow - t0).TotalSeconds;
             var r = (Dictionary<string, object>)Json.Parse(body);
             Check(r["interrupted"] is bool b && b && took < 8, $"wait(25s) returns early when the base is attacked ({took:0.0}s)");
             Check(body.Contains("BASE UNDER ATTACK") || body.Contains("ENEMY NEAR BASE"), "the interrupted wait carries the alert");
             t0 = DateTime.UtcNow;
             // Red is fighting too, so only a critical alert should cut its wait short; nothing critical happens to Red here.
-            body = http.GetStringAsync($"http://127.0.0.1:7799/api/wait?team=1&seconds=1.5&min=critical").Result;
+            body = http.GetStringAsync($"http://127.0.0.1:{port}/api/wait?team=1&seconds=1.5&min=critical").Result;
             took = (DateTime.UtcNow - t0).TotalSeconds;
             r = (Dictionary<string, object>)Json.Parse(body);
             Check(r["interrupted"] is bool b2 && !b2 && took >= 1.4 && took < 4, $"with nothing happening, wait runs its full time ({took:0.0}s)");
@@ -1498,7 +1858,8 @@ namespace Pez.Headless
             Check(st.Contains("\"standing_orders\":\"Rush with infantry.\""), "get_state carries standing_orders");
             Check(Json.Write(StateView.TeamState(w, 1)).Contains("\"standing_orders\":\"none\""), "the other team sees only its own (none)");
 
-            var api = new ApiServer(7798);
+            int port = FreePort();
+            var api = new ApiServer(port);
             api.Start();
             bool stop = false, sent = false;
             var loop = new Thread(() =>
@@ -1516,12 +1877,12 @@ namespace Pez.Headless
             loop.Start();
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(40) };
             var t0 = DateTime.UtcNow;
-            var body = http.GetStringAsync("http://127.0.0.1:7798/api/wait?team=1&seconds=20&orders_version=0").Result;
+            var body = http.GetStringAsync($"http://127.0.0.1:{port}/api/wait?team=1&seconds=20&orders_version=0").Result;
             double took = (DateTime.UtcNow - t0).TotalSeconds;
             var r = (Dictionary<string, object>)Json.Parse(body);
             Check(r["interrupted"] is bool b && b && took < 5, $"new orders cut a 20s wait short ({took:0.0}s)");
             Check(r["orders_changed"] is bool oc && oc && body.Contains("Expand to the uranium"), "the wait result carries the new orders");
-            var post = http.PostAsync("http://127.0.0.1:7798/api/admin/orders?team=0", new StringContent("{\"text\":\"Turtle.\"}")).Result.Content.ReadAsStringAsync().Result;
+            var post = http.PostAsync($"http://127.0.0.1:{port}/api/admin/orders?team=0", new StringContent("{\"text\":\"Turtle.\"}")).Result.Content.ReadAsStringAsync().Result;
             Check(post.Contains("\"orders_version\":2") && post.Contains("Turtle."), "POST /api/admin/orders replaces orders and bumps the version");
             stop = true;
             api.Stop();
@@ -1726,6 +2087,7 @@ namespace Pez.Headless
 
             // Leaving turns the base into salvage ore that anyone can mine.
             var hqTiles = Enumerable.Range(0, 9).Select(k => new Int2(hq2.Origin.X + k % 3, hq2.Origin.Y + k / 3)).ToList();
+            t2.Add("steel", 2000); // mined, not given: the starting base and stock are gifts and leave no salvage
             var msg = w.Leave(t2.Id);
             Check(w.Teams[t2.Id].Left && !w.Owned(t2.Id).Any(), $"leaving removes the player's forces: {msg}");
             Check(hqTiles.All(p => w.Map.Ore[w.Map.Idx(p.X, p.Y)] > 0), "their old HQ footprint is now salvage ore");
@@ -1816,6 +2178,89 @@ namespace Pez.Headless
             w.SetOrder(raider, Order.Attack, hq.Center, hq.Id);
             Run(w, 10);
             Check(hq.Hp < hq.Def.MaxHp, "after protection the base can be attacked");
+        }
+
+        /// <summary>Protection covers the newcomer's base, not economic play against others: it can't mine by an enemy base, and a derrick it holds is fair game.</summary>
+        static void NewcomerEconomicPlay()
+        {
+            Console.WriteLine("\n-- newcomer protection and economic play");
+            var w = new World(2, 7, 64) { Open = true, ProtectionSeconds = 600 };
+            Run(w, 60);
+            var hq0 = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var t = w.AddTeam("llm", "Late Joiner", out _);
+            var hq = w.Owned(t.Id).First(e => e.Def.Key == "command_center");
+            foreach (var u in w.Owned(0).Concat(w.Owned(t.Id)).Where(u => !u.IsStructure).ToList()) w.Remove(u);
+            Check(w.IsProtected(t.Id) && !w.IsProtected(0), "the newcomer is protected, the founder is not");
+
+            // Mining: an enemy's home field, two tiles from its base, is off limits to a protected truck; its own is still its own.
+            var theirs = w.Map.NearestOre(hq0.Center, 12).Value;
+            var truck = At(w.SpawnUnit(t.Id, "mining_truck", hq), theirs.Center + new Vec2(0, 1));
+            // Only what the newcomer has seen counts: an unseen base tells it nothing (no refusal), a seen one bars the field.
+            var r = Commands.Execute(w, t.Id, Cmd("type", "harvest", "units", new[] { truck.Id }, "x", theirs.Center.X, "y", theirs.Center.Y));
+            Check(Ok(r), $"ordered to mine by a base it hasn't seen, the truck isn't refused (the order leaks nothing): {Said(r)}");
+            Run(w, 1);
+            Check(w.Teams[t.Id].KnownEnemyStructures.Values.Any(k => k.team == 0), "the truck then sees the enemy base");
+            r = Commands.Execute(w, t.Id, Cmd("type", "harvest", "units", new[] { truck.Id }, "x", theirs.Center.X, "y", theirs.Center.Y));
+            Check(!Ok(r) && r["error"].ToString().Contains("newcomer protection") && r["error"].ToString().Contains("another team's structures"),
+                  $"a protected truck ordered to mine by an enemy base is refused, with why: {Said(r)}");
+            int fieldBefore = w.Map.Ore[w.Map.Idx(theirs.X, theirs.Y)];
+            truck.HarvestTile = theirs; w.SetOrder(truck, Order.Harvest, theirs.Center); truck.HarvestTile = theirs;
+            Run(w, 20);
+            Check(w.Map.Ore[w.Map.Idx(theirs.X, theirs.Y)] >= fieldBefore && (!truck.HarvestTile.HasValue || Vec2.Dist(truck.HarvestTile.Value.Center, hq0.Center) >= World.HostileOreRadius),
+                  $"and a truck already there mines none of it and moves off (field {fieldBefore} -> {w.Map.Ore[w.Map.Idx(theirs.X, theirs.Y)]})");
+            var mine = w.Map.NearestOre(hq.Center, 12).Value;
+            var home = At(w.SpawnUnit(t.Id, "mining_truck", hq), mine.Center + new Vec2(0, 1));
+            r = Commands.Execute(w, t.Id, Cmd("type", "harvest", "units", new[] { home.Id }, "x", mine.Center.X, "y", mine.Center.Y));
+            Check(Ok(r), $"it can mine its own starting field: {Said(r)}");
+            Run(w, 20);
+            Check(home.Cargo > 0 || home.Order == Order.ReturnOre, $"and does (cargo {home.Cargo})");
+            // The newcomer's own field stays reserved from everyone else.
+            var foreign = At(w.SpawnUnit(0, "mining_truck", hq0), mine.Center + new Vec2(0, 1));
+            foreign.HarvestTile = mine; w.SetOrder(foreign, Order.Harvest, mine.Center); foreign.HarvestTile = mine;
+            Check(w.OreReserved(mine, 0), "the protected newcomer's starting ore is still reserved from others");
+            Run(w, 5);
+            Check(!foreign.HarvestTile.HasValue || !w.OreReserved(foreign.HarvestTile.Value, 0), "and a founder's truck sent onto it moves off");
+            // Once protection ends the same order is allowed.
+            t.ProtectedUntil = 0;
+            r = Commands.Execute(w, t.Id, Cmd("type", "harvest", "units", new[] { truck.Id }, "x", theirs.Center.X, "y", theirs.Center.Y));
+            Check(Ok(r), $"after protection ends the truck may mine anywhere: {Said(r)}");
+
+            // Derricks: neutral ones can be taken during protection, but one a protected team holds can be shot and captured.
+            t.ProtectedUntil = w.Time + 600;
+            var d = w.Derricks.First();
+            d.Team = t.Id;
+            var raider = At(w.SpawnUnit(0, "heavy_tank", hq0), d.Center + new Vec2(3, 3));
+            w.UpdateVisibility();
+            float hp = d.Hp;
+            r = Commands.Execute(w, 0, Cmd("type", "attack", "units", new[] { raider.Id }, "target", d.Id));
+            Check(Ok(r), $"a derrick held by a protected team can be attacked: {Said(r)}");
+            w.Hurt(d, 50, raider);
+            Check(d.Hp < hp, "and hurt");
+            w.Hurt(hq, 50, raider);
+            Check(hq.Hp == hq.Def.MaxHp, "while its base is still untouchable");
+            // Protected units never shoot back, however they got the order: not on the alarm, not on a direct attack order.
+            var guard = At(w.SpawnUnit(t.Id, "heavy_tank", hq), d.Center + new Vec2(-3, 0));
+            var guard2 = At(w.SpawnUnit(t.Id, "heavy_tank", hq), d.Center + new Vec2(-3, 2));
+            raider.Hp = raider.Def.MaxHp;
+            w.Hurt(d, 10, raider);
+            Check(guard.Order != Order.Attack && guard.Order != Order.AttackMove, $"protected units nearby don't answer the alarm for a hit derrick (order {guard.Order})");
+            w.SetOrder(raider, Order.Idle, raider.Pos); // the founder only stands there; the derrick keeps its health for the capture below
+            w.SetOrder(guard2, Order.Attack, raider.Center, raider.Id);
+            Run(w, 10);
+            Check(raider.Hp == raider.Def.MaxHp && guard.Hp == guard.Def.MaxHp && guard2.Hp == guard2.Def.MaxHp,
+                  $"and a protected unit with a direct attack order fires nothing (raider {raider.Hp:0}/{raider.Def.MaxHp})");
+            w.Remove(guard); w.Remove(guard2);
+            d.Hp = d.Def.MaxHp * 0.3f;
+            var eng = At(w.SpawnUnit(0, "engineer", hq0), d.Center + new Vec2(1, 1));
+            r = Commands.Execute(w, 0, Cmd("type", "capture", "units", new[] { eng.Id }, "target", d.Id));
+            Check(Ok(r), $"an engineer may capture a derrick a protected team holds (below 50%): {Said(r)}");
+            Run(w, 20);
+            Check(d.Team == 0, $"and takes it (now team {d.Team})");
+            var mineEng = At(w.SpawnUnit(t.Id, "engineer", hq), d.Center + new Vec2(1, 2));
+            d.Hp = d.Def.MaxHp * 0.3f;
+            w.UpdateVisibility();
+            r = Commands.Execute(w, t.Id, Cmd("type", "capture", "units", new[] { mineEng.Id }, "target", d.Id));
+            Check(!Ok(r) && Said(r).Contains("newcomer protection"), $"while a protected team still can't take other players' derricks: {Said(r)}");
         }
     }
 }

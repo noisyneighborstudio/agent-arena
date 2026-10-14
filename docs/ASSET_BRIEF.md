@@ -1,5 +1,7 @@
 # Pezz asset design brief
 
+> **Process has moved on.** For how to make, refine, verify and ship an asset today, follow [`ASSET_GUIDE.md`](art/ASSET_GUIDE.md). This document is kept for its prompt for outside artists; where it disagrees with the guide about process, the guide wins.
+
 Paste the prompt below into Claude (Claude Design, or any Claude surface that can produce images, SVG or 3D files). It describes every asset the game currently uses, with the exact footprints, moving parts and naming the Unity code expects, so the results can be dropped straight in.
 
 ---
@@ -20,7 +22,7 @@ You're the art director and lead asset designer for **Pezz**, a modern, high-res
 ### Technical requirements (Unity, built-in render pipeline)
 
 - **Scale:** one map tile is one Unity unit (1 m in the file). +Y is up, +Z is forward (the direction units face and fire). Each pivot sits at ground level, at the centre of the footprint.
-- **Buildings** must fit exactly inside their tile footprint, with a 0.04-unit margin on every side. Doors, docks and vehicle exits face −Z (south).
+- **Buildings** must fit exactly inside their tile footprint, with a 0.04-unit margin on every side. Doors, docks and vehicle exits face −Z (south). The drop-offs (command center, refinery, outpost) are square, and the game turns each a quarter turn about its centre so its door and dock face its truck bay, which opens toward its ore; the barracks and factory turn the same way so their door faces the middle of the map (where their units come out): keep these footprints and pivots symmetric.
 - **Moving parts** are separate child nodes with exactly these names. The game rotates and animates them:
   - `turret`: yaws around Y
   - `barrel`: recoils along −Z; a child of `turret`

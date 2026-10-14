@@ -1,5 +1,7 @@
 # Pez asset pack v0.1: The Dispenser War
 
+> **Process has moved on.** For how to make, refine, verify and ship an asset today, follow [`ASSET_GUIDE.md`](ASSET_GUIDE.md). This document is kept for its record of the original blockout pack; where it disagrees with the guide about process, the guide wins.
+
 These are blockout assets, built to the brief's exact technical contract (footprints, pivots, node names and team mask) so they can go into Unity today. Replace them with final art later without touching game code.
 
 ## What's inside

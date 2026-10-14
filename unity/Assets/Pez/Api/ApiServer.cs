@@ -786,9 +786,9 @@ namespace Pez.Api
                     if (id == team) continue;
                     t.Remove("standing_orders"); // a commander's orders are the team's plan
                     if (team < 0) continue;
-                    foreach (var k in new[] { "stock", "rates", "power_produced", "power_used", "visible", "explored", "detected", "revealed",
+                    foreach (var k in new[] { "stock", "granted", "rates", "power_produced", "power_used", "visible", "explored", "detected", "revealed",
                                               "structure_queue", "unit_queues", "known_enemy_structures", "surveyed", "survey_sites", "reserve",
-                                              "save_for", "save_for_cost", "zones", "stalled_since", "surface_warned_at", "home_ore_warned", "last_active_at", "orders_version" })
+                                              "save_for", "save_for_cost", "zones", "stalled_since", "surface_warned_at", "home_ore_warned", "last_active_at", "orders_version", "plasma_owed" })
                         t.Remove(k);
                     if (t["stats"] is JObj st) t["stats"] = new JObj().Set("kills", st["kills"] ?? 0);
                     // Where a rival's base is, is for scouting: their start goes far off the map (not 0,0, a real corner, where
@@ -799,7 +799,7 @@ namespace Pez.Api
             {
                 foreach (var e in events.OfType<JObj>()) if ((e["type"] as string) == "orders" && (team < 0 || Num(e["team"] ?? -1) != team)) e.Remove("text"); // World.SetOrders logs the text as an event
                 if (team >= 0)
-                    world["events"] = events.OfType<JObj>().Where(e => PublicEvent(e["type"] as string) || Num(e["team"] ?? -1) == team || Sees(w, team, e["pos"])).Cast<object>().ToList();
+                    world["events"] = events.OfType<JObj>().Where(e => PublicEvent(e["type"] as string) || Num(e["team"] ?? -1) == team || (!OwnerEvent(e["type"] as string) && Sees(w, team, e["pos"]))).Cast<object>().ToList();
             }
             // Orders given lately, which the client's copy gives again at their ticks (Game.Replay) so it moves as the game did
             // rather than sliding to it at the next snapshot. A player's copy gets only its own team's.
@@ -829,7 +829,7 @@ namespace Pez.Api
                     }
                     else eo.Remove("order_pos");
                     foreach (var k in new[] { "rally", "waypoints", "waypoint_loop", "resume_order", "resume_pos", "resume_guard", "resume_target", "resume_waypoints",
-                                              "mine_queue", "home_pos", "harvest_tile", "prospect_center", "prospect_radius", "skip_sites", "passengers", "retreat_below", "fuel", "fuel_cap", "until_capturable", "engage_derricks" })
+                                              "mine_queue", "home_pos", "harvest_tile", "prospect_center", "prospect_radius", "skip_sites", "passengers", "retreat_below", "fuel", "fuel_cap", "until_capturable", "engage_derricks", "output", "granted_share", "cargo_salvage" })
                         eo.Remove(k);
                     eo["guard_pos"] = eo["pos"];
                     keep.Add(eo);
@@ -844,6 +844,8 @@ namespace Pez.Api
                 world["rate_snapshot"] = rates.OfType<JObj>().Where(r => Num(r["team"]) == team).Cast<object>().ToList();
             if (world["air_warned"] is List<object> aw)
                 world["air_warned"] = aw.OfType<List<object>>().Where(x => x.Count > 0 && Num(x[0]) == team).Cast<object>().ToList();
+            if (world["derrick_hinted"] is List<object> dh) // which derricks a rival's units stopped beside is theirs to know
+                world["derrick_hinted"] = dh.OfType<List<object>>().Where(x => x.Count > 0 && Num(x[0]) == team).Cast<object>().ToList();
             // Deep deposits are found by surveying: a player's copy only has the ones it surveyed.
             if (world["map"] is JObj map && map["deep"] is List<object> deep)
                 map["deep"] = deep.OfType<JObj>().Where(d => t0.Surveyed.Contains((int)Num(d["id"]))).Cast<object>().ToList();
@@ -865,6 +867,15 @@ namespace Pez.Api
         static double Num(object o) => o is double d ? d : o is float f ? f : o is int i ? i : o is long l ? l : o is IConvertible c ? c.ToDouble(System.Globalization.CultureInfo.InvariantCulture) : 0;
 
         /// <summary>Events everyone hears about (the scoreboard and chat), wherever they happen.</summary>
+        /// <summary>
+        /// Events that only tell their own team about its economy or its units' state (power totals, upkeep, research, deep ore,
+        /// fuel): a rival's never reaches a player's copy, even when the spot it names is in sight. These are the types
+        /// StateView.EventList shows only to the team they belong to.
+        /// </summary>
+        static bool OwnerEvent(string type) => type is "low_power" or "power_restored" or "defences_offline" or "defences_online" or "research_started" or "researched"
+            or "unstalled" or "surveyed" or "survey_failed" or "drilled" or "drill_failed" or "depleted" or "low_fuel" or "stranded" or "refuelled" or "retreating"
+            or "out_of_range" or "capture_stopped" or "derrick_skipped";
+
         static bool PublicEvent(string type) => type == "chat" || type == "defeated" || type == "game_over" || type == "joined" || type == "left" || type == "resigned" || type == "match";
 
         static bool Sees(World w, int team, object pos)
@@ -875,7 +886,21 @@ namespace Pez.Api
             return w.Teams[team].Visible[m.Idx(x, y)];
         }
 
-        static JObj ViewFrame(World w, int team)
+        /// <summary>
+        /// A unit queue as the viewer's production list: a row for each unit a building is working on (each barracks has its own),
+        /// or the head of a queue nothing is working on. The first row of a unit says how many of it are queued.
+        /// </summary>
+        static List<object> UnitProduction(Team t, Producer kind)
+        {
+            var q = t.UnitQueues[kind];
+            var now = t.Working(kind);
+            if (now.Count == 0 && q.Count > 0) now.Add(q[0]);
+            var counted = new HashSet<string>();
+            return now.Select(p => (object)new JObj().Set("type", p.Key).Set("count", counted.Add(p.Key) ? q.Count(x => x.Key == p.Key) : 1)
+                .Set("pct", (int)(p.Progress / Defs.Get(p.Key).BuildTime * 100)).Set("building", p.WorkerId != 0 ? (object)p.WorkerId : null)).ToList();
+        }
+
+        internal static JObj ViewFrame(World w, int team)
         {
             var m = w.Map;
             string shroud = null;
@@ -893,9 +918,10 @@ namespace Pez.Api
                 bool known = team < 0 || w.IsVisibleTo(team, e) || (e.IsStructure && w.Teams[team].KnownEnemyStructures.ContainsKey(e.Id));
                 if (!known) continue;
                 var c = e.Center;
-                // An invention is drawn as its base unit (ModelKey); its player-chosen name rides along at index 10.
+                // An invention is drawn as its base unit (ModelKey); its player-chosen name rides along at index 10. A structure's
+                // facing (index 6) is where its door faces: its bay for a drop-off, else south, where the models' doors are.
                 var row = new List<object> { e.Id, e.Def.OwnerTeam >= 0 ? e.Def.ModelKey : e.Def.Key, e.Team, Math.Round(c.X, 2), Math.Round(c.Y, 2), (int)(100 * e.Hp / e.Def.MaxHp),
-                    Math.Round(e.Facing, 2), e.IsStructure ? StateView.Pct(e.BuildProgress) : -1, e.IsStructure ? e.Def.SizeX : 0,
+                    Math.Round(e.IsStructure ? w.DoorFacing(e) : e.Facing, 2), e.IsStructure ? StateView.Pct(e.BuildProgress) : -1, e.IsStructure ? e.Def.SizeX : 0,
                     // fuel %: your own units only (spectators see all); -1 = not shown
                     e.Def.UsesFuel && (team < 0 || e.Team == team) ? StateView.Pct(e.FuelFraction) : -1 };
                 if (e.Def.OwnerTeam >= 0) row.Add(e.Def.Name);
@@ -943,8 +969,7 @@ namespace Pez.Api
                     .Set("structures", w.Entities.Count(e => !e.Dead && e.Team == team && e.IsStructure))
                     .Set("kills", t.Stats.Kills).Set("protected_for_s", w.IsProtected(team) ? (int)(t.ProtectedUntil - w.Time) : 0)
                     .Set("production", t.StructureQueue.Select(p => { var s0 = w.Get(p.StructureId); return (object)new JObj().Set("type", p.Key).Set("pct", (int)((s0?.BuildProgress ?? 0) * 100)); })
-                        .Concat(t.UnitQueues.Values.Where(q => q.Count > 0).Select(q => (object)new JObj().Set("type", q[0].Key)
-                            .Set("count", q.Count(x => x.Key == q[0].Key)).Set("pct", (int)(q[0].Progress / Defs.Get(q[0].Key).BuildTime * 100)))).ToList()));
+                        .Concat(t.UnitQueues.Where(kv => kv.Value.Count > 0).SelectMany(kv => UnitProduction(t, kv.Key))).ToList()));
                 o.Set("alerts", w.Alerts.Active(w, team).Take(4).Select(a => AlertLog.Describe(w, a)).ToList());
                 o.Set("alert_items", w.Alerts.Active(w, team).Take(4).Select(a => (object)new JObj().Set("priority", a.Priority.ToString().ToLowerInvariant())
                     .Set("label", AlertLog.Label(a.Kind)).Set("sector", StateView.Sector(a.Pos)).Set("x", (int)a.Pos.X).Set("y", (int)a.Pos.Y)).ToList());
@@ -962,7 +987,8 @@ namespace Pez.Api
                 .Set("game_over", w.GameOver).Set("winner", w.Winner)
                 .Set("match", StateView.MatchJson(w))
                 .Set("resumed_from", game.ResumedFrom).Set("last_saved", game.LastSaved)
-                .Set("sim_errors", w.Errors).Set("last_sim_error", w.LastError).Set("render_fps", MathF.Round(game.RenderFps, 1))
+                .Set("sim_errors", w.Errors).Set("last_sim_error", w.LastError)
+                .Set("movement_settles", w.SettleCounts.Values.Sum()).Set("movement_settles_by", w.SettleCounts.OrderByDescending(kv => kv.Value).Take(8).Aggregate(new JObj(), (j, kv) => j.Set(kv.Key, kv.Value))) // the dance guard (docs/MOVEMENT.md).Set("render_fps", MathF.Round(game.RenderFps, 1))
                 .Set("teams", w.Teams.Select(t => new JObj()
                     .Set("team", t.Id).Set("seat", t.Seat).Set("name", t.Name).Set("controller", t.Controller).Set("player", t.PlayerName)
                     .Set("stockpile", StateView.Stockpile(t)).Set("defeated", t.Defeated)

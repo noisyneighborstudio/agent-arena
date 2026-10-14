@@ -19,6 +19,8 @@ namespace Pez.Headless
     ///              [--resume | --fresh] [--snapshot ~/.config/pezz/rooms/game-PORT.json] [--save-interval 30] [--match-hours 4]
     ///              the game is saved every 30 game-seconds, soon after a join, on POST /api/admin/save and on SIGTERM/SIGINT;
     ///              --resume restores the saved game at startup (an --open arena does by default; --fresh starts over)
+    ///              [--econ-report]  the economy's measurement report (EconReport.cs): rates against the rules text, regrowth, surface ore
+    ///              and deep deposits by map size, the catch-up kit, and scripted AI vs AI over seeds x sizes x richness (see its flags)
     /// Runs the game with no graphics. LLMs connect over the HTTP API (usually via the MCP server).
     /// --selftest plays AI vs AI as fast as possible and prints the result.
     /// </summary>
@@ -55,10 +57,12 @@ namespace Pez.Headless
             World.RegrowthDisabled = args.Contains("--no-regrowth"); // balance baselines
             if (args.Contains("--selftest")) return SelfTest(cfg, int.Parse(Arg("--max-minutes", "30")));
             if (args.Contains("--test")) return Tests.Run();
+            if (args.Contains("--gate")) return Tests.RunGate();
             if (args.Contains("--test-observe")) return Tests.RunObserve();
             if (args.Contains("--bench-swarm")) return Tests.BenchSwarm();
             if (args.Contains("--test-kitchen-sink")) return Tests.RunKitchenSink();
             if (args.Contains("--test-economy")) return Tests.RunEconomy();
+            if (args.Contains("--econ-report")) return EconReport.Run(args);
             if (args.Contains("--drift")) return DanceCheck.Drift(Arg("--drift", ""), Arg("--to", ""));
             if (args.Contains("--dance-check")) return DanceCheck.Run(Arg("--dance-check", ""), float.Parse(Arg("--seconds", "60"), System.Globalization.CultureInfo.InvariantCulture), args.Contains("--verbose"));
             if (args.Contains("--resume-check")) return ResumeCheck(Arg("--resume-check", ""), float.Parse(Arg("--seconds", "600"), System.Globalization.CultureInfo.InvariantCulture));

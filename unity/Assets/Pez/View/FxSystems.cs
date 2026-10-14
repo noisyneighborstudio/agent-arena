@@ -18,15 +18,32 @@ namespace Pez.View
         static FxSystems inst;
         public static FxSystems I => inst != null ? inst : inst = Create();
 
-        public ParticleSystem Flash, Fire, Smoke, Dust, Sparks, Shards, Ring, Scorch, Pool, Flame, Plume;
+        public ParticleSystem Flash, Fire, Smoke, Dust, Sparks, Shards, Ring, Scorch, Pool, Flame, Plume, Motes;
         Transform ground;
         /// <summary>
-        /// The prevailing wind (world units/s, horizontal): one wind over the whole map, so every plume nearby leans the
-        /// same way. It comes from the west-south-west at about half a tile a second, gusting slowly (plus or minus a
-        /// quarter) and wandering a few degrees over minutes. Smoke, steam and dust drift with it at its speed.
+        /// The prevailing wind (world units/s, horizontal): one wind over the whole map, so every plume leans the same
+        /// way. Each game has its own (SetPrevailing: from its id, so every browser watching it agrees), at about a tile a
+        /// second, gusting slowly (plus or minus a quarter) and wandering a few degrees over minutes. Smoke, steam and
+        /// dust drift with it at its speed: a stack's smoke trails off downwind, dust blows across the ground.
         /// </summary>
-        public static Vector3 Wind { get; private set; } = new Vector3(0.44f, 0f, 0.2f);
-        const float WindSpeed = 0.5f, WindHeading = 24f; // heading in degrees from +x (east) toward +z (north)
+        public static Vector3 Wind { get; private set; } = new Vector3(0.91f, 0f, 0.41f);
+        const float WindSpeed = 1f;
+        static float windHeading = 24f; // degrees from +x (east) toward +z (north)
+        static string windGame;
+
+        /// <summary>The prevailing wind's heading for this game, from its id (the same in every browser watching it).</summary>
+        public static void SetPrevailing(string gameId)
+        {
+            if (gameId == null || gameId == windGame) return;
+            windGame = gameId;
+            uint h = 2166136261;
+            foreach (char c in gameId) h = (h ^ c) * 16777619;
+            windHeading = h % 360;
+            Wind = WindAt(Time.time);
+        }
+
+        /// <summary>The wind a building fire's simulation was tuned for (half a tile a second): it leans flames, not smoke.</summary>
+        public static Vector3 FireWind => Wind * (0.5f / WindSpeed);
         // Wind-borne systems and their drag: each gets force = wind x drag, so its particles drift at the wind's speed.
         readonly Dictionary<ParticleSystem, float> windBorne = new Dictionary<ParticleSystem, float>();
 
@@ -138,7 +155,7 @@ namespace Pez.View
 
             // Smoke: buoyant, slowed by drag, spreading as it rises, leaning with the wind, lit by the scene.
             // Young smoke glows from inside (the cooling fireball) for its first fifth.
-            Smoke = Make("smoke", Mat("PezFxSmoke", 3000, ("_Heat", 1f), ("_HeatFade", 0.2f), ("_Noise", 0.65f)), 3500, -0.05f, 1.4f, smokeStreams);
+            Smoke = Make("smoke", Mat("PezFxSmoke", 3000, ("_Heat", 1f), ("_HeatFade", 0.2f), ("_Noise", 0.65f)), 6000, -0.05f, 1.4f, smokeStreams);
             Smoke.GetComponent<ParticleSystemRenderer>().sortMode = ParticleSystemSortMode.Distance;
             SizeOverLife(Smoke, new Keyframe(0, 0.45f), new Keyframe(0.3f, 1f), new Keyframe(1, 1.75f));
             ColorOverLife(Smoke, Grad(new[] { (0f, Color.white), (1f, Color.white) }, new[] { (0f, 0f), (0.05f, 0.95f), (0.5f, 0.7f), (1f, 0f) }));
@@ -169,7 +186,7 @@ namespace Pez.View
             Turbulence(Plume, 0.12f, 1.1f);
 
             // Dust: cool, heavier than smoke, kicked out along the ground and settling (no glow).
-            Dust = Make("dust", Mat("PezFxSmoke", 3000, ("_Heat", 0f), ("_Noise", 0.7f)), 3000, -0.01f, 2.4f, smokeStreams);
+            Dust = Make("dust", Mat("PezFxSmoke", 3000, ("_Heat", 0f), ("_Noise", 0.7f)), 5000, -0.01f, 2.4f, smokeStreams);
             Dust.GetComponent<ParticleSystemRenderer>().sortMode = ParticleSystemSortMode.Distance;
             SizeOverLife(Dust, new Keyframe(0, 0.5f), new Keyframe(0.25f, 1f), new Keyframe(1, 1.9f));
             ColorOverLife(Dust, Grad(new[] { (0f, Color.white), (1f, Color.white) }, new[] { (0f, 0f), (0.04f, 0.9f), (0.4f, 0.6f), (1f, 0f) }));
@@ -187,6 +204,11 @@ namespace Pez.View
             col.enabled = true; col.type = ParticleSystemCollisionType.Planes; col.SetPlane(0, ground);
             col.bounce = 0.38f; col.dampen = 0.35f; col.lifetimeLoss = 0f; col.radiusScale = 0.3f;
             col.sendCollisionMessages = false;
+
+            // Motes: soft glowing specks that float up and wink out (a soldier being healed). Light, slowed by drag, no wind.
+            Motes = Make("motes", Mat("PezFxGlow", 3022, ("_Shape", 0), ("_Opacity", 0), ("_Boost", 2.2f)), 600, -0.12f, 1.8f, glowStreams);
+            SizeOverLife(Motes, new Keyframe(0, 0.4f), new Keyframe(0.2f, 1f), new Keyframe(1, 0f));
+            ColorOverLife(Motes, Grad(new[] { (0f, Color.white), (1f, Color.white) }, new[] { (0f, 0f), (0.15f, 1f), (0.7f, 0.8f), (1f, 0f) }));
 
             // Debris: faceted shards, simulated in StepShards (gravity, drag, bounce, friction, settle).
             Shards = Make("shards", Mat("PezFxShard", 2000), MaxShards, 0f, 0f, shardStreams, ParticleSystemRenderMode.Mesh);
@@ -250,7 +272,7 @@ namespace Pez.View
         static Vector3 WindAt(float t)
         {
             float gust = 1f + 0.18f * Mathf.Sin(t * 0.21f) + 0.08f * Mathf.Sin(t * 0.53f + 1.3f);
-            float heading = (WindHeading + 9f * Mathf.Sin(t * 0.017f) + 4f * Mathf.Sin(t * 0.061f + 0.7f)) * Mathf.Deg2Rad;
+            float heading = (windHeading + 9f * Mathf.Sin(t * 0.017f) + 4f * Mathf.Sin(t * 0.061f + 0.7f)) * Mathf.Deg2Rad;
             return new Vector3(Mathf.Cos(heading), 0f, Mathf.Sin(heading)) * WindSpeed * gust;
         }
 
@@ -313,6 +335,7 @@ namespace Pez.View
             Emit(Pool, at, Vector3.zero, 0.1f, 0.2f, clear);
             Emit(Flame, at, Vector3.up, 0.1f, 0.2f, clear);
             Emit(Plume, at, Vector3.up, 0.1f, 0.2f, clear);
+            Emit(Motes, at, Vector3.up, 0.1f, 0.2f, clear);
             EmitShard(at + Vector3.down * 3f, Vector3.zero, 0.01f, 0.2f, clear);
         }
 

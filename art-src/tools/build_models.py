@@ -56,9 +56,10 @@ class Asset:
         self.key, self.kind, self.size = key, kind, size
         self.nodes = {key: (None, np.eye(4))}
         self.parts = []
-    def node(self, name, parent, pos=(0, 0, 0), rot=None):
+    def node(self, name, parent, pos=(0, 0, 0), rot=None, scale=None):
         M = T(pos)
         if rot is not None: M = M @ rot
+        if scale is not None: M = M @ np.diag([*scale, 1.0])
         self.nodes[name] = (parent, M); return name
     def add(self, node, m, mesh): self.parts.append((node or '__auto__', m, mesh))
     # primitives (centre coords in node-local space)
@@ -518,9 +519,58 @@ def S_power_plant():
     a.box('steel', .07, .07, .5, x=tx, y=.12, z=.75)
     return a
 
+def scoop_bay_hatch(a, idx, nx, nz, wall, w=.6, h=.38, y0=.12):
+    """A scoop hatch in a refinery wall: the dock's chute (DockView's kraft trough) comes out of the wall facing the truck when
+    terrain keeps the south lane from being used. A licorice frame (one ring: it stays a single piece through rounding) round a
+    dark opening, and a cream roll-up shutter with a team lip (node hatch_<idx>, pivot at the opening's top edge, local +z out
+    of the wall; RefineryWorks scales its y to roll it up and show the opening). (nx, nz) is the wall's outward normal, `wall`
+    its distance from the centre."""
+    top, mid = y0 + h, y0 + h / 2
+    ro = np.array([(-1, -1), (1, -1), (1, 1), (-1, 1)], float)
+    fo, fi, d = ro * [w / 2 + .07, h / 2 + .05], ro * [w / 2 + .005, h / 2 + .005], .06   # frame ring: outer, inner, depth
+    v = np.array([(x, y, z) for z in (d / 2, -d / 2) for (x, y) in np.vstack([fo, fi])], float)
+    f = []
+    for k in range(4):
+        k1 = (k + 1) % 4
+        for z0, rev in ((0, False), (8, True)):                      # front ring, back ring
+            q = [z0 + k, z0 + k1, z0 + 4 + k1, z0 + 4 + k]
+            f += [[q[0], q[2], q[1]], [q[0], q[3], q[2]]] if not rev else [[q[0], q[1], q[2]], [q[0], q[2], q[3]]]
+        for off in (0, 4):                                           # outer sides, inner sides
+            q = [k + off, k1 + off, 8 + k1 + off, 8 + k + off]
+            f += [[q[0], q[1], q[2]], [q[0], q[2], q[3]]] if off == 0 else [[q[0], q[2], q[1]], [q[0], q[3], q[2]]]
+    ring = trimesh.Trimesh(v, np.array(f), process=False); ring.fix_normals()
+    rot = ry(90 * nx) if nx else np.eye(4)
+    ring.apply_transform(T((wall * nx, mid, wall * nz)) @ rot @ T((0, 0, .02)))
+    a.add(None, 'licorice', ring)
+    dk = trimesh.creation.box(extents=(w, h, .03)); dk.apply_transform(T((wall * nx, mid, wall * nz)) @ rot); a.add(None, 'dark', dk)
+    sh = a.node(f'hatch_{idx}', 'stage_1', (wall * nx, top, wall * nz), rot=rot if nx else None)
+    a.box('cream', w - .02, h - .02, .03, y=-h / 2, z=.03, node=sh)         # the shutter, hanging from the top edge
+    a.box('team', w - .02, .05, .05, y=-h + .035, z=.035, node=sh)          # its lip
+    # The dock lamp above the frame (node dock_lens_<idx>, lit by DockView's chase with a row of pips either side of it): the
+    # truck is waved into this wall the way the south lamps wave it into the dock. A licorice bezel (a plain part, so it stays out
+    # of the amber the south lamps share) behind an amber lens.
+    ly, ld = top + .05 + .11, .03
+    lens = a.node(f'dock_lens_{idx}', 'stage_1', (wall * nx + ld * nx, ly, wall * nz + ld * nz))
+    sz = (.05, .07, .09) if nx else (.09, .07, .05)                          # (x, y, z): the lens is thin across its wall
+    a.box('amber', *sz, node=lens)
+    bz = (.03, .105, .135) if nx else (.135, .105, .03)
+    a.box('licorice', *bz, x=wall * nx + .005 * nx, y=ly, z=wall * nz + .005 * nz)
+
+def bay_shutter(a, w=.88, h=.67, top=.8, z=-1.4):
+    """A cream roll-up shutter across the refinery's south bay (node bay_shutter, pivot at the top edge, local +z out of the wall,
+    in the same style as scoop_bay_hatch's): RefineryWorks keeps it down whenever the truck bay is on a side wall, so the dock
+    that nobody is using reads as shut rather than an open dark doorway. The model rests with it rolled up (scale ~0, a point: the
+    south bay as it was; the icon and the pack show that) and the view scales it down from there."""
+    sh = a.node('bay_shutter', 'stage_1', (0, top, z), scale=(.001, .001, .001))
+    a.box('cream', w, h, .03, y=-h / 2, z=.0, node=sh)
+    a.box('team', w, .05, .05, y=-h + .035, z=.005, node=sh)
+
 def S_mining_refinery():
     a = Asset('mining_refinery', 'structures', 3); pad(a, 3)
     a.box('cream', 2.7, .75, 1.6, y=.455, z=.3)
+    a.node('stage_1', a.key)
+    for i, (nx, nz, wall) in enumerate(((1, 0, 1.35), (-1, 0, 1.35), (0, 1, 1.1))): scoop_bay_hatch(a, i, nx, nz, wall)
+    bay_shutter(a)
     a.box('cream', .9, .75, .9, x=-.9, y=.455, z=-.95)
     a.box('cream', .9, .75, .9, x=.9, y=.455, z=-.95)
     door(a, .9, .6, -.48, lights=False, anim=True)              # dock (south)
@@ -1863,7 +1913,7 @@ def V_stealth_bomber():
 # the helmet (and shoulder pads), on top, where it reads at full zoom-out. The rifleman is the reference.
 #
 #   nodes = candy_trooper(a, pose='rifle', uniform='smoke', trim='kraft', pads=True, helmet=True, bulk=1.0, lower=16,
-#                         weapon=True)
+#                         weapon=True, hold=None, knees=False)
 #
 # Frame: glTF, +Y up, +Z forward, pivot on the ground between the feet, 0.555 to the helmet's crown (WorldView draws
 # infantry 1.35x). The soldier's right hand is -X (the import mirrors x, so in Unity it's +X: still his right).
@@ -1871,6 +1921,9 @@ def V_stealth_bomber():
 #   hips          (0, .19, 0) under the root: pelvis and belt. Gait sways, leans and bobs it. Don't animate it.
 #   leg_l, leg_r  (+-.045, .19, 0) under the root, at the hip joints: a trouser leg and a licorice boot (sole at y=0).
 #                 Gait swings them about x and tucks the swinging one (scale y). Don't animate them.
+#   knee_l, knee_r (knees=True only) under leg_l / leg_r at the knee, TROOPER_KNEE below the hip joint: the shin, a round
+#                 knee like the elbows, and the boot. Gait bends them (the swinging leg's knee instead of its tuck, and
+#                 Gait.Kneel: one knee down, the other foot planted ahead). Don't animate them either.
 #   turret        under hips, at the waist: torso, pads, head, arms, pack. PezMotion yaws it to aim (the body turns for
 #                 more than its yaw limit) and to glance now and then: the soldier twists at the waist.
 #   head          under turret, at the neck (figure y .375): face, eyes, helmet. SoldierWorks turns it to glance about and
@@ -1891,16 +1944,30 @@ def V_stealth_bomber():
 #   'carry'     arms down, the right hand holding `barrel` at the hip (-.135, .2, .03) (a pistol, a toolbox, a med kit);
 #               with weapon=False both hands just hang.
 # Kit: uniform (the body's material), trim (webbing, belt, pouches), pads (team shoulder pads), helmet (False for
-# headgear of your own, but keep team on top), bulk (torso width: 1.15 reads beefier), lower (the arms' rest pitch).
+# headgear of your own, but keep team on top), bulk (torso width: 1.15 reads beefier), lower (the arms' rest pitch),
+# hold (optional (grip, hands): the pose's grip and (shoulder, elbow, wrist) per arm, for a weapon the pose doesn't fit),
+# knees (jointed legs for a soldier that kneels: the medic, the sniper; off by default, which leaves every other soldier's
+# one-piece legs as they are).
 # Budget: the base is ~2.3k triangles after rounding (the rifleman with rifle and pack ~3k); keep a soldier under ~3.2k.
 TROOPER_HIP, TROOPER_SHOULDER, TROOPER_NECK = .19, .345, .375
+TROOPER_KNEE = .095   # hip to knee (knees=True): half the leg
 
-def candy_trooper(a, pose='rifle', uniform='smoke', trim='kraft', pads=True, helmet=True, bulk=1.0, lower=16, weapon=True):
-    H, S, N = TROOPER_HIP, TROOPER_SHOULDER, TROOPER_NECK
+def candy_trooper(a, pose='rifle', uniform='smoke', trim='kraft', pads=True, helmet=True, bulk=1.0, lower=16, weapon=True, hold=None,
+                  knees=False):
+    H, S, N, K = TROOPER_HIP, TROOPER_SHOULDER, TROOPER_NECK, TROOPER_KNEE
     # Legs, hung from the root at the hips.
-    legs = {}
+    legs, kn = {}, {}
     for side, sx in (('leg_l', 1), ('leg_r', -1)):
         lg = legs[side] = a.node(side, a.key, (sx * .045, H, 0))
+        if knees:
+            # A knee joint halfway down: the thigh on the leg, the shin and boot on knee_l / knee_r, and a round knee
+            # like the elbows, which keeps the joint closed however far it bends.
+            k = kn[side] = a.node('knee' + side[3:], lg, (0, -K, 0))
+            a.box(uniform, .066, K - .01, .076, y=-(K + .01) / 2, node=lg)            # thigh
+            a.box(uniform, .066, .065, .076, y=-.0325, node=k)                     # shin
+            a.sphere(uniform, .036, node=k, sub=1)                                 # knee
+            a.box('licorice', .076, .05, .1, y=-H + K + .025, z=.012, node=k)      # boot, toe forward
+            continue
         a.box(uniform, .066, .15, .076, y=-.085, node=lg)
         a.box('licorice', .076, .05, .1, y=-H + .025, z=.012, node=lg)          # boot, toe forward
     # Pelvis and belt.
@@ -1946,6 +2013,7 @@ def candy_trooper(a, pose='rifle', uniform='smoke', trim='kraft', pads=True, hel
         grip = (-.135, .2, .03)
         hands = [((-.112, S, 0), (-.135, .27, -.005), (-.135, .21, .02)),
                  ((.112, S, 0), (.135, .27, -.005), (.135, .21, .02))]
+    if hold: grip, hands = hold                                                  # a weapon of its own size: (grip, hands)
     for sh, el, wr in hands:
         loc = [(p[0], p[1] - S, p[2]) for p in (sh, el, wr)]
         a.tube(uniform, loc, .027, node=ar, sides=8)
@@ -1953,7 +2021,7 @@ def candy_trooper(a, pose='rifle', uniform='smoke', trim='kraft', pads=True, hel
         a.sphere('cream', .031, x=loc[2][0], y=loc[2][1], z=loc[2][2], node=ar, sub=1)   # hand
     br = a.node('barrel', ar, (grip[0], grip[1] - S, grip[2])) if weapon else None
     return dict(hips=hp, leg_l=legs['leg_l'], leg_r=legs['leg_r'], turret=tu, head=hd, hat='hat', pack='pack', arms=ar,
-                barrel=br)
+                barrel=br, knee_l=kn.get('leg_l'), knee_r=kn.get('leg_r'))
 
 def trooper_rifle(a, br):
     """The rifleman's rifle on a candy_trooper barrel (+40% for the silhouette): kraft stock and handguard, licorice
@@ -1978,27 +2046,388 @@ def V_rifleman():
     trooper_pack(a, n['pack'])
     return a
 
-def V_infantry(key, kind):
-    a = Asset(key, 'units', .55)
-    for sx in (-1, 1): a.box('smoke', .06, .22, .07, x=sx * .045, y=.11)
-    a.box('smoke' if kind != 'laser' else 'cream', .17, .18, .1, y=.31)
-    a.sphere('team', .07, y=.48, sub=1, scale=(1, .9, 1))                    # helmet (team)
-    for sx in (-1, 1): a.box('team', .06, .04, .09, x=sx * .1, y=.39)       # shoulder pads
-    if kind == 'medic':
-        a.box('bone', .14, .14, .06, y=.32, z=-.08)
-        a.box('team', .1, .03, .065, y=.33, z=-.085); a.box('team', .03, .1, .065, y=.33, z=-.085)
-        return a
-    tu = a.node('turret', a.key, (0, .33, 0))
-    for sx in (-1, 1): a.box('smoke', .04, .04, .14, x=sx * .07, z=.06, node=tu)
-    br = a.node('barrel', tu, (.05, 0, .1))
-    if kind == 'rocket':
-        a.cyl('kraft', .04, .32, y=.07, z=0, axis='z', node=br)
-        a.cyl('amber', .03, .01, y=.07, z=.16, axis='z', node=br)
-    elif kind == 'laser':
-        a.box('dark', .03, .04, .22, z=.08, node=br)
-        a.box('cyan', .035, .015, .14, y=.025, z=.06, node=br)
-    else:
-        a.box('dark', .025, .035, .22, z=.08, node=br)
+# The rocket soldier: a kraft candy tube on the right shoulder that fires wrapped sweets. The tube is fatter and longer
+# than the shoulder pose's default, so it rides further out (hold=ROCKET_SOLDIER_HOLD) and clears the head, the helmet and
+# the eyes over the arms' whole range (SoldierWorks: from the reload dip, 22 degrees down, to 46 up: 40 at aircraft and the kick).
+ROCKET_SOLDIER_BORE, ROCKET_SOLDIER_R, ROCKET_SOLDIER_MOUTH, ROCKET_SOLDIER_BREECH = .03, .037, .25, -.16
+ROCKET_SOLDIER_SEAT = .262                                                       # the loaded sweet's centre (and the muzzle)
+ROCKET_SOLDIER_HOLD = ((-.136, .43, 0),
+                       [((-.112, TROOPER_SHOULDER, 0), (-.165, .285, .0), (-.128, .372, .06)),   # right: the pistol grip
+                        ((.112, TROOPER_SHOULDER, 0), (.07, .29, .11), (-.124, .375, .17))])     # left: across, the fore grip
+
+def rocket_soldier_sweet(a, nd, z=0, twist=20, rear=True):
+    """A wrapped sweet along +Z, centred at z on node nd: the team candy in its cellophane, a foil twist at each end (or
+    just the front one: rear=False for a sweet standing in its carton, its back half out of sight)."""
+    candy = trimesh.creation.icosphere(subdivisions=1, radius=.028)
+    candy.apply_scale((1, 1, 1.5))
+    # Open where the rear pinch (or the carton) hides it: an open part keeps its shape when rounded (a closed, stretched
+    # sphere would be faceted into ~1.4k triangles).
+    candy = candy.slice_plane([0, 0, -.04 if rear else 0], [0, 0, 1], cap=False)
+    candy.apply_translation((0, 0, z)); a.add(nd, 'team', candy)
+    for s in ((-1, 1) if rear else (1,)):
+        a.cyl('foil', .01, .014, z=z + s * .045, axis='z', node=nd, sections=6)           # the pinch
+        a.box('foil', .042, .01, .016, z=z + s * .057, node=nd, rot=rz(s * twist))         # the twist's fan
+
+def rocket_soldier_launcher(a, br):
+    """The candy launcher on a candy_trooper barrel: an open kraft tube with a sweet loaded in its mouth (the warhead, on
+    the `rocket` node) inside a licorice lip, a licorice venturi bell at the breech (the `breech` node: the backblast
+    leaves from it), a licorice pistol grip, a kraft fore grip and a flip-up sight on the side toward the eye."""
+    L0, L1, R, r = ROCKET_SOLDIER_BREECH, ROCKET_SOLDIER_MOUTH, ROCKET_SOLDIER_R, ROCKET_SOLDIER_BORE
+    def along(mesh, z, m):
+        mesh.apply_translation((0, 0, z)); a.add(br, m, mesh)
+    along(trimesh.creation.annulus(r_min=r, r_max=R, height=L1 - L0, sections=12), (L0 + L1) / 2, 'kraft')
+    along(trimesh.creation.torus(major_radius=(R + r) / 2, minor_radius=.0095, major_sections=10, minor_sections=4), L1, 'licorice')
+    along(trimesh.creation.annulus(r_min=r + .002, r_max=R + .005, height=.045, sections=10), L0 - .012, 'licorice')
+    a.box('licorice', .02, .05, .026, y=-R - .018, z=.06, node=br, rot=rx(-12))  # pistol grip
+    a.box('kraft', .022, .042, .026, y=-R - .014, z=.17, node=br)                # fore grip
+    a.box('licorice', .008, .032, .03, x=.022, y=R + .008, z=.02, node=br, rot=rz(-35))  # the sight, up beside the eye
+    rk = a.node('rocket', br, (0, 0, ROCKET_SOLDIER_SEAT))                       # SoldierWorks feeds it up the tube
+    rocket_soldier_sweet(a, rk)
+    a.node('muzzle', br, (0, 0, ROCKET_SOLDIER_SEAT))
+    a.node('breech', br, (0, 0, L0 - .035))
+
+def rocket_soldier_quiver(a, pk):
+    """Spare sweets on the back: a kraft carton tube slung over the left shoulder blade, two sweets standing in it."""
+    q = a.node('rocket_quiver', pk, (.04, 0, -.04), rot=rz(-16) @ rx(-10))
+    tube = trimesh.creation.annulus(r_min=.034, r_max=.04, height=.13, sections=10)
+    tube.apply_transform(axis_rot('y')); a.add(q, 'kraft', tube)
+    a.box('licorice', .09, .014, .085, y=-.035, node=q)                          # its strap
+    for i, sx in enumerate((-.015, .015)):
+        sw = a.node(f'rocket_spare_{i}', q, (sx, .045 + .012 * i, .006 * (1 - 2 * i)), rot=rx(-90))
+        rocket_soldier_sweet(a, sw, twist=-25 if i else 25, rear=False)
+
+def rocket_soldier_goggles(a, hat):
+    """Blast goggles pushed up on the helmet: two foil lenses over the brim on a licorice bridge."""
+    tilt = T((0, .075 - .175, 0)) @ rx(-15) @ T((0, -.075 + .175, 0))           # the helmet's tilt, about the head's centre
+    for sx in (-1, 1):
+        c = trimesh.creation.cylinder(radius=.019, height=.014, sections=8)
+        c.apply_transform(rx(-50)); c.apply_translation((sx * .03, -.06, .082)); c.apply_transform(tilt)
+        a.add(hat, 'foil', c)
+    br = trimesh.creation.box(extents=(.03, .008, .01)); br.apply_transform(rx(-50))
+    br.apply_translation((0, -.06, .082)); br.apply_transform(tilt); a.add(hat, 'licorice', br)     # the bridge
+
+def V_rocket_soldier():
+    a = Asset('rocket_soldier', 'units', .55)
+    n = candy_trooper(a, pose='shoulder', lower=12, hold=ROCKET_SOLDIER_HOLD)
+    rocket_soldier_launcher(a, n['barrel'])
+    rocket_soldier_quiver(a, n['pack'])
+    rocket_soldier_goggles(a, n['hat'])
+    return a
+
+def laser_trooper_rifle(a, br):
+    """The laser trooper's beam rifle on a candy_trooper barrel: chunkier and shorter than the rifleman's, a cream
+    receiver on a smoke-plastic stock, the cyan charge cell (the rail, its own `cell` node) along the top in a foil
+    cradle, and up front the emitter: a cream barrel with a foil cooling ring, and the cyan lens
+    (its own `lens` node) with the muzzle node on it. SoldierWorks drives both glows (the cell charges, the lens
+    flashes), as LaserWorks does the tower's coils and lens."""
+    a.box('smoke', .034, .05, .085, y=-.01, z=-.088, node=br)                    # stock, into the shoulder
+    a.box('cream', .054, .066, .14, y=.004, z=.012, node=br)                     # receiver
+    a.box('smoke', .028, .056, .032, y=-.052, z=-.004, node=br, rot=rx(-16))     # pistol grip
+    a.box('foil', .038, .016, .13, y=.042, z=.012, node=br)                      # the cell's cradle
+    cl = a.node('cell', br, (0, .054, .012))
+    a.box('cyan', .022, .016, .112, node=cl)                                     # the charge cell: the rail
+    a.cyl('cream', .036, .11, y=.006, z=.135, axis='z', node=br, sections=6)    # the emitter
+    a.cyl('foil', .04, .014, y=.006, z=.104, axis='z', node=br, sections=8)     # its cooling ring
+    ln = a.node('lens', br, (0, .006, .19))
+    a.cyl('cyan', .025, .008, axis='z', node=ln, sections=8)
+    a.node('muzzle', br, (0, .006, .195))
+
+def laser_trooper_pack(a, pk):
+    """The laser trooper's power pack on a candy_trooper pack node: two cream capacitor cans with team caps (the laser
+    tower's charge bank, carried) strapped to its back."""
+    for sx in (-1, 1):
+        a.box('cream', .054, .124, .054, x=sx * .032, y=-.008, z=-.025, node=pk)
+        a.box('team', .06, .026, .06, x=sx * .032, y=.064, z=-.025, node=pk)   # its cap: team, on top
+
+def laser_trooper_crest(a, hd):
+    """A foil crest over the crown of the laser trooper's team helmet, front to back: from the high camera it's a silver
+    stripe down the middle of the team dome."""
+    tilt = T((0, .075, 0)) @ rx(-15) @ T((0, -.075, 0))                         # the helmet's own tilt (candy_trooper)
+    pts = [(0, .092 + .0819 * 1.03 * math.sin(math.radians(f)), .089 * 1.03 * math.cos(math.radians(f)))
+           for f in range(8, 173, 15)]
+    pts = [(tilt @ np.array([*p, 1.]))[:3] for p in pts]
+    a.hoop('foil', pts, .01, node=hd, closed=False, sides=6, side=(1, 0, 0), r2=.008)
+
+def V_laser_trooper():
+    a = Asset('laser_trooper', 'units', .55)
+    n = candy_trooper(a, pose='rifle', trim='foil')
+    laser_trooper_rifle(a, n['barrel'])
+    laser_trooper_pack(a, n['pack'])
+    laser_trooper_crest(a, n['head'])
+    return a
+
+# ---------------------------------------------------------------- the medic, on the candy trooper
+# Unarmed: a big white med pack with a team plus (never a red cross: red would read as Cherry), a medic's roundel on the
+# team helmet, and a heal spray in the right hand. Jointed knees (knees=True), so it kneels to tend.
+MEDIC_SPRAY_DOWN = 65   # the spray hangs this far below level at rest; SoldierWorks raises the arms as much to aim it
+
+def medic_spray(a, br):
+    """The heal spray on a candy_trooper barrel: a cream canister with a team end cap, a steel nozzle and a bone tip, held
+    pointing down-forward MEDIC_SPRAY_DOWN degrees (it hangs at the hip). The muzzle node is at the tip: the heal leaves
+    from it."""
+    R = rx(MEDIC_SPRAY_DOWN)
+    at = lambda d: tuple((R @ np.array([0, 0, d, 1.]))[:3])
+    a.cyl('cream', .021, .08, *at(.012), axis='z', node=br, sections=6, rot=R)        # the canister, in the fist
+    a.cyl('team', .024, .018, *at(-.034), axis='z', node=br, sections=6, rot=R)       # its end cap
+    a.cyl('steel', .0075, .04, *at(.075), axis='z', node=br, sections=8, rot=R)       # nozzle
+    a.sphere('bone', .012, *at(.097), node=br, sub=1)                                 # tip
+    a.node('muzzle', br, at(.105))
+
+def medic_pack(a, pk):
+    """The med pack on a candy_trooper pack node: a bone-white case, wider than the soldier's shoulders so it reads as a
+    white block from any angle, under a lid, with a team plus on its back and on the lid."""
+    a.box('bone', .19, .14, .075, y=0, z=-.0375, node=pk)
+    a.box('bone', .2, .028, .085, y=.075, z=-.04, node=pk)                         # lid
+    for sx, sy, sz, y, z in ((.1, .03, .012, -.002, -.079), (.03, .1, .012, -.002, -.079),     # back
+                             (.1, .012, .028, .091, -.04), (.028, .012, .06, .091, -.04)):     # lid
+        a.box('team', sx, sy, sz, y=y, z=z, node=pk)
+
+def medic_badge(a, hd):
+    """A bone roundel with a team plus on the front of the candy_trooper helmet, where the dome turns up from the brim: a
+    flat lens set into the dome, so its rim sinks into the curve (an open shell, like the dome: rounding leaves it alone)."""
+    e = 22
+    tilt = T((0, .075, 0)) @ rx(-15) @ T((0, -.075, 0))                         # the helmet's own tilt (candy_trooper)
+    n = np.array([0, math.sin(math.radians(e)), math.cos(math.radians(e))])
+    p = np.array([0, .092 + .089 * .92 * n[1], .089 * n[2]])
+    lens = trimesh.creation.icosphere(subdivisions=1, radius=.03); lens.apply_scale((1, 1, .3))
+    lens = lens.slice_plane([0, 0, -.004], [0, 0, 1], cap=False)
+    lens.apply_transform(tilt @ T(p) @ rx(-e)); a.add(hd, 'bone', lens)
+    for w, h in ((.032, .01), (.01, .032)):
+        b = trimesh.creation.box(extents=(w, h, .006)); b.apply_transform(tilt @ T(p + n * .007) @ rx(-e)); a.add(hd, 'team', b)
+
+def V_medic():
+    a = Asset('medic', 'units', .55)
+    n = candy_trooper(a, pose='carry', lower=0, knees=True)
+    medic_spray(a, n['barrel'])
+    medic_pack(a, n['pack'])
+    medic_badge(a, n['head'])
+    return a
+
+# The engineer: a candy trooper with a team hard hat (a lamp on its front), a big spanner held in both hands, a team tool
+# chest on his back and a kraft tool belt. He captures buildings: he walks up with the spanner raised, knocks the building
+# three times, the third blow takes it, and he moves in (SoldierWorks, MOTION.md engineer).
+def engineer_hardhat(a, hat):
+    """A team hard hat on a candy_trooper hat node, in place of the helmet: a wide brim with a peak, a domed crown with a
+    raised cream ridge, and the hat lamp on the front (lamp node: SoldierWorks lights it while he's on a capture job).
+    Tipped back on the head like the helmet, so the face shows from the high camera."""
+    hh = a.node('engineer_hardhat', hat, (0, -.1, 0), rot=rx(-13))           # at the head's centre: the tilt pivots there
+    dome = trimesh.creation.icosphere(subdivisions=2, radius=.094)
+    dome.apply_scale((1, .86, 1.04)); dome.apply_translation((0, .018, 0))
+    dome = dome.slice_plane([0, .02, 0], [0, 1, 0], cap=False)               # open shell: its rim hides under the brim
+    a.add(hh, 'team', dome)
+    brim = trimesh.creation.cylinder(radius=.118, height=.016, sections=20)
+    brim.apply_transform(axis_rot('y')); brim.apply_scale((1, 1, 1.1)); brim.apply_translation((0, .02, .014))
+    a.add(hh, 'team', brim)                                                  # wide all round, a peak in front
+    ridge = [(0, .018 + .081 * math.cos(t), .098 * math.sin(t)) for t in np.linspace(-1.2, 1.2, 7)]
+    a.tube('cream', ridge, .013, node=hh, sides=6)                           # the moulded ridge, front to back
+    lp = a.node('lamp', hh, (0, .055, .088), rot=rx(-8))
+    a.cyl('licorice', .024, .03, axis='z', node=lp, sections=8)             # housing
+    a.cyl('amber', .018, .008, z=.016, axis='z', node=lp, sections=8)       # lens
+
+def engineer_spanner(a, br):
+    """A big open-ended spanner (+40%) on a candy_trooper barrel, held in both hands like a rifle: a bright foil handle with a
+    kraft grip, the open jaw out front (its mouth facing forward, its flat vertical, so the blow lands jaw first), and the
+    muzzle node at the jaw: the blows' sparks fly from it."""
+    jz, R_ = .23, .039
+    a.box('foil', .022, .034, .24, z=.065, node=br)                          # handle
+    a.box('kraft', .03, .042, .08, z=.0, node=br)                            # grip under the right hand
+    arc = [(0, R_ * math.sin(t), jz + R_ * math.cos(t)) for t in np.linspace(math.radians(42), math.radians(318), 10)]
+    a.hoop('foil', arc, .014, node=br, closed=False, sides=6, side=(1, 0, 0), r2=.018)   # the jaw
+    a.node('muzzle', br, (0, 0, jz))
+
+def engineer_toolchest(a, pk):
+    """A team tool chest on a candy_trooper pack node, strapped on like a pack: cream latches, a licorice carry handle
+    on its lid, and a saw poking out of the top."""
+    a.box('team', .15, .11, .07, y=-.005, z=-.036, node=pk)
+    a.box('team', .156, .022, .076, y=.058, z=-.036, node=pk)                # lid
+    for sx in (-1, 1): a.box('cream', .018, .026, .01, x=sx * .045, y=.04, z=-.073, node=pk)  # latches
+    a.tube('licorice', [(-.035, .068, -.036), (-.03, .09, -.036), (.03, .09, -.036), (.035, .068, -.036)], .007, node=pk, sides=6)
+    a.box('steel', .006, .06, .05, x=-.058, y=.095, z=-.048, node=pk, rot=rx(12))   # a saw blade
+    a.box('kraft', .016, .03, .03, x=-.058, y=.132, z=-.04, node=pk)          # its handle
+
+def engineer_toolbelt(a, hp):
+    """A kraft tool belt round a candy_trooper's hips: a wide belt, a pouch on the left, a hammer hung on the right."""
+    a.box('kraft', .2, .036, .142, y=.02, node=hp)
+    a.box('kraft', .044, .05, .056, x=.104, y=-.008, z=.014, node=hp)        # pouch (left: +x)
+    a.box('licorice', .046, .012, .058, x=.104, y=.02, z=.014, node=hp)      # its flap
+    a.box('kraft', .016, .085, .016, x=-.104, y=-.02, z=.024, node=hp)       # hammer handle, hung in a loop
+    a.box('steel', .022, .02, .05, x=-.104, y=.03, z=.024, node=hp)          # its head
+
+def V_engineer():
+    a = Asset('engineer', 'units', .55)
+    n = candy_trooper(a, pose='rifle', helmet=False, pads=False, lower=28)
+    engineer_hardhat(a, n['hat'])
+    engineer_spanner(a, n['barrel'])
+    engineer_toolchest(a, n['pack'])
+    engineer_toolbelt(a, n['hips'])
+    return a
+
+# ---------------------------------------------------------------- infantry: the sniper
+# A candy trooper (knees, to kneel and shoot) with a very long scoped rifle and a ghillie of shredded candy wrappers: a cape
+# of mint, kraft and foil strips over the back, and a floppy team boonie hat with wrapper tufts in its band.
+
+def sniper_turned(a, node, m, profile, sections, at=(0, 0, 0)):
+    """A turned part along +Z (a barrel, a scope): `profile` is a counterclockwise list of (radius, z) points closed on
+    the axis. Give it a step or a waist, so rounding leaves it as turned (and cheap)."""
+    t = trimesh.creation.revolve(np.array(profile, float), sections=sections)
+    t.apply_translation(at); a.add(node, m, t)
+
+def sniper_rifle(a, br):
+    """The sniper's rifle on a candy_trooper barrel, two thirds longer than the rifleman's: a kraft stock, a round
+    licorice receiver with its bolt (node `bolt`: the handle out to the right, -X, with a cream knob; SoldierWorks cycles
+    it after each shot), a long steel barrel ending in a licorice muzzle brake, a kraft fore-end, and a fat scope whose cyan lens (node `lens`) glows with the shot's readiness and glints just before it fires.
+    `muzzle` is at the brake's tip."""
+    a.box('kraft', .034, .058, .13, y=-.01, z=-.105, node=br)                   # stock, into the shoulder
+    sniper_turned(a, br, 'licorice', [(0, -.05), (.017, -.05), (.022, -.035), (.02, .025), (.022, .085), (.017, .1), (0, .1)], 6)  # receiver
+    a.box('licorice', .016, .036, .028, y=-.036, z=.05, node=br, rot=rx(-10))   # magazine
+    a.box('kraft', .034, .034, .14, y=-.004, z=.165, node=br)                   # fore-end
+    sniper_turned(a, br, 'steel', [(0, .22), (.0093, .22), (.0093, .45), (0, .45)], 8)          # barrel
+    sniper_turned(a, br, 'licorice', [(0, .448), (.0165, .448), (.0165, .462), (.012, .468), (.0165, .474), (.0165, .49), (0, .49)], 6)  # brake
+    # The scope: one turned licorice body (eyepiece, tube, objective bell) on its mount.
+    sniper_turned(a, br, 'licorice', [(0, -.06), (.021, -.06), (.021, -.025), (.015, -.015), (.015, .1), (.026, .125),
+                                      (.026, .17), (0, .17)], 8, at=(0, .05, 0))
+    a.box('licorice', .012, .024, .05, y=.03, z=.04, node=br)
+    ln = a.node('lens', br, (0, .05, .1715))
+    a.cyl('cyan', .02, .006, axis='z', node=ln, sections=8)
+    # The bolt: its axis along the receiver, the handle out to the right with a cream knob.
+    bt = a.node('bolt', br, (0, .008, .02))
+    a.strut('steel', (0, 0, 0), (-.036, 0, -.006), .006, node=bt, sections=6)
+    a.strut('cream', (-.032, 0, -.0055), (-.052, 0, -.009), .0093, node=bt, sections=6)
+    a.node('muzzle', br, (0, 0, .492))
+
+SNIPER_WRAPPERS = ('mint', 'kraft', 'foil', 'mint', 'smoke', 'kraft', 'mint', 'foil', 'kraft')
+
+def sniper_strip(at, L, w, rot):
+    """One shredded-wrapper strip hung from `at`, `L` long, turned by `rot` about its top."""
+    st = trimesh.creation.box(extents=(w, L, .005))
+    st.apply_translation((0, -L / 2, 0)); st.apply_transform(rot); st.apply_translation(at)
+    return st
+
+def sniper_crumple(r, at, seed):
+    """A crumpled wrapper: a lumpy little ball (too lumpy to be convex, so rounding leaves it crumpled)."""
+    b = trimesh.creation.icosphere(subdivisions=0, radius=r)
+    g = np.random.default_rng(seed)
+    k = g.uniform(.85, 1.15, len(b.vertices)); k[g.choice(len(k), 4, replace=False)] = .45   # four dents
+    b.vertices = b.vertices * k[:, None] * np.array([1.15, .85, 1]); b.apply_translation(at)
+    return b
+
+def sniper_ghillie(a, pk):
+    """The ghillie cape on a candy_trooper pack node: a mint mantle across the back of the shoulders, crumpled wrappers
+    bunched along its top, and two rows of shredded wrapper strips (mint, kraft, foil, smoke) hanging from it, each
+    splayed a little and its own length, so the back reads lumpy and shaggy against the rifleman's square pack. All of
+    it at least .075 behind the shoulders, so the elbows clear it whatever the arms do, and above the legs' swing."""
+    nu, nv = 5, 3
+    P = np.zeros((nu, nv, 3))
+    for i in range(nu):
+        for j in range(nv):
+            u = -1 + 2 * i / (nu - 1); v = j / (nv - 1)                         # u across the back, v down from the shoulders
+            P[i, j] = (u * .1, .08 - v * .1, -.016 - .014 * (1 - u * u) - .008 * v)
+    a.sheet('mint', P, .012, node=pk)
+    for k, (x, y, z, r, m) in enumerate(((-.062, .085, -.04, .03, 'foil'), (.0, .09, -.048, .032, 'mint'),
+                                         (.065, .082, -.038, .029, 'kraft'))):
+        a.add(pk, m, sniper_crumple(r, (x, y, z), 20 + k))
+    rng = np.random.default_rng(11)
+    for row, (n, top, L0, z0) in enumerate(((8, .07, .11, -.034), (6, .02, .11, -.05))):
+        for k in range(n):
+            u = -1 + 2 * (k + .5 * row) / (n - 1 + row)
+            L = L0 + .045 * rng.random()
+            rot = rz(-u * 14 + rng.uniform(-8, 8)) @ rx(-10 - 10 * rng.random() - 6 * row) @ ry(u * 20 + rng.uniform(-20, 20))
+            a.add(pk, SNIPER_WRAPPERS[(k + 4 * row) % len(SNIPER_WRAPPERS)],
+                  sniper_strip((u * .09, top - .012 * u * u, z0 - .01 * (1 - u * u)), L, .021, rot))
+
+def sniper_boonie(a, hat):
+    """A floppy team boonie hat on a candy_trooper hat node (the head's crown), pushed back on the head like the
+    rifleman's helmet so the face shows from the high camera: a soft crown and a wide drooping brim (team, on top), a
+    kraft band, and a short veil of wrapper strips hanging off the back of the brim."""
+    tilt = T((0, -.1, 0)) @ rx(-14) @ T((0, .1, 0))
+    def put(mesh, m):
+        mesh.apply_transform(tilt); a.add(hat, m, mesh)
+    brim = trimesh.creation.revolve(np.array([(0, -.053), (.108, -.07), (.108, -.059), (.072, -.036), (0, -.036)]), sections=12)
+    brim.apply_transform(axis_rot('y')); put(brim, 'team')                      # brim, drooping
+    crown = trimesh.creation.icosphere(subdivisions=1, radius=.074)
+    crown.apply_scale((1, .66, 1)); crown.apply_translation((0, -.036, 0))
+    put(crown.slice_plane([0, -.038, 0], [0, 1, 0], cap=False), 'team')
+    # The band: an open ring hugging the crown's foot (its inside is hidden in the crown).
+    ang = np.linspace(0, 2 * math.pi, 13)[:-1]
+    v = np.array([(.0755 * math.sin(t), y, .0755 * math.cos(t)) for y in (-.037, -.019) for t in ang])
+    f = [[i, (i + 1) % 12, 12 + (i + 1) % 12] for i in range(12)] + [[i, 12 + (i + 1) % 12, 12 + i] for i in range(12)]
+    band = trimesh.Trimesh(v, f, process=False)
+    if np.dot(band.face_normals[0], band.triangles_center[0] * [1, 0, 1]) < 0: band.invert()
+    put(band, 'kraft')
+    for k in range(4):                                                          # the veil
+        deg = 180 + (k - 1.5) * 28
+        r = math.radians(deg)
+        put(sniper_strip((.1 * math.sin(r), -.066, .1 * math.cos(r)), .045 + .014 * (k % 2), .024, ry(deg) @ rx(-12)),
+            SNIPER_WRAPPERS[k + 1])
+
+def V_sniper():
+    a = Asset('sniper', 'units', .55)
+    n = candy_trooper(a, pose='rifle', helmet=False, lower=22, knees=True)
+    sniper_rifle(a, n['barrel'])
+    sniper_ghillie(a, n['pack'])
+    sniper_boonie(a, n['hat'])
+    return a
+
+# ---- the commando: a candy trooper with a team beret, a bandolier and a satchel of candy charges, a compact SMG at the
+# hip and a charge in his left hand. The charge is the C4 he lobs (SoldierWorks / C4Charge: kneel, lob, stick, blink,
+# blow on the sim's `shot`), so it's a candy brick in the team's wrapper, big enough to read stuck on a wall.
+
+def commando_charge(a, node, x=0, y=0, z=0, s=1.0, rot=None, parts=('bone', 'team', 'licorice')):
+    """One candy charge: a bone-white candy brick in a team wrapper band with a licorice detonator cap, centred at
+    (x, y, z) on `node`, long side along z, scaled by s. `parts` picks which of the three to build (the small ones in
+    the kit skip the cap and the band, to stay in budget)."""
+    M = T((x, y, z)) @ (rot if rot is not None else np.eye(4))
+    for m, sx, sy, sz, oy in (('bone', .05, .05, .08, 0), ('team', .054, .054, .03, 0), ('licorice', .022, .014, .022, .031)):
+        if m not in parts: continue
+        b = trimesh.creation.box(extents=(sx * s, sy * s, sz * s))
+        b.apply_translation((0, oy * s, 0)); b.apply_transform(M); a.add(node, m, b)
+
+def commando_beret(a, hat):
+    """A team beret on the hat node: a wide, flat puff of team colour slouched down over his right ear, with a cream
+    badge over his left eye. Like the trooper's helmet it's an open shell (its rim sits on the head), so
+    rounding leaves it alone."""
+    slouch = T((.008, -.03, -.004)) @ rz(13) @ rx(-8)
+    b = trimesh.creation.icosphere(subdivisions=2, radius=.1)
+    b.apply_scale((1.04, .32, 1.04))
+    b = b.slice_plane([0, -.01, 0], [0, 1, 0], cap=False)
+    b.apply_transform(slouch); a.add(hat, 'team', b)
+    badge = trimesh.creation.cylinder(radius=.019, height=.01, sections=10)
+    badge.apply_transform(rx(90 - 35)); badge.apply_translation((.042, -.03, .094)); a.add(hat, 'cream', badge)
+
+def commando_smg(a, br):
+    """A compact candy SMG held at the hip: a licorice receiver over a kraft pistol grip, a stick magazine and a short
+    steel barrel; the muzzle node at its tip."""
+    a.box('licorice', .036, .05, .13, y=.026, z=.02, node=br)                     # receiver, over the fist
+    a.box('kraft', .028, .052, .032, y=-.006, z=-.016, node=br, rot=rx(14))       # pistol grip (in the fist)
+    a.box('licorice', .022, .064, .026, y=-.02, z=.062, node=br, rot=rx(-8))      # stick magazine
+    a.box('steel', .02, .02, .06, y=.032, z=.11, node=br)                         # barrel
+    a.node('muzzle', br, (0, .032, .14))
+
+def commando_satchel(a, pk):
+    """A kraft demolition satchel on the back with three candy charges standing in it."""
+    a.box('kraft', .15, .11, .062, y=-.012, z=-.031, node=pk)
+    for i, x in enumerate((-.046, 0, .046)):
+        commando_charge(a, pk, x=x, y=.046, z=-.031, s=.7, rot=rx(-90) @ rz(7 * (i - 1)), parts=('bone',))
+
+def commando_bandolier(a, tu, bulk):
+    """A licorice bandolier from his left shoulder to his right hip, carrying two small team-wrapped charges."""
+    w = .1 * bulk
+    a.tube('licorice', [(w * .8, .19, .0), (w * .55, .175, .068), (-w * .55, .03, .068), (-w * .85, .015, .02)], .011, node=tu, sides=6)
+    for k in (.33, .66):
+        x, y = w * .55 + (-w * 1.1) * k, .175 + (.03 - .175) * k
+        commando_charge(a, tu, x=x, y=y, z=.08, s=.6, rot=rz(-52), parts=('team',))
+
+def V_commando():
+    a = Asset('commando', 'units', .55)
+    n = candy_trooper(a, pose='carry', trim='licorice', helmet=False, bulk=1.06, lower=6)
+    commando_beret(a, n['hat'])
+    commando_smg(a, n['barrel'])
+    commando_satchel(a, n['pack'])
+    commando_bandolier(a, n['turret'], 1.06)
+    # The charge in his left hand (the one he lobs), held out a little in front of the fist: its own node, so
+    # SoldierWorks can draw it from the satchel and C4Charge can copy it.
+    ch = a.node('charge', n['arms'], (.135, .2 - TROOPER_SHOULDER - .03, .06))
+    commando_charge(a, ch, s=1.15)
     return a
 
 # ---------------------------------------------------------------- ores
@@ -2031,8 +2460,7 @@ BUILDERS = [S_command_center, S_outpost, S_power_plant, S_mining_refinery, S_bar
             lambda: V_tank('light_tank', .9, .62), lambda: V_tank('heavy_tank', 1.2, .8, twin=True),
             lambda: V_tank('artillery', .9, .62, art=True), lambda: V_tank('laser_tank', 1.1, .7, laser=True),
             V_gunship, V_stealth_bomber,
-            V_rifleman, lambda: V_infantry('rocket_soldier', 'rocket'),
-            lambda: V_infantry('laser_trooper', 'laser'), lambda: V_infantry('medic', 'medic'),
+            V_rifleman, V_rocket_soldier, V_laser_trooper, V_medic, V_engineer, V_sniper, V_commando,
             lambda: O_ore('iron_ore'), lambda: O_ore('copper_ore'), lambda: O_ore('crystal'), lambda: O_ore('uranium')]
 
 if __name__ == '__main__':

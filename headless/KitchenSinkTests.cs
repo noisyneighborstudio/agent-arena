@@ -85,6 +85,7 @@ namespace Pez.Headless
             Check(Count("captured") >= 5 && w.Entities.Count(e => !e.Dead && e.Def.Key == "derrick" && e.Team < 0) >= 1, $"an engineer keeps capturing a neutral derrick ({Count("captured")} captures)");
             Check(Count("boarded") >= 16 && Count("unloaded") >= 4, $"transports load and unload ({Count("boarded")} boardings, {Count("unloaded")} unloads)");
             Check(landed && Count("refuelled") >= 5, $"an aircraft lands and refuels ({Count("refuelled")} times)");
+            Check(Count("heal") >= 100, $"the field medic keeps healing its rifleman ({Count("heal")} heal pulses)");
             Check(Count("destroyed") >= 100, $"wrecks and explosions keep coming ({Count("destroyed")} destroyed events)");
             var firing = w.Entities.Count(e => !e.Dead && e.Team == KitchenSink.Blue && e.IsArmed && w.Time - e.LastFiredAt < 10f);
             Check(firing >= 17, $"every weapon in the combat range is firing ({firing} shooters fired in the last 10 s)");
@@ -94,6 +95,18 @@ namespace Pez.Headless
             var strandedTank = w.Entities.FirstOrDefault(e => !e.Dead && e.Stranded);
             Check(strandedTank != null && strandedTank.Fuel == 0, "the stranded tank stays stranded");
             Check(w.Entities.Where(e => !e.Dead && !e.IsStructure && e.Def.UsesFuel && !e.Stranded && e.Order != Order.Refuel && !e.Landed).All(e => e.Fuel >= e.FuelMax * 0.59f), "everything else keeps its fuel");
+
+            // The browser copy restores a snapshot, which doesn't carry World.Showcase: its shooters still fire (protection must not mute them).
+            var room = new Game(new GameConfig { KitchenSink = true });
+            for (int i = 0; i < 20 * World.TickRate; i++) room.Advance(World.Dt);
+            var copy = new Game(new GameConfig { Seed = 1, MapSize = 48, Controllers = new[] { "llm" } });
+            copy.Restore(Snapshot.Parse(Snap(room)));
+            copy.World.Mirror = true;
+            float t0 = copy.World.Time;
+            for (int i = 0; i < 20 * World.TickRate; i++) copy.Advance(World.Dt);
+            int copyFiring = copy.World.Entities.Count(e => !e.Dead && e.Team == KitchenSink.Blue && e.IsArmed && e.LastFiredAt > t0 + 0.1f);
+            Check(copy.World.Showcase == null && copy.World.IsProtected(KitchenSink.Blue) && copyFiring >= 10,
+                  $"a restored showcase copy (no Showcase, teams still protected) still fires: {copyFiring} Blue shooters fired in 20 s");
         }
     }
 }

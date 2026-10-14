@@ -1,6 +1,6 @@
 # Pezz art direction: the standard
 
-This is the quality bar for every Pezz asset: buildings, vehicles, infantry, resources, effects and animation. It's written to hand to an artist, a 3D team or a model. An AI reviewer that applies it automatically is in `.claude/agents/art-director.md`. Asset reviews against it go in `docs/art/reviews/`.
+This is the quality bar for every Pezz asset: buildings, vehicles, infantry, resources, effects and animation. It's written to hand to an artist, a 3D team or a model. An AI reviewer that applies it automatically is in `.claude/agents/art-director.md`. Asset reviews against it go in `docs/art/reviews/`. How the bar is met in practice here (house style, the owner's rules, pipeline, verification, shipping) is `docs/art/ASSET_GUIDE.md`.
 
 ## Pezz notes (how the standard applies here)
 

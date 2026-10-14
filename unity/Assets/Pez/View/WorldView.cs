@@ -24,6 +24,7 @@ namespace Pez.View
             public float LandK;          // aircraft: 0 flying, 1 parked on its pad (eases between)
             // Hull feel (MOTION.md): nose-up under acceleration, dip when braking, kick back on firing.
             public float HullSpeed, HullPitch, HullPitchVel;
+            public float TrackDustT;     // ground vehicle: until its next puff of dust off the tracks
             // Drones tilt like quadcopters: the smoothed velocity, and the tilt (a world-space lean vector) on a spring.
             public Vector3 DroneVel, DroneTilt, DroneTiltVel;
             public Vector3? EaseFrom; public Vector3 EaseOff; // a resync moved the entity: where it was drawn, and the offset from where it now is (bleeds off)
@@ -34,6 +35,7 @@ namespace Pez.View
             public int OreTint = -1;     // deep mine: the ore its tube is tinted to; mining truck: the ore its load shows
             public float DustNext;       // decaying structure: when its next grit falls
             public int TeamShown;        // the team colour its model wears (a captured building changes hands)
+            public float TintAt;         // ... and when it takes the new one: an engineer on screen lands his last blow first
             public int Born;             // frame the view was made (deploys pair a unit with the structure it became)
             public float BoardT;         // boarding: 0..1 while the passenger shrinks into its carrier
             public Vector3 BoardedAt;    // ... and where its carrier is drawn (unloaded, it steps back out from there)
@@ -81,6 +83,7 @@ namespace Pez.View
             public Bounds? Roof;
             // Drop-offs: the dock lamps and chute, and what the bay's truck reported this frame or last.
             public DockView Dock;
+            public float BayYaw;         // degrees: how far its model is turned so its door faces the side its trucks or units use (a quarter turn each; 0 = south)
             public int DockFrame = -10;
             public DockView.Phase DockBest;
             // Construction: the staked site, the last progress seen (stage landings) and the crane's beam cadence.
@@ -191,7 +194,7 @@ namespace Pez.View
         /// or it's a spectator view) and each player's stream whose team sees it. Remembered-but-unseen enemy buildings
         /// show none of their current state.
         /// </summary>
-        List<int> AudienceFor(Entity e)
+        internal List<int> AudienceFor(Entity e)
         {
             audience.Clear();
             if (PovTeam < 0 || e.Team == PovTeam || World.IsVisibleTo(PovTeam, e)) audience.Add(TerrainView.MainFogLayer);
@@ -244,6 +247,7 @@ namespace Pez.View
                 if (v.Works != null && v.Rig.Root.gameObject.activeSelf) v.Works.Show(SeesState(v.E, team)); // no live belt under fog
             Deposits?.SetPov(team, PovTeam);
             FireSim.SetPovLayer(team == PovTeam ? TerrainView.MainFogLayer : TerrainView.TeamFogLayerBase + team);
+            GlowCasters.SetPovLayer(team == PovTeam ? TerrainView.MainFogLayer : team < 0 ? -1 : TerrainView.TeamFogLayerBase + team);
             foreach (var v in Views.Values)
             {
                 if (v.Shade == null || !v.Rig.Root.gameObject.activeSelf) continue;
@@ -320,6 +324,8 @@ namespace Pez.View
         {
             alpha = Mathf.Clamp01(alpha);
             var w = World;
+            FxSystems.SetPrevailing(w.GameId);
+            BlowDust();
             if (w.MapVersion != mapVersion) RebuildTerrain();
             var seen = new HashSet<int>();
             foreach (var e in w.Entities)
@@ -409,7 +415,7 @@ namespace Pez.View
             foreach (var v in Views.Values)
             {
                 var e = v.E;
-                bool want = !e.Dead && !e.IsCarried && sheenTeams.TryGetValue(e.Team, out var st) && st.mat != null && st.fade > 0f;
+                bool want = !e.Dead && !e.IsCarried && e.Def.Key != "derrick" && sheenTeams.TryGetValue(e.Team, out var st) && st.mat != null && st.fade > 0f;
                 if (!want || (v.Sheen != null && v.Sheen.Team != e.Team)) { if (v.Sheen != null) { v.Sheen.Clear(); v.Sheen = null; } if (!want) continue; }
                 if (!v.Rig.Root.gameObject.activeSelf) continue;
                 var sh = v.Sheen ??= new Sheen { Team = e.Team };
@@ -504,6 +510,12 @@ namespace Pez.View
                 into.Rig.Emerge.SetBuildProgress(0f);
                 rig.Emerge.StartCoroutine(rig.Emerge.PlayDeployInto(into.Rig.Emerge));
             }
+            else if (v.Troop is { Capturing: true } && rig.HasModel && rig.Root.gameObject.activeInHierarchy)
+            {
+                // An engineer who has just taken a building: he knocks on it and moves in (SoldierWorks.MoveIn).
+                rig.Model.transform.SetParent(transform, true);
+                rig.Emerge.StartCoroutine(v.Troop.MoveIn());
+            }
             else if (rig.HasModel && rig.Root.gameObject.activeInHierarchy && !(LeftSight(v) && v.Popping))
             {
                 rig.Model.transform.SetParent(transform, true);
@@ -513,6 +525,17 @@ namespace Pez.View
             }
             Destroy(rig.Root.gameObject);
             if (v.Sim != null) { v.Sim.Release(); v.Sim = null; }
+        }
+
+        /// <summary>The seconds until a building just captured takes its new colours: the engineer who took it, if he's on
+        /// screen, plans his act at it (SoldierWorks.Capture) and the colours go on with his last blow. 0 if he isn't.</summary>
+        float Capturer(EV b)
+        {
+            foreach (var o in Views.Values)
+                if (o.E.Dead && o.E.Def.Engineer && o.E.TargetId == b.E.Id && o.E.Team == b.E.Team && o.Troop != null && !o.Troop.Capturing &&
+                    o.Rig.HasModel && o.Rig.Root.gameObject.activeInHierarchy)
+                    return o.Troop.Capture(b.Rig.Model, Mats.Team(b.E.Team), new List<int>(AudienceFor(b.E)));
+            return 0f;
         }
 
         /// <summary>
@@ -532,7 +555,7 @@ namespace Pez.View
             var t = World.Teams[e.Team];
             if (e.Def.Key == "command_center") return t.StructureQueue.Count > 0;
             if (e.Def.Key == "radar_dome") return e.IsComplete && !t.LowPower;
-            if (e.Def.Produces != Producer.None && t.UnitQueues.TryGetValue(e.Def.Produces, out var q)) return q.Count > 0;
+            if (e.Def.Produces != Producer.None && t.UnitQueues.TryGetValue(e.Def.Produces, out var q)) return q.Exists(p => p.WorkerId == e.Id);
             return e.Working;
         }
 
@@ -771,6 +794,7 @@ namespace Pez.View
             v.Works.Show(SeesState(e, PovTeam));
             v.Works.Tick(e.Working, t.Amount("iron_ore") > t.Reserved("iron_ore"), t.Amount("copper_ore") > t.Reserved("copper_ore"),
                 t.LowPower ? 0.5f : 1f, Time.deltaTime);
+            v.Works.Hatches(v.Dock, Time.deltaTime);
             if (v.FireK >= 0.15f || v.Works.Stacks == 0) return;
             float now = Time.time;
             if (v.SteamNext == null)
@@ -839,7 +863,7 @@ namespace Pez.View
             ring.localScale = new Vector3(r, 1f, r);
             ring.gameObject.SetActive(false);
             var v = new EV { E = e, Rig = rig, Ring = ring, Born = Time.frameCount, Bars = e.IsMine ? null : new Bars(rig.Root, e, 0f), TeamShown = e.Team };
-            if (e.IsStructure) { rig.Root.position = W(e.Center); Plinths.Register(e.Id, rig.Root.position, rig.Plinth); }
+            if (e.IsStructure) { rig.Root.position = W(e.Center); TurnToBay(v); Plinths.Register(e.Id, rig.Root.position, rig.Plinth, v.BayYaw); }
             if (e.IsStructure && !e.IsComplete && rig.HasModel) v.Site = new SiteView(rig.Root, e.Def.SizeX, e.Def.SizeY);
             if (e.Def.Key == "derrick" && rig.HasModel && JustPlaced(e))
             {
@@ -852,21 +876,56 @@ namespace Pez.View
             }
             if (e.IsStructure && e.Def.DropOff && rig.HasModel)
             {
-                var (bay, _, facing, _) = World.Bay(e);
-                v.Dock = DockView.For(rig, e.Def.SizeX * 0.5f, e.Def.SizeY * 0.5f, facing, bay);
+                // The model is turned so its door faces the bay, so in the model's own frame the bay is always on its -Z (south) side.
+                var (bay, _, _, _) = World.Bay(e);
+                v.Dock = DockView.For(rig, e.Def.SizeX * 0.5f, e.Def.SizeY * 0.5f, -Mathf.PI / 2f, bay);
             }
             return v;
+        }
+
+        /// <summary>
+        /// A drop-off's model faces its bay, and a barracks' or factory's its door (the side its units come out on): the pack's doors
+        /// face -Z (south), so the model (and the plinth ramp that goes with the door) turns a quarter turn per side about its centre.
+        /// Footprints are square, so it still fits. Everything built on the model (door, lamps, crane, stacks) turns with it. The side
+        /// is kept for life, unless an enemy building goes up on a drop-off's lane and the sim moves its bay to a clear side
+        /// (World.Bay), so FollowBay checks for that.
+        /// </summary>
+        void TurnToBay(EV v)
+        {
+            if (!World.HasDoorSide(v.E.Def)) return;
+            float yaw = YawOfDoor(World.DoorFacing(v.E)); // the door (-Z) turns from south to the side its units and trucks use
+            v.BayYaw = yaw;
+            v.Rig.Body.localRotation = Quaternion.Euler(0f, v.BayYaw, 0f);
+        }
+
+        /// <summary>The yaw (degrees, a quarter turn each) that turns a model's -Z door to face the sim's direction `facing` (radians).</summary>
+        static float YawOfDoor(float facing) => Mathf.Round((-90f - facing * Mathf.Rad2Deg) / 90f) * 90f;
+
+        /// <summary>
+        /// Twice a second, a drop-off whose bay the sim has moved to another side (its lane was built over) turns its model, plinth
+        /// ramp and dock point after it, so the door is always where the trucks and new units are.
+        /// </summary>
+        void FollowBay(EV v)
+        {
+            var e = v.E;
+            if (!e.IsStructure || !World.HasDoorSide(e.Def) || (Time.frameCount + e.Id) % 30 != 0) return;
+            if (Mathf.Approximately(YawOfDoor(World.DoorFacing(e)), v.BayYaw)) return;
+            TurnToBay(v);
+            Plinths.Register(e.Id, v.Rig.Root.position, v.Rig.Plinth, v.BayYaw);
+            if (v.Dock != null) v.Dock.BayPoint = World.Bay(e).bay;
         }
 
         void UpdateView(EV v, float alpha)
         {
             var e = v.E;
             var rig = v.Rig;
+            FollowBay(v);
             if (e.IsStructure && rig.HasModel && v.TeamShown != e.Team)
             {
-                // Captured (an engineer took it; a derrick claimed or released): it wears its new owner's colours.
-                Models.TintTeam(rig.Model, e.Team);
-                v.TeamShown = e.Team;
+                // Captured (an engineer took it; a derrick claimed or released): it wears its new owner's colours, as the
+                // engineer's last blow lands if he's on screen (SoldierWorks.Capture).
+                if (v.TintAt <= 0f) v.TintAt = Time.time + Capturer(v);
+                if (Time.time >= v.TintAt) { Models.TintTeam(rig.Model, e.Team); v.TeamShown = e.Team; v.TintAt = 0f; }
             }
             if (e.IsStructure && rig.HasModel)
             {
@@ -878,7 +937,7 @@ namespace Pez.View
                 if (e.IsComplete || v.SmokeK > 0f || v.Sim != null) Damage(v);
                 Construction(v);
                 if (e.Def.Key == "deep_mine") { Fx.Audience = AudienceFor(e); (v.Headframe ??= DeepMineWorks.For(rig.Model, e.Id, ref v.Glows)).Tick(World, e, SeesState(e, PovTeam), Time.deltaTime); Fx.Audience = null; }
-                if (e.Def.Key == "derrick") { Fx.Audience = AudienceFor(e); (v.Derrick ??= DerrickWorks.For(rig.Model, v.TeamShown, e.Id)).Tick(e, SeesState(e, PovTeam), Time.deltaTime); Fx.Audience = null; }
+                if (e.Def.Key == "derrick") { Fx.Audience = AudienceFor(e); (v.Derrick ??= DerrickWorks.For(rig.Model, v.TeamShown, e.Id)).Tick(e, v.TeamShown, SeesState(e, PovTeam), Time.deltaTime); Fx.Audience = null; }
                 if (e.Def.Key == "mining_refinery" && e.IsComplete && e.Team >= 0) Refinery(v);
                 if (e.Def.Key == "outpost" && e.IsComplete && e.Team >= 0) (v.Depot ??= OutpostWorks.For(rig.Model, e.Id)).Tick(World, e, SeesState(e, PovTeam), Time.deltaTime);
                 if (e.Def.Key == "enrichment_plant" && e.Team >= 0) { Fx.Audience = AudienceFor(e); (v.Enrich ??= EnrichWorks.For(rig.Model, e.Id, ref v.Glows)).Tick(World.Teams[e.Team], e.IsComplete, e.Working, SeesState(e, PovTeam), v.FireK < 0.15f, Time.deltaTime); Fx.Audience = null; }
@@ -890,9 +949,9 @@ namespace Pez.View
                 if (e.Def.Key == "barracks" && e.IsComplete && e.Team >= 0)
                 {
                     bool next = QueueHead(e, out float tp, out float tT);
-                    var unit = next ? World.Teams[e.Team].UnitQueues[e.Def.Produces][0].Key : null;
+                    var queue = next ? QueuedAt(e) : null;
                     Fx.Audience = AudienceFor(e);
-                    (v.Bunks ??= BarracksWorks.For(rig.Model, e.Team, e.Id)).Tick(next, tp, tT, unit, Time.deltaTime);
+                    (v.Bunks ??= BarracksWorks.For(rig.Model, e.Team, e.Id)).Tick(next, tp, tT, queue, Time.deltaTime);
                     Fx.Audience = null;
                 }
                 if (e.Def.Key == "airfield" && e.IsComplete && e.Team >= 0) (v.Field ??= AirfieldWorks.For(rig.Model, rig.Motion, e.Id)).Tick(World, e, SeesState(e, PovTeam), Time.deltaTime);
@@ -911,6 +970,15 @@ namespace Pez.View
                 if (v.Dock != null)
                 {
                     var phase = v.DockFrame >= Time.frameCount - 1 ? v.DockBest : DockView.Phase.Idle;
+                    // The bay can change side mid-match (a building that blocked the south lane is destroyed): the dock follows. The dock works
+                    // in the model's own frame, and the model is turned to face the bay (TurnToBay), so the sim's bay direction goes in as the
+                    // model sees it: its south (the door) once the model has turned, a side wall only in the moment before FollowBay turns it.
+                    if ((Time.frameCount + e.Id) % 6 == 0)
+                    {
+                        var (bayNow, _, facingNow, _) = World.Bay(e);
+                        var bayLocal = rig.Model.transform.InverseTransformDirection(new Vector3(Mathf.Cos(facingNow), 0f, Mathf.Sin(facingNow)));
+                        v.Dock.Rebay(Mathf.Atan2(bayLocal.z, bayLocal.x), bayNow);
+                    }
                     v.Dock.Tick(phase, Time.deltaTime);
                     // The door is up from Align until the truck has pulled out, and rolls down 0.5 s after.
                     if (phase != DockView.Phase.Idle && v.Dock.DoorSide) { rig.Motion.SetDoorOpen(true); v.DoorTimer = Mathf.Max(v.DoorTimer, 0.5f); }
@@ -964,7 +1032,7 @@ namespace Pez.View
                 if (v.EaseOff != Vector3.zero) { v.EaseOff *= Mathf.Exp(-Time.deltaTime * 14f); if (v.EaseOff.sqrMagnitude < 1e-4f) v.EaseOff = Vector3.zero; rig.Root.position += v.EaseOff; }
                 var targetRot = Quaternion.Euler(0, Yaw(e.Facing), 0);
                 rig.Root.rotation = Quaternion.Slerp(rig.Root.rotation, targetRot, Time.deltaTime * 14f);
-                if (!e.IsAir && e.Def.Armor != Armor.Infantry) HullFeel(v);
+                if (!e.IsAir && e.Def.Armor != Armor.Infantry) { HullFeel(v); TrackDust(v); }
                 if (Models.IsArtillery(e.Def.Key) && rig.HasModel) Artillery(v);
                 if (rig.HasModel)
                 {
@@ -1014,10 +1082,10 @@ namespace Pez.View
                 }
                 // Aircraft bank into turns; drones tilt toward where they're accelerating, as quadcopters do.
                 if (e.Def.ModelKey == "recon_drone") DroneTilt(v);
-                else if (e.IsAir) rig.Body.localRotation = Quaternion.Euler(e.Moving ? 6f : 0, 0, Mathf.Clamp(Mathf.DeltaAngle(rig.Root.eulerAngles.y, Yaw(e.Facing)) * 0.6f, -25f, 25f));
+                else if (e.IsAir) rig.Body.localRotation = Quaternion.Slerp(rig.Body.localRotation, Quaternion.Euler(e.Moving ? 6f : 0, 0, Mathf.Clamp(Mathf.DeltaAngle(rig.Root.eulerAngles.y, Yaw(e.Facing)) * 0.6f, -25f, 25f)), 1f - Mathf.Exp(-Time.deltaTime * 5f)); // eased: a stop or a turn tips it over a fifth of a second, never in one frame
                 // Infantry walk: the stride follows the ground actually covered this frame, and they settle when they stop.
                 if (rig.Gait != null) rig.Gait.Tick(rig.Root, Time.deltaTime);
-                if (rig.Gait != null && rig.HasModel) (v.Troop ??= SoldierWorks.For(rig.Model, e.Id)).Tick(e, World.Time, v.LastFire, Time.deltaTime);
+                if (rig.Gait != null && rig.HasModel) (v.Troop ??= SoldierWorks.For(rig.Model, e.Id, rig.Gait, this)).Tick(e, World.Time, v.LastFire, Time.deltaTime);
             }
             if (rig.Barrel != null && !rig.HasModel)
             {
@@ -1058,12 +1126,13 @@ namespace Pez.View
                 if (show) { var sc = v.Bay.localScale; sc.y = v.DoorHeight * open; v.Bay.localScale = sc; var lp = v.Bay.localPosition; lp.y = v.Door.localPosition.y - v.DoorHeight + sc.y * 0.5f; v.Bay.localPosition = lp; }
             }
             v.Blink = 1f;
-            if (!t.UnitQueues.TryGetValue(e.Def.Produces, out var q) || q.Count == 0) { v.Vents = 0; return; }
-            if (!IsFirstProducer(e)) return;
-            var def = Defs.Get(q[0].Key);
+            // Each building rolls out the unit it is working on itself.
+            var item = t.UnitQueues.TryGetValue(e.Def.Produces, out var q) ? q.Find(p => p.WorkerId == e.Id) : null;
+            if (item == null) { v.Vents = 0; return; }
+            var def = Defs.Get(item.Key);
             if (def == null) return;
             float rate = t.LowPower ? 0.5f : 1f;
-            float T = (def.BuildTime - q[0].Progress) / rate;
+            float T = (def.BuildTime - item.Progress) / rate;
             if (T < 1.5f) v.Blink = (Time.time * 4f + e.Id * 0.731f) % 2f < 1f ? 1.6f : 0.15f; // each factory blinks on its own phase
             if (T > 0.8f) v.Vents = 0;
             else if (v.Vents < 3 && T < 0.8f - v.Vents * 0.2f)
@@ -1078,19 +1147,38 @@ namespace Pez.View
             if (T < lead && v.Door != null) { rig.Motion.SetDoorOpen(true); v.DoorTimer = Mathf.Max(v.DoorTimer, T + 1.4f); }
         }
 
-        /// <summary>Is this the producer making the team's next unit of its kind, and if so how far along it is (0..1) and
-        /// how many seconds until it's out (half speed on low power)?</summary>
+        /// <summary>Is this producer making a unit (each building works its own item of the shared queue), and if so how far along
+        /// it is (0..1) and how many seconds until it's out (half speed on low power)?</summary>
         bool QueueHead(Entity e, out float p, out float T)
         {
             p = 0f; T = float.MaxValue;
             var t = World.Teams[e.Team];
-            if (!t.UnitQueues.TryGetValue(e.Def.Produces, out var q) || q.Count == 0 || !IsFirstProducer(e)) return false;
-            var def = Defs.Get(q[0].Key);
+            var item = t.UnitQueues.TryGetValue(e.Def.Produces, out var q) ? q.Find(x => x.WorkerId == e.Id) : null;
+            if (item == null) return false;
+            var def = Defs.Get(item.Key);
             if (def == null || def.BuildTime <= 0f) return false;
-            p = Mathf.Clamp01(q[0].Progress / def.BuildTime);
-            T = (def.BuildTime - q[0].Progress) / (t.LowPower ? 0.5f : 1f);
+            p = Mathf.Clamp01(item.Progress / def.BuildTime);
+            T = (def.BuildTime - item.Progress) / (t.LowPower ? 0.5f : 1f);
             return true;
         }
+
+        readonly List<ProdItem> queuedAt = new List<ProdItem>();
+
+        /// <summary>The soldiers queued at this barracks: the one it works on itself first (ProdItem.WorkerId; QueueHead says it has one),
+        /// then those still waiting for a barracks that this one may take. The team's queue is shared, so its head can be another
+        /// barracks' soldier. Reused between calls: the caller reads it at once.</summary>
+        List<ProdItem> QueuedAt(Entity e)
+        {
+            queuedAt.Clear();
+            var q = World.Teams[e.Team].UnitQueues[e.Def.Produces];
+            foreach (var p in q) if (p.WorkerId == e.Id) queuedAt.Add(p);
+            foreach (var p in q) if (p.WorkerId == 0 && (p.StructureId == 0 || p.StructureId == e.Id || !Trains(World.Get(p.StructureId), e))) queuedAt.Add(p);
+            return queuedAt;
+        }
+
+        /// <summary>Is b a building that can still train for e's team and kind (as World.AssignWorkers counts one)? An item queued at one that
+        /// isn't (gone, captured, unfinished) goes to whichever is free.</summary>
+        static bool Trains(Entity b, Entity e) => b != null && !b.Dead && b.Team == e.Team && b.IsStructure && b.IsComplete && b.Def.Produces == e.Def.Produces;
 
         static float DoorH(Transform door)
         {
@@ -1122,13 +1210,6 @@ namespace Pez.View
             t.GetComponent<Renderer>().shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             t.gameObject.SetActive(false);
             return t;
-        }
-
-        bool IsFirstProducer(Entity e)
-        {
-            foreach (var o in World.Entities)
-                if (!o.Dead && o.Team == e.Team && o.IsStructure && o.IsComplete && o.Def.Produces == e.Def.Produces) return o == e;
-            return false;
         }
 
         /// <summary>
@@ -1204,6 +1285,46 @@ namespace Pez.View
         /// the sim stops the vehicle (it's about to reach its firing range or its move point), so stopping and the first
         /// shot's kick no longer cancel. The heavy squats a little as it pulls away.
         /// </summary>
+        /// <summary>
+        /// The prevailing wind over open ground: faint breaths of dust lifted and blown along it, about 8 a second at
+        /// random points across the screen (so the same density at any zoom), drifting downwind for a few seconds.
+        /// </summary>
+        void BlowDust()
+        {
+            var cam = Camera.main;
+            if (cam == null || Time.deltaTime <= 0f) return;
+            blowDue += Time.deltaTime * 8f;
+            var flat = new Plane(Vector3.up, Vector3.zero);
+            for (; blowDue >= 1f; blowDue -= 1f)
+            {
+                var ray = cam.ViewportPointToRay(new Vector3(Random.Range(-0.1f, 1.1f), Random.Range(-0.1f, 1.1f), 0f));
+                if (!flat.Raycast(ray, out float d)) continue;
+                var p = ray.GetPoint(d);
+                if (p.x < 0f || p.z < 0f || p.x > World.Map.W || p.z > World.Map.H) continue; // off the map: no ground to lift
+                Fx.BlowingDust(p);
+            }
+        }
+        float blowDue;
+
+        /// <summary>
+        /// A ground vehicle on the move throws dust off its tracks or wheels, from alternate sides of its tail, more often
+        /// the faster it goes, and the wind carries it off. Only where each camera can see the vehicle (Fx.Audience).
+        /// </summary>
+        void TrackDust(EV v)
+        {
+            var e = v.E;
+            if (e.IsStructure || e.IsMine || v.HullSpeed < 0.35f) { v.TrackDustT = 0f; return; }
+            if ((v.TrackDustT -= Time.deltaTime) > 0f) return;
+            v.TrackDustT = Mathf.Lerp(0.3f, 0.1f, Mathf.Clamp01(v.HullSpeed / 3f));
+            var root = v.Rig.Root;
+            float r = e.Def.Radius, side = (Time.frameCount & 1) == 0 ? 1f : -1f;
+            var at = root.position - root.forward * r * 0.8f + root.right * r * 0.5f * side;
+            at.y = 0f;
+            Fx.Audience = AudienceFor(e);
+            Fx.TrackDust(at, -root.forward, Mathf.Clamp(r * 2f, 0.7f, 2f));
+            Fx.Audience = null;
+        }
+
         void HullFeel(EV v)
         {
             float dt = Mathf.Min(Time.deltaTime, 0.03f); // the spring below is explicit: it diverges at ~0.2 s frames and goes NaN (for good) within a minute of them (seen in the 1 fps dev build)
@@ -1371,6 +1492,7 @@ namespace Pez.View
                     trail.startWidth = 0.08f; trail.endWidth = 0f;
                     if (p.Weapon.Name == "sam") { trail.sharedMaterial = Mats.Unlit(new Color(0.95f, 0.92f, 0.86f, 0.75f), true); trail.time = 0.8f; trail.startWidth = 0.07f; trail.endWidth = 0.03f; } // a SAM round's cream smoke trail
                     trail.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                    if (p.Weapon.Name == "rocket") sv?.Troop?.Arm(t); // a candy trooper's rocket flies as its wrapped sweet
                     projectiles[p.Id] = t;
                     projectileStart[p.Id] = (from, p.PrevPos, Mathf.Max(0.1f, Vec2.Dist(p.PrevPos, p.TargetPos)));
                 }
@@ -1384,6 +1506,7 @@ namespace Pez.View
                 var pos = W(ground, Mathf.Lerp(start.y, endY, k) + arc);
                 float off = 1f - Mathf.SmoothStep(0f, 1f, Vec2.Dist(ground, simStart) / MuzzleBlend);
                 if (off > 0f) { pos.x += (start.x - simStart.X) * off; pos.z += (start.z - simStart.Y) * off; }
+                if ((pos - t.position).sqrMagnitude > 1e-8f) t.rotation = Quaternion.LookRotation(pos - t.position); // nose first
                 t.position = pos;
                 if (shellShadows.TryGetValue(p.Id, out var shadow))
                 {
@@ -1455,9 +1578,11 @@ namespace Pez.View
                             }
                             else if (ev.Key == "c4")
                             {
-                                // Charge planted and blown: no tracer, a big blast on the target.
+                                // Charge planted and blown: no tracer, a big blast on the target, where the commando stuck it
+                                // (SoldierWorks: the charge he planted on it while arming or during the cooldown, else where it would stick).
+                                if (Views.TryGetValue(ev.A, out var cv) && cv.Troop != null) to = cv.Troop.Detonate(ev.B, to);
                                 Fx.Explosion(to, 1.1f);
-                                Fx.Scorch(W(ev.Pos2), 1.2f);
+                                Fx.Scorch(new Vector3(to.x, 0f, to.z), 1.2f);
                             }
                             else
                             {
@@ -1478,6 +1603,7 @@ namespace Pez.View
                                 // The ground notices: a dust ring under a heavy's shot, a blast ring and lingering smoke for artillery.
                                 if (ev.Key == "heavy_cannon") Fx.GroundRing(sv.Rig.Root.position, 1.4f, 0.5f, 0);
                                 if (arty) { Fx.GroundRing(sv.Rig.Root.position, 2f, 0.6f, 6); Fx.BarrelSmoke(tip); }
+                                sv.Troop?.Fired(Views.TryGetValue(ev.B, out var tgt) ? tgt.Rig.Root.position + Vector3.up * 0.3f : W(ev.Pos2, 0.3f)); // a launcher's backblast and reload
                             }
                             Kick(ev.A, 0.08f);
                             break;
@@ -1492,15 +1618,18 @@ namespace Pez.View
                                 // An aircraft rides the airfield's lift up and lifts off from its deck (AirfieldWorks).
                                 bool onLift = def2.IsAir && producer.E.Def.Key == "airfield";
                                 if (onLift && producer.Field == null) { producer.Rig.Motion.SnapLiftDown(); producer.Rig.Motion.SetLiftUp(true); }
-                                // Start at the door (south face) and roll out to where the sim placed it.
+                                // Start at the door (south face, or a drop-off's bay side: where the sim puts new units) and roll out to where it placed it.
                                 var c = producer.E.Center;
                                 // From 0.6 inside the door (hidden in the dark bay) when the model has one.
                                 var door = producer.Rig.HasModel ? PezMotion.FindDeep(producer.Rig.Model.transform, "door") : null;
+                                float doorAt = World.DoorFacing(producer.E);
+                                var doorDir = new Vec2(Mathf.Cos(doorAt), Mathf.Sin(doorAt));
+                                float inside = (Mathf.Abs(doorDir.X) > 0.5f ? producer.E.Def.SizeX : producer.E.Def.SizeY) * 0.5f - 0.3f; // 0.3 in from the wall
                                 tv2.SpawnFrom = onLift && producer.Field != null ? producer.Field.Board(tv2)
                                               : def2.IsAir ? W(c, 0.2f)
                                               : producer.Bunks is { HasExit: true } ? producer.Bunks.Exit // where it stood up after its tuck and roll
-                                              : door != null ? new Vector3(door.position.x, 0f, door.position.z + 0.6f)
-                                              : W(new Vec2(c.X, producer.E.Origin.Y + 0.3f));
+                                              : door != null ? new Vector3(door.position.x, 0f, door.position.z) + producer.Rig.Model.transform.forward * 0.6f
+                                              : W(c + doorDir * inside);
                                 tv2.SpawnT = 0;
                                 tv2.Rig.Root.position = tv2.SpawnFrom.Value; // this frame too: it was already drawn where the sim put it
                                 if (producer.Bunks is { HasExit: true }) tv2.Rig.Root.rotation = producer.Bunks.ExitFacing; // and facing the way it stood up
@@ -1512,6 +1641,7 @@ namespace Pez.View
                         { var sd = Defs.Get(ev.Key); Fx.Salvaged(W(ev.Pos), sd != null && sd.IsStructure ? sd.SizeX : 1f); }
                         break;
                     case "captured":
+                        if (Views.TryGetValue(ev.B, out var capturer) && capturer.Troop is { Capturing: true }) break; // he plays it on his last blow
                         Fx.Beam(W(ev.Pos, 0.2f), W(ev.Pos, 4f), Mats.Team(ev.Team), 0.25f);
                         Fx.MuzzleFlash(W(ev.Pos, 0.6f), 0.4f);
                         break;
@@ -1522,8 +1652,9 @@ namespace Pez.View
                             var from = MuzzleOf(ev.A, ev.Pos);
                             var to = W(ev.Pos2, HeightOf(ev.B, heal ? 0.3f : 0.5f));
                             // Heal beam: team-neutral cream-white. Welding beam: caramel amber.
-                            Fx.Beam(from, to, heal ? new Color(0.96f, 0.95f, 0.91f, 0.8f) : new Color(Mats.Amber.r, Mats.Amber.g, Mats.Amber.b, 0.9f), heal ? 0.05f : 0.035f);
+                            Fx.Beam(from, to, heal ? new Color(0.96f, 0.95f, 0.91f, 0.8f) : new Color(Mats.Amber.r, Mats.Amber.g, Mats.Amber.b, 0.9f), heal ? 0.05f : 0.035f, lamp: !heal); // a heal's light is Fx.Healed's
                             if (!heal) Fx.MuzzleFlash(to, 0.05f); // welding sparks
+                            else if (Views.TryGetValue(ev.B, out var patient)) { Fx.Healed(to); patient.Troop?.Tended(from); } // motes rise off it; it looks round at its medic
                             // A building being repaired is being fought: its fire turns to white steam where the beam lands.
                             if (!heal && Views.TryGetValue(ev.B, out var fought) && fought.E.IsStructure) { fought.RepairAt = Time.time; fought.RepairPoint = to; }
                             break;

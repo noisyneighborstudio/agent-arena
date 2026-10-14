@@ -9,7 +9,7 @@ namespace Pez.Sim
     /// (Approach), wait beside it if the bay is busy (Queue), turn to face away from the building (Align), reverse in
     /// (Reverse), settle and tip the load (Unload), then drive out (PullOut). See World.UpdateHarvester.
     /// </summary>
-    public enum DockStep { None, Approach, Queue, Align, Reverse, Unload, PullOut }
+    public enum DockStep { None, Approach, Queue, Enter, Align, Reverse, Unload, PullOut } // Enter: its turn, pulling up to the head of the lane
 
     public class Entity
     {
@@ -21,6 +21,12 @@ namespace Pez.Sim
         public float TurretFacing;    // radians, weapon
         public float Hp;
         public bool Dead;
+        /// <summary>
+        /// The share of what this cost that the arena's gift paid (0..1; Team.Pay): 1 for the starting base and units and a late
+        /// joiner's catch-up buildings, which weren't paid for at all. It is worth that much less as kill value, salvage and a
+        /// dismantled base (World.AddWorth), whoever holds it later, and a refund of it is that much gift again. Saved with the game.
+        /// </summary>
+        public float GrantedShare;
 
         // Structures
         public Int2 Origin;
@@ -46,6 +52,10 @@ namespace Pez.Sim
         public Vec2 ProgressPos;
         public float ProgressAt, GhostUntil, ProgressDist;
         public float LastFiredAt = -999;
+        // Planting a charge (a weapon with an ArmTime: C4): how long it has worked ArmingTarget, in range and standing still,
+        // without a break. Its first shot goes off at the weapon's ArmTime.
+        public float Arming;
+        public int ArmingTarget;
         // Queued waypoints for move / attack_move (taken in order; with WaypointLoop, forever, as a patrol).
         public readonly List<Vec2> Waypoints = new List<Vec2>();
         public bool WaypointLoop;
@@ -59,6 +69,12 @@ namespace Pez.Sim
         public bool GivingWay;
         // A crusher held up by its own soldiers in its path: since when (0 = it isn't). It forces its way through after World.OwnBlockLimit.
         public float OwnBlockedSince;
+        public float DodgeUntil;
+        // The dance guard (World.WatchDances): two-second running averages of its per-tick step (velocity and speed), its
+        // last step, how long it's been on the move without getting anywhere, recent reversals, and until when it's settled.
+        public Vec2 DanceVel, DanceStep, DanceHeading;
+        public float DanceSpeed, DanceFor, DanceFlips, SettledUntil;
+        public float QueuedAt;        // truck: when it joined its drop-off's queue (World.QueueAhead orders the line by it)      // soldier: getting out of a vehicle's way until then (its walk and aim wait)
         public float RepathTimer;
         public bool Moving;
         public int LastAttackerId;
@@ -73,6 +89,7 @@ namespace Pez.Sim
 
         // Mining trucks
         public int Cargo;
+        public int CargoSalvage;     // of Cargo, how much is salvage picked up off the ground (it counts as mined when it's delivered, not before)
         public int CargoType = -1;   // index into Defs.Ores while carrying
         public int HarvestType = -1; // preferred ore type, -1 = nearest of any
         public Int2? HarvestTile;
@@ -80,6 +97,12 @@ namespace Pez.Sim
         public bool Burning;         // a building on fire (below World.BurnBelow): it burns down unless repaired
         public DockStep Dock;        // where it is in backing into a drop-off's bay
         public int DockAt;           // the drop-off structure it's delivering to
+        /// <summary>
+        /// A door side (an index into World.BaySides: 0 south, 1 east, 2 west, 3 north), chosen when the building was placed, deployed or
+        /// spawned and kept: a drop-off's truck bay faces its nearest ore (so lanes don't move under the trucks), a barracks' or factory's
+        /// door faces the middle of the map. Old saves have 0, south.
+        /// </summary>
+        public int BaySide;
 
         // Deep mines: the deposit underneath
         public int DepositId;
@@ -98,7 +121,9 @@ namespace Pez.Sim
 
         // Converters / reactors: currently producing
         public bool Working;
-        /// <summary>A defence whose upkeep its team can't pay: it stands, but doesn't fire until the steel is there (World.Upkeep).</summary>
+        /// <summary>Fusion reactors: the share of its power it makes, 0 to 1 (the share of its plasma burn the team could pay last tick).</summary>
+        public float Output;
+        /// <summary>A defence whose upkeep its team can't pay: it stands and draws no power, but doesn't fire until the steel is there (World.Upkeep).</summary>
         public bool Offline;
 
         // Transports and passengers
@@ -146,6 +171,7 @@ namespace Pez.Sim
         public string DockName => Order != Order.ReturnOre ? null : Dock switch
         {
             DockStep.Queue => "waiting for the bay",
+            DockStep.Enter => "pulling up to the bay",
             DockStep.Align => "lining up to back in",
             DockStep.Reverse => "backing into the bay",
             DockStep.Unload => "unloading",

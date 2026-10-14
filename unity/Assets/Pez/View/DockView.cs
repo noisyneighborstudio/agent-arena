@@ -15,30 +15,59 @@ namespace Pez.View
     /// each lamp on the refinery and the command center (they chase upward, "come in"), a row between them on the
     /// outpost's low drop pad. The chute is built here too (the pack has no chute node): a kraft trough on the refinery
     /// and the command center, which have a door; the outpost's pad takes ore without one. Off, the lamps are unlit.
+    /// A bay that terrain moved to another wall (not the door's) sends the chute through that wall. A model with a hatch
+    /// there (hatch_N nodes: the refinery's roll-up shutters) has the chute rest just inside the wall, and it only comes
+    /// out once the hatch's owner reports it open (Opening); ChuteBusy tells that owner to hold it open until the chute is back.
+    /// The signals follow the bay too: the south lamps and pips are lit only while the bay is the door's (south), and a model
+    /// with a lamp lens on each side hatch (dock_lens_N, beside hatch_N: the refinery) gets a short row of pips either side of
+    /// it that runs the same Active chase and Clear / off sequence for the wall the truck actually uses. A side lamp that has no
+    /// signal of its own (the command center, the outpost) just leaves the south dark. When the bay changes side the old
+    /// signal fades out and the new one in over 0.2 s, no snap.
     /// </summary>
     public class DockView
     {
         public enum Phase { Idle, Clear, Active }
 
-        readonly Renderer lamps;               // the model's own pair
-        readonly Renderer[] pips;
+        /// <summary>One dock signal: a lamp renderer (the south pair, or a hatch's lens) and the pips that chase up to it.
+        /// W is how much the bay is its wall's, 0 to 1 (fades over 0.2 s).</summary>
+        class Signal
+        {
+            public Renderer Lens;
+            public Renderer[] Pips;
+            public Vector3 Dir;
+            public float W, WShown = -1f;
+            public Phase Shown = (Phase)(-1);
+            public bool Cream;
+        }
+        readonly System.Collections.Generic.List<Signal> signals = new System.Collections.Generic.List<Signal>();
         readonly Transform chute;
-        readonly Vector3 chuteIn, chuteOut;
+        readonly Transform model, door;
+        readonly float halfX, halfY;
+        Vector3 chuteIn, chuteOut, wantDir;
+        float swapK = 1f;                      // 0..1: how much of the chute shows while it changes sides
         readonly Material amber, cream, lampAmber, lampCream;
         float chuteK, clearT = -1f;
-        Phase shown = (Phase)(-1);
-        bool creamShown;
+        bool hatched, gated;                   // a hatch in the bay's wall; the wall's panel (hatch or south shutter) gates the chute
 
         static Material pipAmber, pipCream, kraft, licorice;
 
         /// <summary>True when the bay is on the door side (south): the door rolls up for the truck.</summary>
-        public readonly bool DoorSide;
+        public bool DoorSide { get; private set; }
+        /// <summary>The bay's direction out of the building, in the model's space.</summary>
+        public Vector3 Dir { get; private set; }
+        /// <summary>The chute is changing sides (the sim moved the bay): it draws back, the old wall's hatch shuts, then it
+        /// comes up on the new side.</summary>
+        public bool Switching => chute != null && wantDir != Dir;
+        /// <summary>How open the wall's hatch is toward Dir, 0 to 1 (the hatch's owner sets it). The chute waits for it to be open.</summary>
+        public System.Func<Vector3, float> Opening;
+        /// <summary>The chute is out, on its way, or wanted out: a hatch in its wall has to stay open.</summary>
+        public bool ChuteBusy { get; private set; }
         /// <summary>The bay point (sim coordinates), for trucks unloading beside a drop-off whose lane is built over.</summary>
         public Vec2 BayPoint;
 
         /// <param name="halfX">Half the footprint across X.</param>
         /// <param name="halfY">Half the footprint across Y (the sim's Y is world Z).</param>
-        /// <param name="facing">The sim's bay facing (World.Bay: south unless terrain blocks that lane).</param>
+        /// <param name="facing">The bay's facing in the model's own frame (WorldView turns a drop-off's model so its door faces the bay: always south, -Z).</param>
         public static DockView For(Rig rig, float halfX, float halfY, float facing, Vec2 bayPoint)
         {
             var m = rig.Model;
@@ -51,7 +80,8 @@ namespace Pez.View
 
         DockView(Transform model, Transform stage, Renderer lampR, Transform door, float halfX, float halfY, Vector3 dir)
         {
-            lamps = lampR;
+            this.model = model; this.door = door; this.halfX = halfX; this.halfY = halfY;
+            Dir = wantDir = dir;
             amber = lampR.sharedMaterial;
             if (pipAmber == null)
             {
@@ -74,6 +104,7 @@ namespace Pez.View
             var left = new Vector3(b.min.x + s * 0.5f, b.center.y, b.center.z);
             var right = new Vector3(b.max.x - s * 0.5f, b.center.y, b.center.z);
             float pip = s * 1.05f;
+            Renderer[] pips;
             if (b.center.y > 0.3f)
             {
                 // A column of three under each lamp, chasing upward to it.
@@ -91,21 +122,36 @@ namespace Pez.View
                 pips = new Renderer[4];
                 for (int i = 0; i < 4; i++) pips[i] = Pip(lt, Vector3.Lerp(left, right, (i + 1) / 5f), pip);
             }
+            signals.Add(new Signal { Lens = lampR, Pips = pips, Dir = Vector3.back });
+
+            // A lamp on each side hatch: the model's lens (dock_lens_N) and a row of two pips either side of it, along the wall.
+            for (int i = 0; ; i++)
+            {
+                var h = PezMotion.FindDeep(model, "hatch_" + i);
+                if (h == null) break;
+                var ln = PezMotion.FindDeep(model, "dock_lens_" + i);
+                var lr = ln != null ? ln.GetComponentInChildren<Renderer>() : null;
+                var hp = model.InverseTransformPoint(h.position); hp.y = 0f;
+                if (lr == null || hp.sqrMagnitude < 0.01f) continue;
+                var wall = Mathf.Abs(hp.x) > Mathf.Abs(hp.z) ? new Vector3(Mathf.Sign(hp.x), 0f, 0f) : new Vector3(0f, 0f, Mathf.Sign(hp.z));
+                var along = new Vector3(Mathf.Abs(wall.z), 0f, Mathf.Abs(wall.x));
+                var c = model.InverseTransformPoint(ln.position);
+                var row = new Renderer[4];
+                float[] at = { -0.22f, -0.11f, 0.11f, 0.22f };           // outer, inner | inner, outer: they chase in to the lens
+                for (int k = 0; k < 4; k++) row[k] = Pip(stage, stage.InverseTransformPoint(model.TransformPoint(c + along * at[k])), 0.055f);
+                signals.Add(new Signal { Lens = lr, Pips = row, Dir = wall });
+            }
+            foreach (var sg in signals) sg.W = Vector3.Dot(sg.Dir, wantDir) > 0.9f ? 1f : 0f;
 
             // The chute: a kraft trough sloping down into the building. Out, its lip is just over the backed-in truck's
             // tail (the bay point is half a tile outside the footprint; the bin's rear edge 0.4 in from the truck's
             // centre); in, it's 0.5 back: parked in the refinery's bay, or behind the command center's door. Doors face
             // -Z; when terrain moved the bay to another side, the chute comes out of that wall instead.
-            DoorSide = dir.z < -0.7f;
             if (door != null)
             {
-                float reach = (Mathf.Abs(dir.x) > 0.7f ? halfX : halfY) + 0.15f;
                 var c = new GameObject("chute").transform;
                 c.SetParent(stage, false);
-                chuteOut = dir * reach + (DoorSide ? new Vector3(model.InverseTransformPoint(door.position).x, 0f, 0f) : Vector3.zero);
-                chuteIn = chuteOut - dir * 0.5f;
-                c.localPosition = chuteIn;
-                c.localRotation = Quaternion.LookRotation(-dir, Vector3.up); // the trough runs along local +Z, into the building
+                chute = c;
                 const float len = 0.62f, w = 0.42f, slope = 12f;
                 var tray = new GameObject("tray").transform;
                 tray.SetParent(c, false);
@@ -114,9 +160,52 @@ namespace Pez.View
                 Part(tray, new Vector3(0f, 0f, 0f), new Vector3(w, 0.025f, len), kraft);
                 Part(tray, new Vector3(-w * 0.5f, 0.035f, 0f), new Vector3(0.03f, 0.07f, len), licorice);
                 Part(tray, new Vector3(w * 0.5f, 0.035f, 0f), new Vector3(0.03f, 0.07f, len), licorice);
-                chute = c;
             }
-            Apply(Phase.Idle, 0f);
+            SetSide(dir);
+            Apply(Phase.Idle, 0f, 0f);
+        }
+
+        /// <summary>
+        /// Puts the chute on the bay's side. Out, its lip is just over the backed-in truck's tail (the bay point is half a
+        /// tile outside the footprint; the bin's rear edge 0.4 in from the truck's centre); in, it's 0.5 back: parked in the
+        /// refinery's bay, or behind the command center's door. Doors face -Z; when terrain or a building moved the bay to
+        /// another side, the chute comes out of that wall instead, through its hatch when the model has one: then it rests
+        /// just inside the wall rather than 0.5 back (which can poke out of a wall).
+        /// </summary>
+        void SetSide(Vector3 dir)
+        {
+            Dir = wantDir = dir;
+            DoorSide = dir.z < -0.7f;
+            hatched = gated = false;
+            if (chute == null) return;
+            float reach = (Mathf.Abs(dir.x) > 0.7f ? halfX : halfY) + 0.15f;
+            chuteOut = dir * reach + (DoorSide ? new Vector3(model.InverseTransformPoint(door.position).x, 0f, 0f) : Vector3.zero);
+            chuteIn = chuteOut - dir * 0.5f;
+            gated = DoorSide && PezMotion.FindDeep(model, "bay_shutter") != null;   // the refinery's south shutter, down while the bay is elsewhere
+            for (int i = 0; ; i++)
+            {
+                var h = PezMotion.FindDeep(model, "hatch_" + i);
+                if (h == null) break;
+                var hp = model.InverseTransformPoint(h.position); hp.y = 0f;
+                if (hp.sqrMagnitude < 0.01f || Vector3.Dot(hp.normalized, dir) < 0.9f) continue;
+                chuteIn = dir * (Vector3.Dot(hp, dir) - 0.12f);
+                hatched = gated = true;
+                break;
+            }
+            chuteK = 0f;
+            chute.localPosition = chuteIn;
+            chute.localRotation = Quaternion.LookRotation(-dir, Vector3.up); // the trough runs along local +Z, into the building
+        }
+
+        /// <summary>The sim's bay now (World.Bay): the point trucks use at once; the chute and hatch follow in Tick when its
+        /// side has changed (a building that blocked the south lane was destroyed, or one now stands on it). `facing` is the bay's
+        /// direction in the model's own frame, like For's (WorldView turns the model to face its bay, so that is south, -Z, except in
+        /// the moment between the sim moving the bay and the model turning after it); a world-space angle would be turned twice.</summary>
+        public void Rebay(float facing, Vec2 bayPoint)
+        {
+            BayPoint = bayPoint;
+            var d = new Vector3(Mathf.Cos(facing), 0f, Mathf.Sin(facing));
+            if (Vector3.Dot(d, wantDir) < 0.9f) wantDir = d;
         }
 
         static Renderer Pip(Transform parent, Vector3 pos, float size)
@@ -141,7 +230,19 @@ namespace Pez.View
             // Chute: out while the truck lines up, backs in and unloads; in once it pulls out.
             if (chute != null)
             {
-                float goal = phase == Phase.Active ? 1f : 0f;
+                // Changing sides: the chute draws back first, the old wall's hatch shuts (its owner, once ChuteBusy is false),
+                // then the chute shrinks away, appears on the new side and the new hatch opens for the next truck.
+                bool switching = wantDir != Dir;
+                bool want = phase == Phase.Active && !switching;
+                ChuteBusy = want || chuteK > 0f;
+                if (switching && chuteK <= 0f && (!gated || Opening == null || Opening(Dir) <= 0.02f))
+                {
+                    swapK = Mathf.MoveTowards(swapK, 0f, dt / 0.2f);
+                    if (swapK <= 0f) SetSide(wantDir);
+                }
+                else if (!switching) swapK = Mathf.MoveTowards(swapK, 1f, dt / 0.2f);
+                chute.localScale = Vector3.one * Mathf.Max(0.001f, swapK * swapK * (3f - 2f * swapK));
+                float goal = want && swapK >= 1f && (!gated || Opening == null || Opening(Dir) >= 0.97f) ? 1f : 0f;
                 if (chuteK != goal)
                 {
                     chuteK = Mathf.MoveTowards(chuteK, goal, dt / 0.5f);
@@ -149,7 +250,7 @@ namespace Pez.View
                     chute.localPosition = Vector3.LerpUnclamped(chuteIn, chuteOut, k);
                 }
             }
-            Apply(phase, Time.time);
+            Apply(phase, Time.time, dt);
         }
 
         static float EaseOutBack(float k)
@@ -160,37 +261,56 @@ namespace Pez.View
             return 1f + (c + 1f) * x * x * x + c * x * x;
         }
 
-        void Apply(Phase phase, float now)
+        void Apply(Phase phase, float now, float dt)
         {
+            foreach (var sg in signals)
+            {
+                // The signal of the wall the bay is on is lit; the others fade to dark.
+                bool mine = Vector3.Dot(sg.Dir, wantDir) > 0.9f;
+                sg.W = Mathf.MoveTowards(sg.W, mine ? 1f : 0f, dt / 0.2f);
+                Show(sg, sg.W > 0.001f ? phase : Phase.Idle, now);
+            }
+        }
+
+        void Show(Signal sg, Phase phase, float now)
+        {
+            var pips = sg.Pips;
+            float w = sg.W;
             bool creamNow = phase == Phase.Clear;
-            if (creamNow != creamShown || phase != shown)
+            if (creamNow != sg.Cream || sg.Shown == (Phase)(-1))
             {
                 var pm = creamNow ? pipCream : pipAmber;
                 for (int i = 0; i < pips.Length; i++) pips[i].sharedMaterial = pm;
-                lamps.sharedMaterial = creamNow ? lampCream : lampAmber;
-                creamShown = creamNow;
+                sg.Lens.sharedMaterial = creamNow ? lampCream : lampAmber;
+                sg.Cream = creamNow;
             }
+            float lensDim, lensGlow;
             if (phase == Phase.Active)
             {
                 // 2 Hz chase: a bright step runs along each column (or in from both ends of the row) to the lamps.
                 int n = pips.Length == 6 ? 4 : 3;         // steps per sweep (3 pips + the lamp, or 2 pips + the lamp)
                 float ph = now * 2f;
                 int lit = (int)((ph - Mathf.Floor(ph)) * n);
+                float d = Mathf.Lerp(0.55f, 1f, w);
                 for (int i = 0; i < pips.Length; i++)
                 {
                     int step = pips.Length == 6 ? i % 3 : (i < 2 ? i : 3 - i);
-                    PezShade.Set(pips[i], 1f, step == lit ? 1f : step == lit - 1 ? 0.35f : 0.08f);
+                    PezShade.Set(pips[i], d, (step == lit ? 1f : step == lit - 1 ? 0.35f : 0.08f) * w);
                 }
-                PezShade.Set(lamps, 1f, lit == n - 1 ? 1.2f : 0.35f);
+                lensDim = d; lensGlow = Mathf.Lerp(0.06f, lit == n - 1 ? 1.2f : 0.35f, w);
             }
-            else if (phase != shown)
+            else
             {
-                float g = phase == Phase.Clear ? 1f : 0f;   // steady cream, or unlit
-                float d = phase == Phase.Clear ? 1f : 0.55f;
-                for (int i = 0; i < pips.Length; i++) PezShade.Set(pips[i], d, g);
-                PezShade.Set(lamps, d, phase == Phase.Clear ? 1f : 0.06f);
+                bool clear = phase == Phase.Clear;      // steady cream, or unlit
+                float d = clear ? Mathf.Lerp(0.55f, 1f, w) : 0.55f;
+                if (phase != sg.Shown || w != sg.WShown)
+                    for (int i = 0; i < pips.Length; i++) PezShade.Set(pips[i], d, clear ? w : 0f);
+                lensDim = d; lensGlow = clear ? Mathf.Lerp(0.06f, 1f, w) : 0.06f;
             }
-            shown = phase;
+            // The lens is set every frame: it is one of the model's emissives, which the building's power glow also writes to
+            // (the pips are built here and are only ours).
+            PezShade.Set(sg.Lens, lensDim, lensGlow);
+            sg.Shown = phase; sg.WShown = w;
         }
     }
 }

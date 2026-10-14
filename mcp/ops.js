@@ -30,7 +30,7 @@ export function opsSite({ host, key, rooms, gameAt, publicUrl }) {
         structures: t.structures, units: t.units, kills: t.kills, view: vt ? `${publicUrl}/view/r${room.id}-${vt}` : null });
     }
     return { id: room.id, title: title(room), code: room.code, time_s: st.time_s, speed: st.speed, paused: st.paused, map: st.map_size,
-      errors: st.sim_errors, game_over: st.game_over, phase: st.match?.phase, ends_in_s: st.match?.ends_in_s, seats,
+      errors: st.sim_errors, settles: st.movement_settles, settles_by: st.movement_settles_by, game_over: st.game_over, phase: st.match?.phase, ends_in_s: st.match?.ends_in_s, seats,
       viewers: [["spectator /watch", `${publicUrl}/watch/${room.id}`]] };
   }
   const title = (room) => `Room ${room.id} · ${room.code ?? ""}${room.kind === "remote" ? ` · on ${room.host}` : ""}`;
@@ -91,7 +91,7 @@ function card(s){
   const status=s.game_over?'<span class=err>game over</span>':s.paused?'paused':'<span class=okc>running</span> ×'+s.speed;
   const rows=s.seats.map(t=>'<tr class="'+(t.out?'out':'')+'"><td><b>'+esc(t.name)+'</b> '+esc(t.player||t.controller||'')+(t.out?' · out':'')+'</td><td class=n>'+(t.score??'')+'</td><td class=n>'+(t.structures??'')+'s '+(t.units??'')+'u '+(t.kills??'')+'k</td><td>'+(t.view?a(s.title+' · '+t.name,'watch',t.view):'')+'</td></tr>').join('');
   return '<div class=card><div class=body><div class=t><b>'+esc(s.title)+'</b><span>'+status+'</span></div>'+
-    '<div class=meta>game '+hms(s.time_s)+' · map '+esc(s.map)+(s.phase?' · '+esc(s.phase)+(s.ends_in_s!=null?' · ends in '+hms(s.ends_in_s):''):'')+(s.code?' · '+esc(s.code):'')+(s.errors?' · <span class=err>'+s.errors+' sim errors</span>':'')+'</div>'+
+    '<div class=meta>game '+hms(s.time_s)+' · map '+esc(s.map)+(s.phase?' · '+esc(s.phase)+(s.ends_in_s!=null?' · ends in '+hms(s.ends_in_s):''):'')+(s.code?' · '+esc(s.code):'')+(s.errors?' · <span class=err>'+s.errors+' sim errors</span>':'')+(s.settles?' · <span class=err title="'+esc(Object.entries(s.settles_by||{}).map(([k,v])=>k+' x'+v).join('\n'))+'">'+s.settles+' movement settles</span>':'')+'</div>'+
     '<div class=links>'+s.viewers.map(([n,u])=>a(s.title+' · '+n,n,u)).join('')+'</div><table>'+rows+'</table></div></div>';
 }
 async function load(){
