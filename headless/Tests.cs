@@ -72,6 +72,7 @@ namespace Pez.Headless
             NoSpinBetweenTanks();
             MovementGate();
             DropOffsFaceTheirBays();
+            C4IsPlanted();
             ViewCopyReplaysOrders();
             GroupMove();
             ResignWhenStalled();
@@ -390,7 +391,7 @@ namespace Pez.Headless
         {
             // Placing by itself (the AI, a build command without x,y, a suggested spot), a drop-off's trucks back into its door side.
             // (Rules 41 did it by keeping the bay on the south side and placing drop-offs where the south lane is clear; since the
-            // economy audit, Rules 43, the bay opens on the clear side nearest the ore and the building turns its door to it.)
+            // economy audit, Rules 44, the bay opens on the clear side nearest the ore and the building turns its door to it.)
             // A player's own x,y is still accepted wherever CanPlace allows it.
             var w = new World(2, 7, 80);
             var def = Defs.Get("mining_refinery");
@@ -426,6 +427,50 @@ namespace Pez.Headless
                 }
             }
             Check(refineries >= 8 && bad == 0, $"house-AI refineries and command centers all have a clear bay on their door side ({refineries} refineries over 4 matches, {bad} without)");
+        }
+
+        static void C4IsPlanted()
+        {
+            // Rules 43: a commando has to plant his charge. Standing in range of an enemy power plant, the first C4 goes off
+            // only after its arming time (1.5 s), the next on the cooldown (5 s) after that; walking off starts the arming
+            // again, and a commando that never stops gets nothing off.
+            var w = new World(2, 7, 80);
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var plant = w.SpawnStructure(1, "power_plant", w.FindPlacement(0, "power_plant").Value, 1f);
+            plant.Hp = 100000f;   // one charge would level it: let it stand for the next ones
+            var c4 = Defs.Get("commando").Weapon;
+            var by = plant.Center + new Vec2(-(plant.Def.SizeX / 2f + 0.5f), 0);
+            var cmd = At(w.SpawnUnit(0, "commando", hq), by);
+            List<float> Shots() => w.Events.Where(e => e.Type == "shot" && e.A == cmd.Id && e.Key == "c4").Select(e => e.Tick * World.Dt).ToList();
+            string Times(List<float> s, float from) => string.Join(", ", s.Select(t => $"{t - from:0.00} s"));
+            w.SetOrder(cmd, Order.Attack, plant.Center, plant.Id);
+            float start = -1f;   // the first tick he works it: in range, stopped
+            for (int i = 0; i < 1.4f * World.TickRate; i++) { w.Step(); if (start < 0f && cmd.LastFiredAt == w.Time) start = w.Time; }
+            Check(start >= 0f && start <= 2 * World.Dt && Shots().Count == 0 && cmd.Arming > 1f,
+                  $"standing by its target, a commando's first charge doesn't go off before it's armed ({Shots().Count} shots, armed {cmd.Arming:0.00} s)");
+            Run(w, 0.3f);
+            var shots = Shots();
+            Check(shots.Count == 1 && shots[0] - start >= c4.ArmTime - 0.01f && shots[0] - start <= c4.ArmTime + 0.11f,
+                  $"it goes off once the charge is armed, {c4.ArmTime} s after he started on it ({Times(shots, start)})");
+            Run(w, 5f);
+            shots = Shots();
+            Check(shots.Count == 2 && MathF.Abs(shots[1] - shots[0] - c4.Cooldown) < 0.11f, $"staying on it, the next follows on the cooldown, not another arming ({Times(shots, start)})");
+
+            // Walked off and back: the arming starts again (the cooldown has long run out by then).
+            w.SetOrder(cmd, Order.Move, by + new Vec2(-4, 0));
+            Run(w, 6f);
+            Check(Shots().Count == 2 && cmd.Order == Order.Idle, $"walked off, nothing more goes off ({Shots().Count} shots, {cmd.OrderName})");
+            w.SetOrder(cmd, Order.Attack, plant.Center, plant.Id);
+            float back = -1f;
+            for (int i = 0; i < 8 * World.TickRate && Shots().Count == 2; i++)
+            {
+                w.Step();
+                if (back < 0f && cmd.LastFiredAt == w.Time) back = w.Time;
+            }
+            shots = Shots();
+            Check(back > 0f && shots.Count == 3 && shots[2] - back >= c4.ArmTime - 0.01f && shots[2] - back <= c4.ArmTime + 0.11f,
+                  $"back in range, he plants a fresh charge: it goes off {(shots.Count == 3 ? shots[2] - back : -1f):0.00} s after he starts on it");
+            Check(w.Errors == 0, "no sim errors");
         }
 
         static void ViewCopyReplaysOrders()
@@ -527,6 +572,7 @@ namespace Pez.Headless
             // A house AI, a placeholder agent seat from the config (nobody plays it), and two agents who join a minute in.
             var game = new Game(new GameConfig { Seed = 5, MapSize = 64, Open = true, Controllers = new[] { "ai", "llm" }, HouseAIs = 1 });
             var w = game.World;
+            w.Teams[1].ProtectedUntil = 1e9f; // (kept out of harm's way: this is about its idle clock, and the house AI's units meeting its truck would end the seat before 20 minutes)
             Step(game, 60);
             var idler = w.AddTeam("llm", "Napper", out _);
             var busy = w.AddTeam("llm", "Keen", out _);
@@ -1293,6 +1339,43 @@ namespace Pez.Headless
             Check(!hq.Burning && !hq.Dead, "a healthy building never burns");
         }
 
+        /// <summary>A tank parked on the head of a lane with rock beside the lane, and a truck stopped by it on the far side of the rock: it
+        /// never stands on the rock (swinging in from there carried it across), and docks. Three ways: the rock beside the head; the rock
+        /// further down the lane and the truck already facing out of the bay (it used to go straight on to back in, slantwise); and the
+        /// truck diagonal to the rock, so that the line to the head only clips the rock's corner between the samples taken along it.</summary>
+        static void DockBesideRock()
+        {
+            string[] how = { "beside the head", "down the lane", "at the corner of the head" };
+            for (int c = 0; c < 3; c++)
+            {
+                var w = new World(2, 7, 80);
+                var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+                var refinery = w.SpawnStructure(0, "mining_refinery", w.FindPlacement(0, "mining_refinery").Value, 1f);
+                var (dock, head, facing, _) = w.Bay(refinery);
+                var outward = (head - dock).Normalized;
+                var across = new Vec2(-outward.Y, outward.X);
+                foreach (var o in w.Owned(0).Where(e => e.IsHarvester).ToList()) w.Remove(o);
+                var rock = Int2.Of(head + across - outward * (c == 1 ? 1f : 0f)); // beside the head of the lane, or one tile down it (towards the bay)
+                w.Map.Tiles[w.Map.Idx(rock.X, rock.Y)] = Terrain.Rock;
+                var tank = At(w.SpawnUnit(0, "heavy_tank", hq), head); w.SetOrder(tank, Order.Idle, tank.Pos);
+                // Within reach of the head, across the rock (or, the last, diagonal to it: 1.1 beside the head and 0.95 out along the lane).
+                var truck = At(w.SpawnUnit(0, "mining_truck", refinery), c == 2 ? head + across * 1.1f + outward * 0.95f : head + across * 1.55f);
+                if (c == 1) truck.Facing = facing;
+                truck.Cargo = 150; truck.CargoType = 0; w.SetOrder(truck, Order.ReturnOre, truck.Pos);
+                int mined0 = w.Teams[0].Stats.OreMined;
+                bool onRock = false;
+                for (int k = 0; k < 30 * World.TickRate && w.Teams[0].Stats.OreMined - mined0 < 150; k++)
+                {
+                    if (c != 1 && k == 8 * World.TickRate) w.Remove(tank); // otherwise it waits for the tank to go
+                    w.Step();
+                    var at = Int2.Of(truck.Pos);
+                    if (!w.Map.Passable(at.X, at.Y)) onRock = true;
+                }
+                Check(!onRock && w.Teams[0].Stats.OreMined - mined0 >= 150,
+                      $"a truck held off the lane head by a parked tank never crosses the rock {how[c]}, and docks{(c != 1 ? " once the tank is gone" : "")} (on rock {onRock}, delivered {w.Teams[0].Stats.OreMined - mined0}, {truck.Dock}, t {w.Time:0.0})");
+            }
+        }
+
         static void NoGridlock()
         {
             // A truck docking at a refinery with idle tanks parked all over the dock still unloads.
@@ -1327,18 +1410,14 @@ namespace Pez.Headless
             var t1 = At(wq.SpawnUnit(0, "mining_truck", hqq), bayQ + acrossQ * -3f + outQ * 4f);
             var t2 = At(wq.SpawnUnit(0, "mining_truck", hqq), bayQ + acrossQ * 3f + outQ * 4f);
             foreach (var tq in new[] { t1, t2 }) { tq.Cargo = 150; tq.CargoType = 0; wq.SetOrder(tq, Order.ReturnOre, tq.Pos); }
-            bool bothIn = false, queued = false, backedIn = false, done1 = false, done2 = false, waitedStill = false, waitedOnItsSide = true;
+            bool bothIn = false, queued = false, backedIn = false, done1 = false, done2 = false, waitedStill = false;
             for (int k = 0; k < 40 * World.TickRate && !(done1 && done2); k++)
             {
                 wq.Step();
+                // (The queue is single file: each waiting truck takes a spot of its own beside the lane, in the order it joined, so the
+                // side it came from no longer decides where it stands. It still has to stand still there.)
                 foreach (var tq in new[] { t1, t2 })
-                    if (tq.Dock == DockStep.Queue && !tq.Moving)
-                    {
-                        // (Waiting on the side of the lane it came from: an id's parity used to choose, so a truck and its half-turned twin waited on opposite sides.)
-                        waitedStill = true;
-                        float onLeft = (tq.Pos.X - headQ.X) * acrossQ.X + (tq.Pos.Y - headQ.Y) * acrossQ.Y;
-                        if (onLeft * (tq == t1 ? -1f : 1f) <= 0f) waitedOnItsSide = false;
-                    }
+                    if (tq.Dock == DockStep.Queue && !tq.Moving) waitedStill = true;
                 done1 |= t1.Dock == DockStep.PullOut; done2 |= t2.Dock == DockStep.PullOut;
                 if (t1.Dock >= DockStep.Align && t2.Dock >= DockStep.Align) bothIn = true;
                 if (t1.Dock == DockStep.Queue || t2.Dock == DockStep.Queue) queued = true;
@@ -1347,7 +1426,8 @@ namespace Pez.Headless
             }
             Check(done1 && done2 && queued && !bothIn && backedIn,
                   $"two trucks share one bay: one waits its turn beside the lane, each unloads backed in, facing out (both delivered {done1 && done2}, queued {queued}, both in at once {bothIn}, after {wq.Time:0.0}s)");
-            Check(waitedStill && waitedOnItsSide, $"and the truck that waits stands on the side of the lane it came from (it stood still there {waitedStill}, on its own side {waitedOnItsSide})");
+            Check(waitedStill, $"and the truck that waits stands still on its spot in the queue (it stood still there {waitedStill})");
+            DockBesideRock();
 
             // Nothing can be built on a truck lane, and a drop-off whose south is walled off gets a bay on a clear side.
             var (bayL, headL, _, okL) = wq.Bay(hqq);

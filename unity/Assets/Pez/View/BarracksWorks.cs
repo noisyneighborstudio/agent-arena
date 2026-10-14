@@ -7,11 +7,15 @@ namespace Pez.View
     /// The barracks as a soldier dispenser (MOTION.md barracks). All of it from the sim's training queue, so it never
     /// leads or lags `trained`:
     ///  - the clear case under the head holds four soldiers, stacked like candy: raw dough at the bottom, primed in the
-    ///    middle, finished (uniform, boots and team helmet) at the top. Each is a figurine of the rifleman (the candy
-    ///    trooper every soldier is built on, at a case figure's size), so they read as the soldiers they become. While a soldier trains the stack rises with its progress, each one
-    ///    baking as it climbs, a fresh lump of dough swells in at the bottom, and the oven strip at the case's foot glows.
+    ///    middle, finished (uniform, boots and team helmet) at the top. Each is a figurine of the soldier it becomes, its
+    ///    own model at a case figure's size: the top one is the soldier in training, the ones below the next in the queue
+    ///    (the lower ones, past the end of the queue, the last soldier queued; the rifleman before anything is queued).
+    ///    A long weapon that would reach the glass turns the figure aside, so it stands across the case. While a soldier
+    ///    trains the stack rises with its progress, each one baking as it climbs, a fresh lump of dough swells in at the
+    ///    bottom, and the oven strip at the case's foot glows.
     ///  - 1.5 s before the soldier is out, the top one rises out of the case up into the flip-top head (head). The head
-    ///    snaps open and spits it out of its mouth (pop), full size and tucked into a ball; it somersaults through the air,
+    ///    snaps open and spits it out of its mouth (pop), full size and tucked into a ball, hugging its weapon down along
+    ///    its body (a long rifle no longer sticks out of the ball like a spoke); it somersaults through the air,
     ///    lands in front (land) with a puff of dust, rolls on to its feet (exit) and stands up as the real unit appears
     ///    there (WorldView spawns it at Exit). The head drops shut.
     ///  - the flag on the flag node is cloth: it streams downwind (FxSystems.Wind) and ripples, harder in a stronger wind.
@@ -46,10 +50,14 @@ namespace Pez.View
         readonly float phase;
 
         static readonly Vector3 HelmetSize = new Vector3(0.054f, 0.03f, 0.054f) * Fig;
-        const string FigureKey = "rifleman";     // the case figurines are this soldier in miniature
+        const string FigureKey = "rifleman";     // the case figurines before anything's queued
+        // The case's inside, either side of the stack's axis (build_models.S_barracks: .42 wide, .22 deep), less a margin.
+        const float CaseHalfDepth = 0.095f, CaseHalfWidth = 0.19f;
+        const float HugDeg = 60f;                // tucked, the arms hug the weapon down along the body
 
         class Soldier
         {
+            public string Key;                   // the soldier it's a figurine of
             public Transform Root, Body, Head, Helmet;   // the primitive figure (no figurine model)
             public Renderer[] Parts;                     // the figurine: its renderers and their coats (dough, primed, finished)
             public Material[][] Coats;
@@ -57,6 +65,8 @@ namespace Pez.View
             public Transform Ball;               // once spat out: the tuck (squashes about the middle) ...
             public GameObject Unit;              // ... holding the real unit's model, full size
             public float Half;                   // that model's half height
+            public Transform Arms;               // its arms (and weapon), hugged in while it's tucked
+            public Quaternion ArmsRest;
         }
 
         BarracksWorks(Transform model, int team, int seed)
@@ -89,7 +99,7 @@ namespace Pez.View
                 exit = model.InverseTransformPoint(x.position);
                 stackRoot = new GameObject("soldier_stack").transform;
                 stackRoot.SetParent(model, false);
-                for (int i = 0; i <= Slots; i++) stack.Add(NewSoldier());
+                for (int i = 0; i <= Slots; i++) stack.Add(NewSoldier(FigureKey));
             }
 
             if (flag)
@@ -132,24 +142,41 @@ namespace Pez.View
         public int Heads => head ? 1 : 0;
         public Vector3 Head(int i) => stackRoot != null ? model.TransformPoint(pop) + Vector3.up * 0.1f : head.position + Vector3.up * 0.2f;
 
-        Soldier NewSoldier()
+        /// <summary>The model a soldier of this kind is drawn with (an invented unit looks like its base unit).</summary>
+        static string FigureModel(string key) => Pez.Sim.Defs.Get(key)?.ModelKey ?? key;
+
+        Soldier NewSoldier(string key)
         {
-            var s = new Soldier { Root = new GameObject("soldier").transform };
+            var s = new Soldier { Key = key, Root = new GameObject("soldier").transform };
             s.Root.SetParent(stackRoot, false);
             s.Root.localScale = Vector3.zero;
-            if (Models.ModelFor(FigureKey) != null)
+            var mk = FigureModel(key);
+            if (Models.ModelFor(mk) == null) mk = FigureKey;
+            if (Models.ModelFor(mk) != null)
             {
-                // The rifleman's own rig, still, a case figure tall, facing out of the case (-z).
-                var rig = Models.Build(FigureKey, team);
+                // The soldier's own rig, still, a case figure tall, facing out of the case (-z).
+                var rig = Models.Build(mk, team);
                 foreach (var c in rig.Root.GetComponentsInChildren<PezMotion>()) Object.Destroy(c);
                 foreach (var c in rig.Root.GetComponentsInChildren<PezEmerge>()) Object.Destroy(c);
+                SoldierWorks.Rest(rig.Root.gameObject);   // a beam weapon's glass at rest
                 s.Parts = rig.Root.GetComponentsInChildren<Renderer>(true);
-                float top = 0f;
-                foreach (var r in s.Parts) top = Mathf.Max(top, r.bounds.max.y - rig.Root.position.y);
+                float top = 0f, ahead = 0f;
+                var at = rig.Root.position;
+                foreach (var r in s.Parts) { top = Mathf.Max(top, r.bounds.max.y - at.y); ahead = Mathf.Max(ahead, r.bounds.max.z - at.z); }
+                float scale = 0.13f * Fig / Mathf.Max(0.1f, top);
+                // A weapon that would reach the glass (the sniper's rifle): the figure turns aside until it fits, across the
+                // case, and only if it's still too long, shrinks.
+                float reach = ahead * scale, turn = 0f;
+                if (reach > CaseHalfDepth)
+                {
+                    turn = Mathf.Min(75f, Mathf.Acos(CaseHalfDepth / reach) * Mathf.Rad2Deg);
+                    float across = reach * Mathf.Sin(turn * Mathf.Deg2Rad);
+                    if (across > CaseHalfWidth) scale *= CaseHalfWidth / across;
+                }
                 var fig = rig.Root;
                 fig.SetParent(s.Root, false);
-                fig.localRotation = Quaternion.Euler(0f, 180f, 0f);
-                fig.localScale = Vector3.one * (0.13f * Fig / Mathf.Max(0.1f, top));
+                fig.localRotation = Quaternion.Euler(0f, 180f + turn, 0f);
+                fig.localScale = Vector3.one * scale;
                 // Raw dough all over; primed (kraft, the face and hands cream, the helmet bare); finished as built.
                 s.Coats = new Material[s.Parts.Length * 3][];
                 for (int i = 0; i < s.Parts.Length; i++)
@@ -211,7 +238,7 @@ namespace Pez.View
             s.Root.localScale = Vector3.one;
             s.Ball = new GameObject("tuck").transform;
             s.Ball.SetParent(s.Root, false);
-            var rig = unit != null ? Models.Build(unit, team) : null;
+            var rig = unit != null ? Models.Build(FigureModel(unit), team) : null;
             if (rig != null)
             {
                 // The unit's own rig, as WorldView would build and draw it, held still: a stand-in until the real one
@@ -221,6 +248,9 @@ namespace Pez.View
                 s.Unit.transform.SetParent(s.Ball, false);
                 foreach (var c in s.Unit.GetComponentsInChildren<PezMotion>()) Object.Destroy(c);
                 foreach (var c in s.Unit.GetComponentsInChildren<PezEmerge>()) Object.Destroy(c);
+                SoldierWorks.Rest(s.Unit);   // a beam weapon at rest, as the real one's when it takes over
+                s.Arms = rig.HasModel ? PezMotion.FindDeep(rig.Model.transform, "arms") : null;
+                if (s.Arms) s.ArmsRest = s.Arms.localRotation;   // hugged in (Out) once its bounds are taken, standing
             }
             else
             {
@@ -244,15 +274,18 @@ namespace Pez.View
             s.Unit.transform.localPosition += Vector3.up * (-bottom - s.Half);
         }
 
-        /// <param name="training">This barracks is the one training the team's next soldier.</param>
+        /// <param name="training">This barracks is working on a soldier (each barracks works its own item of the team's queue).</param>
         /// <param name="p">That soldier's progress, 0..1.</param>
         /// <param name="T">Seconds until it's out (`trained`).</param>
-        /// <param name="unit">Its kind (rifleman, medic...): it's spat out as that unit's model.</param>
+        /// <param name="queue">The soldiers queued at this barracks, the one it is training first (null if it isn't training):
+        /// the top one is spat out as that unit's model, and the case's figurines are the ones queued. Not the team's queue
+        /// itself, whose head can be another barracks' soldier (WorldView.QueuedAt).</param>
         /// <remarks>Call with Fx.Audience set: the landing kicks up dust.</remarks>
-        public void Tick(bool training, float p, float T, string unit, float dt)
+        public void Tick(bool training, float p, float T, List<Pez.Sim.ProdItem> queue, float dt)
         {
             Flag(dt);
             if (stackRoot == null) { HeadOnly(training, dt); return; }
+            string unit = training && queue != null && queue.Count > 0 ? queue[0].Key : null;
 
             // A soldier finished (progress reset or training stopped after the pop): the one out front has become the
             // real unit; the stack moves down the list and a new lump is made ready at the bottom.
@@ -260,9 +293,10 @@ namespace Pez.View
             if (done)
             {
                 if (prop != null) { Object.Destroy(prop.Root.gameObject); prop = null; }
-                stack.Insert(0, NewSoldier());
+                stack.Insert(0, NewSoldier(stack.Count > 0 ? stack[0].Key : FigureKey));
                 hadPop = false;
             }
+            if (training) Queued(queue);
             lastP = training ? p : -1f;
             float o = training ? Mathf.Clamp01(p) : 0f;
 
@@ -306,6 +340,26 @@ namespace Pez.View
             headK = Mathf.MoveTowards(headK, open ? 1f : 0f, dt / (open ? 0.1f : 0.22f));
             float k = open ? Mathf.SmoothStep(0f, 1f, headK) : headK * headK;
             if (head) head.localRotation = headRest * Quaternion.Euler(40f * k, 0f, 0f);
+        }
+
+        /// <summary>The figurines follow the queue: the top one is the soldier in training (once that one has left the case,
+        /// the next), each below it the one after, and those past the end of the queue the last one queued. One that's the
+        /// wrong soldier (the queue changed) is remade as the right one where it stands.</summary>
+        void Queued(List<Pez.Sim.ProdItem> queue)
+        {
+            if (queue == null || queue.Count == 0) return;
+            int n = stack.Count;
+            for (int j = 0; j < n; j++)
+            {
+                int q = Mathf.Min(j + (hadPop ? 1 : 0), queue.Count - 1);
+                int i = n - 1 - j;
+                var key = queue[q].Key;
+                if (stack[i].Key == key) continue;
+                var old = stack[i];
+                stack[i] = NewSoldier(key);
+                stack[i].Root.localPosition = old.Root.localPosition;
+                Object.Destroy(old.Root.gameObject);
+            }
         }
 
         /// <summary>The one out of the case: up into the head, then spat out, a somersault, a landing, a roll, up.</summary>
@@ -365,6 +419,12 @@ namespace Pez.View
             }
             s.Root.localPosition = at;
             s.Root.localRotation = face * Quaternion.Euler(spin, 0f, 0f);
+            // Tucked, it hugs its weapon down along its body; it lets go as it stands, back to the rest the real one has.
+            if (s.Arms)
+            {
+                float hug = T > RollEnd ? 1f : 1f - Mathf.SmoothStep(0f, 1f, Mathf.Clamp01((RollEnd - T) / RollEnd * 1.4f));
+                s.Arms.localRotation = s.ArmsRest * Quaternion.Euler(HugDeg * hug, 0f, 0f);
+            }
             // Tucked into a ball: shorter, a little fatter.
             float fat = 1f + (1f - Mathf.Min(1f, squash)) * 0.3f;
             s.Ball.localScale = new Vector3(fat, squash, fat);

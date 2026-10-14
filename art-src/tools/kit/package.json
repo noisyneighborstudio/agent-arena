@@ -1,0 +1,9 @@
+{
+  "name": "pezz-art-kit",
+  "version": "1.0.0",
+  "description": "three.js for the art kit previews and icons (npm ci here once)",
+  "dependencies": {
+    "three": "^0.170.0"
+  },
+  "private": true
+}

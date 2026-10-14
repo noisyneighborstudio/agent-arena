@@ -599,14 +599,20 @@ namespace Pez.Sim
         ///     stop collects most (it hopped tile to tile on thin ore); vehicles drive where they face (no crabwise slide as
         ///     they turn); a unit as close as it can get to a point another stands on has arrived; a path through something
         ///     built since is planned again; the dance guard only counts time a unit spends moving.
-        /// 43: the economy audit (#42): the stockpile spills however the last command center is lost and knocked-out teams
+        /// 43: C4 has to be planted: a commando must stand still in range of the same target for 1.5 s before his first
+        ///     charge goes off (walking off or switching target starts it again; then one every 5 s as before). A medic
+        ///     turns to face the soldier it's healing.
+        /// 44: the economy audit (#42): the stockpile spills however the last command center is lost and knocked-out teams
         ///     leave salvage; one valuation (raw-ore mix); gifts (start and catch-up) are worth nothing; economy score excludes
         ///     salvage; selling can't dodge losses or delete derricks; protection covers the base only; parallel production per
         ///     building; cheaper fusion with partial output; upkeep 4% of steel price; regrowth by ore; bays face the ore; fair
         ///     deep kits and neutral fields; invention pricing fixes; seat-symmetric placement, doors and tie-breaks. A drop-off's
         ///     bay opens on its clear side nearest the ore and its door turns to face it (this replaces 41's south-lane placement).
+        ///     Merged with 42's movement: a loaded truck on picked-over ground (no stop within reach collects 8 ore) sets out for
+        ///     its next spot at most every two seconds, not every second; a truck pulling into a bay swings in and shoves aside
+        ///     a unit parked on the head of its lane, rather than waiting for it to leave.
         /// </summary>
-        public const int RulesVersion = 43;
+        public const int RulesVersion = 44;
 
         public static JObj Rules()
         {
@@ -620,7 +626,7 @@ namespace Pez.Sim
                 "Assign trucks to the ore you need with harvest + ore. Crystal and uranium sit in the contested middle.",
                 "Deliveries take time: a mining truck lines up 2 tiles out from a drop-off's bay (command_center, mining_refinery or outpost; the bay opens on the side that faces the nearest ore field, set when it is built and kept, or the first clear side if that lane is blocked), turns, backs in and unloads, one truck per bay at a time; the others wait beside the lane (my_units shows each truck's dock status). A turn in the bay takes about 6 s and a busy bay takes a load about every 7 s (about 20 ore a second), so a big truck fleet needs more drop-offs. Nothing can be built on a truck lane.",
                 "Expand: build an outpost_truck at the factory, drive it to a remote ore field and deploy it. Outposts are drop-off points and let you build defenses there.",
-                "Specialists: engineers capture enemy buildings below 50% HP; snipers delete infantry from range 9; commandos C4 buildings. APCs and transport choppers carry infantry (load/unload). Mine layers plant hidden mines. Flak tracks are mobile anti-air. Mammoth tanks are super-heavy and self-repair to 50%. Recon drones are cheap flying scouts.",
+                "Specialists: engineers capture enemy buildings below 50% HP; snipers delete infantry from range 9; commandos C4 buildings (each charge has to be planted: 1.5 s standing still beside the target before the first goes off). APCs and transport choppers carry infantry (load/unload). Mine layers plant hidden mines. Flak tracks are mobile anti-air. Mammoth tanks are super-heavy and self-repair to 50%. Recon drones are cheap flying scouts.",
                 "Repair trucks (factory) fix vehicles, aircraft and structures for steel; medics (barracks) heal infantry for free. Both auto-tend anything damaged within 6 tiles when idle, so park them behind your army.",
                 "Aircraft ignore terrain. Only rockets, lasers, SAMs, gunships (and weakly, rifles/mg) can hit them. Stealth bombers are invisible except within 3 tiles of your units or inside your radar dome range.",
                 "Regrowth: mined surface fields slowly grow back toward what they started with: from ore a field still has (spreading to its neighbouring tiles), or from its root (the richest tile) once it's mined to nothing. Per tile it is fastest in the middle of the map and slowest in the corners, and iron and copper regrow faster than crystal and uranium (whose fields ring the middle). A mined-bare 80-tile map at full richness earns back about 8 ore/s over its first 20 minutes (a 128-tile map about 9): on the 80 about 3.5 iron, 1.7 copper, 2 crystal and 0.7 uranium, around a third of it in the middle (about half that on a scarce map). Nothing regrows under a structure or on a tile a truck is working, and it stops at sudden death (the match clock). Deep mines (4 ore/s each) remain the bigger income: regrowth is the long tail that keeps your home iron and copper trickling back and makes holding the middle pay.",
@@ -677,6 +683,7 @@ namespace Pez.Sim
             if (d.FuelDepot) o.Set("refuels", "ground vehicles parked next to it");
             if (d.Helipad) o.Set("refuels", "aircraft that land on it");
             if (d.Weapon != null) o.Set("weapon", $"{d.Weapon.Name}: {d.Weapon.Damage} dmg, range {d.Weapon.Range}, every {d.Weapon.Cooldown}s; " +
+                (d.Weapon.ArmTime > 0 ? $"planted: stand still in range of the same target {d.Weapon.ArmTime}s before the first goes off; " : "") +
                 (d.Weapon.HitsGround ? $"x{d.Weapon.VsInfantry} vs infantry, x{d.Weapon.VsVehicle} vs vehicles, x{d.Weapon.VsStructure} vs structures" : "air only") +
                 (d.Weapon.HitsAir ? $", x{d.Weapon.VsAir} vs aircraft" : ", can't hit aircraft") +
                 (d.Weapon.Range > d.Sight ? $"; outranges its own sight ({d.Sight}): needs a spotter to fire at full range" : ""));

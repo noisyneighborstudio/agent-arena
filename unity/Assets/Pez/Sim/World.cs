@@ -1143,6 +1143,10 @@ namespace Pez.Sim
         public void SetOrder(Entity e, Order o, Vec2 pos, int target = 0)
         {
             Touched?.Add(e);
+            // The dance guard's two-second averages describe the order in progress: given an order, a unit that had stopped starts them afresh.
+            // (One that arrives and is sent straight back the way it came has the old direction in its average velocity for a second or so,
+            // which reads as "getting nowhere" and, with a short jam in a doorway, settled a soldier walking out of its base.)
+            if (e.Order == Order.Idle && o != Order.Idle) { e.DanceVel = default; e.DanceSpeed = 0f; }
             e.Order = o;
             e.OrderPos = pos;
             e.TargetId = target;
@@ -1851,6 +1855,7 @@ namespace Pez.Sim
             e.Moving = false;
             e.Path = null;
             e.TurretFacing = RotateToward(e.TurretFacing, (t.Center - e.Pos).Angle, 6f * Dt);
+            if (e.Def.Armor == Armor.Infantry) e.Facing = RotateToward(e.Facing, (t.Center - e.Pos).Angle, TurnRate(e) * Dt); // a medic turns to its patient, as infantry turn to fire
             var team = Teams[e.Team];
             if (topping) Refill(t, t.FuelMax / (EntityDef.RefuelSeconds * 1.2f) * Dt);
             float hp = MathF.Min(e.Def.RepairRate * Dt, t.Def.MaxHp - t.Hp);
@@ -1899,14 +1904,26 @@ namespace Pez.Sim
             // Newcomer protection: a protected team can't attack, whatever order its units are on. Not in the showcase, whose teams are
             // protected for good (ProtectedUntil = MaxValue, which a restored copy keeps though it has no Showcase) so nothing takes damage.
             if (IsProtected(e.Team) && Showcase == null && Teams[e.Team].ProtectedUntil < float.MaxValue) return;
+            var w = e.Def.Weapon;
+            if (w.ArmTime > 0f)
+            {
+                // A charge has to be planted (C4): in range of the same target and standing still, every tick without a
+                // break, for the weapon's ArmTime before the first goes off. Walking off, falling out of range or switching
+                // target starts it again; staying on it, the next ones follow on the cooldown.
+                float gap = Time - e.LastFiredAt;
+                bool working = !e.Moving && e.ArmingTarget == t.Id && gap <= Dt * 1.5f;
+                if (!working) e.Arming = 0f;
+                else if (gap > 0f) e.Arming = MathF.Min(e.Arming + gap, w.ArmTime);
+                e.ArmingTarget = t.Id;
+            }
             e.LastFiredAt = Time;
             var dir = t.Center - e.Pos;
             float want = dir.Angle;
             e.TurretFacing = RotateToward(e.TurretFacing, want, 6f * Dt);
             if (!e.IsStructure && !e.Moving && e.Def.Armor == Armor.Infantry && Time >= e.DodgeUntil) e.Facing = RotateToward(e.Facing, want, TurnRate(e) * Dt); // dodging: running, not aiming
             if (e.Cooldown > 0) return;
+            if (w.ArmTime > 0f && e.Arming < w.ArmTime - Dt * 0.5f) return; // still planting it
             if (MathF.Abs(AngleDiff(e.TurretFacing, want)) > 0.35f) return;
-            var w = e.Def.Weapon;
             e.Cooldown = w.Cooldown;
             if (w.ProjectileSpeed <= 0)
             {
@@ -2073,11 +2090,23 @@ namespace Pez.Sim
                     Vec2? home = drops.Count > 0 ? drops.OrderBy(dp => Vec2.DistSq(dp, from)).First() : (Vec2?)null;
                     // Ore within its reach first: it mines a patch from where it stands rather than hopping tile to tile
                     // (drive a tile, stop, mine a few, drive a tile: a slide-pause rhythm on thin ore).
-                    e.HarvestTile = (e.Moving ? null : Map.NearestOre(e.Pos, 3, t => Vec2.Dist(t.Center, e.Pos) <= MineReach && Free(t) && Wanted(t) && Unclaimed(t), want, home))
-                                    ?? RichestNear(e.Pos, 8f, t => Free(t) && Wanted(t) && Unclaimed(t), want, home) // where a stop collects most
-                                    ?? Map.NearestOre(from, 40, t => Free(t) && Wanted(t) && Unclaimed(t), want, home)
-                                    ?? Map.NearestOre(from, 80, t => Free(t) && Wanted(t), want, home)
-                                    ?? Map.NearestOre(from, 80, Free, want, home);
+                    var inReach = e.Moving ? null : Map.NearestOre(e.Pos, 3, t => Vec2.Dist(t.Center, e.Pos) <= MineReach && Free(t) && Wanted(t) && Unclaimed(t), want, home);
+                    // Picked-over ground, where the best stop collects under ThinStop: a loaded truck on it sets out for its next spot only on
+                    // a beat (ThinHopEvery) of the world's clock, so scraping a field is a hop every couple of seconds, not a stop-go beat of
+                    // one a second. (The ore regrows no faster for the hurry.) Mid-drive, or empty (just out of the bay), it picks at once.
+                    bool offBeat = e.Cargo > 0 && !e.Moving && Tick % ThinHopEvery != 0;
+                    // Off the beat, with nothing in reach, it has nothing to decide when no spot around it collects that much: it waits without
+                    // the search below, which would only find the same (the count ignores who has claimed what, so it can only overrate a
+                    // spot; the check after the search catches the rest).
+                    if (inReach == null && offBeat && PickedOver(e.Pos, HopRadius, want)) return;
+                    int collects = int.MaxValue; // what the stop RichestNear picks collects
+                    var spot = inReach
+                               ?? RichestNear(e.Pos, HopRadius, t => Free(t) && Wanted(t) && Unclaimed(t), want, home, out collects) // where a stop collects most
+                               ?? Map.NearestOre(from, 40, t => Free(t) && Wanted(t) && Unclaimed(t), want, home)
+                               ?? Map.NearestOre(from, 80, t => Free(t) && Wanted(t), want, home)
+                               ?? Map.NearestOre(from, 80, Free, want, home);
+                    if (collects < ThinStop && offBeat) return;
+                    e.HarvestTile = spot;
                     e.Path = null;
                     if (!e.HarvestTile.HasValue)
                     {
@@ -2152,7 +2181,12 @@ namespace Pez.Sim
                         {
                             if (e.Dock != DockStep.Enter) e.Path = null;
                             e.Dock = DockStep.Enter;
-                            if (Vec2.Dist(e.Pos, head) > 0.35f) { FollowPath(e, head, 0.3f); return; }
+                            // A unit parked on the head of the lane counts as the truck being there (FollowPath stops it as close
+                            // as it can get): it swings in from where it stopped, and Align holds its line, so separation shoves
+                            // the parked unit aside. (Waiting for the unit to leave, a truck sat in Enter for good behind a tank
+                            // parked on the lane.) Only over open ground: Align and Reverse move in a straight line, so a truck
+                            // stopped across rock beside the lane stays in Enter, trying for the head, until the unit moves.
+                            if (Vec2.Dist(e.Pos, head) > 0.35f && !(FollowPath(e, head, 0.3f) && Vec2.Dist(e.Pos, head) <= TakenReach(e) && LineClear(e.Pos, head))) return;
                             e.Dock = DockStep.Align;
                             e.Moving = false;
                             e.Path = null;
@@ -2171,9 +2205,15 @@ namespace Pez.Sim
                 case DockStep.Align:
                     // Turn on the spot to face away from the building (the bin end toward it), settling onto the lane.
                     e.Moving = false;
+                    // It only ever steps onto open ground (the check before Align samples the line, and can miss a clipped corner): a
+                    // step that wouldn't be sends it back to Enter with a fresh path, to find its way round.
+                    var settle = e.Pos + (head - e.Pos) * MathF.Min(1f, 4f * Dt);
+                    if (!StepOpen(e.Pos, settle)) { e.Dock = DockStep.Enter; e.Path = null; return; }
                     e.Facing = RotateToward(e.Facing, bayFacing, AlignTurnRate * Dt);
-                    e.Pos = e.Pos + (head - e.Pos) * MathF.Min(1f, 4f * Dt);
-                    if (MathF.Abs(AngleDiff(e.Facing, bayFacing)) < 0.02f) { e.Facing = bayFacing; e.Dock = DockStep.Reverse; }
+                    e.Pos = settle;
+                    // Reverse moves straight to the bay, so the truck must be on the lane first, not just facing the right way
+                    // (one that came in beside the head already faced out, and backed in at a slant, across what lay beside the lane).
+                    if (MathF.Abs(AngleDiff(e.Facing, bayFacing)) < 0.02f && Vec2.Dist(e.Pos, head) < 0.1f) { e.Facing = bayFacing; e.Dock = DockStep.Reverse; }
                     return;
                 case DockStep.Reverse:
                     {
@@ -2210,14 +2250,49 @@ namespace Pez.Sim
 
         /// <summary>How far a parked mining truck's cutter reaches: its own tile and the eight around it.</summary>
         public const float MineReach = 1.5f;
+        /// <summary>Ore a stop has to collect (within MineReach of it) to be worth a drive of its own. Under it, the ground is picked over (see ThinHopEvery).</summary>
+        public const int ThinStop = 8;
+        /// <summary>Ticks between the beats a truck on picked-over ground sets out for its next spot on (two seconds).</summary>
+        public const int ThinHopEvery = TickRate * 2;
+        /// <summary>How far from where it stands a truck looks for its next spot to mine (RichestNear).</summary>
+        public const float HopRadius = 8f;
+
+        /// <summary>The ore of type `want` (any, if negative) a truck parked on tile t reaches: the tile and the eight around it.</summary>
+        int OreAround(Int2 t, int want)
+        {
+            int sum = 0;
+            for (int dy = -1; dy <= 1; dy++)
+                for (int dx = -1; dx <= 1; dx++)
+                    if (Map.OreAt(t.X + dx, t.Y + dy) > 0 && (want < 0 || Map.OreType[Map.Idx(t.X + dx, t.Y + dy)] == want)) sum += Map.OreAt(t.X + dx, t.Y + dy);
+            return sum;
+        }
+
+        /// <summary>Is the ground within `radius` of `from` picked over: some ore of type `want` (any, if negative) on it, but no stop that collects ThinStop?</summary>
+        bool PickedOver(Vec2 from, float radius, int want)
+        {
+            bool any = false;
+            int r = (int)MathF.Ceiling(radius), cx = (int)from.X, cy = (int)from.Y;
+            for (int y = cy - r; y <= cy + r; y++)
+                for (int x = cx - r; x <= cx + r; x++)
+                {
+                    if (Map.OreAt(x, y) <= 0 || (want >= 0 && Map.OreType[Map.Idx(x, y)] != want) || Vec2.Dist(new Int2(x, y).Center, from) > radius) continue;
+                    if (OreAround(new Int2(x, y), want) >= ThinStop) return false;
+                    any = true;
+                }
+            return any;
+        }
+
         /// <summary>
         /// The ore tile within `radius` of `from` where a parked truck collects the most: the ore within its reach there
         /// (MineReach, the tile and the eight around it), less a little for the drive. On a thin or picked-over field a
         /// truck used to drive to the nearest tile, take a unit or two, and drive a tile again: a slide-pause rhythm.
+        /// `collects` is that ore, at the tile it returns.
         /// </summary>
-        Int2? RichestNear(Vec2 from, float radius, Func<Int2, bool> ok, int want, Vec2? home = null)
+        internal Int2? RichestNear(Vec2 from, float radius, Func<Int2, bool> ok, int want, Vec2? home, out int collects)
         {
-            Int2? best = null; float bestScore = float.MinValue, bestHome = 0;
+            collects = int.MaxValue;
+            Int2? best = null; float bestScore = float.MinValue, bestHome = 0, bestRight = 0;
+            var right = home.HasValue ? RightOf(home.Value) : new Vec2(0, 0);
             int r = (int)MathF.Ceiling(radius), cx = (int)from.X, cy = (int)from.Y;
             bool Good(int x, int y) => Map.InBounds(x, y) && Map.OreAt(x, y) > 0 && (want < 0 || Map.OreType[Map.Idx(x, y)] == want) && ok(new Int2(x, y));
             for (int y = cy - r; y <= cy + r; y++)
@@ -2229,11 +2304,14 @@ namespace Pez.Sim
                     int sum = 0;
                     for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) if (Good(x + dx, y + dy)) sum += Map.OreAt(x + dx, y + dy);
                     float score = sum - 4f * d;
-                    // (Equal scores: the tile nearer home, as NearestOre breaks its ties, not the scan order, which favours one seat.)
-                    float toHome = home.HasValue ? Vec2.DistSq(new Int2(x, y).Center, home.Value) : 0f;
+                    // (Equal scores: as NearestOre breaks its ties, the tile nearer home, then the one on the right as home faces the middle of
+                    // the map, never the scan order, which favours one seat.)
+                    var centre = new Int2(x, y).Center;
+                    float toHome = home.HasValue ? Vec2.DistSq(centre, home.Value) : 0f, toRight = (centre.X - from.X) * right.X + (centre.Y - from.Y) * right.Y;
                     int cmp = best == null ? -1 : TieCmp(bestScore, score);
                     if (cmp == 0) cmp = TieCmp(toHome, bestHome);
-                    if (cmp < 0) { bestScore = score; bestHome = toHome; best = new Int2(x, y); }
+                    if (cmp == 0) cmp = TieCmp(bestRight, toRight); // the further right wins
+                    if (cmp < 0) { bestScore = score; bestHome = toHome; bestRight = toRight; best = new Int2(x, y); collects = sum; }
                 }
             return best;
         }
@@ -3144,7 +3222,7 @@ namespace Pez.Sim
         bool FollowPath(Entity e, Vec2 dest, float tolerance)
         {
             float dd = Vec2.Dist(e.Pos, dest);
-            if (dd <= tolerance || (dd <= e.Def.Radius * 2f + 0.6f && GoalTaken(e, dest))) { e.Moving = false; e.Path = null; return true; }
+            if (dd <= tolerance || (dd <= TakenReach(e) && GoalTaken(e, dest))) { e.Moving = false; e.Path = null; return true; }
             if (e.IsAir) { StepToward(e, dest); return false; }
             if (e.Path == null)
             {
@@ -3164,6 +3242,14 @@ namespace Pez.Sim
             return false;
         }
 
+        /// <summary>Can a unit step from a to b: onto open ground, and a diagonal step not squeezing between two blocked tiles?</summary>
+        bool StepOpen(Vec2 a, Vec2 b)
+        {
+            Int2 ta = Int2.Of(a), tb = Int2.Of(b);
+            bool Open(int x, int y) => Map.InBounds(x, y) && Map.Passable(x, y);
+            return Open(tb.X, tb.Y) && (ta.X == tb.X || ta.Y == tb.Y || Open(tb.X, ta.Y) || Open(ta.X, tb.Y));
+        }
+
         /// <summary>Open ground all along the straight line from a to b (sampled every quarter tile).</summary>
         bool LineClear(Vec2 a, Vec2 b)
         {
@@ -3176,6 +3262,9 @@ namespace Pez.Sim
             }
             return true;
         }
+
+        /// <summary>How near a point another unit stands on e has to get for that to count as there (GoalTaken): a couple of its radii, and a little.</summary>
+        static float TakenReach(Entity e) => e.Def.Radius * 2f + 0.6f;
 
         /// <summary>
         /// Another unit stands still on the point e is going to: as close as e can get counts as there. (Pushing in to the

@@ -79,16 +79,14 @@ namespace Pez.View
             return Deck;
         }
 
-        /// <summary>Seconds until this airfield's next aircraft is done (infinity when it isn't building one).</summary>
+        /// <summary>Seconds until this airfield's next aircraft is done (infinity when it isn't building one): each airfield works its
+        /// own item of the team's shared queue (ProdItem.WorkerId), not the head's.</summary>
         static float Due(World w, Entity e, out bool producing)
         {
             producing = false;
             var t = w.Teams[e.Team];
-            if (!t.UnitQueues.TryGetValue(Producer.Airfield, out var q) || q.Count == 0) return float.PositiveInfinity;
-            var item = q[0];
-            var chosen = item.StructureId != 0 ? w.Get(item.StructureId) : null;
-            var at = chosen != null && chosen.Team == e.Team && chosen.IsComplete && chosen.Def.Produces == Producer.Airfield ? chosen : w.FirstProducer(e.Team, Producer.Airfield);
-            if (at != e) return float.PositiveInfinity;
+            var item = t.UnitQueues.TryGetValue(Producer.Airfield, out var q) ? q.Find(p => p.WorkerId == e.Id) : null;
+            if (item == null) return float.PositiveInfinity;
             producing = true;
             var def = Defs.Get(item.Key);
             return def == null ? float.PositiveInfinity : (def.BuildTime - item.Progress) / (t.LowPower ? 0.5f : 1f);

@@ -1,5 +1,7 @@
 # Pezz asset design brief
 
+> **Process has moved on.** For how to make, refine, verify and ship an asset today, follow [`ASSET_GUIDE.md`](art/ASSET_GUIDE.md). This document is kept for its prompt for outside artists; where it disagrees with the guide about process, the guide wins.
+
 Paste the prompt below into Claude (Claude Design, or any Claude surface that can produce images, SVG or 3D files). It describes every asset the game currently uses, with the exact footprints, moving parts and naming the Unity code expects, so the results can be dropped straight in.
 
 ---
