@@ -1,6 +1,6 @@
 # Pez — motion and mechanics spec (Unity)
 
-Units are tiles (1 tile = 1 Unity unit) and seconds. Rotation speeds are in degrees per second, spinners in rpm. Node names match the .glb files. `PezMotion.cs` drives the named nodes and `PezEmerge.cs` runs the emerge and remove transforms.
+Units are tiles (1 tile = 1 Unity unit) and seconds. Rotation speeds are in degrees per second, spinners in rpm. Node names match the .glb files. `PezMotion.cs` drives the named nodes and `PezEmerge.cs` runs the emerge and remove transforms. This file is generated from `art-src/tools/motion.py`: change an entry there and splice it in with `art-src/tools/kit/motion_splice.py` (see `docs/art/ASSET_GUIDE.md` §6).
 
 ## Global rules
 
@@ -177,10 +177,6 @@ Units are tiles (1 tile = 1 Unity unit) and seconds. Rotation speeds are in degr
 - **`coil`:** mode=charge_glow, charge_s=0.4, peak=1.3, drain_s=0.25, light=GlowCaster cyan, 2.8 x glow, range 2.4, pool 1.2
 - **Idle:** The head faces forward and glances now and then (PezMotion's idle turret). The coils breathe on a 2.5 s sine (glow 0.25–0.45) and the lens glows at 0.5.
 
-**Every structure, emerge:** Rises out of its pad in stages; nothing appears instantly. stage_0 (pad) lifts from y=-0.15 to 0 during build progress 0–10%. stage_1, stage_2 and stage_3 each start at local y = -(stage height) and rise to 0 with ease-out cubic over progress 10–45%, 45–75% and 75–95%. The opaque terrain and pad hide whatever is still below ground. stage_3 ends with a 4% Y-scale overshoot that settles in 0.15 s (spring-loaded). Functional nodes (turret, spinner, door, lift) come last, at 95–100%: a turret rises 0.3 out of its housing, then a spinner spins up from 0 rpm.
-
-**Every structure, remove:** Destroyed: shake ±0.03 for 0.4 s, then poof: a soft cream cloud bursts out of the building while it swells 8% for 0.06 s and pops to nothing in 0.14 s. A rubble decal fades in under it. Sold: dust at the footprint corners, then the same poof. Nothing sinks into the ground.
-
 ### `deep_mine`
 *Pumps ore from the deep deposit under it straight into the stockpile.*
 
@@ -280,7 +276,7 @@ Units are tiles (1 tile = 1 Unity unit) and seconds. Rotation speeds are in degr
 *Range-12 indirect fire. Needs a spotter. Must stop to fire.* Built at **factory**.
 
 - **Locomotion:** tracked · max 1.3 t/s · accel 0.9 t/s² · decel 1.35 t/s² · turn 70°/s · turns in place: yes
-- **Mechanics:** Tracked: pivot-turns in place at 70°/s. Same family as artillery with a longer hull and a far longer gun (range 12). Fire cycle as artillery: stop and deploy (hull lowers 0.04; spade_l and spade_r, folded up 105° for travel, slam down in 0.25 s and bite, kicking dust at their blades; the gun, stowed for travel on the bow's travel lock at about −3°, rises to its fixed −60° over 0.6 s as it nears firing range and snaps up if a shot comes first; moving again, the spades fold and the gun stows once the turret faces forward). On firing, the barrel recoils 0.24 along its own axis over 0.05 s and returns over 0.7 s, and the hull pitches back 3°.
+- **Mechanics:** Tracked: pivot-turns in place at 70°/s. When it has to turn more than 60° it stops and turns first, then drives. Accelerating pitches the hull nose-up 2° and braking pitches it nose-down 3° (spring, 0.25 s). On slopes the hull follows the ground normal (lerp 8/s). Same family as artillery with a longer hull and a far longer gun (range 12). Fire cycle as artillery: stop and deploy (hull lowers 0.04; spade_l and spade_r, folded up 105° for travel, slam down in 0.25 s and bite, kicking dust at their blades; the gun, stowed for travel on the bow's travel lock at about −3°, rises to its fixed −60° over 0.6 s as it nears firing range and snaps up if a shot comes first; moving again, the spades fold and the gun stows once the turret faces forward). On firing, the barrel recoils 0.24 along its own axis over 0.05 s and returns over 0.7 s, and the hull pitches back 3°.
 - **`turret`:** yaw_speed_deg=50, yaw_limit_deg=360, idle_scan=True
 - **`barrel`:** recoil=0.24, recoil_out_s=0.05, return_s=0.7, pitch_deg=-60
 - **`spade_l`, `spade_r`:** hinged at the hull's rear; rest pose planted (deployed), +105° about local X folded for travel

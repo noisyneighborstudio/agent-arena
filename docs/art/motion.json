@@ -806,7 +806,9 @@
     "recoil_out_s": 0.05,
     "return_s": 0.6,
     "pitch_deg": -60
-   }
+   },
+   "spade_l`, `spade_r": "hinged at the hull's rear; rest pose planted (deployed), +105\u00b0 about local X folded for travel",
+   "cradle": "the recoil cradle, a child of `turret` on the trunnion, pitched with `barrel` (\u221260\u00b0 rest); the view pitches both +57\u00b0 to stow the gun"
   },
   "idle": "Barrel stays elevated; no idle scan."
  },
@@ -837,7 +839,9 @@
     "recoil_out_s": 0.05,
     "return_s": 0.7,
     "pitch_deg": -60
-   }
+   },
+   "spade_l`, `spade_r": "hinged at the hull's rear; rest pose planted (deployed), +105\u00b0 about local X folded for travel",
+   "cradle": "the recoil cradle, a child of `turret` on the trunnion, pitched with `barrel` (\u221260\u00b0 rest); the view pitches both +57\u00b0 to stow the gun"
   },
   "idle": "Barrel stays elevated; no idle scan."
  },
