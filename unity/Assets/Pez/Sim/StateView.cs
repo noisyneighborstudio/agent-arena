@@ -619,7 +619,8 @@ namespace Pez.Sim
         /// 46: miner withdrawal is an explicit team policy; fields resume only after the team sees the raid gone.
         /// 47: named squads persist membership and producer enrollment; they add no autonomous behavior.
         /// 48: squad guards execute only supplied conditions, with saved bands, cooldowns and one guard order writer.
-        public const int RulesVersion = 48;
+        /// 49: held medics keep the explicit guard's order instead of starting a native repair trip.
+        public const int RulesVersion = 49;
 
         public static JObj Rules()
         {
@@ -628,6 +629,7 @@ namespace Pez.Sim
             o.Set("miner_policy", "Off by default. set_policy miners {withdraw_on_attack:true,to:[x,y] or base,resume_after_s:N} withdraws trucks on the same field when one is hit or a visible armed enemy reaches weapon range. Every destination and delay is yours. A field cannot withdraw again within 20 seconds, and resumes only after the team sees the raid gone for your delay; loss of sight is not clearance. Direct orders detach a truck until you explicitly harvest with it again. Events miners_withdrawn and miners_resumed explain each action.");
             o.Set("squads", "squad {name,add:[ids],remove:[ids],disband:true} names live own units, with one squad per unit and names of 1-24 characters. Use squad:NAME or units:\"squad:NAME\" on unit commands. Squads issue no orders by themselves. Dead members leave while their formation HP contribution remains for casualty strength. Explicit membership changes reform the baseline from current live HP; producer rally enrollment adds new members' HP. Rally with squad enrolls new units, and a later rally without squad clears that enrollment.");
             o.Set("squad_guards", "Off unless supplied. guard replaces the squad's full guard configuration: retreat_below_pct, hold_for_support {within}, screen {roles:[unit keys],behind}, withdraw_below_strength_pct, to:[x,y]. Retreat rules require your destination. HP retreat rearms only after healing five percentage points above its threshold and a cooldown; healing never sends a unit back to fight. Support uses a release band and saved continuation. Screening follows the already-commanded route/target direction without choosing an enemy. Strength withdrawal latches and raises critical decision_needed. guard_triggered explains facts and actions; guards never pick targets or train units.");
+            o.Set("guarded_medics", "A held medic stays under the guard's order. An explicit heal or repair order takes control if you want it to move toward a casualty.");
             o.Set("overview", "Real-time strategy with a production chain. Mining trucks mine four ores (iron_ore, copper_ore, crystal, uranium) into your stockpile. Converter buildings turn ore into materials (steel, copper, circuits, lenses, plasma, composite) that higher-tier structures and units cost. Your command_center builds structures; barracks/factory/airfield build units. A team is defeated when it has no structures left (and no construction_truck to deploy a new command center). Real time at 20 ticks/s; it does not wait for you.");
             o.Set("chain", Defs.All.Values.Where(d => d.Recipes.Length > 0).SelectMany(d => d.Recipes.Select(r => $"{d.Key}: {r}")).Append($"fusion_reactor: burns {World.FusionBurn} plasma/s for +500 power").ToList());
             o.Set("tips", new List<string> {

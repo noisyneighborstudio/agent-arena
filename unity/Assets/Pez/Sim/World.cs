@@ -1452,7 +1452,7 @@ namespace Pez.Sim
             {
                 case Order.Idle:
                     if (e.IsArmed) IdleCombat(e);
-                    else if (e.Def.RepairRate > 0) IdleRepair(e);
+                    else if (e.Def.RepairRate > 0 && !e.GuardMotionPaused) IdleRepair(e);
                     break;
                 case Order.Repair:
                     UpdateRepair(e);

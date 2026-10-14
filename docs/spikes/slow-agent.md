@@ -229,3 +229,7 @@ dotnet run -c Release --no-build -- --slow-agent --slow-agent-layer guards \
   --slow-agent-seeds 1,2,3 --slow-agent-minutes 12 \
   --slow-agent-out ../docs/spikes/slow-agent-guards.jsonl
 ```
+
+### P5 held-medic follow-up (rules 49)
+
+A one-second held-medic regression reached its native repair scan and found another order source: it could replace a support hold with a medical trip. Rules 49 skips that scan while the explicit guard owns motion; direct heal/repair still wins. The latest full headless suite and 65 focused guard assertions pass, and the MCP regression suite passes32/32. The matrices above remain the measured rules-48 evidence: their guarded armies contain riflemen/tanks, while default-off units never set the motion-pause flag, so this medical-only correction does not change their mechanics. No existing measurement has been relabelled as a new run.

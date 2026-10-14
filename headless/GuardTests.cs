@@ -86,7 +86,7 @@ namespace Pez.Headless
             At(healer.units[0], new Vec2(44.5f, 30.5f)); At(healer.units[1], new Vec2(30.5f, 30.5f));
             At(healer.units[2], new Vec2(49, 30.5f)); healer.units[2].Hp = 30;
             Commands.Execute(w, 0, Cmd("type", "move", "squad", "west", "x", 60, "y", 30));
-            GuardConfig(w, "hold_for_support", Cmd("within", 6)); Run(w, 0.2f);
+            GuardConfig(w, "hold_for_support", Cmd("within", 6)); Run(w, 1);
             Check(healer.units[0].Order == Order.Idle && Vec2.Dist(healer.units[0].Pos, new Vec2(44.5f, 30.5f)) < 0.1f,
                 "a held unarmed leader cannot replace the guard order with a medical trip to a nearby casualty");
         }

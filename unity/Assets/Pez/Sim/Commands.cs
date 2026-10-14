@@ -44,6 +44,7 @@ namespace Pez.Sim
       add ""squad"":""west"" to enroll new units in that squad; a later rally without squad clears enrollment (rally applies to your producers of this building's kind)
   {""type"":""squad"", ""name"":""west"", ""add"":[IDS], ""remove"":[IDS]}  name live own units (1-24 chars, one squad each); disband:true clears it. No movement by itself. Unit commands accept ""squad"":""west"" or ""units"":""squad:west"".
   {""type"":""guard"", ""squad"":""west"", ""retreat_below_pct"":40, ""hold_for_support"":{""within"":6}, ""screen"":{""roles"":[""artillery""],""behind"":4}, ""withdraw_below_strength_pct"":50, ""to"":[X,Y]}  each field optional and off unless supplied; replaces the full guard config. Retreats require to. Guards use bands/cooldowns, explain interventions and never choose targets. An empty guard command disables all guards.
+      held medics stay under guard control; an explicit heal/repair order takes control when you want a medical trip
   {""type"":""sell"", ""structure_id"":ID}                 sell for 50% refund (your only one of a tech or production building needs ""confirm"":true)
   {""type"":""reserve"", ""item"":""iron_ore"", ""amount"":300}  converters (refineries, plants) leave this much of an item alone, so raw-ore costs (power_plant, mining_refinery, mining_truck) stay payable; amount 0 clears it
   {""type"":""save_for"", ""unit"":""drill_rig""}           save up for one unit or structure: converters leave its cost alone until you train/build it (no unit: cancel)
