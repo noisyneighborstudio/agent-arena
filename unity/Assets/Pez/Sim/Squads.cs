@@ -22,7 +22,7 @@ namespace Pez.Sim
             return new JObj().Set("name", Name).Set("members", live.Select(e => (object)e.Id).ToList())
                 .Set("hp", hp).Set("formation_hp", FormationHp).Set("strength_pct", FormationHp > 0 ? StateView.Pct(hp / FormationHp) : 0)
                 .Set("centre", live.Count == 0 ? null : (object)SnapIO.V(new Vec2(live.Average(e => e.Pos.X), live.Average(e => e.Pos.Y))))
-                .Set("objective", null).Set("guards", Guards.View());
+                .Set("objective", Objectives.ForSquad(w, team, Name)?.Id).Set("guards", Guards.View());
         }
 
         internal JObj Save()
@@ -101,6 +101,7 @@ namespace Pez.Sim
             if (disband)
             {
                 if (!squads.TryGetValue(name, out var gone)) return Fail("unknown squad '" + name + "'");
+                Objectives.SquadRemoved(w, team, name);
                 SquadGuards.Release(w, gone.Live(w, team));
                 squads.Remove(name);
                 foreach (var building in w.Owned(team).Where(e => e.IsStructure && e.RallySquad == name)) building.RallySquad = null;
@@ -114,13 +115,15 @@ namespace Pez.Sim
                 foreach (var other in squads.Values)
                     if (other != squad && other.Members.Remove(id))
                     {
+                        Objectives.MemberRemoved(w, w.Get(id), other.Name);
                         amended.Add(other); other.Guards.Units.Remove(id); w.Get(id).GuardMotionPaused = false;
                     }
                 squad.Members.Add(id);
             }
             foreach (int id in remove)
             {
-                squad.Members.Remove(id); squad.Guards.Units.Remove(id); w.Get(id).GuardMotionPaused = false;
+                if (!squad.Members.Remove(id)) continue;
+                Objectives.MemberRemoved(w, w.Get(id), squad.Name); squad.Guards.Units.Remove(id); w.Get(id).GuardMotionPaused = false;
             }
             // Explicit amendments establish a new formation; deaths do not. Rally additions extend its saved baseline.
             foreach (var changed in amended) changed.FormationHp = changed.Live(w, team).Sum(e => e.Hp);
@@ -139,6 +142,7 @@ namespace Pez.Sim
         {
             if (unit.Team < 0 || unit.Team >= w.Teams.Count) return;
             foreach (var squad in w.Teams[unit.Team].Squads.Values) { squad.Members.Remove(unit.Id); squad.Guards.Units.Remove(unit.Id); }
+            Objectives.OwnRemoved(w, unit);
             unit.GuardMotionPaused = false;
         }
 

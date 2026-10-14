@@ -49,8 +49,9 @@ namespace Pez.Sim
 
     public class GuardUnit
     {
-        public bool HpRetreated, HpSpent, SupportHeld, ScreenActive, StrengthExempt, StrengthAssigned, PaceApplied;
-        public int PatrolLap, LastLoopPhase = -1;
+        public bool HpRetreated, HpSpent, SupportHeld, ScreenActive, StrengthExempt, StrengthAssigned, PaceApplied, BasePending;
+        public int PatrolLap, LastLoopPhase = -1, BaseRevision;
+        public string BaseObjective;
         public float HpAt = -999, SupportAt = -999, ScreenAt = -999, ScreenGoalAt = -999, LastDirectAt = -999;
         public Vec2 HpGoal, ScreenGoal, StrengthGoal;
         public GuardAction Action;
@@ -62,6 +63,7 @@ namespace Pez.Sim
             .Set("screen_goal", SnapIO.V(ScreenGoal)).Set("strength_exempt", StrengthExempt).Set("strength_assigned", StrengthAssigned)
             .Set("strength_goal", SnapIO.V(StrengthGoal)).Set("last_direct_at", SnapIO.X(LastDirectAt)).Set("action", Action.ToString())
             .Set("pace_applied", PaceApplied).Set("patrol_lap", PatrolLap).Set("last_loop_phase", LastLoopPhase)
+            .Set("base_pending", BasePending).Set("base_revision", BaseRevision).Set("base_objective", BaseObjective)
             .Set("continuation", Continuation?.Save());
 
         internal static GuardUnit Load(Dictionary<string, object> d)
@@ -73,6 +75,7 @@ namespace Pez.Sim
             d.Load("strength_exempt", ref u.StrengthExempt); d.Load("strength_assigned", ref u.StrengthAssigned); d.Load("strength_goal", ref u.StrengthGoal);
             d.Load("last_direct_at", ref u.LastDirectAt); d.LoadEnum("action", ref u.Action);
             d.Load("pace_applied", ref u.PaceApplied); d.Load("patrol_lap", ref u.PatrolLap); d.Load("last_loop_phase", ref u.LastLoopPhase);
+            d.Load("base_pending", ref u.BasePending); d.Load("base_revision", ref u.BaseRevision); d.Load("base_objective", ref u.BaseObjective);
             if (d.Obj("continuation") is Dictionary<string, object> c) u.Continuation = GuardContinuation.Load(c);
             return u;
         }
@@ -189,6 +192,7 @@ namespace Pez.Sim
             }
             finally { w.CommandActor = actor; }
             g.Notes.AddRange(old.Notes.TakeLast(MaxNotes)); squad.Guards = g;
+            Objectives.InvalidateBase(w, team, squad.Name);
             return new JObj().Set("ok", true).Set("guards", g.View()).Set("result", "guard configuration replaced; omitted guards are off");
         }
 
@@ -241,6 +245,7 @@ namespace Pez.Sim
             body.Set("text", text);
             squad.Guards.Notes.Add(Json.Write(body));
             while (squad.Guards.Notes.Count > MaxNotes) squad.Guards.Notes.RemoveAt(0);
+            if (kind == "decision_needed" && Objectives.GuardDecision(w, team, squad, body)) return;
             w.Emit(kind, team, text: text);
             if (!w.Mirror) w.Observe.Note(team, "orders", kind, severity, "own", body, text);
         }
@@ -274,6 +279,19 @@ namespace Pez.Sim
             foreach (var e in units) e.GuardMotionPaused = false;
         }
 
+        /// <summary>Resolve staged intent with the same writer before its squad is removed.</summary>
+        public static void FlushBase(World w, int team, Squad squad)
+        {
+            string actor = w.CommandActor; w.CommandActor = null;
+            try
+            {
+                foreach (var unit in squad.Live(w, team))
+                    if (squad.Guards.Units.TryGetValue(unit.Id, out var state) && state.BasePending)
+                        Apply(w, team, squad, squad.Guards, unit, state);
+            }
+            finally { w.CommandActor = actor; }
+        }
+
         public static void DirectOrder(World w, Entity unit)
         {
             unit.GuardMotionPaused = false;
@@ -290,9 +308,17 @@ namespace Pez.Sim
         }
 
         /// <summary>P6 stages base intent here; its coordinator must resolve guards before the single order write.</summary>
-        public static void SetBaseIntent(World w, Squad squad, Entity unit, GuardContinuation continuation)
+        public static void SetBaseIntent(World w, Squad squad, Entity unit, GuardContinuation continuation, string objective = null, int revision = 0)
         {
-            var state = State(squad.Guards, unit); state.Continuation = continuation;
+            var state = State(squad.Guards, unit);
+            if (objective != null && state.BaseObjective == objective && state.BaseRevision == revision) return;
+            state.Continuation = continuation; state.BaseObjective = objective; state.BaseRevision = revision; state.BasePending = true;
+        }
+
+        public static void ClearBase(Squad squad, Entity unit)
+        {
+            if (!squad.Guards.Units.TryGetValue(unit.Id, out var state)) return;
+            state.BasePending = false; state.BaseObjective = null; state.BaseRevision = 0;
         }
 
         public static void Step(World w, int team)
@@ -300,13 +326,13 @@ namespace Pez.Sim
             if (w.Tick % 2 != 0 || w.Teams[team].Defeated || w.Teams[team].Left) return;
             foreach (var squad in w.Teams[team].Squads.Values.OrderBy(s => s.Name, StringComparer.Ordinal))
             {
-                var g = squad.Guards; if (!g.Enabled) continue;
+                var g = squad.Guards; if (!g.Enabled && !g.Units.Values.Any(u => u.BasePending)) continue;
                 var live = squad.Live(w, team);
                 foreach (int id in g.Units.Keys.Where(id => !squad.Members.Contains(id) || w.Get(id) == null).ToList()) g.Units.Remove(id);
                 foreach (var unit in live)
                 {
                     var state = State(g, unit);
-                    if (CanControl(w, unit) && state.Action == GuardAction.None &&
+                    if (state.BaseObjective == null && CanControl(w, unit) && state.Action == GuardAction.None &&
                         (unit.Order == Order.Move || unit.Order == Order.AttackMove || (unit.Order == Order.Attack && unit.LastOrderBy != "sim")))
                     {
                         var continuation = GuardContinuation.Capture(unit);
@@ -395,7 +421,24 @@ namespace Pez.Sim
             if (g.ScreenRoles.Count == 0) return;
             var frontUnits = live.Where(e => !e.IsAir && CanControl(w, e) && !Stronger(g, State(g, e)) && !g.ScreenRoles.Contains(e.Def.Key) &&
                 Traveling(Base(State(g, e), e))).ToList();
-            if (frontUnits.Count == 0) return;
+            if (frontUnits.Count == 0)
+            {
+                // A completed explicit go replaces its front's route with a hold. Release only that objective's
+                // stale screen to its already-supplied base goal; ordinary P5 screens keep their sticky position.
+                foreach (var unit in live)
+                {
+                    var u = State(g, unit); var o = Objectives.ForUnit(w, unit);
+                    if (!u.ScreenActive || !CanControl(w, unit) || Stronger(g, u) || w.Time - u.ScreenAt < Cooldown ||
+                        o == null || o.Paused || o.Verb != "go" || u.BaseObjective != o.Id) continue;
+                    var fronts = live.Where(e => e.ObjectiveId == o.Id && !o.Detached.Contains(e.Id) && !g.ScreenRoles.Contains(e.Def.Key)).ToList();
+                    if (fronts.Count == 0 || fronts.Any(e => !CanControl(w, e) || Stronger(g, State(g, e)) ||
+                        Base(State(g, e), e).Order != Order.Idle || !o.Members.TryGetValue(e.Id, out var m) || !m.Arrived)) continue;
+                    u.ScreenActive = false; u.ScreenAt = w.Time;
+                    Record(w, team, squad, "guard_released", "screen", new JObj().Set("reason", "objective_front_arrived")
+                        .Set("unit", unit.Id).Set("objective", o.Id).Set("goal", SnapIO.V(u.Continuation.Pos)));
+                }
+                return;
+            }
             var centre = new Vec2(frontUnits.Average(e => e.Pos.X), frontUnits.Average(e => e.Pos.Y));
             var route = new Vec2(frontUnits.Average(e => Base(State(g, e), e).Pos.X - Base(State(g, e), e).RouteOrigin.X),
                 frontUnits.Average(e => Base(State(g, e), e).Pos.Y - Base(State(g, e), e).RouteOrigin.Y));
@@ -426,7 +469,14 @@ namespace Pez.Sim
                 u.HpRetreated ? GuardAction.HpRetreat : u.SupportHeld ? GuardAction.Support : u.ScreenActive ? GuardAction.Screen : GuardAction.None;
             if (action == GuardAction.None)
             {
-                if (u.Action == GuardAction.Support || u.Action == GuardAction.Screen)
+                if (u.BasePending && u.Continuation != null)
+                {
+                    unit.GuardMotionPaused = false;
+                    if (unit.LastOrderBy != "objective") ResetMotionWindow(unit);
+                    u.Continuation.Restore(w, unit); unit.LastOrderBy = "objective"; u.BasePending = false;
+                    Objectives.BaseCommitted(w, unit);
+                }
+                else if (u.Action == GuardAction.Support || u.Action == GuardAction.Screen)
                 {
                     unit.GuardMotionPaused = false; u.Continuation?.Restore(w, unit);
                 }

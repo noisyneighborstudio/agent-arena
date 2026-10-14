@@ -77,6 +77,7 @@ namespace Pez.Headless
             SlowMinerLayerHarness();
             SlowSquadLayerHarness();
             SlowGuardLayerHarness();
+            SlowObjectiveLayerHarness();
         }
 
         static void SlowMinerLayerHarness()

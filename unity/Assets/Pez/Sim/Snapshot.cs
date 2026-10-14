@@ -30,8 +30,8 @@ namespace Pez.Sim
         /// <summary>1: first version. 2: mining zones, prospecting surveyors, drill rigs' zones, arena champion. 3: agent inventions.
         /// 4: economy and endgame (salvage from kills, ore regrowth, construction trucks, the match clock, derricks, defence upkeep).
         /// 5: turn safety (ready seats and preparation clock, retry receipts, own losses and order provenance). 6: opt-in miner policy and withdrawal state.
-        /// 7: named squads, formation HP and rally enrollment. 8: squad guards, saved continuations and motion pauses.</summary>
-        public const int Schema = 8;
+        /// 7: named squads, formation HP and rally enrollment. 8: squad guards, saved continuations and motion pauses. 9: literal objectives, decision baselines and pinned reinforcement.</summary>
+        public const int Schema = 9;
         public const int MinReader = 1;
         /// <summary>Events kept: the last two minutes, plus recent chat, at most MaxEvents. Alerts: the last minute.</summary>
         const int MaxEvents = 1500;
@@ -93,6 +93,7 @@ namespace Pez.Sim
             if (t.Miners.WithdrawOnAttack || t.Miners.Fields.Count > 0 || t.Miners.Detached.Count > 0 ||
                 t.Miners.ToBase || t.Miners.Destination.LengthSq > 0 || t.Miners.ResumeAfterS != 0) o.Set("miner_policy", t.Miners.Save());
             if (t.CommandReceipts.Count > 0) o.Set("command_receipts", t.CommandReceipts.Select(r => (object)new JObj().Set("id", r.Id).Set("at", r.At.ToString("O", CultureInfo.InvariantCulture)).Set("reply", r.Reply)).ToList());
+            if (t.Objectives.Count > 0) o.Set("objectives", t.Objectives.Values.Select(x => (object)x.Save()).ToList());
             if (t.Squads.Count > 0) o.Set("squads", t.Squads.Values.OrderBy(s => s.Name, StringComparer.Ordinal).Select(s => (object)s.Save()).ToList());
             if (t.GoneUnits.Count > 0) o.Set("gone_units", t.GoneUnits.Select(kv => (object)new List<object> { kv.Key, kv.Value }).ToList());
             if (t.Granted.Count > 0) o.Set("granted", SnapIO.Floats(t.Granted));
@@ -120,11 +121,12 @@ namespace Pez.Sim
             return o;
         }
 
-        static JObj WriteItem(ProdItem p) => new JObj().Set("key", p.Key).Put("progress", p.Progress).Put("structure_id", p.StructureId).Put("worker_id", p.WorkerId).Put("granted_share", p.GrantedShare);
+        static JObj WriteItem(ProdItem p) => new JObj().Set("key", p.Key).Put("progress", p.Progress).Put("structure_id", p.StructureId).Put("worker_id", p.WorkerId).Put("granted_share", p.GrantedShare).Put("objective_id", p.ObjectiveId).Put("reinforcement_squad", p.ReinforcementSquad);
 
         static ProdItem ReadItem(D d)
         {
             var p = new ProdItem();
+            d.Load("objective_id", ref p.ObjectiveId); d.Load("reinforcement_squad", ref p.ReinforcementSquad);
             d.Load("key", ref p.Key); d.Load("progress", ref p.Progress); d.Load("structure_id", ref p.StructureId); d.Load("worker_id", ref p.WorkerId); d.Load("granted_share", ref p.GrantedShare);
             return Defs.Get(p.Key) == null ? null : p;
         }
@@ -142,6 +144,7 @@ namespace Pez.Sim
             d.Load("start", ref t.StartPos); d.Load("defeated", ref t.Defeated); d.Load("left", ref t.Left); d.Load("resigned", ref t.Resigned);
             d.Load("stalled_since", ref t.StalledSince); d.Load("house", ref t.House); d.Load("seat", ref t.Seat);
             d.Load("ready", ref t.Ready);
+            foreach (var row in d.Objs("objectives")) { var objective = Objective.Load(row); if (objective.Id != null) t.Objectives[objective.Id] = objective; }
             foreach (var row in d.Objs("squads")) { var squad = Squad.Load(row); if (squad != null) t.Squads[squad.Name] = squad; }
             d.Load("protected_until", ref t.ProtectedUntil); d.Load("surface_warned_at", ref t.SurfaceWarnedAt); d.Load("home_ore_warned", ref t.HomeOreWarned); d.Load("last_active_at", ref t.LastActiveAt);
             if (d.Str("scatter") is string sc && ulong.TryParse(sc, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var scState)) t.Scatter.State = scState; // (a save from before: from the start)
@@ -208,7 +211,7 @@ namespace Pez.Sim
             o.Put("last_order_tick", e.LastOrderTick, -1).Put("last_retreat_tick", e.LastRetreatTick, -1).Put("last_order_by", e.LastOrderBy);
             o.Put("waypoint_loop", e.WaypointLoop).Put("retreat_below", e.RetreatBelow).Put("retreating", e.Retreating).Put("retreat_spent", e.RetreatSpent).Put("giving_way", e.GivingWay).Put("own_blocked_since", e.OwnBlockedSince).Put("dodge_until", e.DodgeUntil).PutV("dance_vel", e.DanceVel).PutV("dance_step", e.DanceStep).PutV("dance_heading", e.DanceHeading).Put("dance_speed", e.DanceSpeed).Put("dance_for", e.DanceFor).Put("dance_flips", e.DanceFlips).Put("settled_until", e.SettledUntil).Put("queued_at", e.QueuedAt)
              .Put("repath_timer", e.RepathTimer).Put("moving", e.Moving).Put("last_attacker", e.LastAttackerId).Put("last_attacker_team", e.LastAttackerTeam, -1)
-             .Put("guard_motion_paused", e.GuardMotionPaused)
+             .Put("objective_id", e.ObjectiveId).Put("guard_motion_paused", e.GuardMotionPaused)
              .Put("last_hit_time", e.LastHitTime, -999f).Put("last_call_for_help", e.LastCallForHelp, -999f)
              .Put("responding", e.Responding).PutV("home_pos", e.HomePos)
              .Put("cargo", e.Cargo).Put("cargo_salvage", e.CargoSalvage).Put("cargo_type", e.CargoType, -1).Put("harvest_type", e.HarvestType, -1);
@@ -251,7 +254,7 @@ namespace Pez.Sim
             d.Load("last_order_tick", ref e.LastOrderTick); d.Load("last_retreat_tick", ref e.LastRetreatTick); d.Load("last_order_by", ref e.LastOrderBy);
             d.Load("waypoint_loop", ref e.WaypointLoop); d.Load("retreat_below", ref e.RetreatBelow); d.Load("retreating", ref e.Retreating); d.Load("retreat_spent", ref e.RetreatSpent); d.Load("giving_way", ref e.GivingWay); d.Load("own_blocked_since", ref e.OwnBlockedSince); d.Load("dodge_until", ref e.DodgeUntil); d.Load("dance_vel", ref e.DanceVel); d.Load("dance_step", ref e.DanceStep); d.Load("dance_heading", ref e.DanceHeading); d.Load("dance_speed", ref e.DanceSpeed); d.Load("dance_for", ref e.DanceFor); d.Load("dance_flips", ref e.DanceFlips); d.Load("settled_until", ref e.SettledUntil); d.Load("queued_at", ref e.QueuedAt);
             d.Load("repath_timer", ref e.RepathTimer); d.Load("moving", ref e.Moving); d.Load("last_attacker", ref e.LastAttackerId); d.Load("last_attacker_team", ref e.LastAttackerTeam);
-            d.Load("guard_motion_paused", ref e.GuardMotionPaused);
+            d.Load("objective_id", ref e.ObjectiveId); d.Load("guard_motion_paused", ref e.GuardMotionPaused);
             d.Load("last_hit_time", ref e.LastHitTime); d.Load("last_call_for_help", ref e.LastCallForHelp);
             d.Load("responding", ref e.Responding); d.Load("home_pos", ref e.HomePos);
             d.Load("cargo", ref e.Cargo); d.Load("cargo_salvage", ref e.CargoSalvage); d.Load("cargo_type", ref e.CargoType); d.Load("harvest_type", ref e.HarvestType);

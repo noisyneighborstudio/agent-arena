@@ -45,6 +45,9 @@ namespace Pez.Sim
   {""type"":""squad"", ""name"":""west"", ""add"":[IDS], ""remove"":[IDS]}  name live own units (1-24 chars, one squad each); disband:true clears it. No movement by itself. Unit commands accept ""squad"":""west"" or ""units"":""squad:west"".
   {""type"":""guard"", ""squad"":""west"", ""retreat_below_pct"":40, ""hold_for_support"":{""within"":6}, ""screen"":{""roles"":[""artillery""],""behind"":4}, ""withdraw_below_strength_pct"":50, ""to"":[X,Y]}  each field optional and off unless supplied; replaces the full guard config. Retreats require to. Guards use bands/cooldowns, explain interventions and never choose targets. An empty guard command disables all guards.
       held medics stay under guard control; an explicit heal/repair order takes control when you want a medical trip
+  {""type"":""objective"", ""id"":""west-exp"", ""squad"":""west"", ""verb"":""go"", ""at"":[X,Y], ""radius"":6, ""assemble"":{""at"":[X0,Y0],""min"":8}, ""reinforce"":{""keep"":{""rifleman"":6,""light_tank"":2},""budget"":{""steel"":800}}, ""wake"":[""squad_below_50"",""enemy_strength_seen>squad"",""objective_done""]}
+      literal go/hold/escort/patrol only; escort uses target_id (or target) OR target_squad, patrol uses waypoints. Radius is required. Nothing starts without this command. Strategy prose never executes.
+      {""type"":""objective"",""id"":""west-exp"",""pause"":true} | resume:true (reattach live members, preserve spending) | cancel:true. Direct unit orders detach. Wake/cannot-continue packets are critical; no automatic substitute or resume.
   {""type"":""sell"", ""structure_id"":ID}                 sell for 50% refund (your only one of a tech or production building needs ""confirm"":true)
   {""type"":""reserve"", ""item"":""iron_ore"", ""amount"":300}  converters (refineries, plants) leave this much of an item alone, so raw-ore costs (power_plant, mining_refinery, mining_truck) stay payable; amount 0 clears it
   {""type"":""save_for"", ""unit"":""drill_rig""}           save up for one unit or structure: converters leave its cost alone until you train/build it (no unit: cancel)
@@ -59,6 +62,20 @@ POST /command may wrap commands with ""request_id"":""unique retry key"" and ""a
 
         public static JObj Execute(World w, int team, Dictionary<string, object> c)
         {
+            var result = ExecuteCore(w, team, c);
+            if (result["ok"] is bool ok && ok)
+            {
+                var type = c.Str("type", "").ToLowerInvariant();
+                if (type != "objective" && type != "guard" && type != "squad" && type != "rally")
+                    foreach (int id in RequestedUnits(w, team, c))
+                        if (w.Get(id) is Entity unit && unit.Team == team) Objectives.DirectOrder(w, unit);
+                Objectives.CommandSucceeded(w, team);
+            }
+            return result;
+        }
+
+        static JObj ExecuteCore(World w, int team, Dictionary<string, object> c)
+        {
             string previousActor = w.CommandActor;
             if (previousActor == null && team >= 0 && team < w.Teams.Count) w.CommandActor = w.Teams[team].PlayerName ?? w.Teams[team].Controller;
             try
@@ -72,6 +89,7 @@ POST /command may wrap commands with ""request_id"":""unique retry key"" and ""a
                     return Err($"you're under newcomer protection for {(int)(w.Teams[team].ProtectedUntil - w.Time)}s more and can't attack yet; use the time to build up");
                 switch (type)
                 {
+                    case "objective": return Objectives.Configure(w, team, c);
                     case "guard": return SquadGuards.Configure(w, team, c);
                     case "squad": return Squads.Configure(w, team, c);
                     case "set_policy": return MinerPolicies.Configure(w, team, c);
@@ -219,7 +237,7 @@ POST /command may wrap commands with ""request_id"":""unique retry key"" and ""a
                 .Set("id", s.Id);
         }
 
-        static JObj Train(World w, int team, Dictionary<string, object> c)
+        internal static JObj Train(World w, int team, Dictionary<string, object> c)
         {
             var key = c.Str("unit") ?? c.Str("key");
             var def = w.Def(key);

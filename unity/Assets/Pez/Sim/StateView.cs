@@ -176,6 +176,7 @@ namespace Pez.Sim
             o.Set("standing_orders", t.StandingOrders.Length == 0 ? "none" : t.StandingOrders);
             o.Set("orders_version", t.OrdersVersion);
             o.Set("squads", Squads.View(w, team));
+            o.Set("objectives", Objectives.View(w, team));
             o.Set("policies", new JObj().Set("miners", t.Miners.View()));
 
             var enemies = w.Teams.Where(x => x.Id != team && !x.Left).Select(x => new JObj()
@@ -316,6 +317,8 @@ namespace Pez.Sim
                     case "defences_offline": case "defences_online": case "crushed": case "made_room":
                     case "research_started": case "researched":
                     case "miners_withdrawn": case "miners_resumed": case "guard_triggered": case "guard_released": case "detached_by_order": case "decision_needed":
+                        if (e.Team == team) s = e.Text; break;
+                    case string ownObjective when ownObjective.StartsWith("objective_", StringComparison.Ordinal):
                         if (e.Team == team) s = e.Text; break;
                     case "defeated": case "game_over": s = e.Text; break;
                 }
@@ -620,7 +623,8 @@ namespace Pez.Sim
         /// 47: named squads persist membership and producer enrollment; they add no autonomous behavior.
         /// 48: squad guards execute only supplied conditions, with saved bands, cooldowns and one guard order writer.
         /// 49: held medics keep the explicit guard's order instead of starting a native repair trip.
-        public const int RulesVersion = 49;
+        /// 50: literal objectives stage base intent through the guard writer, with explicit assembly, budgets and decision wakes.
+        public const int RulesVersion = 50;
 
         public static JObj Rules()
         {
@@ -630,6 +634,7 @@ namespace Pez.Sim
             o.Set("squads", "squad {name,add:[ids],remove:[ids],disband:true} names live own units, with one squad per unit and names of 1-24 characters. Use squad:NAME or units:\"squad:NAME\" on unit commands. Squads issue no orders by themselves. Dead members leave while their formation HP contribution remains for casualty strength. Explicit membership changes reform the baseline from current live HP; producer rally enrollment adds new members' HP. Rally with squad enrolls new units, and a later rally without squad clears that enrollment.");
             o.Set("squad_guards", "Off unless supplied. guard replaces the squad's full guard configuration: retreat_below_pct, hold_for_support {within}, screen {roles:[unit keys],behind}, withdraw_below_strength_pct, to:[x,y]. Retreat rules require your destination. HP retreat rearms only after healing five percentage points above its threshold and a cooldown; healing never sends a unit back to fight. Support uses a release band and saved continuation. Screening follows the already-commanded route/target direction without choosing an enemy. Strength withdrawal latches and raises critical decision_needed. guard_triggered explains facts and actions; guards never pick targets or train units.");
             o.Set("guarded_medics", "A held medic stays under the guard's order. An explicit heal or repair order takes control if you want it to move toward a casualty.");
+            o.Set("objectives", "Off unless configured. objective names an id and squad, an explicit go/hold/escort/patrol verb and positive radius. Go attack-moves to your point then holds; hold uses your area; escort follows exactly your own target_id/target_squad; patrol loops your waypoints. Optional assemble.at/min gates advance once. Reinforce keeps only your listed counts at compatible producers rallied to the squad; budget caps listed resources and each kept type must consume a capped resource. All ordinary costs spent are reported. Wake squad_below_N, enemy_strength_seen>squad or objective_done pauses and emits a critical decision packet. Indefinite hold/escort/patrol never complete themselves. Direct unit orders detach; explicit resume hands current members back with spending preserved, full replacement supplies a new budget. The executor never substitutes targets, builds factories or reads strategy prose.");
             o.Set("overview", "Real-time strategy with a production chain. Mining trucks mine four ores (iron_ore, copper_ore, crystal, uranium) into your stockpile. Converter buildings turn ore into materials (steel, copper, circuits, lenses, plasma, composite) that higher-tier structures and units cost. Your command_center builds structures; barracks/factory/airfield build units. A team is defeated when it has no structures left (and no construction_truck to deploy a new command center). Real time at 20 ticks/s; it does not wait for you.");
             o.Set("chain", Defs.All.Values.Where(d => d.Recipes.Length > 0).SelectMany(d => d.Recipes.Select(r => $"{d.Key}: {r}")).Append($"fusion_reactor: burns {World.FusionBurn} plasma/s for +500 power").ToList());
             o.Set("tips", new List<string> {

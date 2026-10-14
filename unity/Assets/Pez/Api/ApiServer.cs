@@ -787,6 +787,7 @@ namespace Pez.Api
                         t.Remove(k);
                     t.Remove("miner_policy"); // only this team's explicit policy executes in its fogged mirror
                     t.Remove("squads"); // rival membership and intentions belong to its commander
+                    t.Remove("objectives");
                     if (t["stats"] is JObj st) t["stats"] = new JObj().Set("kills", st["kills"] ?? 0);
                     // Where a rival's base is, is for scouting: their start goes far off the map (not 0,0, a real corner, where
                     // the client's copy would then think a protected rival's reserved ore lay).
@@ -825,7 +826,7 @@ namespace Pez.Api
                         if (next.Count > 0) eo["order_pos"] = next[next.Count - 1];
                     }
                     else eo.Remove("order_pos");
-                    foreach (var k in new[] { "guard_motion_paused", "last_order_by", "last_order_tick", "last_retreat_tick", "rally_squad", "rally", "waypoints", "waypoint_loop", "resume_order", "resume_pos", "resume_guard", "resume_target", "resume_waypoints",
+                    foreach (var k in new[] { "objective_id", "guard_motion_paused", "last_order_by", "last_order_tick", "last_retreat_tick", "rally_squad", "rally", "waypoints", "waypoint_loop", "resume_order", "resume_pos", "resume_guard", "resume_target", "resume_waypoints",
                                               "mine_queue", "home_pos", "harvest_tile", "prospect_center", "prospect_radius", "skip_sites", "passengers", "retreat_below", "fuel", "fuel_cap", "until_capturable", "engage_derricks", "output", "granted_share", "cargo_salvage" })
                         eo.Remove(k);
                     eo["guard_pos"] = eo["pos"];
@@ -869,7 +870,7 @@ namespace Pez.Api
         /// fuel): a rival's never reaches a player's copy, even when the spot it names is in sight. These are the types
         /// StateView.EventList shows only to the team they belong to.
         /// </summary>
-        static bool OwnerEvent(string type) => type is "miners_withdrawn" or "miners_resumed" or "guard_triggered" or "guard_released" or "detached_by_order" or "decision_needed" or "low_power" or "power_restored" or "defences_offline" or "defences_online" or "research_started" or "researched"
+        static bool OwnerEvent(string type) => (type != null && type.StartsWith("objective_", StringComparison.Ordinal)) || type is "miners_withdrawn" or "miners_resumed" or "guard_triggered" or "guard_released" or "detached_by_order" or "decision_needed" or "low_power" or "power_restored" or "defences_offline" or "defences_online" or "research_started" or "researched"
             or "unstalled" or "surveyed" or "survey_failed" or "drilled" or "drill_failed" or "depleted" or "low_fuel" or "stranded" or "refuelled" or "retreating"
             or "out_of_range" or "capture_stopped" or "derrick_skipped";
 

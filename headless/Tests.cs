@@ -84,6 +84,7 @@ namespace Pez.Headless
             MinerProtection();
             NamedSquads();
             SquadGuardBehaviors();
+            LiteralObjectives();
             WaitPacing();
             DeepMining();
             Prospecting();

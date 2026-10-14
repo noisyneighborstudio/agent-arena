@@ -9,7 +9,7 @@ using Pez.Sim;
 namespace Pez.Headless
 {
     /// <summary>Offline paired matches. The commander sees the public fogged data; only the metric observer sees deaths.</summary>
-    public static class SlowAgent
+    public static partial class SlowAgent
     {
         internal const int TurnTicks = 30 * World.TickRate;
         internal const float AllyRadius = 8;
@@ -23,7 +23,7 @@ namespace Pez.Headless
         {
             string Arg(string key, string def) { int i = Array.IndexOf(args, key); return i >= 0 && i + 1 < args.Length ? args[i + 1] : def; }
             string layer = Arg("--slow-agent-layer", "baseline");
-            if (layer != "baseline" && layer != "miners" && layer != "squads" && layer != "guards") { Console.Error.WriteLine("--slow-agent-layer takes baseline, miners, squads or guards."); return 2; }
+            if (layer != "baseline" && layer != "miners" && layer != "squads" && layer != "guards" && layer != "objectives") { Console.Error.WriteLine("--slow-agent-layer takes baseline, miners, squads, guards or objectives."); return 2; }
             int minutes = int.Parse(Arg("--slow-agent-minutes", "12"), CultureInfo.InvariantCulture);
             int[] seeds = Arg("--slow-agent-seeds", "1,2,3").Split(',').Select(int.Parse).ToArray();
             if (minutes < 1 || seeds.Length == 0) { Console.Error.WriteLine("Use positive minutes and at least one seed."); return 2; }
@@ -76,7 +76,7 @@ namespace Pez.Headless
                 foreach (var metric in metrics.Where(m => m != null))
                 {
                     metric.Sample(w, lastEvent, ownBefore);
-                    if (layer == "miners" || layer == "guards" || fixtureDirectory != null)
+                    if (layer == "miners" || layer == "guards" || layer == "objectives" || fixtureDirectory != null)
                         metric.SampleExecutor(w, (unit, details) =>
                         {
                             if (fixtureWritten || recentSnapshots.Count == 0) return;
@@ -103,7 +103,7 @@ namespace Pez.Headless
                 .Set("seats", metrics.Where(m => m != null).Select(m => (object)m.Report(w, commanders[m.Team])).ToList());
         }
 
-        internal sealed class Metrics
+        internal sealed partial class Metrics
         {
             public readonly int Team;
             internal int MinerLosses, UndefendedMinerLosses, CombatLosses, UnsupportedCombatLosses;
@@ -149,7 +149,7 @@ namespace Pez.Headless
 
             internal void SampleExecutor(World w, Action<Entity, JObj> onSettle = null)
             {
-                if (layer == "guards" || movementDiagnostics)
+                if (layer == "guards" || layer == "objectives" || movementDiagnostics)
                     foreach (var unit in w.Owned(Team).Where(e => !e.IsStructure && !e.IsMine))
                     {
                         float prior = settledUntil.TryGetValue(unit.Id, out var until) ? until : 0;
@@ -178,6 +178,7 @@ namespace Pez.Headless
                 var log = w.Observe.Log(Team);
                 foreach (var observation in log.After(executorCursor))
                 {
+                    if (layer == "objectives") { SampleObjective(observation); continue; }
                     if (layer == "guards")
                     {
                         if (observation.Kind == "guard_released") releases++;
@@ -242,7 +243,8 @@ namespace Pez.Headless
                     .Set("own_movement_settles", ownSettles).Set("settle_events", settleEvents)
                     .Set("guard_trigger_latency", Latencies(guardDelays)).Set("decision_latency", Latencies(decisionDelays))
                     .Set("reasons", guardReasons.Aggregate(new JObj(), (o, pair) => o.Set(pair.Key, pair.Value))).Set("events", guardEvents));
-                if (movementDiagnostics && layer != "guards") result.Set("movement_diagnostics", new JObj().Set("own_movement_settles", ownSettles).Set("settle_events", settleEvents));
+                if (layer == "objectives") result.Set("objective_executor", ObjectiveReport(w, commander));
+                if (movementDiagnostics && layer != "guards" && layer != "objectives") result.Set("movement_diagnostics", new JObj().Set("own_movement_settles", ownSettles).Set("settle_events", settleEvents));
                 return result;
             }
         }
@@ -254,7 +256,7 @@ namespace Pez.Headless
         }
 
         /// <summary>No World state is consulted to choose a plan: data and feed are exactly the player's surfaces.</summary>
-        internal sealed class Commander
+        internal sealed partial class Commander
         {
             public readonly int Team;
             readonly bool habits;
@@ -264,7 +266,7 @@ namespace Pez.Headless
             internal const string ArmySquad = "army";
             bool squadReady;
             bool guardsConfigured;
-            bool UsesSquad => layer == "squads" || layer == "guards";
+            bool UsesSquad => layer == "squads" || layer == "guards" || layer == "objectives";
             long cursor;
             string stream;
             int nextTurn;
@@ -277,6 +279,7 @@ namespace Pez.Headless
                 if (w.Tick < nextTurn || w.Teams[Team].Defeated) return;
                 nextTurn = w.Tick + TurnTicks;
                 Turns++;
+                if (layer == "objectives") metrics.ObjectiveTurnTick = w.Tick;
                 var state = StateData.Team(w, Team);
                 var units = Rows(state, "units").ToList();
                 var structures = Rows(state, "structures").ToList();
@@ -291,7 +294,7 @@ namespace Pez.Headless
                 var centre = new Vec2(Number(map, "w") / 2, Number(map, "h") / 2);
                 var staging = home + (centre - home).Normalized * 10;
                 var log = w.Observe.Log(Team);
-                var feed = log.Read(stream, cursor, new ObsFilter { Cats = new HashSet<string> { "alert" } }, 4000);
+                var feed = log.Read(stream, cursor, new ObsFilter { Cats = layer == "objectives" ? new HashSet<string> { "alert", "orders" } : new HashSet<string> { "alert" } }, 4000);
                 stream = (string)feed["stream"]; cursor = Convert.ToInt64(feed["next_cursor"]);
                 var alerts = Rows(feed, "events").Where(a => CombatAlerts.Contains((string)a["kind"])).ToList();
 
@@ -306,8 +309,8 @@ namespace Pez.Headless
                 int Queue(string producer) => Rows(production, producer).Count();
                 int Trucks() => units.Count(u => (string)u["type"] == "mining_truck");
                 if (Trucks() + Queue("command_center") < 6 && options.Contains("mining_truck")) Send(game, "type", "train", "unit", "mining_truck");
-                if (Has("factory") && Queue("factory") < 2 && options.Contains("light_tank")) Send(game, "type", "train", "unit", "light_tank", "count", 2);
-                if (Has("barracks") && Queue("barracks") < 3 && options.Contains("rifleman")) Send(game, "type", "train", "unit", "rifleman", "count", 3);
+                if (Has("factory") && Queue("factory") < 2 && options.Contains("light_tank")) TrainAtKnownProducer(game, structures, "light_tank", 2);
+                if (Has("barracks") && Queue("barracks") < 3 && options.Contains("rifleman")) TrainAtKnownProducer(game, structures, "rifleman", 3);
                 foreach (var truck in units.Where(u => (string)u["type"] == "mining_truck" && (string)u["order"] == "idle"))
                     Send(game, "type", "harvest", "units", Ids(new[] { truck }), "ore", Id(truck) % 3 == 0 ? "copper_ore" : "iron_ore");
 
@@ -330,18 +333,43 @@ namespace Pez.Headless
                         "hold_for_support", new Dictionary<string, object> { ["within"] = 6d },
                         "screen", new Dictionary<string, object> { ["roles"] = new List<object> { "rifleman" }, ["behind"] = 4d },
                         "withdraw_below_strength_pct", 50, "to", new List<object> { (double)home.X, (double)home.Y });
+                bool objectiveHandback = false;
                 if (habits)
                 {
                     var fresh = units.Where(u => !retreated.Contains(Id(u))).ToList();
                     if (fresh.Count > 0 && Send(game, "type", "set_retreat", "units", Ids(fresh), "below_pct", 40))
+                    {
                         foreach (var u in fresh) retreated.Add(Id(u));
-                    foreach (var s in structures.Where(s => Defs.Get((string)s["type"])?.Produces is Producer.Barracks or Producer.Factory))
+                        objectiveHandback = layer == "objectives" && fresh.Any(u => armyMembers.Contains(Id(u)));
+                    }
+                }
+                if (habits || layer == "objectives")
+                {
+                    foreach (var s in structures.Where(s => Defs.Get((string)s["type"])?.Produces is Producer.Barracks or Producer.Factory)
+                        .Where(s => layer != "objectives" || s["complete"] is bool complete && complete))
                         if (!rallied.Contains(Id(s)))
                         {
                             var rally = new List<object> { "type", "rally", "structure_id", Id(s), "x", staging.X, "y", staging.Y };
                             if (UsesSquad) { rally.Add("squad"); rally.Add(ArmySquad); }
                             if (Send(game, rally.ToArray())) rallied.Add(Id(s));
                         }
+                }
+
+                if (layer == "objectives")
+                {
+                    if (objectiveHandback)
+                    {
+                        state = StateData.Team(w, Team);
+                        var objective = Rows(state, "objectives").FirstOrDefault(o => (string)o["id"] == Mission);
+                        if (objective != null && !Yes(objective, "paused") && Count(objective, "detached") > 0 &&
+                            Send(game, "type", "objective", "id", Mission, "resume", true))
+                        {
+                            metrics.ObjectiveHandbacks++;
+                            state = StateData.Team(w, Team);
+                        }
+                    }
+                    ObjectiveTurn(game, state, Rows(feed, "events").ToList(), army, alerts, structures, home, staging, metrics);
+                    return;
                 }
 
                 var responded = new List<JObj>();
@@ -387,7 +415,11 @@ namespace Pez.Headless
                 Commands++;
                 var result = (JObj)((List<object>)CommandSafety.ExecuteBatch(game, Team, command, "slow-agent")["results"])[0];
                 bool ok = result["ok"] is bool b && b;
-                if (!ok) Rejected++;
+                if (!ok)
+                {
+                    Rejected++;
+                    if (layer == "objectives") RecordObjectiveRejection(command, result);
+                }
                 return ok;
             }
         }

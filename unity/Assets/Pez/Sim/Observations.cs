@@ -1204,7 +1204,7 @@ namespace Pez.Sim
                     .Set("units", t.UnitQueues.Where(kv => kv.Value.Count > 0).ToDictionary(kv => ProducerName(kv.Key), kv => (object)kv.Value.Select(p => (object)p.Key).ToList())))
                 .Set("stockpile", StateView.Stockpile(t)).Set("power", new List<object> { t.PowerUsed, t.PowerProduced })
                 .Set("policies", new JObj().Set("miners", t.Miners.View()))
-                .Set("squads", Squads.View(w, Team))
+                .Set("squads", Squads.View(w, Team)).Set("objectives", Objectives.View(w, Team))
                 .Set("standing_orders", new JObj().Set("version", t.OrdersVersion).Set("text", t.StandingOrders).Set("src", "human"))
                 .Set("open_cmds", cmds.Values.Select(c => (object)new JObj().Set("cmd", c.Id).Set("type", c.Type).Set("units", c.Units.Where(u => !c.Outcome.ContainsKey(u)).Cast<object>().ToList())).ToList())
                 .Set("match", StateView.MatchJson(w));

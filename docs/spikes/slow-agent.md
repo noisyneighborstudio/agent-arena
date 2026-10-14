@@ -233,3 +233,80 @@ dotnet run -c Release --no-build -- --slow-agent --slow-agent-layer guards \
 ### P5 held-medic follow-up (rules 49)
 
 A one-second held-medic regression reached its native repair scan and found another order source: it could replace a support hold with a medical trip. Rules 49 skips that scan while the explicit guard owns motion; direct heal/repair still wins. The latest full headless suite and 65 focused guard assertions pass, and the MCP regression suite passes32/32. The matrices above remain the measured rules-48 evidence: their guarded armies contain riflemen/tanks, while default-off units never set the motion-pause flag, so this medical-only correction does not change their mechanics. No existing measurement has been relabelled as a new run.
+
+## P6 setup declared before measurement: objective intent (rules 50)
+
+This experiment enables objectives without P5 guards or miner policy. The fixed thirty-second commander retains its economy/building sequence, ordinary training counts and unit types. It creates the stable own `army` squad and explicitly rallies its already-owned completed barracks/factory to the original home-to-centre staging point in both variants. Ordinary army purchases name those existing producers, making their cohort commitment explicit. The first `go` mission starts only when both producers exist and at least four own combat units are present; it then assembles eight members at staging, within radius 6, before advancing. Its destination uses the original fog-visible/remembered target rule or the public mirrored-home exploration point.
+
+The reinforcement declaration is `keep:{rifleman:6,light_tank:2}`, lifetime `steel:800`, and an explicitly chosen `copper:160` cap. The copper limit is derived from the actual public light-tank price: at most four tanks fit 800 steel, at 40 copper each. Every resource cost of the two listed types is capped. Mission replacement carries remaining caps and records retired spending; it never renews the lifetime allowance. Ordinary commander production remains outside that executor budget, as in the baseline, and is reported as a separate limitation.
+
+These are declared intent-representation changes, not a pure executor-speed comparison: early idle subsets wait for the cohort, assembly replaces piecemeal advances, plain gets the explicit producer rallies needed for reinforcement, and both variants stop issuing competing primitive army orders. The `p0_habits` label in this layer retains native retreat and rally configuration, but primitive `together` has no objective equivalent; assembly/persistent cohort does not silently enable a pacing guard. Full-cohort defence retargeting is an explicit mission replacement, never substituting a full squad for an old subset without declaring that changed plan.
+
+The commander reads its own `decision_needed` packets on the next scheduled thirty-second turn. A completed `go` resumes once into its existing hold phase. Exhausted budget explicitly replaces the same mission without reinforcement, retaining all spent costs. Strength/threat/native-retreat pauses resume only when the corresponding own fogged state clears the condition; native arrival is read from the unit's public order/goal, and wound state is not rearmed. Other unavailable-slot/queue conditions remain explicitly paused, rather than choosing an alternate location, type or refund. A P0 fresh-unit `set_retreat` command detaches that unit by design; the commander explicitly hands it back with one resume only when its objective is active. It does not use that configuration handback to bypass a critical pause.
+
+Metrics retain the baseline losses, ordinary alert responses and scores. Separately they count objective orders between model turns, start/resume-to-first-order delay, assembly releases, packet reasons/facts/known threats/open commitments, packet-response latency, unresolved packets, fresh-unit handbacks and lifetime spending. Alerts already covered by unchanged objective intent are counted separately rather than falsely treated as a new accepted commander command. No critical event creates an early model turn. The never-configured floor must still reproduce every original matrix metric exactly.
+
+### P6 results and unchanged-floor verification
+
+Frozen rules-50 runtime, seeds 1–3, twelve-minute cap, normal starts and the same seat swaps/alternating variant order as before. [Objective raw results](slow-agent-objectives.jsonl) contain eighteen games with zero sim errors and **zero own movement-settle episodes**. [The rules-50 default floor](slow-agent-floor-rules50.jsonl) reproduces every one of the original eighteen baseline rows and per-seat metrics exactly after removing only the rules-version label. A final objectives-only rejection observer rerun preserved every prior metric exactly; it records error reasons without changing commands. That matrix took 13.3 seconds wall time; the default-floor run took 11.3 seconds. These are offline run metadata, not model or network latency.
+
+Cells remain mean / nearest-rank p50 / p95 across six slow seats. The P0 objective variant has the explicitly declared retreat/rally/assembly semantics above; it is not the primitive P0 plan with invisible together pacing.
+
+| Opponent | Variant + objectives | Undefended miner losses | All miner losses | Unsupported armed losses | All armed losses | Final score |
+|---|---|---:|---:|---:|---:|---:|
+| simple_ai | plain | 5.67 / 6.00 / 7.00 | 7.50 / 7.00 / 8.00 | 14.17 / 12.00 / 22.00 | 26.83 / 26.00 / 30.00 | 0.00 / 0.00 / 0.00 |
+| simple_ai | p0_habits | 4.67 / 5.00 / 7.00 | 7.67 / 8.00 / 8.00 | 16.67 / 16.00 / 21.00 | 27.00 / 27.00 / 29.00 | 0.00 / 0.00 / 0.00 |
+| self | plain | 4.17 / 1.00 / 10.00 | 4.83 / 1.00 / 13.00 | 7.00 / 8.00 / 12.00 | 22.67 / 21.00 / 31.00 | 150.00 / 130.00 / 187.00 |
+| self | p0_habits | 0.17 / 0.00 / 1.00 | 0.67 / 0.00 / 2.00 | 4.17 / 3.00 / 8.00 | 18.00 / 15.00 / 32.00 | 150.00 / 141.00 / 171.00 |
+
+| Opponent | Variant + objectives | Ordinary alerts | New commander responses | Unresolved ordinary alerts | Ordinary response seconds (mean / p50 / p95) |
+|---|---|---:|---:|---:|---:|
+| simple_ai | plain | 194 | 32 | 162 | 11.15 / 9.90 / 28.00 |
+| simple_ai | p0_habits | 205 | 21 | 184 | 14.41 / 15.60 / 29.20 |
+| self | plain | 189 | 63 | 126 | 14.82 / 16.25 / 28.55 |
+| self | p0_habits | 194 | 35 | 159 | 15.70 / 19.05 / 29.30 |
+
+| Opponent | Variant | Between-turn objective orders | Assembly releases | Critical packets / responses / unresolved | Packet response seconds (mean / p50 / p95) | Fresh-unit handbacks |
+|---|---|---:|---:|---:|---:|---:|
+| simple_ai | plain | 710 | 6 | 6 / 6 / 0 | 11.50 / 7.80 / 29.40 | 0 |
+| simple_ai | p0_habits | 681 | 6 | 13 / 13 / 0 | 19.42 / 25.10 / 29.90 | 10 |
+| self | plain | 2937 | 6 | 20 / 20 / 0 | 18.47 / 23.90 / 29.10 | 0 |
+| self | p0_habits | 3112 | 6 | 41 / 41 / 0 | 21.20 / 19.60 / 29.90 | 14 |
+
+All 7,440 recorded objective orders occur between the fixed commander turns. The twenty-four measured slow seats each release their initial assembly once. All 132 recorded start/resume-to-first-objective-order delays are 0.10 game-seconds. This is the explicit plan continuing in the sim; it does not shorten the commander's thirty-second cadence.
+
+The eighty critical packets comprise forty `squad_below_50`, thirty-six `native_retreat` and four `objective_done`. Every packet receives an explicit response at a scheduled turn, but **58 responses acknowledge continued pause**, eighteen resume the same mission after the fixed condition clears, and four resume completed `go` into hold. Zero unresolved packets therefore means the commander addressed them, not that eighty missions advanced. Native-retreat arrival is read from the own unit's public order and goal. Twenty-four P0 fresh-unit handbacks explicitly reattach newly rallied units after configuring their retreat threshold; the handler never uses that handback to resume an already-paused mission.
+
+Packet records contain 116 fact fields, 79 changed-since-command lost-unit entries, 126 HP-change entries, six currently visible threat entries and no remembered threat entries in this matrix. Their open commitments contain 88 production entries, with no other-objective, construction or reserve commitments in this particular single-mission plan. Full own fog packets and response actions are retained in raw results; no opponent economy or hidden contact is supplied to the commander.
+
+### Reinforcement budget and rejected commands
+
+The combined reinforcement spend across twenty-four slow seats is 2,600 steel and 520 copper: thirteen additional light tanks in total. Individual seats spend either zero or 200 steel/40 copper; every seat stays within its lifetime 800/160 cap across all mission replacements. Ordinary explicit production usually fills the keep counts before a reinforcement purchase is needed. No budget-exhaustion packet occurs in the actual matrix, so the strongest budget claim comes from the separate focused scenario: real purchases/replacements consume 800 steel/160 copper, pause, and the next thirty-second turn continues the same mission without renewing those resources.
+
+| Opponent | Variant | Reinforcement steel spent (mean / p50 / p95) | Copper spent (mean / p50 / p95) |
+|---|---|---:|---:|
+| simple_ai | plain | 200.00 / 200.00 / 200.00 | 40.00 / 40.00 / 40.00 |
+| simple_ai | p0_habits | 133.33 / 200.00 / 200.00 | 26.67 / 40.00 / 40.00 |
+| self | plain | 100.00 / 0.00 / 200.00 | 20.00 / 0.00 / 40.00 |
+| self | p0_habits | 0.00 / 0.00 / 0.00 | 0.00 / 0.00 / 0.00 |
+
+All 137 rejected commands are ordinary pre-turn affordability choices after an earlier command spent stock: 24 mining-truck purchases see 79/200 iron ore; rifleman purchases see 10/40 steel (54), 0/40 (36), or 20/40 (23). There are **no objective, prerequisite or slot command rejections**. A runtime unavailable-slot situation would pause and packet the objective, rather than reject an accepted configuration; none occurs here. The baseline's known batch-affordability limitation remains documented rather than silently changing its economy.
+
+### Where P6 did not win and decision
+
+Relative to the primitive baseline, unsupported armed losses fall 28.0% for plain vs SimpleAI (19.67 → 14.17), 9.1% for P0 vs SimpleAI (18.33 → 16.67), 72.7% for plain self-play (25.67 → 7.00), and 44.4% for P0 self-play (7.50 → 4.17). Those changes include assembly, cohort routing, explicit packet handling and the loss of primitive together semantics, so they are evidence about these declared plans, not isolated executor performance.
+
+Every slow-vs-SimpleAI seat still loses, at 428.60–506.20 seconds, and its final score is zero. Plain self-play undefended miner losses worsen from 3.00 to 4.17 (38.9%); P0 self-play stays at 0.17. The single combat objective configures no miner policy and does not magically protect exposed economy. Mean self-play score remains 150 by construction. Reinforcement's upper budget is exercised in a focused scenario, not this match matrix. No actual match emits the `enemy_strength_seen>squad` wake in this setup; that condition is covered by the core fog/scenario tests rather than claimed as measured here.
+
+Ordinary alert response counts fall because the commander keeps an objective active or paused instead of issuing a new direct attack for every fresh alert. Four alerts are explicitly recorded as already covered by unchanged intent; the remaining unresolved ordinary alerts are not silently reclassified as successful actions. Most critical casualty packets lead to waiting for strength, and P0 native retreat can pause the whole mission until arrival. Fewer combat deaths may partly mean less fighting; the data does not prove faster conquest or stronger strategic judgement.
+
+**Go to P7's nonexecuting strategy record and display.** P6 demonstrates literal intent persisting between slow turns, explicit critical packet handling at the chosen cadence, bounded spending, zero observed objective-profile settles and an exactly unchanged default floor. It fails a stronger win-rate claim against SimpleAI and shows an economy-protection tradeoff in plain self-play. Preserve those limits: strategy text must not become a second player, and a future strategy experiment must explicitly declare different goals, budgets or wake policy before measurement.
+
+The frozen harness has 47 passing checks, including opt-in-only objectives, the explicit profile/producers, real budget exhaustion with conserved lifetime spend, no competing primitive army orders, native arrival followed by explicit resume without rearming the wound, and one-time P0 fresh-unit handback into active assembly. Reproduce with:
+
+```sh
+cd headless
+dotnet run -c Release --no-build -- --slow-agent --slow-agent-layer objectives \
+  --slow-agent-seeds 1,2,3 --slow-agent-minutes 12 \
+  --slow-agent-out ../docs/spikes/slow-agent-objectives.jsonl
+```

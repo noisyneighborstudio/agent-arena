@@ -15,7 +15,7 @@ namespace Pez.Headless
             var w = game.World;
             Array.Fill(w.Teams[0].Visible, true);
             var at = w.Teams[0].StartPos;
-            var kinds = new[] { "miners_withdrawn", "miners_resumed", "guard_triggered", "guard_released", "detached_by_order", "decision_needed" };
+            var kinds = new[] { "miners_withdrawn", "miners_resumed", "guard_triggered", "guard_released", "detached_by_order", "decision_needed", "objective_paused", "objective_configured", "objective_ordered", "objective_done" };
             foreach (string kind in kinds)
             {
                 w.Emit(kind, 1, pos: at, text: "private-rival-" + kind);

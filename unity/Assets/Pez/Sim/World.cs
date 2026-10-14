@@ -12,6 +12,7 @@ namespace Pez.Sim
         public float GrantedShare; // units: the share of its price the arena's gift paid (the unit carries it, and a refund returns it as gift)
         public int StructureId;  // structures: the foundation entity being built; units: the building chosen to train it (0 = any free one)
         public int WorkerId;     // units: the building working on it right now (0 = waiting for a free one)
+        public string ObjectiveId, ReinforcementSquad; // paid objective commitments stay pinned to StructureId
     }
 
     /// <summary>A surveyor's flag on a deep deposit: the team's mining zone, with the same id as the deposit.</summary>
@@ -52,6 +53,7 @@ namespace Pez.Sim
         /// <summary>Standing instructions from the human commander to whoever (usually an LLM) plays this team.</summary>
         public string StandingOrders = "";
         public int OrdersVersion;
+        public readonly SortedDictionary<string, Objective> Objectives = new SortedDictionary<string, Objective>(StringComparer.Ordinal);
         public readonly Dictionary<string, Squad> Squads = new Dictionary<string, Squad>(StringComparer.Ordinal);
         public readonly MinerPolicy Miners = new MinerPolicy();
         /// <summary>Recent command replies, per seat, for safe retries across restarts.</summary>
@@ -839,7 +841,8 @@ namespace Pez.Sim
             e.FuelCap = DroneFuel(def);
             e.Fuel = e.FuelMax;
             Sim.Squads.EnrollSpawn(this, e, at.RallySquad);
-            if (e.IsHarvester) SetOrder(e, Order.Harvest, e.Pos);
+            if (Objectives.EnrollSpawn(this, e, at.RallySquad)) { } // its literal objective is committed by the shared writer
+            else if (e.IsHarvester) SetOrder(e, Order.Harvest, e.Pos);
             else if (at.Rally.HasValue) SetOrder(e, Order.Move, at.Rally.Value);
             else if (!def.IsAir)
             {
@@ -968,6 +971,7 @@ namespace Pez.Sim
             if ((type == "destroyed" || type == "salvaged") && ById.TryGetValue(a, out var gone))
             {
                 MinerPolicies.WitnessGone(this, gone);
+                Objectives.WitnessGone(this, gone);
                 if (Feed != null)
                     for (int t = 0; t < Teams.Count && t < 31; t++)
                         if (t != gone.Team && !gone.IsCarried && IsVisibleTo(t, gone)) ev.SeenBy |= 1 << t;
@@ -1164,7 +1168,7 @@ namespace Pez.Sim
 
         public void SetOrder(Entity e, Order o, Vec2 pos, int target = 0)
         {
-            if (CommandActor != null) SquadGuards.DirectOrder(this, e);
+            if (CommandActor != null) { Objectives.DirectOrder(this, e); SquadGuards.DirectOrder(this, e); }
             if (CommandActor != null && e.IsHarvester && e.Team >= 0) MinerPolicies.DirectOrder(this, e, o);
             Touched?.Add(e);
             e.LastOrderTick = Tick;
@@ -1180,7 +1184,7 @@ namespace Pez.Sim
             e.Path = null;
             e.RepathTimer = 0;
             e.Dock = DockStep.None; e.DockAt = 0;
-            if (o == Order.Idle) { e.GuardPos = e.Pos; e.Moving = false; } // stopped where it is (an idle truck left Moving parked in soldiers' way)
+            if (o == Order.Idle) { e.GuardPos = Objectives.HoldPoint(this, e, e.Pos); e.Moving = false; } // stopped where it is (an idle truck left Moving parked in soldiers' way)
             e.Responding = false; // any new order (from a commander or the response itself) replaces the old one
             e.SpeedCap = 0; e.Group = 0;
             e.Waypoints.Clear(); e.WaypointLoop = false;
@@ -1209,6 +1213,7 @@ namespace Pez.Sim
             Guard("economy", UpdateEconomy);
             Guard("production", UpdateProduction);
             Guard("miner policy", () => { foreach (var team in Teams) MinerPolicies.Step(this, team.Id); });
+            Guard("objectives", () => { foreach (var team in Teams) Objectives.Step(this, team.Id); });
             Guard("squad guards", () => { foreach (var team in Teams) SquadGuards.Step(this, team.Id); });
             Guard("groups", MeasureGroups);
             if (Tick % (TickRate * 10) == 0) Guard("home ore", CheckHomeOre);
@@ -1393,7 +1398,11 @@ namespace Pez.Sim
                     {
                         var item = q[i];
                         var producer = item.WorkerId != 0 ? Get(item.WorkerId) : null;
-                        if (producer == null) continue; // waiting for a free building
+                        if (producer == null || !ObjectiveReinforcements.ProducerEligible(this, team.Id, item, producer))
+                        {
+                            ObjectiveReinforcements.ProducerBlocked(this, team.Id, item);
+                            continue; // waiting for a free building; objective commitments never migrate
+                        }
                         var def = Def(item.Key);
                         item.Progress += Dt * rate;
                         if (item.Progress >= def.BuildTime)
@@ -1426,7 +1435,7 @@ namespace Pez.Sim
             var free = new List<Entity>(all);
             foreach (var p in q)
             {
-                int at = p.WorkerId != 0 ? free.FindIndex(e => e.Id == p.WorkerId) : -1;
+                int at = p.WorkerId != 0 ? free.FindIndex(e => e.Id == p.WorkerId && ObjectiveReinforcements.ProducerEligible(this, team, p, e)) : -1;
                 if (at >= 0) free.RemoveAt(at);
                 else p.WorkerId = 0; // its building is gone
             }
@@ -1434,13 +1443,13 @@ namespace Pez.Sim
             foreach (var p in q)
             {
                 if (p.WorkerId != 0 || p.StructureId == 0) continue;
-                int at = free.FindIndex(e => e.Id == p.StructureId);
+                int at = free.FindIndex(e => e.Id == p.StructureId && ObjectiveReinforcements.ProducerEligible(this, team, p, e));
                 if (at >= 0) { p.WorkerId = p.StructureId; free.RemoveAt(at); }
             }
             foreach (var p in q)
             {
                 if (free.Count == 0) break;
-                if (p.WorkerId != 0 || (p.StructureId != 0 && all.Exists(e => e.Id == p.StructureId))) continue; // at work, or waiting for its own building
+                if (p.ObjectiveId != null || p.WorkerId != 0 || (p.StructureId != 0 && all.Exists(e => e.Id == p.StructureId))) continue; // objective pins never fall back
                 p.WorkerId = free[0].Id;
                 free.RemoveAt(0);
             }
@@ -1619,6 +1628,7 @@ namespace Pez.Sim
         void IdleCombat(Entity e)
         {
             if (e.GuardMotionPaused) { e.Moving = false; OpportunisticFire(e); return; }
+            if (Objectives.Bounded(this, e) && !Objectives.MotionAllowed(this, e, e.Pos)) { e.Moving = false; return; }
             var t = AcquireTarget(e, e.Def.Sight);
             if (t == null)
             {
@@ -1659,7 +1669,7 @@ namespace Pez.Sim
             Near(victim.Center, 10f, nearHelp);
             foreach (var u in nearHelp)
             {
-                if (u.Dead || u.Team != victim.Team || u.IsStructure || !u.IsArmed || u.IsCarried || u.Order != Order.Idle || u.GuardMotionPaused || IsProtected(u.Team)) continue; // protected units don't retaliate
+                if (u.Dead || u.Team != victim.Team || u.IsStructure || !u.IsArmed || u.IsCarried || u.Order != Order.Idle || u.GuardMotionPaused || Objectives.Bounded(this, u) || IsProtected(u.Team)) continue; // protected units don't retaliate
                 if (!u.Def.Weapon.CanHit(attacker.Def)) continue;
                 if (Vec2.Dist(u.Pos, victim.Center) > 10f) continue;
                 var home = u.GuardPos;
@@ -1868,7 +1878,7 @@ namespace Pez.Sim
             Entity best = null; float bd = 6f;
             foreach (var o in Entities)
             {
-                if (!CanTend(e, o)) continue;
+                if (!CanTend(e, o) || !Objectives.TargetAllowed(this, e, o)) continue;
                 // Stranded vehicles are worth a longer drive than a scratch.
                 float d = o.DistFrom(e.Pos) - (o.Stranded ? 14f : 0f);
                 if (d < bd) { bd = d; best = o; }
@@ -1916,7 +1926,7 @@ namespace Pez.Sim
                 if (e.Def.Weapon != null && !e.Def.Weapon.CanHit(o.Def)) continue;
                 float d = o.DistFrom(e.Pos);
                 if (d > radius) continue;
-                if (!IsVisibleTo(e.Team, o)) continue;
+                if (!IsVisibleTo(e.Team, o) || !Objectives.TargetAllowed(this, e, o)) continue;
                 // Prefer armed threats, then units, then structures.
                 float score = d + (o.IsArmed ? 0 : 4) + (o.IsStructure ? 6 : 0);
                 if (score < bestScore) { bestScore = score; best = o; }
@@ -2373,7 +2383,7 @@ namespace Pez.Sim
         {
             e.CargoSalvage = 0;
             e.CargoType = -1;
-            if (MinerPolicies.Controls(this, e) || SquadGuards.Controls(this, e)) SetOrder(e, Order.Idle, e.Pos);
+            if (MinerPolicies.Controls(this, e) || SquadGuards.Controls(this, e) || Objectives.Bounded(this, e)) SetOrder(e, Order.Idle, e.Pos);
             else e.Order = Order.Harvest;
             e.Path = null;
             e.Dock = DockStep.None;
@@ -3297,7 +3307,7 @@ namespace Pez.Sim
         }
 
         /// <summary>How near a point another unit stands on e has to get for that to count as there (GoalTaken): a couple of its radii, and a little.</summary>
-        static float TakenReach(Entity e) => e.Def.Radius * 2f + 0.6f;
+        internal static float TakenReach(Entity e) => e.Def.Radius * 2f + 0.6f;
 
         /// <summary>
         /// Another unit stands still on the point e is going to: as close as e can get counts as there. (Pushing in to the
@@ -3359,6 +3369,7 @@ namespace Pez.Sim
             // 0.6 rad of it, it used to slide crabwise while it turned. Infantry and aircraft step straight to it.
             var heading = e.Def.Armor == Armor.Vehicle ? new Vec2(MathF.Cos(e.Facing), MathF.Sin(e.Facing)) : d / len;
             var next = e.Pos + heading * step;
+            if (!Objectives.MotionAllowed(this, e, next)) { e.Moving = false; return; }
             // Never roll onto its own infantry: wait for them to get clear (they dodge). Only a vehicle held up by its own for
             // OwnBlockLimit seconds forces its way through, and can catch one with nowhere to go.
             if (Crusher(e) && OntoOwnInfantry(e, next) is Entity inWay)
@@ -3427,7 +3438,7 @@ namespace Pez.Sim
             {
                 var spot = idle.Pos + s;
                 var t = Int2.Of(spot);
-                if (!Map.Passable(t.X, t.Y) || Crowded(idle, spot)) continue;
+                if (!Map.Passable(t.X, t.Y) || Crowded(idle, spot) || !Objectives.MotionAllowed(this, idle, spot)) continue;
                 SetOrder(idle, Order.Move, spot);
                 idle.GivingWay = true;
                 idle.GuardPos = spot;
