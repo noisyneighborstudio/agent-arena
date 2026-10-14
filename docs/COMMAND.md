@@ -159,10 +159,10 @@ each guard: zero settles, no oscillation between hold and advance.
 | Phase | State | Commit | Notes |
 |---|---|---|---|
 | P0 briefing | done | 358144e | live |
-| P1 turn safety | pushed; deploying | 40c928c | Rules 45: ready/grace, saved retry receipts, advisory stale/obsolete replies. Release build + full `--test`: All tests passed; MCP turn safety 2/2, lobby 12/12, observe 5/5; site/watcher 14/14. Watch CI for 40c928c, then baseline phase. |
-| P2 slow-agent spike | pushed; deploying | 2111cb5 | 18 offline matches at rules 45, zero sim errors; full `--test`: All tests passed. Baseline and reproduction in `docs/spikes/slow-agent.md`. AI undefended miners 7.17 both; unsupported losses 19.67→18.33; all slow seats lose. Self-play unsupported losses 25.67→7.50. |
-| P3 miner protection | in progress; uncommitted | | Opt-in policy implementation and tests underway; no default behaviour enabled. Needs focused/full tests, zero-settle gate and spike rerun before commit. |
-| P4 squads | not started | | |
+| P1 turn safety | done; deployed | 40c928c (in e310cb9) | Rules 45: ready/grace, saved retry receipts, advisory stale/obsolete replies. Release build + full `--test`: All tests passed; MCP turn safety 2/2, lobby 12/12, observe 5/5; site/watcher 14/14. CI live e310cb9 at 16:43 EDT. |
+| P2 slow-agent spike | done; deployed | 2111cb5 (in d797248) | 18 offline matches at rules 45, zero sim errors; full `--test`: All tests passed. Baseline and reproduction in `docs/spikes/slow-agent.md`. AI undefended miners 7.17 both; unsupported losses 19.67→18.33; all slow seats lose. Self-play unsupported losses 25.67→7.50. CI live d797248 at 16:51 EDT. |
+| P3 miner protection | pushed; deploying | 77961b4 | Rules 46; full `--test`: All tests passed; 54 focused assertions, 4 zero-settle gates; 20 MCP tests. 18-match default floor exactly preserved. Plain self undefended miners 3.00→0.67; AI plain unchanged 7.17; P0 combinations worsen. Mixed verdict/reconsideration recorded in spike. |
+| P4 squads | in progress; uncommitted | | Addressing/persistence only; implement live membership, formation strength, rally enrollment, snapshots and MCP selectors. Needs green tests before shipment. |
 | P5 guards | not started | | |
 | P6 objectives | not started | | |
 | P7 strategy record + view | not started | | |
@@ -174,6 +174,6 @@ the T3 thread that wrote this doc, as T3 task
 `task_status` on that id and reviews each phase's commits against the principle and the architecture rules above. If the supervisor runs out, any agent continues from this table: read the
 latest commits touching the files above, check `ci-work/status.json`, and carry on with the first phase not marked done.
 
-**Next step:** watch CI deploy P1 (40c928c, included in e310cb9) and P2 (2111cb5). Finish P3 tests and zero-settle movement gate, re-run `--slow-agent --slow-agent-layer miners` once that layer is wired, record paired results, then commit/deploy rules 46. Continue with P4 only after this evidence.
+**Next step:** watch P3 (77961b4) deploy. Finish and verify P4 named squads (expected rules 47), then measure and build P5 only as explicitly configured guards. P3 evidence and its narrower go-to-P4 verdict are in `docs/spikes/slow-agent.md`; raw layer/floor runs are committed.
 
-**Open questions:** P1 conservatively pauses the saved readiness countdown during host downtime, matching the existing waiting clock. Retry cache capacity refuses new keys before executing (512 receipts per team), preserving every accepted key for ten real minutes. Stale order facts use strictly later ticks: changes in the same tick as a supplied `as_of_tick` cannot be ordered relative to that state read without a separate revision. Own unavailable-unit history is bounded to the latest 2048 removals.
+**Open questions:** P1 conservatively pauses the saved readiness countdown during host downtime, matching the existing waiting clock. Retry cache capacity refuses new keys before executing (512 receipts per team), preserving every accepted key for ten real minutes. Stale order facts use strictly later ticks: changes in the same tick as a supplied `as_of_tick` cannot be ordered relative to that state read without a separate revision. Own unavailable-unit history is bounded to the latest 2048 removals. P3: `base` is literal Team.StartPos; salvage-only tiles are excluded; fog may hold miners indefinitely; changing a destination affects future withdrawals/enrollment without reordering existing withdrawals. The chosen retreat point and lost mining time can worsen outcomes, especially with P0 habits: no automatic tactical fix was added.
