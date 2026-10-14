@@ -2086,16 +2086,22 @@ namespace Pez.Sim
                     Vec2? home = drops.Count > 0 ? drops.OrderBy(dp => Vec2.DistSq(dp, from)).First() : (Vec2?)null;
                     // Ore within its reach first: it mines a patch from where it stands rather than hopping tile to tile
                     // (drive a tile, stop, mine a few, drive a tile: a slide-pause rhythm on thin ore).
-                    int collects = int.MaxValue; // what the stop RichestNear picks collects
-                    var spot = (e.Moving ? null : Map.NearestOre(e.Pos, 3, t => Vec2.Dist(t.Center, e.Pos) <= MineReach && Free(t) && Wanted(t) && Unclaimed(t), want, home))
-                               ?? RichestNear(e.Pos, 8f, t => Free(t) && Wanted(t) && Unclaimed(t), want, home, out collects) // where a stop collects most
-                               ?? Map.NearestOre(from, 40, t => Free(t) && Wanted(t) && Unclaimed(t), want, home)
-                               ?? Map.NearestOre(from, 80, t => Free(t) && Wanted(t), want, home)
-                               ?? Map.NearestOre(from, 80, Free, want, home);
+                    var inReach = e.Moving ? null : Map.NearestOre(e.Pos, 3, t => Vec2.Dist(t.Center, e.Pos) <= MineReach && Free(t) && Wanted(t) && Unclaimed(t), want, home);
                     // Picked-over ground, where the best stop collects under ThinStop: a loaded truck on it sets out for its next spot only on
                     // a beat (ThinHopEvery) of the world's clock, so scraping a field is a hop every couple of seconds, not a stop-go beat of
                     // one a second. (The ore regrows no faster for the hurry.) Mid-drive, or empty (just out of the bay), it picks at once.
-                    if (collects < ThinStop && e.Cargo > 0 && !e.Moving && Tick % ThinHopEvery != 0) return;
+                    bool offBeat = e.Cargo > 0 && !e.Moving && Tick % ThinHopEvery != 0;
+                    // Off the beat, with nothing in reach, it has nothing to decide when no spot around it collects that much: it waits without
+                    // the search below, which would only find the same (the count ignores who has claimed what, so it can only overrate a
+                    // spot; the check after the search catches the rest).
+                    if (inReach == null && offBeat && PickedOver(e.Pos, HopRadius, want)) return;
+                    int collects = int.MaxValue; // what the stop RichestNear picks collects
+                    var spot = inReach
+                               ?? RichestNear(e.Pos, HopRadius, t => Free(t) && Wanted(t) && Unclaimed(t), want, home, out collects) // where a stop collects most
+                               ?? Map.NearestOre(from, 40, t => Free(t) && Wanted(t) && Unclaimed(t), want, home)
+                               ?? Map.NearestOre(from, 80, t => Free(t) && Wanted(t), want, home)
+                               ?? Map.NearestOre(from, 80, Free, want, home);
+                    if (collects < ThinStop && offBeat) return;
                     e.HarvestTile = spot;
                     e.Path = null;
                     if (!e.HarvestTile.HasValue)
@@ -2197,7 +2203,9 @@ namespace Pez.Sim
                     e.Moving = false;
                     e.Facing = RotateToward(e.Facing, bayFacing, AlignTurnRate * Dt);
                     e.Pos = e.Pos + (head - e.Pos) * MathF.Min(1f, 4f * Dt);
-                    if (MathF.Abs(AngleDiff(e.Facing, bayFacing)) < 0.02f) { e.Facing = bayFacing; e.Dock = DockStep.Reverse; }
+                    // Reverse moves straight to the bay, so the truck must be on the lane first, not just facing the right way
+                    // (one that came in beside the head already faced out, and backed in at a slant, across what lay beside the lane).
+                    if (MathF.Abs(AngleDiff(e.Facing, bayFacing)) < 0.02f && Vec2.Dist(e.Pos, head) < 0.1f) { e.Facing = bayFacing; e.Dock = DockStep.Reverse; }
                     return;
                 case DockStep.Reverse:
                     {
@@ -2238,6 +2246,34 @@ namespace Pez.Sim
         public const int ThinStop = 8;
         /// <summary>Ticks between the beats a truck on picked-over ground sets out for its next spot on (two seconds).</summary>
         public const int ThinHopEvery = TickRate * 2;
+        /// <summary>How far from where it stands a truck looks for its next spot to mine (RichestNear).</summary>
+        public const float HopRadius = 8f;
+
+        /// <summary>The ore of type `want` (any, if negative) a truck parked on tile t reaches: the tile and the eight around it.</summary>
+        int OreAround(Int2 t, int want)
+        {
+            int sum = 0;
+            for (int dy = -1; dy <= 1; dy++)
+                for (int dx = -1; dx <= 1; dx++)
+                    if (Map.OreAt(t.X + dx, t.Y + dy) > 0 && (want < 0 || Map.OreType[Map.Idx(t.X + dx, t.Y + dy)] == want)) sum += Map.OreAt(t.X + dx, t.Y + dy);
+            return sum;
+        }
+
+        /// <summary>Is the ground within `radius` of `from` picked over: some ore of type `want` (any, if negative) on it, but no stop that collects ThinStop?</summary>
+        bool PickedOver(Vec2 from, float radius, int want)
+        {
+            bool any = false;
+            int r = (int)MathF.Ceiling(radius), cx = (int)from.X, cy = (int)from.Y;
+            for (int y = cy - r; y <= cy + r; y++)
+                for (int x = cx - r; x <= cx + r; x++)
+                {
+                    if (Map.OreAt(x, y) <= 0 || (want >= 0 && Map.OreType[Map.Idx(x, y)] != want) || Vec2.Dist(new Int2(x, y).Center, from) > radius) continue;
+                    if (OreAround(new Int2(x, y), want) >= ThinStop) return false;
+                    any = true;
+                }
+            return any;
+        }
+
         /// <summary>
         /// The ore tile within `radius` of `from` where a parked truck collects the most: the ore within its reach there
         /// (MineReach, the tile and the eight around it), less a little for the drive. On a thin or picked-over field a
