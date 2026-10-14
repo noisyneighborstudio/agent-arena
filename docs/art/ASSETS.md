@@ -67,3 +67,16 @@ Add `PezCliffs` (with a MeshFilter and MeshRenderer) to an empty GameObject at t
 - **No FBX.** glTF is the delivery format; Blender converts to FBX in one step if you need it.
 - **Untested inside Unity.** The C# compiles against a Unity API stub but hasn't run in a Unity project.
 - **Check the axes once on import.** glTFast converts glTF to Unity by negating X, so models should come in facing +Z with doors toward the camera. Confirm this on the factory.
+
+## Preserved browser model
+
+`unity/Assets/Pez/Resources/PezModels/heavy_tank_legacy.glb` is the unchanged heavy-tank model from
+`bcae70dcefe31028f4ad7bff95027281b809360a`, retained only for the three browser viewers' `mammoth_tank` alias.
+The approved heavy tank now has one gun; the mammoth keeps its previous browser appearance until its own revision is
+approved. Unity still uses the mammoth's existing procedural twin-cannon fallback; it never loads this archive for that
+unit. The gateway and publish script serve/copy every model in `PezModels`, including this archive.
+
+To reproduce it, use that commit's `build_models.py` builder `V_tank('heavy_tank', 1.2, .8, twin=True)` and the
+`round_models.py --only heavy_tank` pipeline from the same commit, then retain the output under the archive name.
+Its SHA-256 is `890d9159afafafc4c9a88fa9a04037826e8f28fef5b82266f00ec5101f618b17`; rebuilding and rounding it
+was checked byte-for-byte. Do not regenerate it from the current heavy-tank builder.

@@ -115,8 +115,8 @@ namespace Pez.View
                 var (t, m, start) = ripples[i];
                 float k = (Time.time - start) / 1.2f;
                 if (k >= 1f || t == null) { if (t != null) Destroy(t.gameObject); Destroy(m); ripples.RemoveAt(i); continue; }
-                // Out from the foot plate to the survey radius (8 tiles) over 1.2 s, fading as it goes.
-                float r = Mathf.Lerp(0.6f, 8f, 1f - (1f - k) * (1f - k)) * 2f;
+                // Out from the foot plate to the survey radius (EntityDef.SurveyRadius, 12 tiles) over 1.2 s, fading as it goes.
+                float r = Mathf.Lerp(0.6f, EntityDef.SurveyRadius, 1f - (1f - k) * (1f - k)) * 2f;
                 t.localScale = new Vector3(r, 1, r);
                 m.color = new Color(1, 1, 1, 1f - k);
             }

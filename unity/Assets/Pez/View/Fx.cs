@@ -587,6 +587,18 @@ namespace Pez.View
             Emit(S.Dust, ground + Up * 0.06f + Flat(0.08f), back * Random.Range(0.2f, 0.5f) + FxSystems.Wind * 0.6f + Up * Random.Range(0.1f, 0.3f),
                 Random.Range(0.22f, 0.36f) * size, Random.Range(1.2f, 1.9f), Vary(Color32.Lerp(DustBiscuit, DustPale, 0.4f), 0.06f, 90));
 
+        /// <summary>A mine dropped through a minelayer's floor (VehicleWorks.Laid): a low ring of dust puffing out from under
+        /// the hull between its tracks, settling fast. `r` is the hull's radius. Its own team's to see (Fx.Audience).</summary>
+        public static void MineDrop(Vector3 ground, float r)
+        {
+            for (int i = 0; i < 10; i++)
+            {
+                var d = Flat(1f).normalized;
+                Emit(S.Dust, ground + d * r * 0.3f + Up * 0.04f, d * Random.Range(0.6f, 1.1f) + Up * Random.Range(0.05f, 0.2f),
+                    Random.Range(0.16f, 0.26f), Random.Range(0.7f, 1.1f), Vary(Color32.Lerp(DustBiscuit, DustPale, 0.3f), 0.05f, 150));
+            }
+        }
+
         /// <summary>A breath from a vehicle's exhaust stack (VehicleWorks): a small grey puff that rises out of the mouth and
         /// drifts downwind for about a second. `k` 1 is a cough as it pulls away, 0 an idling wisp.</summary>
         public static void Exhaust(Vector3 mouth, float k) =>

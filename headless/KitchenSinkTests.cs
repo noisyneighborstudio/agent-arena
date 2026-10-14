@@ -39,6 +39,7 @@ namespace Pez.Headless
             var gallery = w.Entities.First(e => e.Def.Key == "rifleman" && e.Team == KitchenSink.Blue && e.Order == Order.Idle);
             var galleryAt = gallery.Pos;
             var oreDocked = new HashSet<int>();
+            var drilledOres = new HashSet<int>();
             bool queued = false, landed = false, siteRising = false;
             int liveAt60 = 0, maxLive = 0;
             var sw = Stopwatch.StartNew();
@@ -48,6 +49,7 @@ namespace Pez.Headless
                 foreach (var e in w.Entities)
                 {
                     if (e.Dead) continue;
+                    if (e.Def.Key == "deep_mine" && e.Team == KitchenSink.Red && w.Map.DepositById(e.DepositId) is DeepDeposit deposit) drilledOres.Add(deposit.Type);
                     if (e.IsHarvester && e.Order == Order.ReturnOre && e.Dock == DockStep.Unload && e.CargoType >= 0) oreDocked.Add(e.CargoType);
                     if (e.IsHarvester && e.Dock == DockStep.Queue) queued = true;
                     if (e.IsAir && e.Landed) landed = true;
@@ -77,6 +79,7 @@ namespace Pez.Headless
                   "construction holds: one site building, a queued site and four stage sites");
             Check(Count("surveyed") >= 10, $"the surveyor keeps surveying ({Count("surveyed")} surveys)");
             Check(Count("drilled") >= 10, $"the drill rig keeps deploying ({Count("drilled")} deep mines)");
+            Check(drilledOres.SetEquals(new int[] { Map.Iron, Map.Copper, Map.Crystal, Map.Uranium }), $"the drill deploy loop shows every ore ({string.Join(", ", drilledOres)})");
             int ccs = w.Teams[KitchenSink.Blue].Stats.Built.TryGetValue("command_center", out var nc) ? nc : 0;
             Check(ccs >= 10, $"the construction truck keeps deploying into a command center ({ccs} times)");
             int ops = w.Teams[KitchenSink.Red].Stats.Built.TryGetValue("outpost", out var no) ? no : 0;
@@ -84,8 +87,10 @@ namespace Pez.Headless
             Check(w.Entities.Count(e => !e.Dead && e.Offline) == 1, "one defence stands offline (upkeep unpaid)");
             Check(Count("captured") >= 5 && w.Entities.Count(e => !e.Dead && e.Def.Key == "derrick" && e.Team < 0) >= 1, $"an engineer keeps capturing a neutral derrick ({Count("captured")} captures)");
             Check(Count("boarded") >= 16 && Count("unloaded") >= 4, $"transports load and unload ({Count("boarded")} boardings, {Count("unloaded")} unloads)");
+            Check(Count("mine_laid") >= 16, $"the minelayer keeps laying its row ({Count("mine_laid")} mines laid)");
             Check(landed && Count("refuelled") >= 5, $"an aircraft lands and refuels ({Count("refuelled")} times)");
             Check(Count("heal") >= 100, $"the field medic keeps healing its rifleman ({Count("heal")} heal pulses)");
+            Check(Count("repair") >= 300, $"the repair trucks keep welding their tank and power plant ({Count("repair")} welds)");
             Check(Count("destroyed") >= 100, $"wrecks and explosions keep coming ({Count("destroyed")} destroyed events)");
             var firing = w.Entities.Count(e => !e.Dead && e.Team == KitchenSink.Blue && e.IsArmed && w.Time - e.LastFiredAt < 10f);
             Check(firing >= 17, $"every weapon in the combat range is firing ({firing} shooters fired in the last 10 s)");

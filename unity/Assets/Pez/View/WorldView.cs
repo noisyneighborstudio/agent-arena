@@ -221,6 +221,7 @@ namespace Pez.View
                 var go = v.Rig.Root.gameObject;
                 if (go.activeSelf != show) go.SetActive(show);
                 if (show && v.BoardT <= 0f) v.Rig.Root.localScale = Vector3.one * vis;
+                if (v.Drive != null && show) v.Drive.Show(team < 0 || v.E.Team == team); // its private act: its own team's to see
                 bool ring = team == PovTeam && Selected.Contains(v.E.Id) && !v.E.IsStructure;
                 if (v.Ring.gameObject.activeSelf != ring) v.Ring.gameObject.SetActive(ring);
                 v.Bars?.ForView(v.E, team); // a player's stream shows only their own units' fuel
@@ -503,10 +504,12 @@ namespace Pez.View
             var rig = v.Rig;
             if (rig.HasModel && rig.Root.gameObject.activeInHierarchy && !v.Destroyed && v.E.Def.DeploysInto != null && DeployedInto(v) is EV into)
             {
-                // Outpost truck / drill rig: the mast stands up, the chassis sinks and the structure rises in its place.
+                // The vehicle's own hand-off (VehicleWorks.HandOff: the drill rig drills itself down under its deep mine, the
+                // construction truck stands the command center's mast up on its footing), else the chassis sinks and the
+                // structure rises in its place (the outpost truck).
                 rig.Model.transform.SetParent(transform, true);
                 into.Rig.Emerge.SetBuildProgress(0f);
-                rig.Emerge.StartCoroutine(rig.Emerge.PlayDeployInto(into.Rig.Emerge));
+                rig.Emerge.StartCoroutine(v.Drive?.HandOff(this, rig.Model.transform, into) ?? rig.Emerge.PlayDeployInto(into.Rig.Emerge));
             }
             else if (v.Troop is { Capturing: true } && rig.HasModel && rig.Root.gameObject.activeInHierarchy)
             {
@@ -519,6 +522,7 @@ namespace Pez.View
                 rig.Model.transform.SetParent(transform, true);
                 // Vehicles leave a wreck for a while; everything else goes poof (PezEmerge.PlayRemove).
                 bool wreck = v.Destroyed && v.E.Def.Armor != Armor.Infantry;
+                if (wreck) v.Drive?.Show(false); // detached wrecks are shared by every camera: erase private mine-stock cues
                 rig.Emerge.StartCoroutine(rig.Emerge.PlayRemove(wreck));
             }
             Destroy(rig.Root.gameObject);
@@ -813,22 +817,12 @@ namespace Pez.View
             if (emitted) Fx.Audience = null;
         }
 
-        /// <summary>Surveyor: thump while it stands surveying (each slam sends a ripple); moving off cancels.</summary>
-        void Survey(EV v)
-        {
-            var e = v.E;
-            var m = v.Rig.Motion;
-            if (m.OnThump == null) m.OnThump = () => Deposits.Ripple(v.Rig.Root.position);
-            bool surveying = e.Order == Order.Survey && !e.Moving && Vec2.Dist(e.Pos, e.OrderPos) <= 0.6f;
-            if (surveying && !m.Surveying) m.Survey();
-            else if (!surveying && m.Surveying) m.CancelSurvey();
-        }
-
         /// <summary>Point the model's turret where the sim says it's facing; idle turrets rest (PezMotion: hold, settle, an occasional glance).</summary>
         void Aim(EV v)
         {
             var e = v.E;
-            bool engaged = Time.time - v.LastFire < 3f || e.Order == Order.Attack;
+            // A repair truck parked at its patient turns its crane to it (the sim turns its TurretFacing there).
+            bool engaged = Time.time - v.LastFire < 3f || e.Order == Order.Attack || (e.Order == Order.Repair && !e.Moving && !e.Def.Medic);
             if (!engaged) { v.Rig.Motion.ClearAim(); return; }
             var dir = new Vector3(Mathf.Cos(e.TurretFacing), 0, Mathf.Sin(e.TurretFacing));
             v.Rig.Motion.AimAt(v.Rig.Root.position + dir * 5f);
@@ -1036,7 +1030,6 @@ namespace Pez.View
                 {
                     if (rig.Turret != null) Aim(v);
                     if (e.IsAir) rig.Motion.SetWorking(true);
-                    if (e.Def.Key == "geological_surveyor") Survey(v);
                     if (e.IsHarvester)
                     {
                         rig.Motion.SetBinLoad(e.Cargo / (float)e.Def.HarvestCapacity);
@@ -1491,6 +1484,8 @@ namespace Pez.View
             {
                 var ev = evs[i];
                 lastSeq = ev.Seq;
+                // A mine laid: the minelayer's dispenser drops it, for its own team's eyes only (VehicleWorks.Laid).
+                if (ev.Type == "mine_laid") { if (Views.TryGetValue(ev.A, out var layer)) layer.Drive?.Laid(this, layer.E); continue; }
                 bool visible = PovTeam < 0 || VisibleTile(ev.Pos) || ev.Team == PovTeam;
                 if (!visible) continue;
                 // Its effects (blasts, smoke, sparks, scorch) only reach the player streams whose team can see the spot.
@@ -1585,7 +1580,7 @@ namespace Pez.View
                             var to = W(ev.Pos2, HeightOf(ev.B, heal ? 0.3f : 0.5f));
                             // Heal beam: team-neutral cream-white. Welding beam: caramel amber.
                             Fx.Beam(from, to, heal ? new Color(0.96f, 0.95f, 0.91f, 0.8f) : new Color(Mats.Amber.r, Mats.Amber.g, Mats.Amber.b, 0.9f), heal ? 0.05f : 0.035f, lamp: !heal); // a heal's light is Fx.Healed's
-                            if (!heal) Fx.MuzzleFlash(to, 0.05f); // welding sparks
+                            if (!heal) { Fx.MuzzleFlash(to, 0.05f); if (Views.TryGetValue(ev.A, out var welder)) welder.Drive?.Welded(to); } // welding sparks; the torch aims and glows
                             else if (Views.TryGetValue(ev.B, out var patient)) { Fx.Healed(to); patient.Troop?.Tended(from); } // motes rise off it; it looks round at its medic
                             // A building being repaired is being fought: its fire turns to white steam where the beam lands.
                             if (!heal && Views.TryGetValue(ev.B, out var fought) && fought.E.IsStructure) { fought.RepairAt = Time.time; fought.RepairPoint = to; }

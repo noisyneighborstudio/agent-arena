@@ -212,11 +212,11 @@ namespace Pez
                 {
                     float k = t / .5f;
                     transform.position = origin + Vector3.down * .06f * k;
-                    PezShade.Set(parts, Mathf.Lerp(1f, WreckDim, k * (2f - k)), 1f);
+                    PezShade.Set(parts, Mathf.Lerp(1f, WreckDim, k * (2f - k)), 1f - k); // its lamps go out as it dies
                     yield return null;
                 }
                 transform.position = origin + Vector3.down * .06f;
-                PezShade.Set(parts, WreckDim, 1f);
+                PezShade.Set(parts, WreckDim, 0f);
                 yield return new WaitForSeconds(20f);
             }
             yield return Poof();

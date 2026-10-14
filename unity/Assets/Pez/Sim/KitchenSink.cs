@@ -630,8 +630,10 @@ namespace Pez.Sim
                 float range = Defs.Get(sk).Weapon.Range * 0.8f;
                 Lane(sk, tk, 2, b, range, name);
             }
-            // In the gap between the columns, the medic.
+            // In the gap between the columns, the medic and the repair trucks.
             FieldMedic(10, 14.25f);
+            FieldRepair(10, 18.5f);
+            StructureRepair(10.5f, 26.5f);
             // The long-range gun under column one, its own spotter drone beside it (sight 7, range 12).
             Lane("long_range_artillery", "power_plant", 2, 30.5f, 10.5f, "Long-range artillery (range 12)", 13);
             Unit(Blue, "recon_drone", 7, 32.5f);
@@ -705,6 +707,47 @@ namespace Pez.Sim
                 }
             });
             Item("Field medic", "a rifleman is hurt; the medic walks over, kneels facing it and heals it with its spray (the heal beam, motes rising off the patient, who looks round at it), stands and walks back to its post; loops", a + 1.75f, b, 7);
+        }
+
+        /// <summary>A Blueberry repair truck at its post at (a, b) and a light tank 3.5 to its right. Every cycle the tank is hit
+        /// (down to 35%); the truck, idle, drives over to it on its own (as repair trucks do with anything damaged within 6
+        /// tiles), turns its crane to it, lifts the boom and welds it whole (about 9 s at 30 HP/s), stows the boom and drives
+        /// back to its post. About 20 s a loop.</summary>
+        void FieldRepair(float a, float b)
+        {
+            var post = P(a, b);
+            var truck = Unit(Blue, "repair_truck", a, b, AlongRight, pin: false);
+            var tank = Unit(Blue, "light_tank", a + 3.5f, b, Toward);
+            int phase = 0; float since = T;
+            holds.Add(() =>
+            {
+                if (truck.Dead || tank.Dead) return;
+                switch (phase)
+                {
+                    case 0: // all well, the truck at its post; then a hit
+                        if (T - since > 2.5f) { tank.Hp = tank.Def.MaxHp * 0.35f; phase = 1; since = T; }
+                        break;
+                    case 1: // the truck goes over and welds it until it's whole
+                        if ((tank.Hp >= tank.Def.MaxHp - 0.5f && truck.Order != Order.Repair && T - since > 1f) || T - since > 25f) { phase = 2; since = T; }
+                        break;
+                    case 2: // a beat, then back to its post
+                        if (T - since < 1.5f) break;
+                        if (truck.Order == Order.Idle && Vec2.Dist(truck.Pos, post) > 0.6f) w.SetOrder(truck, Order.Move, post);
+                        else if (truck.Order == Order.Idle) { phase = 0; since = T; }
+                        break;
+                }
+            });
+            Item("Field repair", "a light tank is hit; the repair truck drives over, turns its crane to it, lifts the boom and swings the torch down onto it, welding (the torch tip and the cab's beacon flash, the welding beam and sparks) until it's whole, stows the boom and drives back to its post; loops", a + 1.75f, b, 7);
+        }
+
+        /// <summary>A Blueberry repair truck beside a power plant held at 45% health: it welds the plant without end (the
+        /// hold puts the damage back as fast as it repairs).</summary>
+        void StructureRepair(float a, float b)
+        {
+            var plant = Bldg(Blue, "power_plant", a + 3f, b);
+            holds.Add(() => { if (!plant.Dead) plant.Hp = plant.Def.MaxHp * 0.45f; });
+            Unit(Blue, "repair_truck", a, b - 0.3f, AlongRight, pin: false);
+            Item("Structure repair", "a repair truck welding a damaged power plant: its crane turned to the plant, the boom up and the torch on the weld, the plant's fire fought to steam where the beam lands", a + 1.5f, b, 7);
         }
 
         /// <summary>A Blueberry shooter at (a, b) and a Cherry target `dist` to its right, fired on forever.</summary>
@@ -837,31 +880,45 @@ namespace Pez.Sim
             DeepMineOn(Green, 28, 4, Map.Iron, 0.55f);
             Item("Deep mine on low power (Lime)", "the hoist at half speed, the winder labouring (the skip crawls now and then on its way up), its glow at half; four bricks of iron left in the stem", 28, 4);
 
-            // The surveyor drives between two spots and surveys each (thumps and ground ripples) in turn.
+            // The surveyor drives between two spots and surveys each in turn. Between them lies a deposit nobody has flagged:
+            // its flag comes off as each survey starts, and goes back in the tick the sim's 8 s survey plants it.
             var sv = Unit(Blue, "geological_surveyor", 3, 3, AlongRight, pin: false);
+            var hidden = Deposit(4.5f, 6f, Map.Copper, 1f, surveyedBy: -1);
             Vec2[] spots = { P(2, 3), P(7, 3) };
-            int s = 1;
-            holds.Add(() => { if (!sv.Dead && sv.Order != Order.Survey) w.SetOrder(sv, Order.Survey, spots[s++ % 2]); });
-            Item("Surveyor surveying", "drives to a spot, stops and thumps for 8 s (ripples), moves on", 4.5f, 3);
+            int s = 1; float idleAt = -1;
+            holds.Add(() =>
+            {
+                if (sv.Dead) return;
+                if (sv.Order == Order.Survey && sv.WorkTimer > 0 && w.Teams[Blue].Surveyed.Remove(hidden.Id)) w.Teams[Blue].Zones.Remove(hidden.Id);
+                if (sv.Order == Order.Survey) { idleAt = -1; return; }
+                if (idleAt < 0) idleAt = T;
+                if (T - idleAt >= 2.5f) w.SetOrder(sv, Order.Survey, spots[s++ % 2]);   // it stands a moment with the flag in, then moves on
+            });
+            Item("Surveyor surveying", "drives to a spot and stops: foot down, mast up, the dish turning; the hammer slams five times (a ripple to 12 tiles each) as the cap's four lamps count the 8 s; the copper deposit's flag rises as the last ripple lands, the lamps blink; it packs up and moves on", 4.5f, 4f);
 
-            // The drill rig drives onto its zone and deploys into a deep mine; 14 s later the mine is cleared and a new rig rolls up.
-            var zone = Deposit(16, 3, Map.Crystal, 0.8f);
-            holds.Add(() => zone.Amount = zone.Initial * 0.8f);
-            Entity rig = null, mine = null; float mineAt = 0, respawn = 0;
-            var rigFrom = P(10, 2);
+            // The drill rig drives onto a zone and deploys into that ore's deep mine; the mine stands 8 s, is cleared, and a
+            // new rig takes the next zone: iron, copper, crystal, uranium in turn. Cherry's (its zones, rigs and mines), as
+            // Blueberry's power is spoken for.
+            var zones = new DeepDeposit[4];
+            var starts = new Vec2[4];                     // where each zone's rig rolls up from (P reads the district now, not later)
+            for (int i = 0; i < 4; i++) { zones[i] = Deposit(12 + 4 * i, 7.5f, i, 0.8f, surveyedBy: Red); starts[i] = P(4.5f + 4 * i, 5.5f); }
+            holds.Add(() => { foreach (var z in zones) z.Amount = z.Initial * 0.8f; });
+            Entity rig = null, mine = null; DeepDeposit zone = null; float mineAt = 0, respawn = 0; int next = 0;
             holds.Add(() =>
             {
                 if (rig != null && rig.Dead) { rig = null; mine = w.Get(zone.MineId); mineAt = T; }
-                if (mine != null && (mine.Dead || T - mineAt > 14f)) { if (!mine.Dead) w.Remove(mine); zone.MineId = 0; mine = null; respawn = T + 2f; }
+                if (mine != null && (mine.Dead || T - mineAt > 8f)) { if (!mine.Dead) w.Remove(mine); zone.MineId = 0; mine = null; respawn = T + 1.5f; }
                 if (rig == null && mine == null && T >= respawn)
                 {
-                    rig = w.PlaceUnit(Blue, "drill_rig", rigFrom, AlongRight);
+                    int k = next++ % 4;
+                    zone = zones[k];
+                    rig = w.PlaceUnit(Red, "drill_rig", starts[k], AlongRight);
                     w.SetOrder(rig, Order.Drill, zone.Pos);
                     rig.ZoneId = zone.Id;
                 }
                 else if (rig != null && rig.Order != Order.Drill && !rig.Dead) { w.SetOrder(rig, Order.Drill, zone.Pos); rig.ZoneId = zone.Id; }
             });
-            Item("Drill rig drilling", "drives onto its zone, the mast stands up and it deploys into a deep mine (the crystal core drill rising as the rig sinks); loops", 13, 3);
+            Item("Drill rig drilling", "Cherry's rig drives onto its zone, its lamp blinking as it nears; the mast stands up off the stern, the auger runs out and bites (chips of that ore fly), and the rig drills itself down as the ore's own deep mine rises over the shaft; iron, copper, crystal and uranium in turn; loops", 18, 7.5f, 10);
         }
 
         void Air()
@@ -911,6 +968,7 @@ namespace Pez.Sim
             // Mixed squads, so every soldier is seen boarding and stepping back out.
             Transport("apc", new[] { "rifleman", "medic", "engineer", "sniper" }, 4, 4, "APC loading");
             Transport("transport_chopper", new[] { "rocket_soldier", "laser_trooper", "commando", "rifleman" }, 18, 4, "Transport chopper loading");
+            MineLaying(29, 4);
 
             var stranded = Unit(Blue, "light_tank", 42, 2);
             fuelExempt.Add(stranded.Id);
@@ -950,6 +1008,41 @@ namespace Pez.Sim
                 }
             });
             Item(name, $"a squad ({string.Join(", ", paxKeys.Select(Pretty))}) walk up and board (shrinking into it), ride, step back out of it and walk back; loops", a + 3, b - 1, 8);
+        }
+
+        /// <summary>A minelayer lays a row of four mines, waits, the mines are cleared and it drives back; forever.</summary>
+        void MineLaying(float a, float b)
+        {
+            var ml = Unit(Blue, "minelayer", a, b, AlongRight, pin: false);
+            var home = P(a, b);
+            var spots = new[] { P(a + 3, b), P(a + 5, b), P(a + 7, b), P(a + 9, b) };
+            int phase = 0; float since = 0;
+            holds.Add(() =>
+            {
+                if (ml.Dead) return;
+                switch (phase)
+                {
+                    case 0: // lay the row
+                        w.SetOrder(ml, Order.LayMines, spots[0]);
+                        ml.MineQueue.Clear();
+                        ml.MineQueue.AddRange(spots);
+                        phase = 1; since = T;
+                        break;
+                    case 1:
+                        if (ml.Order != Order.LayMines || T - since > 20f) { phase = 2; since = T; }
+                        break;
+                    case 2: // the row lies a while, then it's cleared and the layer drives home
+                        if (T - since < 5f) break;
+                        foreach (var m in w.Entities.Where(o => !o.Dead && o.IsMine && o.Team == Blue && spots.Any(s => Vec2.Dist(s, o.Pos) < 0.6f)).ToList()) w.Remove(m);
+                        w.SetOrder(ml, Order.Move, home);
+                        phase = 3; since = T;
+                        break;
+                    case 3:
+                        if (ml.Order == Order.Idle && T - since > 1f) phase = 0;
+                        break;
+                }
+            });
+            Item("Mine laying", "a minelayer lays a row of four mines: its head flips back as it nears each spot, the candy stack steps down, the bottom candy drops through the floor with a puff and the mine is left behind (Blueberry's to see: Cherry's stream sees the head shut and a still stack; Cherry's radar dome across the district does detect the mines a moment later, the sim's rule); cleared after 5 s; loops", a + 5, b, 8);
         }
 
         void Wrecks()
@@ -1076,7 +1169,7 @@ namespace Pez.Sim
                 }
                 else if (truck != null && !truck.Dead && truck.Order == Order.Idle && w.Deploy(truck) != null) { w.Remove(truck); truck = null; again = T + 2f; }
             });
-            Item("Construction truck deploying", "drives up, stops and deploys into a command center (the truck sinks as the base rises); loops", 7, 4.5f, 9);
+            Item("Construction truck deploying", "drives up, stops and deploys: it lines up on the crane's footing, stands the command center's own crane mast up off its tail, and sinks away as the base rises round the mast; loops", 7, 4.5f, 9);
 
             // An outpost truck (Cherry, whose trucks work far off in the economy loop, so none come here to unload) drives up
             // and deploys: the bunker rises out of it and the lookout's mast telescopes up. 12 s later the outpost is cleared
