@@ -1151,9 +1151,13 @@ namespace Pez.View
             queuedAt.Clear();
             var q = World.Teams[e.Team].UnitQueues[e.Def.Produces];
             foreach (var p in q) if (p.WorkerId == e.Id) queuedAt.Add(p);
-            foreach (var p in q) if (p.WorkerId == 0 && (p.StructureId == 0 || p.StructureId == e.Id || World.Get(p.StructureId) == null)) queuedAt.Add(p);
+            foreach (var p in q) if (p.WorkerId == 0 && (p.StructureId == 0 || p.StructureId == e.Id || !Trains(World.Get(p.StructureId), e))) queuedAt.Add(p);
             return queuedAt;
         }
+
+        /// <summary>Is b a building that can still train for e's team and kind (as World.AssignWorkers counts one)? An item queued at one that
+        /// isn't (gone, captured, unfinished) goes to whichever is free.</summary>
+        static bool Trains(Entity b, Entity e) => b != null && !b.Dead && b.Team == e.Team && b.IsStructure && b.IsComplete && b.Def.Produces == e.Def.Produces;
 
         static float DoorH(Transform door)
         {
