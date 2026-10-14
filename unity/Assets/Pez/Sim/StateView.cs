@@ -175,6 +175,7 @@ namespace Pez.Sim
             o.Set("last_alert_seq", w.Alerts.LastSeq);
             o.Set("standing_orders", t.StandingOrders.Length == 0 ? "none" : t.StandingOrders);
             o.Set("orders_version", t.OrdersVersion);
+            o.Set("policies", new JObj().Set("miners", t.Miners.View()));
 
             var enemies = w.Teams.Where(x => x.Id != team && !x.Left).Select(x => new JObj()
                 .Set("team", x.Id).Set("name", x.Name).Set("player", x.PlayerName ?? x.Controller)
@@ -613,12 +614,14 @@ namespace Pez.Sim
         ///     a unit parked on the head of its lane, rather than waiting for it to leave.
         /// </summary>
         /// 45: waiting seats explicitly ready up (120-second grace); command retries and stale decision facts survive saves.
-        public const int RulesVersion = 45;
+        /// 46: miner withdrawal is an explicit team policy; fields resume only after the team sees the raid gone.
+        public const int RulesVersion = 46;
 
         public static JObj Rules()
         {
             var o = new JObj().Set("rules_version", RulesVersion);
             o.Set("turn_safety", "Waiting rooms start when the required seats are ready, or 120 real seconds after they fill. Send ready after reading your state. Command request_id retries return the first reply for 10 real minutes (bounded to 512 receipts per team). Optional as_of_tick reports newer orders, retreats and own losses without rejecting stale orders; a missing target returns obsolete.");
+            o.Set("miner_policy", "Off by default. set_policy miners {withdraw_on_attack:true,to:[x,y] or base,resume_after_s:N} withdraws trucks on the same field when one is hit or a visible armed enemy reaches weapon range. Every destination and delay is yours. A field cannot withdraw again within 20 seconds, and resumes only after the team sees the raid gone for your delay; loss of sight is not clearance. Direct orders detach a truck until you explicitly harvest with it again. Events miners_withdrawn and miners_resumed explain each action.");
             o.Set("overview", "Real-time strategy with a production chain. Mining trucks mine four ores (iron_ore, copper_ore, crystal, uranium) into your stockpile. Converter buildings turn ore into materials (steel, copper, circuits, lenses, plasma, composite) that higher-tier structures and units cost. Your command_center builds structures; barracks/factory/airfield build units. A team is defeated when it has no structures left (and no construction_truck to deploy a new command center). Real time at 20 ticks/s; it does not wait for you.");
             o.Set("chain", Defs.All.Values.Where(d => d.Recipes.Length > 0).SelectMany(d => d.Recipes.Select(r => $"{d.Key}: {r}")).Append($"fusion_reactor: burns {World.FusionBurn} plasma/s for +500 power").ToList());
             o.Set("tips", new List<string> {

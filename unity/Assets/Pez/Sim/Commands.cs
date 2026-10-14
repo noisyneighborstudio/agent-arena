@@ -23,6 +23,7 @@ namespace Pez.Sim
       add ""spread"":3 (tiles between units, 1-6; true = 3) to open the formation up against splash (artillery, heavy tanks)
       add ""waypoints"":[[x,y],...] to queue more points (x/y optional: the first waypoint is used), and ""loop"":true to patrol them (a loop within 4 tiles holds there instead)
   {""type"":""set_retreat"", ""units"":[IDS], ""below_pct"":30}  units pull back to base on their own below that HP %, once per wound, so your next order sticks (aircraft land on a pad; 0 = off)
+  {""type"":""set_policy"", ""miners"":{""withdraw_on_attack"":true,""to"":""base"",""resume_after_s"":20}}  opt-in field withdrawal on hits/visible weapon-range threats; to may be [x,y]; false disables it. Resumes only after the field is visibly clear for your delay. Direct orders detach a truck; harvest hands it back.
   {""type"":""attack"", ""units"":[IDS], ""target"":ID}     focus fire on a visible enemy
       add ""until"":""capturable"" (structures only) to hold fire once it's at 50% health or less, so an engineer can capture it; they open up again if it's repaired
   {""type"":""stop"", ""units"":[IDS]}
@@ -67,6 +68,7 @@ POST /command may wrap commands with ""request_id"":""unique retry key"" and ""a
                     return Err($"you're under newcomer protection for {(int)(w.Teams[team].ProtectedUntil - w.Time)}s more and can't attack yet; use the time to build up");
                 switch (type)
                 {
+                    case "set_policy": return MinerPolicies.Configure(w, team, c);
                     case "build": return Build(w, team, c);
                     case "train": return Train(w, team, c);
                     case "move": return UnitOrder(w, team, c, Order.Move);
@@ -113,7 +115,7 @@ POST /command may wrap commands with ""request_id"":""unique retry key"" and ""a
         /// slot has. Units get slots by where they stand, front to back and left to right, so their paths don't cross
         /// (handed out in command order they did, and wedged each other short of their slots).
         /// </summary>
-        static Dictionary<Entity, Vec2> FormationSlots(World w, List<Entity> units, Vec2 dest, float gap)
+        internal static Dictionary<Entity, Vec2> FormationSlots(World w, List<Entity> units, Vec2 dest, float gap, IEnumerable<Vec2> reserved = null)
         {
             int n = units.Count, cols = (int)MathF.Ceiling(MathF.Sqrt(n)), rows = (n + cols - 1) / cols;
             var centre = new Vec2(units.Average(u => u.Pos.X), units.Average(u => u.Pos.Y));
@@ -128,7 +130,7 @@ POST /command may wrap commands with ""request_id"":""unique retry key"" and ""a
                 slots.Add((dest + side * lat + fwd * along, r, lat));
             }
             // Open ground only, and never two slots on one spot.
-            var taken = new List<Vec2>();
+            var taken = reserved?.ToList() ?? new List<Vec2>();
             for (int k = 0; k < slots.Count; k++)
             {
                 var at = slots[k].at;

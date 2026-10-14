@@ -74,7 +74,7 @@ Rows about a death carry `at_t`, the exact game time it happened.
   `command_completed` (with `now_idle`), `unit_idle` (a unit went idle without finishing an order of yours), `unit_arrived` (info: a new unit at its rally point, or one that stepped aside, now idle),
   `auto_order` (a unit acting on its own: responding to an attack, refuelling), `no_progress` (6 s on the way
   somewhere and no closer, not because it's fighting) and `progress_resumed`, `formation_split`, `support_behind`
-  and `formation_regrouped`, `retreat_started` and `retreat_ended`, and `order_failed` (immediate: a drill, survey or
+  and `formation_regrouped`, `retreat_started` and `retreat_ended`, `miners_withdrawn` and `miners_resumed` (an explicitly enabled field policy, with the observed trigger and action), `detached_by_order` (a direct order taking a truck out of policy control), and `order_failed` (immediate: a drill, survey or
   capture that can't be done, or a trip out of fuel range).
 - **Combat:** `engagement_started` and `engagement_ended` (fights clustered by place, with a summary), `damage` (per
   entity `hp` before and after, and `by`: the attacker if you can see it, otherwise `"not visible"`), `losses`
@@ -172,6 +172,12 @@ lists the units now idle. A unit given a new order is reported as `replaced_by_c
 replacing orders is always safe. A unit that stops on its own shows as `unit_idle`, `no_progress`, `stopped_short` or
 `diverted:<order>`. Train commands complete when their units are out, and build commands when the structure is
 finished or lost.
+
+Optional `request_id` on a batch or command makes retries return its first result for ten real minutes, including after a
+server restart. Receipts are per team and bounded to 512; capacity refuses new keys before executing, preserving existing
+unexpired replies. `as_of_tick` adds advisory `stale` facts about later own-unit orders (with provenance), retreats and losses.
+Orders still execute where possible. An unavailable target returns `code: obsolete`, with a reason that does not confirm an
+unseen enemy death. Retry receipts and unavailable-unit history never enter viewer snapshots.
 
 ## One controller per team
 

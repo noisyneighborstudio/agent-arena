@@ -72,4 +72,58 @@ dotnet run -c Release --no-build -- --slow-agent --slow-agent-layer baseline \
 
 **Go to P3:** miner protection has a clear baseline failure to address: 7.17 undefended miner deaths per slow seat against SimpleAI despite existing retreat/cohesion/rally habits. Keep its policy opt-in and explicit; this result authorizes no automatic tactical player. Re-run the same matrix after P3, then P4/P5, then P6, recording separate raw files and appending the numbers here. Prefer per-seed paired changes over pooled win claims. If a layer does not improve its targeted losses or plan continuity, record the result and revisit that design before the next layer.
 
-Resume after the P2 phase commit: add only the shipped layer's explicit setup commands to the harness, preserving the baseline choices and metrics. The CLI currently accepts `baseline` only so an unimplemented layer cannot silently receive a baseline label.
+Resume after the P2 phase commit: add only the shipped layer's explicit setup commands to the harness, preserving the baseline choices and metrics. At P2 the CLI accepted `baseline` only, so an unimplemented layer could not silently receive a baseline label. Shipped opt-in layers are added explicitly below.
+
+## P3 rerun: explicit miner withdrawal (rules 46)
+
+Run on the same machine and seeds after P3's sim source was frozen and its dedicated tests/gates passed. The `miners` layer adds exactly one first-turn command per slow commander: `set_policy` with `withdraw_on_attack:true`, explicit `[home.x,home.y]` destination and `resume_after_s:20`. Every other commander decision stays unchanged, including later direct orders taking priority over policy. Plain/P0 and the opposing seats still alternate as in P2. No player behaviour is added to SimpleAI.
+
+Raw results: [slow-agent-miners.jsonl](slow-agent-miners.jsonl). Eighteen games, zero sim errors, rules 46. Slow-vs-AI knockouts occur at 431.85–549.35 seconds; self-play reaches 720 seconds. This matrix took 11.5 seconds wall time. A separate default-off matrix [slow-agent-floor-rules46.jsonl](slow-agent-floor-rules46.jsonl) reproduced **every one of the eighteen P2 match/seat metrics exactly**, after excluding the rules-version label. The floor-check process ran concurrently; these wall times are run metadata, not a performance comparison.
+
+Cells remain mean / nearest-rank p50 / p95 across six slow seats.
+
+| Opponent | Variant + miner policy | Undefended miner losses | All miner losses | Unsupported armed losses | All armed losses | Final score |
+|---|---|---:|---:|---:|---:|---:|
+| simple_ai | plain | 7.17 / 6.00 / 10.00 | 8.50 / 8.00 / 11.00 | 20.50 / 19.00 / 26.00 | 28.00 / 27.00 / 32.00 | 0.00 / 0.00 / 0.00 |
+| simple_ai | p0_habits | 7.67 / 7.00 / 10.00 | 8.33 / 8.00 / 10.00 | 19.50 / 19.00 / 22.00 | 28.00 / 28.00 / 32.00 | 0.00 / 0.00 / 0.00 |
+| self | plain | 0.67 / 0.00 / 2.00 | 1.17 / 0.00 / 4.00 | 28.00 / 27.00 / 42.00 | 40.50 / 40.00 / 47.00 | 150.00 / 148.00 / 168.00 |
+| self | p0_habits | 1.00 / 0.00 / 5.00 | 1.67 / 0.00 / 6.00 | 10.33 / 6.00 / 22.00 | 38.33 / 37.00 / 47.00 | 150.00 / 149.00 / 173.00 |
+
+| Opponent | Variant + miner policy | Alerts | Commander responses | Unresolved | Commander response seconds (mean / p50 / p95) |
+|---|---|---:|---:|---:|---:|
+| simple_ai | plain | 203 | 95 | 108 | 14.05 / 14.70 / 27.50 |
+| simple_ai | p0_habits | 221 | 90 | 131 | 13.56 / 14.10 / 26.05 |
+| self | plain | 281 | 222 | 59 | 13.90 / 13.20 / 27.05 |
+| self | p0_habits | 315 | 272 | 43 | 13.08 / 12.10 / 28.05 |
+
+Executor interventions are measured separately using `miners_withdrawn` observations, their `reason` and `triggered_at_s`. The raw event list includes each intervention's tick, units and trigger-to-order delay. A `hit` record is a matched damage-trigger reaction; `seen_weapon_range` is a visible-threat trigger, which can precede the first hit. `field_already_withdrawn` enrolls a new truck into an existing withdrawal and is counted separately below; it is included in the raw `unmatched` count because it is not a new initial hit/range transition. A missing trigger is never interpreted as zero.
+
+| Opponent | Variant | Hit-trigger reactions | Visible-range triggers | New-enrollment events | Resume events |
+|---|---|---:|---:|---:|---:|
+| simple_ai | plain | 1 | 12 | 30 | 2 |
+| simple_ai | p0_habits | 1 | 15 | 29 | 2 |
+| self | plain | 2 | 14 | 25 | 2 |
+| self | p0_habits | 3 | 18 | 8 | 12 |
+
+Across all groups there are 158 withdrawal observations: 7 damage-trigger reactions, 59 visible-range triggers and 92 new-enrollment events, plus 18 resume observations. Every recorded trigger-to-order delay is 0 game-seconds: the rule issues the ordinary order in the same sim tick as its trigger. This is synchronous execution timing, **not** proof the trucks escaped or that a model received the event with zero latency. The 30-second commander's alert-response distributions above remain separate.
+
+### Where P3 did not win
+
+In plain self-play, undefended miner losses improve in every seed: paired two-seat totals 4 → 0, 5 → 2 and 9 → 2. The mean drops 3.00 → 0.67 (77.8% fewer). Against SimpleAI plain, mean undefended losses stay 7.17, with paired totals 13 → 15, 16 → 17 and 14 → 11; all six slow seats still lose. Adding policy to P0 habits worsens undefended losses from 7.17 → 7.67 against AI and 0.17 → 1.00 in self-play. It does not uniformly improve the targeted metric.
+
+Withdrawal also costs production time. Mean ore mined falls 8.4% for plain vs AI, 5.1% for P0 vs AI, 1.1% for plain self-play and 2.2% for P0 self-play. The policy preserves only the field known to the team and requires visible clearance before resumption; the unchanged script can later give a direct withdrawal/mining order and take responsibility again. This is evidence for a tradeoff in an explicit safety policy, not a reason to add automatic tactical judgement or silently override the commander's next turn.
+
+### P3 reconsideration and decision before P4/P5
+
+**Retain P3 as an opt-in instrument, with a mixed verdict.** It executes the configured response promptly and improves plain self-play in all three seeds. It fails the stronger claim that home withdrawal alone protects slow commanders against SimpleAI, and combining it with P0 is worse in this small sample. The initial criterion is therefore met only for a narrower use case; do not advertise policy as an unconditional improvement.
+
+Proceed to P4's non-behavioural addressing layer. For P5, test explicitly selected escorts/support/withdraw destinations rather than giving the executor permission to choose safer ground or whether to fight. Reconsider those guards if their own controlled rerun also fails to move the targeted metrics. Open question for broader testing: when does the chosen fallback destination or lost mining uptime make withdrawal worse than the existing retreat rule? Three seeds do not settle that strategic choice.
+
+The added harness tests passed after P3 integration: default policy stays off, `miners` configures its explicit home destination/delay only once, event cursors consume interventions once, hit/range timing stays separate and unmatched triggers remain explicit. Run the layer with:
+
+```sh
+cd headless
+dotnet run -c Release --no-build -- --slow-agent --slow-agent-layer miners \
+  --slow-agent-seeds 1,2,3 --slow-agent-minutes 12 \
+  --slow-agent-out ../docs/spikes/slow-agent-miners.jsonl
+```

@@ -52,6 +52,7 @@ namespace Pez.Sim
         /// <summary>Standing instructions from the human commander to whoever (usually an LLM) plays this team.</summary>
         public string StandingOrders = "";
         public int OrdersVersion;
+        public readonly MinerPolicy Miners = new MinerPolicy();
         /// <summary>Recent command replies, per seat, for safe retries across restarts.</summary>
         public readonly List<CommandReceipt> CommandReceipts = new List<CommandReceipt>();
         /// <summary>Recent unavailable own entities, id to removal tick; never enemy intelligence.</summary>
@@ -961,9 +962,13 @@ namespace Pez.Sim
             var ev = new GameEvent { Seq = nextSeq++, Tick = Tick, Type = type, Team = team, A = a, B = b, Pos = pos, Pos2 = pos2, Key = key, Text = text };
             // Which teams saw it go: only they may be told it was destroyed (the observation feed never reports deaths in the fog).
             // A dismantled unit (its team left or was knocked out) goes the same way: the feed forgets it where it was seen go.
-            if ((type == "destroyed" || type == "salvaged") && Feed != null && ById.TryGetValue(a, out var gone))
-                for (int t = 0; t < Teams.Count && t < 31; t++)
-                    if (t != gone.Team && !gone.IsCarried && IsVisibleTo(t, gone)) ev.SeenBy |= 1 << t;
+            if ((type == "destroyed" || type == "salvaged") && ById.TryGetValue(a, out var gone))
+            {
+                MinerPolicies.WitnessGone(this, gone);
+                if (Feed != null)
+                    for (int t = 0; t < Teams.Count && t < 31; t++)
+                        if (t != gone.Team && !gone.IsCarried && IsVisibleTo(t, gone)) ev.SeenBy |= 1 << t;
+            }
             Events.Add(ev);
             Feed?.OnEmit(ev);
             EventCounts[type] = (EventCounts.TryGetValue(type, out var n) ? n : 0) + 1;
@@ -1156,6 +1161,7 @@ namespace Pez.Sim
 
         public void SetOrder(Entity e, Order o, Vec2 pos, int target = 0)
         {
+            if (CommandActor != null && e.IsHarvester && e.Team >= 0) MinerPolicies.DirectOrder(this, e, o);
             Touched?.Add(e);
             e.LastOrderTick = Tick;
             e.LastOrderBy = CommandActor ?? "sim";
@@ -1199,6 +1205,7 @@ namespace Pez.Sim
             Guard("economy", UpdateEconomy);
             Guard("production", UpdateProduction);
             Guard("groups", MeasureGroups);
+            Guard("miner policy", () => { foreach (var team in Teams) MinerPolicies.Step(this, team.Id); });
             if (Tick % (TickRate * 10) == 0) Guard("home ore", CheckHomeOre);
             double tu = Profile ? profileClock.Elapsed.TotalSeconds : 0;
             // Units act one after another, and whoever acts later sees the other's move: it fires first as two armies close, and a
@@ -2027,6 +2034,7 @@ namespace Pez.Sim
                 if (Time - t.LastHitTime > 10f && (t.IsStructure || t.IsHarvester))
                     Emit("under_attack", t.Team, t.Id, src?.Id ?? 0, t.Center, key: t.Def.Key);
                 t.LastHitTime = Time;
+                if (t.IsHarvester) MinerPolicies.Hit(this, t);
                 RaiseDamageAlert(t, src);
             }
             if (src != null && !src.Dead && src.Team != t.Team && !src.IsMine)
@@ -2358,7 +2366,8 @@ namespace Pez.Sim
         {
             e.CargoSalvage = 0;
             e.CargoType = -1;
-            e.Order = Order.Harvest;
+            if (MinerPolicies.Controls(this, e)) SetOrder(e, Order.Idle, e.Pos);
+            else e.Order = Order.Harvest;
             e.Path = null;
             e.Dock = DockStep.None;
             e.DockAt = 0;

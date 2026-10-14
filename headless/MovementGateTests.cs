@@ -19,6 +19,7 @@ namespace Pez.Headless
         static void MovementGate()
         {
             GateGuardCatchesADance();
+            GateMinerProtection();
             GateAirfieldRush();
             GateCrowd(budget: 0);
             GateEconomy(seed: 4, size: 80);
@@ -39,6 +40,61 @@ namespace Pez.Headless
         }
 
         static string Settles(World w) => w.SettleCounts.Count == 0 ? "none" : string.Join(", ", w.SettleCounts.Select(kv => $"{kv.Key} x{kv.Value}"));
+
+        static void GateMinerProtection()
+        {
+            // A stationary raid remains visible from a scout while the miners withdraw: no repeated order writes or
+            // return trips just because the withdrawing trucks leave weapon range. Its exit band belongs to the field.
+            var (game, trucks, _) = MinerScene(); var w = game.World;
+            EnableMiners(w, 2);
+            var foe = Enemy(w, "rifleman", new Vec2(35.5f, 31.5f)); foe.Cooldown = 10000;
+            w.Hurt(trucks[0], 1, null, 1);
+            Step(game, 60);
+            Check(w.SettleCounts.Count == 0, $"miner withdrawal under a visible 60-second raid has zero settles ({Settles(w)})");
+            Check(w.EventCounts.TryGetValue("miners_withdrawn", out int wd) && wd == 1 && !w.EventCounts.ContainsKey("miners_resumed") &&
+                trucks.All(t => !t.Dead && t.Order != Order.Harvest),
+                "miners stay at their withdrawal point during a persistent raid, without withdraw/resume oscillation");
+
+            // Withdraw, see the raid leave, then resume exactly once at each miner's previous ore stop.
+            var clear = MinerScene(); w = clear.game.World;
+            EnableMiners(w, 2);
+            foe = Enemy(w, "rifleman", new Vec2(35.5f, 31.5f)); foe.Cooldown = 10000;
+            w.Hurt(clear.trucks[0], 1, null, 1);
+            Step(clear.game, 2); At(foe, new Vec2(40.5f, 31.5f));
+            Step(clear.game, 58);
+            Check(w.SettleCounts.Count == 0, $"miner withdrawal and clear-field resumption over 60 seconds has zero settles ({Settles(w)})");
+            Check(w.EventCounts.TryGetValue("miners_withdrawn", out wd) && wd == 1 && w.EventCounts.TryGetValue("miners_resumed", out int rs) && rs == 1,
+                "a raid seen leaving resumes mining once, without hold/advance or withdrawal oscillation");
+
+            var loaded = MinerScene(); w = loaded.game.World;
+            EnableMiners(w, 2, "base");
+            foreach (var truck in loaded.trucks) { truck.Cargo = 90; truck.CargoType = Map.Iron; }
+            w.Hurt(loaded.trucks[0], 1, null, 1); w.Remove(loaded.scout);
+            Step(loaded.game, 60);
+            Check(w.SettleCounts.Count == 0, $"loaded miners withdrawing to base and unloading over 60 seconds have zero settles ({Settles(w)})");
+            Check(loaded.trucks.All(t => !t.Dead && t.Cargo == 0 && t.Order != Order.Harvest) && !w.EventCounts.ContainsKey("miners_resumed"),
+                "unloading at base cannot restart mining while the policy still owns a withdrawn truck");
+
+            var shared = MinerScene(); w = shared.game.World;
+            for (int y = 30; y <= 33; y++) for (int x = 40; x <= 43; x++)
+            {
+                int i = w.Map.Idx(x, y); w.Map.Ore[i] = w.Map.OreBase[i] = 500;
+                w.Map.OreType[i] = w.Map.OreBaseType[i] = Map.Iron;
+            }
+            w.Map.FieldsChanged();
+            var allTrucks = shared.trucks.ToList();
+            for (int i = 0; i < 3; i++)
+            {
+                var truck = At(Mine0(w, "mining_truck"), new Vec2(40.5f + i, 31.5f));
+                w.SetOrder(truck, Order.Harvest, truck.Pos); allTrucks.Add(truck);
+            }
+            EnableMiners(w); w.Hurt(allTrucks[0], 1, null, 1); w.Hurt(allTrucks[3], 1, null, 1);
+            Check(allTrucks.Select(t => t.OrderPos).Distinct().Count() == allTrucks.Count,
+                "two withdrawing fields reserve distinct goals at the same agent-supplied destination");
+            w.Remove(shared.scout); Step(shared.game, 60);
+            Check(w.SettleCounts.Count == 0 && allTrucks.All(t => !t.Dead && t.Order != Order.Harvest),
+                $"two mining fields withdrawing together over 60 seconds have zero settles and no return oscillation ({Settles(w)})");
+        }
 
         /// <summary>Six aircraft low on fuel make for one airfield (four slots): they land in their own slots or hold until one
         /// frees, and none hovers over the pad shoving the others until it runs dry (they used to, and crashed).</summary>

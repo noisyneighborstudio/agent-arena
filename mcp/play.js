@@ -325,7 +325,7 @@ export function registerPlayTools(server, getPlayer, beforeEach = async () => {}
     run((p, a) => p.mapText(a.x, a.y, a.radius)));
   server.registerTool("command",
     {
-      description: "Issue one or more commands to your team in a single call. Add request_id for safe retries within 10 minutes and as_of_tick from the state you used; results report what changed meanwhile. Each returns ok/error (or obsolete when its target is gone). Examples: " +
+      description: "Issue one or more commands to your team in a single call. Add request_id for safe retries within 10 minutes and as_of_tick from the state you used; results report what changed meanwhile. Miner protection is opt-in: set_policy with miners {withdraw_on_attack:true,to:[x,y] or base,resume_after_s:20}; false disables it. Each returns ok/error (or obsolete when its target is gone). Examples: " +
         '{"type":"build","structure":"power_plant"} (auto-placed), {"type":"train","unit":"light_tank","count":3}, ' +
         '{"type":"attack_move","units":"idle","x":50,"y":50}, {"type":"attack","units":[12,13],"target":40} (add "until":"capturable" to stop at 50% for an engineer), ' +
         '{"type":"harvest","units":[3],"ore":"crystal"}, {"type":"survey","units":[29],"x":14,"y":100} (geological_surveyor: flags the deep deposits within 12 tiles as mining zones), {"type":"prospect","units":[29],"x":40,"y":40,"radius":40} (surveyors roam the area on their own: survey, flag, move on), {"type":"drill","units":[57],"zone":12} (drill_rig drives to mining zone 12 and deploys into a deep_mine; omit zone for the nearest free one), {"type":"deploy","units":[57]} (outpost_truck -> outpost, or drill_rig -> deep_mine on a flagged zone within 3 tiles), ' +

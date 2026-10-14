@@ -57,6 +57,7 @@ namespace Pez.Headless
             World.RegrowthDisabled = args.Contains("--no-regrowth"); // balance baselines
             if (args.Contains("--selftest")) return SelfTest(cfg, int.Parse(Arg("--max-minutes", "30")));
             if (args.Contains("--test")) return Tests.Run();
+            if (args.Contains("--test-miner-policy")) return Tests.RunMinerPolicy();
             if (args.Contains("--gate")) return Tests.RunGate();
             if (args.Contains("--test-observe")) return Tests.RunObserve();
             if (args.Contains("--test-slow-agent")) return Tests.RunSlowAgent();

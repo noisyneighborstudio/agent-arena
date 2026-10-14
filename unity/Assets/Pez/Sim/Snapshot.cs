@@ -29,8 +29,8 @@ namespace Pez.Sim
         public const string Format = "pezz-snapshot";
         /// <summary>1: first version. 2: mining zones, prospecting surveyors, drill rigs' zones, arena champion. 3: agent inventions.
         /// 4: economy and endgame (salvage from kills, ore regrowth, construction trucks, the match clock, derricks, defence upkeep).
-        /// 5: turn safety (ready seats and preparation clock, retry receipts, own losses and order provenance).</summary>
-        public const int Schema = 5;
+        /// 5: turn safety (ready seats and preparation clock, retry receipts, own losses and order provenance). 6: opt-in miner policy and withdrawal state.</summary>
+        public const int Schema = 6;
         public const int MinReader = 1;
         /// <summary>Events kept: the last two minutes, plus recent chat, at most MaxEvents. Alerts: the last minute.</summary>
         const int MaxEvents = 1500;
@@ -89,6 +89,8 @@ namespace Pez.Sim
                 .Put("stalled_since", t.StalledSince, -1f).Put("house", t.House).Put("ready", t.Ready).Set("seat", t.Seat).Put("protected_until", t.ProtectedUntil)
                 .Put("surface_warned_at", t.SurfaceWarnedAt, -999f).Put("home_ore_warned", t.HomeOreWarned, 0).Set("last_active_at", t.LastActiveAt)
                 .Set("scatter", t.Scatter.State.ToString("x16"));
+            if (t.Miners.WithdrawOnAttack || t.Miners.Fields.Count > 0 || t.Miners.Detached.Count > 0 ||
+                t.Miners.ToBase || t.Miners.Destination.LengthSq > 0 || t.Miners.ResumeAfterS != 0) o.Set("miner_policy", t.Miners.Save());
             if (t.CommandReceipts.Count > 0) o.Set("command_receipts", t.CommandReceipts.Select(r => (object)new JObj().Set("id", r.Id).Set("at", r.At.ToString("O", CultureInfo.InvariantCulture)).Set("reply", r.Reply)).ToList());
             if (t.GoneUnits.Count > 0) o.Set("gone_units", t.GoneUnits.Select(kv => (object)new List<object> { kv.Key, kv.Value }).ToList());
             if (t.Granted.Count > 0) o.Set("granted", SnapIO.Floats(t.Granted));
@@ -131,6 +133,7 @@ namespace Pez.Sim
             var t = new Team { Id = index, LastActiveAt = now };
             d.Load("name", ref t.Name); d.Load("controller", ref t.Controller); d.Load("player", ref t.PlayerName);
             d.Load("standing_orders", ref t.StandingOrders); d.Load("orders_version", ref t.OrdersVersion);
+            t.Miners.Load(d.Obj("miner_policy"));
             SnapIO.LoadFloats(d.Obj("stock"), t.Stock); SnapIO.LoadFloats(d.Obj("rates"), t.Rates);
             SnapIO.LoadFloats(d.Obj("granted"), t.Granted); // a save from before gifts counted: nothing is a gift, as before
             d.Load("power_produced", ref t.PowerProduced); d.Load("power_used", ref t.PowerUsed); d.Load("plasma_owed", ref t.PlasmaOwed);

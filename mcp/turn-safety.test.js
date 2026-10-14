@@ -11,7 +11,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { Player, registerPlayTools } from "./play.js";
+import { Command, Player, registerPlayTools } from "./play.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DIR = fs.mkdtempSync(path.join(os.tmpdir(), "pezz-turn-safety-"));
@@ -148,4 +148,20 @@ test("shared gameplay tools forward metadata unchanged and never ready a player 
   assert.deepEqual(sent[0], { commands, request_id: "batch-retry", as_of_tick: 12 });
   await tools.get("ready")({ format: "json" });
   assert.deepEqual(sent[1], { commands: [{ type: "ready" }] });
+});
+
+
+test("MCP preserves the explicit miner policy without enabling it during tool registration", async () => {
+  const player = new Player("http://unused.invalid", { team: 0 }, null);
+  const sent = [];
+  player.call = async (route, opts) => {
+    if (route === "/api/command") { sent.push(opts.body); return JSON.stringify({ results: [{ ok: true }] }); }
+    return JSON.stringify({ new_alerts: [], last_alert_seq: 0, orders_version: 0 });
+  };
+  const tools = new Map();
+  registerPlayTools({ registerTool: (name, _, fn) => tools.set(name, fn) }, () => player);
+  assert.equal(sent.length, 0);
+  const policy = Command.parse({ type: "set_policy", miners: { withdraw_on_attack: true, to: [8, 9], resume_after_s: 20 } });
+  await tools.get("command")({ commands: [policy], format: "json" });
+  assert.deepEqual(JSON.parse(JSON.stringify(sent[0])), { commands: [{ type: "set_policy", miners: { withdraw_on_attack: true, to: [8, 9], resume_after_s: 20 } }] });
 });

@@ -680,6 +680,7 @@ namespace Pez.Sim
         // Caches over OreBase (rebuilt when the fields change; not state): every field tile, and each field's root.
         bool fieldsChanged = true;
         int[] fieldTiles;
+        int[] fieldOf;
         bool[] fieldRoots;
 
         /// <summary>
@@ -692,11 +693,13 @@ namespace Pez.Sim
             {
                 var list = new List<int>();
                 fieldRoots = new bool[W * H];
+                fieldOf = Enumerable.Repeat(-1, W * H).ToArray();
                 var seen = new bool[W * H];
                 var stack = new Stack<int>();
                 for (int s = 0; s < OreBase.Length; s++)
                 {
                     if (OreBase[s] <= 0 || seen[s]) continue;
+                    int start = list.Count;
                     int best = s; seen[s] = true; stack.Push(s);
                     while (stack.Count > 0)
                     {
@@ -714,12 +717,22 @@ namespace Pez.Sim
                             }
                     }
                     fieldRoots[best] = true;
+                    for (int k = start; k < list.Count; k++) fieldOf[list[k]] = best;
                 }
                 list.Sort();
                 fieldTiles = list.ToArray();
                 fieldsChanged = false;
             }
             tiles = fieldTiles; roots = fieldRoots;
+        }
+
+        /// <summary>The persistent root of this ore tile's connected field, independent of ore depletion.</summary>
+        internal Int2? FieldRoot(Int2 tile)
+        {
+            if (!InBounds(tile.X, tile.Y)) return null;
+            FieldIndex(out _, out _);
+            int root = fieldOf[Idx(tile.X, tile.Y)];
+            return root >= 0 ? new Int2(root % W, root / W) : (Int2?)null;
         }
 
         /// <summary>OreBase was edited directly (the kitchen sink): rebuild the field index.</summary>

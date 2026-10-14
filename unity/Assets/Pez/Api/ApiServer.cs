@@ -785,6 +785,7 @@ namespace Pez.Api
                                               "structure_queue", "unit_queues", "known_enemy_structures", "surveyed", "survey_sites", "reserve",
                                               "save_for", "save_for_cost", "zones", "stalled_since", "surface_warned_at", "home_ore_warned", "last_active_at", "orders_version", "plasma_owed" })
                         t.Remove(k);
+                    t.Remove("miner_policy"); // only this team's explicit policy executes in its fogged mirror
                     if (t["stats"] is JObj st) t["stats"] = new JObj().Set("kills", st["kills"] ?? 0);
                     // Where a rival's base is, is for scouting: their start goes far off the map (not 0,0, a real corner, where
                     // the client's copy would then think a protected rival's reserved ore lay).

@@ -58,14 +58,14 @@ namespace Pez.Headless
                 "LastCallForHelp LastAttackerTeam Responding HomePos Cargo CargoType HarvestType HarvestTile WorkTimer Burning Dock DockAt BaySide DepositId Working Output Offline CarrierId Passengers Fuel Landed Stranded " +
                 "GrantedShare CargoSalvage FuelCap AtDepot FuelWarned NoAutoRefuelUntil ResumeOrder ResumePos ResumeGuard ResumeTarget ResumeWaypoints ResumeSpeedCap MineQueue LastFiredAt Arming ArmingTarget " +
                 "Prospecting ProspectCenter ProspectRadius SkipSites SurveyFailure SurveyFailedAt ZoneId | CmdId", // CmdId: the observation feed's command tracking, which restarts (as a new stream) with the process
-            [typeof(Team)] = "Id Name Controller PlayerName StandingOrders OrdersVersion CommandReceipts GoneUnits Stock Rates PowerProduced PowerUsed PlasmaOwed Detected Revealed Defeated StartPos " +
+            [typeof(Team)] = "Id Name Controller PlayerName StandingOrders OrdersVersion Miners CommandReceipts GoneUnits Stock Rates PowerProduced PowerUsed PlasmaOwed Detected Revealed Defeated StartPos " +
                 "Visible Explored Left Resigned StalledSince House Ready Seat ProtectedUntil StructureQueue UnitQueues KnownEnemyStructures Surveyed SurveySites Zones " +
                 "SurfaceWarnedAt HomeOreWarned LastActiveAt Reserve SaveFor SaveForCost Stats Granted Scatter",
             [typeof(World)] = "Map Paths MapVersion Open MaxPlayers MaxMapSize GrowStep SafeJoinDistance ProtectionSeconds Teams ById Entities Projectiles Events " +
                 "EventCounts Alerts Tick GameOver Winner Errors LastError nextId nextSeq seatCounter rng rateSnapshot airWarned derrickHinted StallGrace ArenaChampion contested Inventions GameId Regrown SuddenDeathAt DerrickRespawns CommandSeq SettleCounts " +
                 "| barredBases ErrorLog loggedErrors cells cellsW cellsH nearTarget nearHelp nearMine nearSep nearSpot nearCrush nearThreat padSlots nearVis Showcase OreVersion oreDirty beingMined regrowNow scoreCache scoreCacheTick NextMatchIn derricksChecked groupSpan Mirror MirrorScores Feed Touched CommandLog CommandActor", // CommandLog: the last few seconds of orders, for browser copies (a restart loses them: a copy just slides once); Feed: the observation feed starts a new stream on resume (readers get a gap and a snapshot); Showcase: the kitchen sink room is never saved (rebuilt from code); Mirror: set by the browser client on its copy
             [typeof(Invention)] = "Key Name Chassis WeaponFrom Summary Team Def ResearchCost ResearchTime Progress Novelty PriceFactor ProposedAt ResearchedAt Built Lost Kills",
-            [typeof(Map)] = "W H Tiles Ore OreType Occupant Spawns Deep OreScale nextDepositId OreBase OreBaseType Salvage | writable fieldsChanged fieldTiles fieldRoots BaseMissing SalvageMissing",
+            [typeof(Map)] = "W H Tiles Ore OreType Occupant Spawns Deep OreScale nextDepositId OreBase OreBaseType Salvage | writable fieldsChanged fieldTiles fieldRoots fieldOf BaseMissing SalvageMissing",
             [typeof(SimpleAI)] = "team Passive nextThink waveSize outpostTargets nextProspect prospectRadius knownSurface stuckSince wantCopper wantCrystal wantUranium wentDeep oreRate ratedAt ratedMined copperStarvedSince",
             [typeof(Game)] = "World Config Speed Paused ais accumulator nextHouseCheck ResumedFrom LastSaved restartIn Waiting waitedBefore waitedSeen waitingSince readyFilledBefore readyFilledSince | RenderFps Restarted Now Replay", // Replay: the browser copy's queue, from the snapshots it fetches
             [typeof(AlertLog)] = "All open nextSeq",
@@ -75,6 +75,10 @@ namespace Pez.Headless
             [typeof(DeepDeposit)] = "Id Pos Type Amount Initial MineId",
             [typeof(ProdItem)] = "Key Progress StructureId WorkerId GrantedShare | CmdId",
             [typeof(ZoneFlag)] = "ZoneId FlaggedBy FlaggedAt",
+            [typeof(MinerPolicy)] = "WithdrawOnAttack ToBase Destination ResumeAfterS Fields Detached",
+            [typeof(MinerField)] = "Root Tiles Withdrawn LastWithdrawal ClearSince Trucks Threats",
+            [typeof(MinerResume)] = "Target WithdrawalTarget HarvestType HarvestTile",
+            [typeof(MinerThreat)] = "Position Range Stealth",
             [typeof(CommandReceipt)] = "Id Reply At",
             [typeof(TeamStats)] = "UnitsBuilt StructuresBuilt UnitsLost StructuresLost Kills OreMined Built KillValue KillsValued SalvageLeft DeepMined DerricksCaptured DerrickSteel SalvageMined UpkeepPaid",
             [typeof(GameConfig)] = "Seed MapSize Speed Controllers Orders Open MaxPlayers MaxMapSize OreScale HouseAIs HouseResignAbove MatchHours MinPlayers | KitchenSink",

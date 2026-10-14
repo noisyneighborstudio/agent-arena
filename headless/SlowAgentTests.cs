@@ -67,6 +67,37 @@ namespace Pez.Headless
             var a = SlowAgent.Match(2, false, "self", 0, 60);
             var b = SlowAgent.Match(2, false, "self", 0, 60);
             Check(Json.Write(a) == Json.Write(b), "the same slow-command match is deterministic including response metrics");
+            Check(!game.World.Teams[0].Miners.WithdrawOnAttack && !((JObj)((System.Collections.Generic.List<object>)a["seats"])[0]).Contains("executor"),
+                "baseline commander never enables miner policy or adds executor metrics");
+            SlowMinerLayerHarness();
+        }
+
+        static void SlowMinerLayerHarness()
+        {
+            var game = new Game(new GameConfig { Seed = 1, MapSize = 80, Controllers = new[] { "llm", "llm" }, MatchHours = 0 });
+            var commander = new SlowAgent.Commander(0, false, "miners");
+            var metric = new SlowAgent.Metrics(0, "miners");
+            commander.Tick(game, metric);
+            var policy = game.World.Teams[0].Miners;
+            Check(policy.WithdrawOnAttack && !policy.ToBase && policy.ResumeAfterS == 20 && Vec2.Dist(policy.Destination, game.World.Teams[0].StartPos) < .1f,
+                "miners layer explicitly sets home destination and 20s clear delay");
+            game.World.Tick = SlowAgent.TurnTicks;
+            commander.Tick(game, metric);
+            Check(game.World.CommandLog.Count(c => c.Cmd.Str("type") == "set_policy") == 1, "miner policy is configured once, not every slow turn");
+
+            game.World.Observe.Note(0, "orders", "miners_withdrawn", Sev.Notice, "own",
+                new JObj().Set("reason", "hit").Set("triggered_at_s", 29.95f), "measurement fixture");
+            game.World.Observe.Note(0, "orders", "miners_withdrawn", Sev.Notice, "own",
+                new JObj().Set("reason", "seen_weapon_range").Set("triggered_at_s", 30f), "measurement fixture");
+            game.World.Observe.Note(0, "orders", "miners_withdrawn", Sev.Notice, "own", new JObj().Set("reason", "unknown"), "measurement fixture");
+            metric.SampleExecutor(game.World);
+            metric.SampleExecutor(game.World);
+            var executor = (JObj)metric.Report(game.World, commander)["executor"];
+            Check(Convert.ToInt32(executor["withdrawals"]) == 3 && Convert.ToInt32(executor["unmatched"]) == 1 &&
+                Convert.ToInt32(((JObj)executor["hit_triggered"])["count"]) == 1 && Convert.ToInt32(((JObj)executor["visible_range_triggered"])["count"]) == 1,
+                "executor measurements separate hit/sight triggers, preserve unmatched and consume observations once");
+            Check(Math.Abs(Convert.ToSingle(((JObj)executor["hit_triggered"])["mean_s"]) - .05f) < .001f,
+                "executor trigger-to-order time is separate from commander alert response");
         }
     }
 }

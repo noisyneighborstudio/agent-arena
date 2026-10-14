@@ -23,7 +23,7 @@ namespace Pez.Headless
         {
             string Arg(string key, string def) { int i = Array.IndexOf(args, key); return i >= 0 && i + 1 < args.Length ? args[i + 1] : def; }
             string layer = Arg("--slow-agent-layer", "baseline");
-            if (layer != "baseline") { Console.Error.WriteLine("--slow-agent-layer currently supports baseline only; add each opt-in layer when it ships."); return 2; }
+            if (layer != "baseline" && layer != "miners") { Console.Error.WriteLine("--slow-agent-layer takes baseline or miners."); return 2; }
             int minutes = int.Parse(Arg("--slow-agent-minutes", "12"), CultureInfo.InvariantCulture);
             int[] seeds = Arg("--slow-agent-seeds", "1,2,3").Split(',').Select(int.Parse).ToArray();
             if (minutes < 1 || seeds.Length == 0) { Console.Error.WriteLine("Use positive minutes and at least one seed."); return 2; }
@@ -54,8 +54,8 @@ namespace Pez.Headless
             var controllers = new[] { "llm", "llm" };
             if (opponent == "simple_ai") controllers[1 - seat] = "ai";
             var game = new Game(new GameConfig { Seed = seed, MapSize = 80, Controllers = controllers, MatchHours = 0 });
-            var commanders = controllers.Select((c, team) => c == "ai" ? null : new Commander(team, habits)).ToArray();
-            var metrics = commanders.Select(c => c == null ? null : new Metrics(c.Team)).ToArray();
+            var commanders = controllers.Select((c, team) => c == "ai" ? null : new Commander(team, habits, layer)).ToArray();
+            var metrics = commanders.Select(c => c == null ? null : new Metrics(c.Team, layer)).ToArray();
             var w = game.World;
             while (!w.GameOver && w.Time < seconds)
             {
@@ -65,7 +65,11 @@ namespace Pez.Headless
                 var ownBefore = w.Entities.Where(e => !e.Dead && !e.IsStructure && e.IsArmed).Select(e => (e.Id, e.Team, e.Pos)).ToArray();
                 long lastEvent = w.Events.Count == 0 ? 0 : w.Events.Last().Seq;
                 game.Advance(World.Dt);
-                foreach (var metric in metrics.Where(m => m != null)) metric.Sample(w, lastEvent, ownBefore);
+                foreach (var metric in metrics.Where(m => m != null))
+                {
+                    metric.Sample(w, lastEvent, ownBefore);
+                    if (layer != "baseline") metric.SampleExecutor(w);
+                }
             }
             return new JObj().Set("layer", layer).Set("rules_version", StateView.RulesVersion).Set("seed", seed)
                 .Set("variant", habits ? "p0_habits" : "plain").Set("opponent", opponent).Set("slow_seat", seat)
@@ -82,7 +86,12 @@ namespace Pez.Headless
             readonly Dictionary<long, float> pending = new Dictionary<long, float>();
             readonly HashSet<long> seen = new HashSet<long>();
             readonly List<float> delays = new List<float>();
-            public Metrics(int team) { Team = team; }
+            readonly string layer;
+            readonly List<object> interventions = new List<object>();
+            readonly List<float> hitDelays = new List<float>(), sightDelays = new List<float>();
+            long executorCursor;
+            int resumes, unmatched;
+            public Metrics(int team, string layer = "baseline") { Team = team; this.layer = layer; }
 
             internal void Sample(World w, long after, (int Id, int Team, Vec2 Pos)[] before)
             {
@@ -105,7 +114,33 @@ namespace Pez.Headless
                 pending.Remove(alertSeq);
             }
 
-            internal JObj Report(World w, Commander commander) => new JObj().Set("team", Team)
+            internal void SampleExecutor(World w)
+            {
+                var log = w.Observe.Log(Team);
+                foreach (var observation in log.After(executorCursor))
+                {
+                    if (observation.Kind == "miners_resumed") resumes++;
+                    if (observation.Kind != "miners_withdrawn") continue;
+                    var facts = observation.Body;
+                    string reason = facts["reason"] as string;
+                    float? trigger = facts["triggered_at_s"] == null ? null : Convert.ToSingle(facts["triggered_at_s"]);
+                    float? delay = trigger.HasValue ? observation.Tick * World.Dt - trigger.Value : null;
+                    if (delay.HasValue && reason == "hit") hitDelays.Add(delay.Value);
+                    else if (delay.HasValue && reason == "seen_weapon_range") sightDelays.Add(delay.Value);
+                    else unmatched++;
+                    interventions.Add(new JObj().Set("tick", observation.Tick).Set("reason", reason)
+                        .Set("triggered_at_s", trigger).Set("trigger_to_order_s", delay).Set("units", facts["units"]));
+                }
+                executorCursor = log.Head;
+            }
+
+            static JObj Latencies(List<float> values) => new JObj().Set("count", values.Count)
+                .Set("mean_s", values.Count == 0 ? null : (object)values.Average())
+                .Set("p50_s", Percentile(values, .5)).Set("p95_s", Percentile(values, .95));
+
+            internal JObj Report(World w, Commander commander)
+            {
+                var result = new JObj().Set("team", Team)
                 .Set("miner_losses", MinerLosses).Set("undefended_miner_losses", UndefendedMinerLosses)
                 .Set("combat_losses", CombatLosses).Set("unsupported_combat_losses", UnsupportedCombatLosses)
                 .Set("alerts", seen.Count).Set("responses", delays.Count).Set("unresolved", pending.Count)
@@ -115,6 +150,11 @@ namespace Pez.Headless
                 .Set("turns", commander.Turns).Set("commands", commander.Commands).Set("rejected_commands", commander.Rejected)
                 .Set("score", w.Scores().FirstOrDefault(s => s.Team == Team)?.Score ?? 0)
                 .Set("ore_mined", w.Teams[Team].Stats.OreMined).Set("units_lost", w.Teams[Team].Stats.UnitsLost);
+                if (layer != "baseline") result.Set("executor", new JObj().Set("withdrawals", interventions.Count).Set("resumes", resumes)
+                    .Set("hit_triggered", Latencies(hitDelays)).Set("visible_range_triggered", Latencies(sightDelays))
+                    .Set("unmatched", unmatched).Set("interventions", interventions));
+                return result;
+            }
         }
 
         internal static object Percentile(IEnumerable<float> values, double fraction)
@@ -128,12 +168,13 @@ namespace Pez.Headless
         {
             public readonly int Team;
             readonly bool habits;
+            readonly string layer;
             readonly HashSet<int> retreated = new HashSet<int>(), rallied = new HashSet<int>();
             long cursor;
             string stream;
             int nextTurn;
             public int Turns, Commands, Rejected;
-            public Commander(int team, bool habits) { Team = team; this.habits = habits; }
+            public Commander(int team, bool habits, string layer = "baseline") { Team = team; this.habits = habits; this.layer = layer; }
 
             internal void Tick(Game game, Metrics metrics)
             {
@@ -146,6 +187,11 @@ namespace Pez.Headless
                 var structures = Rows(state, "structures").ToList();
                 var own = (JObj)state["you"];
                 var home = Point((JObj)own["start"]);
+                if (Turns == 1 && layer == "miners")
+                    Send(game, "type", "set_policy", "miners", new Dictionary<string, object>
+                    {
+                        ["withdraw_on_attack"] = true, ["to"] = new List<object> { (double)home.X, (double)home.Y }, ["resume_after_s"] = 20d
+                    });
                 var map = (JObj)state["map"];
                 var centre = new Vec2(Number(map, "w") / 2, Number(map, "h") / 2);
                 var staging = home + (centre - home).Normalized * 10;
