@@ -21,6 +21,8 @@ namespace Pez.Headless
             GateGuardCatchesADance();
             GateMinerProtection();
             GateSquadGuards();
+            GateSupportRelease();
+            GateMinerArbitration();
             GateObjectives();
             GateObjectiveInteractions();
             GateAirfieldRush();

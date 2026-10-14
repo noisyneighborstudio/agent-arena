@@ -18,7 +18,7 @@ namespace Pez.Headless
         static List<object> ObjectivePoint(float x, float y) => new List<object> { (double)x, (double)y };
         static void LiteralObjectives()
         {
-            ObjectiveValidation(); ObjectiveGoAndAssembly(); ObjectiveHoldCombat(); ObjectiveEscortAndPatrol();
+            ObjectiveValidation(); ObjectivePatrolWaypointLimit(); ObjectiveGoAndAssembly(); ObjectiveUnreachableGo(); ObjectiveHoldCombat(); ObjectiveEscortAndPatrol();
             ObjectiveDirectAndGuard(); ObjectiveFogAndPackets(); ObjectivePersistence(); ObjectiveNativeHandoff(); ObjectiveReinforcementTests(); ObjectiveInteractions();
         }
 
@@ -72,6 +72,57 @@ namespace Pez.Headless
                 "an early go arrival holds its supplied area while the rest arrive instead of chasing or shooting outside it");
         }
 
+        static void ObjectivePatrolWaypointLimit()
+        {
+            var (game, _) = ObjectiveScene("rifleman"); var w = game.World;
+            var points = Enumerable.Range(0, 20).Select(i => (object)ObjectivePoint(20 + i, 30)).ToList();
+            Check(Ok(ObjectiveConfig(w, "verb", "patrol", "waypoints", points)), "objective patrol accepts the move command's maximum of 20 waypoints");
+            string original = Snap(game);
+            points.Add(ObjectivePoint(45, 30));
+            var tooMany = ObjectiveConfig(w, "verb", "patrol", "waypoints", points);
+            Check(!Ok(tooMany) && Snap(game) == original, "objective patrol rejects 21 waypoints atomically before running the route geometry check");
+            points[0] = null;
+            var malformed = ObjectiveConfig(w, "verb", "patrol", "waypoints", points);
+            Check(!Ok(malformed) && ((string)malformed["error"]).Contains("20"), "objective patrol checks the raw waypoint count before parsing individual points");
+        }
+
+        static void ObjectiveUnreachableGo()
+        {
+            var (game, units) = ObjectiveScene("rifleman"); var w = game.World; var unit = units[0];
+            for (int y = 0; y < w.Map.H; y++) w.Map.Tiles[w.Map.Idx(38, y)] = Terrain.Water;
+            ObjectiveConfig(w, "verb", "go", "at", ObjectivePoint(55, 30)); Run(w, 20);
+            var o = ObjectiveOf(w); var decisions = Events(w, 0).Where(e => e.Str("kind") == "decision_needed").ToList();
+            Check(o.Paused && !o.Done && o.PauseReason == "destination_unreachable" && decisions.Count == 1 && decisions[0].Str("sev") == "critical",
+                "an open destination disconnected by terrain pauses go and emits one critical decision instead of silently idling forever");
+            Check(o.At.Equals(new Vec2(55, 30)) && unit.Pos.X < 38 && unit.Order == Order.Idle,
+                "a stopped-short go holds where it stopped and preserves the agent's exact destination without selecting an alternative");
+            Run(w, 5);
+            Check(Events(w, 0).Count(e => e.Str("kind") == "decision_needed") == 1,
+                "an unreachable go stays paused without repeated critical packets or automatic retries");
+            for (int y = 0; y < w.Map.H; y++) w.Map.Tiles[w.Map.Idx(38, y)] = Terrain.Grass;
+            ObjectiveConfig(w, "resume", true); Run(w, 20);
+            Check(!ObjectiveOf(w).Paused && ObjectiveOf(w).Done, "explicit resume retries the supplied go destination after its obstruction is removed");
+
+            var stuck = ObjectiveScene("rifleman"); w = stuck.game.World; unit = stuck.units[0];
+            ObjectiveConfig(w, "verb", "go", "at", ObjectivePoint(55, 30)); var pin = unit.Pos;
+            for (int i = 0; i < 3 * World.TickRate; i++) { w.Step(); unit.Pos = unit.PrevPos = pin; }
+            var restarted = Resume(Snap(stuck.game)); var restored = restarted.World.Get(unit.Id);
+            for (int i = 0; i < 6 * World.TickRate; i++)
+            {
+                w.Step(); unit.Pos = unit.PrevPos = pin;
+                restarted.World.Step(); restored.Pos = restored.PrevPos = pin;
+            }
+            Check(ObjectiveOf(w).Paused && ObjectiveOf(w).PauseReason == "no_progress",
+                "a go that keeps a movement order but makes no progress also pauses for a commander's decision");
+            Check(ObjectiveOf(restarted.World).Packet == ObjectiveOf(w).Packet,
+                "an unfinished go progress clock survives snapshots and produces the same decision after restart");
+
+            var fighting = ObjectiveScene("rifleman"); w = fighting.game.World;
+            var foe = Enemy(w, "rifleman", fighting.units[0].Pos + new Vec2(4, 0)); foe.Hp = 5000; foe.GuardMotionPaused = true; foe.Cooldown = 10000;
+            ObjectiveConfig(w, "verb", "go", "at", ObjectivePoint(55, 30)); Run(w, 15);
+            Check(!ObjectiveOf(w).Paused && foe.Hp < 5000, "ordinary attack-move combat suspends the go progress clock instead of declaring a blocked destination");
+        }
+
         static void ObjectiveHoldCombat()
         {
             var (game, units) = ObjectiveScene("rifleman"); var w = game.World;
@@ -115,7 +166,7 @@ namespace Pez.Headless
             ObjectiveConfig(w, "resume", true); Run(w, 0.2f);
             Check(!ObjectiveOf(w).Detached.Contains(units[0].Id) && units[0].ObjectiveId == "west-plan", "explicit resume hands the squad's members back without silently doing so earlier");
             Commands.Execute(w, 0, Cmd("type", "set_retreat", "units", new[] { units[0].Id }, "below_pct", 40));
-            Check(ObjectiveOf(w).Detached.Contains(units[0].Id), "a successful direct unit configuration also detaches rather than retaining hidden objective authority");
+            Check(!ObjectiveOf(w).Detached.Contains(units[0].Id), "a retreat threshold configuration preserves objective authority until an actual retreat orders the unit");
 
             var guarded = ObjectiveScene("light_tank", "light_tank"); w = guarded.game.World;
             GuardConfig(w, "withdraw_below_strength_pct", 75, "to", ObjectivePoint(20, 30)); ObjectiveConfig(w, "verb", "go", "at", ObjectivePoint(55, 30));

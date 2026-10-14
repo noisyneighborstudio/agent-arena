@@ -23,7 +23,7 @@ namespace Pez.Sim
       add ""spread"":3 (tiles between units, 1-6; true = 3) to open the formation up against splash (artillery, heavy tanks)
       add ""waypoints"":[[x,y],...] to queue more points (x/y optional: the first waypoint is used), and ""loop"":true to patrol them (a loop within 4 tiles holds there instead)
   {""type"":""set_retreat"", ""units"":[IDS], ""below_pct"":30}  units pull back to base on their own below that HP %, once per wound, so your next order sticks (aircraft land on a pad; 0 = off)
-  {""type"":""set_policy"", ""miners"":{""withdraw_on_attack"":true,""to"":""base"",""resume_after_s"":20}}  opt-in field withdrawal on hits/visible weapon-range threats; to may be [x,y]; false disables it. Resumes only after the field is visibly clear for your delay. Direct orders detach a truck; harvest hands it back.
+  {""type"":""set_policy"", ""miners"":{""withdraw_on_attack"":true,""to"":""base"",""resume_after_s"":20}}  opt-in field withdrawal on hits/visible weapon-range threats; to may be [x,y]; false disables it. Resumes only after the field is visibly clear for your delay; a same-tick hit wins over resumption through one policy order writer. Direct orders detach a truck; harvest hands it back.
   {""type"":""attack"", ""units"":[IDS], ""target"":ID}     focus fire on a visible enemy
       add ""until"":""capturable"" (structures only) to hold fire once it's at 50% health or less, so an engineer can capture it; they open up again if it's repaired
   {""type"":""stop"", ""units"":[IDS]}
@@ -42,13 +42,13 @@ namespace Pez.Sim
   {""type"":""drill"", ""units"":[DRILL RIG IDS], ""zone"":ID}  a drill_rig drives to that mining zone and deploys into a Deep Mine on arrival (omit zone: each rig takes the nearest free zone)
   {""type"":""rally"", ""structure_id"":ID, ""x"":X, ""y"":Y} where new units from that building go
       add ""squad"":""west"" to enroll new units in that squad; a later rally without squad clears enrollment (rally applies to your producers of this building's kind)
-  {""type"":""squad"", ""name"":""west"", ""add"":[IDS], ""remove"":[IDS]}  name live own units (1-24 chars, one squad each); disband:true clears it. No movement by itself. Unit commands accept ""squad"":""west"" or ""units"":""squad:west"".
-  {""type"":""guard"", ""squad"":""west"", ""retreat_below_pct"":40, ""hold_for_support"":{""within"":6}, ""screen"":{""roles"":[""artillery""],""behind"":4}, ""withdraw_below_strength_pct"":50, ""to"":[X,Y]}  each field optional and off unless supplied; replaces the full guard config. Retreats require to. Guards use bands/cooldowns, explain interventions and never choose targets. An empty guard command disables all guards.
+  {""type"":""squad"", ""name"":""west"", ""add"":[IDS], ""remove"":[IDS]}  name live own units (1-24 chars, one squad each); disband:true clears it. Maximum 32 squads per team, including empty ones; disband frees a slot. No movement by itself. Unit commands accept ""squad"":""west"" or ""units"":""squad:west"".
+  {""type"":""guard"", ""squad"":""west"", ""retreat_below_pct"":40, ""hold_for_support"":{""within"":6}, ""screen"":{""roles"":[""artillery""],""behind"":4}, ""withdraw_below_strength_pct"":50, ""to"":[X,Y]}  each field optional and off unless supplied; replaces the full guard config. Retreats require to. Support releases obsolete holds after its cooldown when travelling support is unavailable. Guards use bands/cooldowns, explain interventions and never choose targets. An empty guard command disables all guards.
       held medics stay under guard control; an explicit heal/repair order takes control when you want a medical trip
   {""type"":""objective"", ""id"":""west-exp"", ""squad"":""west"", ""verb"":""go"", ""at"":[X,Y], ""radius"":6, ""assemble"":{""at"":[X0,Y0],""min"":8}, ""reinforce"":{""keep"":{""rifleman"":6,""light_tank"":2},""budget"":{""steel"":800}}, ""wake"":[""squad_below_50"",""enemy_strength_seen>squad"",""objective_done""]}
-      literal go/hold/escort/patrol only; escort uses target_id (or target) OR target_squad, patrol uses waypoints. Radius is required. Nothing starts without this command. Strategy prose never executes.
-      {""type"":""objective"",""id"":""west-exp"",""pause"":true} | resume:true (reattach live members, preserve spending) | cancel:true. Direct unit orders detach. Wake/cannot-continue packets are critical; no automatic substitute or resume.
-  {""type"":""set_strategy"",""text"":""Expand east, then defend the crystal field."",""priorities"":[""expand east"",""defend crystal""]}  record your strategy (text up to 2000 characters, up to 16 priorities of 120 characters each). Both fields required; empty text and [] clear it. Identical normalized records keep the same plan_version. Strategy prose never gives orders or enables an executor.
+      literal go/hold/escort/patrol only; escort uses target_id (or target) OR target_squad, patrol uses 2-20 waypoints. Maximum 64 retained objectives per team (including paused/done); cancel frees a slot. Radius is required. Nothing starts without this command. Strategy prose never executes.
+      {""type"":""objective"",""id"":""west-exp"",""pause"":true} | resume:true (reattach live members, preserve spending) | cancel:true. Only units actually given direct orders detach; configuration and strategy selectors do not. Stopped-short/no-progress go pauses with a critical decision_needed and no new destination. Wake/cannot-continue packets are critical; no automatic substitute or resume.
+  {""type"":""set_strategy"",""text"":""Expand east, then defend the crystal field."",""priorities"":[""expand east"",""defend crystal""]}  record your strategy (text up to 2000 characters, up to 16 priorities of 120 characters each). Both fields required; empty text and [] clear it. Identical normalized records keep the same plan_version. Strategy prose never gives orders or enables an executor. Chat, strategy and tech proposals preserve decision baselines.
   {""type"":""sell"", ""structure_id"":ID}                 sell for 50% refund (your only one of a tech or production building needs ""confirm"":true)
   {""type"":""reserve"", ""item"":""iron_ore"", ""amount"":300}  converters (refineries, plants) leave this much of an item alone, so raw-ore costs (power_plant, mining_refinery, mining_truck) stay payable; amount 0 clears it
   {""type"":""save_for"", ""unit"":""drill_rig""}           save up for one unit or structure: converters leave its cost alone until you train/build it (no unit: cancel)
@@ -64,17 +64,44 @@ Add ""plan_version"":VERSION from state to report a changed strategy or human st
 
         public static JObj Execute(World w, int team, Dictionary<string, object> c)
         {
-            var result = ExecuteCore(w, team, c);
+            var type = c.Str("type", "").ToLowerInvariant();
+            // Resolve effects from SetOrder, not selectors: filters, available seats and units:idle can
+            // change which units actually receive an order. Preserve the observation tracker's collector.
+            bool unitOrder = IsUnitOrder(type);
+            var previousTouched = w.Touched;
+            var touched = unitOrder ? new List<Entity>() : null;
+            JObj result;
+            try
+            {
+                if (unitOrder) w.Touched = touched;
+                result = ExecuteCore(w, team, c);
+            }
+            finally
+            {
+                if (unitOrder)
+                {
+                    w.Touched = previousTouched;
+                    previousTouched?.AddRange(touched);
+                }
+            }
             if (result["ok"] is bool ok && ok)
             {
-                var type = c.Str("type", "").ToLowerInvariant();
-                if (type != "objective" && type != "guard" && type != "squad" && type != "rally")
-                    foreach (int id in RequestedUnits(w, team, c))
-                        if (w.Get(id) is Entity unit && unit.Team == team) Objectives.DirectOrder(w, unit);
-                Objectives.CommandSucceeded(w, team);
+                if (unitOrder)
+                    foreach (var unit in touched.Distinct().Where(e => e.Team == team && !e.Dead))
+                        Objectives.DirectOrder(w, unit);
+                // Chat, strategy records and tech proposals do not acknowledge an executor decision.
+                // All baseline-changing commands are replayed; ready/start_match bypass this surface.
+                if (IsDecision(type)) Objectives.CommandSucceeded(w, team);
             }
             return result;
         }
+
+        static bool IsUnitOrder(string type) => type is "move" or "attack_move" or "attack" or "stop" or "harvest"
+            or "deploy" or "repair" or "heal" or "load" or "unload" or "capture" or "lay_mines"
+            or "refuel" or "survey" or "prospect" or "drill";
+
+        static bool IsDecision(string type) => IsUnitOrder(type) || type is "objective" or "guard" or "squad" or "rally"
+            or "set_policy" or "set_retreat" or "build" or "train" or "sell" or "reserve" or "save_for" or "cancel";
 
         static JObj ExecuteCore(World w, int team, Dictionary<string, object> c)
         {

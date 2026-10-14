@@ -1216,6 +1216,7 @@ namespace Pez.Sim
 
             Guard("economy", UpdateEconomy);
             Guard("production", UpdateProduction);
+            MinerPolicies.BeginTick(this);
             Guard("miner policy", () => { foreach (var team in Teams) MinerPolicies.Step(this, team.Id); });
             Guard("objectives", () => { foreach (var team in Teams) Objectives.Step(this, team.Id); });
             Guard("squad guards", () => { foreach (var team in Teams) SquadGuards.Step(this, team.Id); });
@@ -1238,7 +1239,14 @@ namespace Pez.Sim
                 try
                 {
                     if (e.IsMine) { MineTick(e); continue; }
-                    if (!e.IsStructure) { CheckRetreat(e); UpdateUnit(e); if (e.Def.UsesFuel && !e.Dead) UpdateFuel(e); if (!e.Dead) CheckJam(e); }
+                    if (!e.IsStructure)
+                    {
+                        // The transition gets one order after all hits are known. Native arrival/refuel cannot write
+                        // an intermediate order while this tick's policy arbitration owns the truck.
+                        if (MinerPolicies.Pending(this, e)) e.Moving = false;
+                        else { CheckRetreat(e); UpdateUnit(e); if (e.Def.UsesFuel && !e.Dead) UpdateFuel(e); }
+                        if (!e.Dead) CheckJam(e);
+                    }
                     else
                     {
                         if (e.IsComplete) Burn(e);
@@ -1256,6 +1264,7 @@ namespace Pez.Sim
             Guard("dodge", DodgeVehicles);
             Guard("separation", Separate);
             Guard("run over", RunOver);
+            Guard("miner policy arbitration", () => MinerPolicies.Resolve(this));
             Guard("dance guard", WatchDances);
             Guard("cleanup", Cleanup);
             if (Tick % 4 == 0) Guard("visibility", UpdateVisibility);
@@ -1274,6 +1283,7 @@ namespace Pez.Sim
         public ObservationFeed Observe => Feed ??= new ObservationFeed(this);
         /// <summary>While a tracked command runs: every unit whose order it set (the feed stamps them with the command's id).</summary>
         public List<Entity> Touched;
+        internal MinerPolicyFrame MinerPolicyFrame;
 
         void UpdatePower()
         {

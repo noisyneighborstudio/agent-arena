@@ -18,7 +18,7 @@ namespace Pez.Headless
         static void NamedSquads()
         {
             Console.WriteLine("\n-- named squads (addressing only)");
-            SquadMembership(); SquadSelectors(); SquadRally(); SquadPersistence(); SquadKnowledge();
+            SquadMembership(); SquadSelectors(); SquadRally(); SquadPersistence(); SquadKnowledge(); SquadCapacity(); ObjectiveRetentionCapacity();
         }
 
         static (Game game, Entity a, Entity b, Entity truck) SquadScene()
@@ -99,6 +99,65 @@ namespace Pez.Headless
             Check(Ok(Commands.Execute(w, 0, Cmd("type", "stop", "units", "squad:west"))) && a.Order == Order.Idle && truck.Order == Order.Idle,
                   "a squad selector addresses only surviving members");
             Check(!Ok(Commands.Execute(w, 0, Cmd("type", "squad", "name", "west", "add", new[] { b.Id }))), "dead units cannot be added back");
+        }
+
+        static void SquadCapacity()
+        {
+            var (game, a, b, truck) = SquadScene(); var w = game.World; var team = w.Teams[0];
+            bool accepted = true;
+            for (int i = 0; i < 32; i++)
+                accepted &= Ok(Commands.Execute(w, 0, Cmd("type", "squad", "name", "slot-" + i)));
+            Check(accepted && team.Squads.Count == 32 && team.Squads.Values.All(s => s.Members.Count == 0),
+                "the squad capacity includes 32 explicitly retained empty squads");
+            Commands.Execute(w, 0, Cmd("type", "squad", "name", "slot-0", "add", new[] { a.Id }));
+            var refused = Commands.Execute(w, 0, Cmd("type", "squad", "name", "overflow", "add", new[] { a.Id }));
+            Check(!Ok(refused) && team.Squads.Count == 32 && !team.Squads.ContainsKey("overflow") && team.Squads["slot-0"].Members.Contains(a.Id),
+                "a new squad at capacity is refused before transferring any unit");
+            Check(Ok(Commands.Execute(w, 0, Cmd("type", "squad", "name", "slot-1", "add", new[] { a.Id }))) &&
+                !team.Squads["slot-0"].Members.Contains(a.Id) && team.Squads["slot-1"].Members.Contains(a.Id),
+                "existing squads remain editable at capacity");
+            Check(Ok(Commands.Execute(w, 1, Cmd("type", "squad", "name", "overflow"))), "squad capacity is local to each team");
+            Check(Ok(Commands.Execute(w, 0, Cmd("type", "squad", "name", "slot-2", "disband", true))) &&
+                Ok(Commands.Execute(w, 0, Cmd("type", "squad", "name", "replacement"))) && team.Squads.Count == 32,
+                "explicit disband frees a squad slot without evicting retained squads");
+            var restored = Resume(Snap(game));
+            Check(restored.World.Teams[0].Squads.Count == 32 &&
+                !Ok(Commands.Execute(restored.World, 0, Cmd("type", "squad", "name", "after-restore"))),
+                "snapshot restore preserves the occupied squad capacity including empty squads");
+        }
+
+        static void ObjectiveRetentionCapacity()
+        {
+            var (game, a, b, truck) = SquadScene(); var w = game.World; var team = w.Teams[0];
+            bool accepted = true;
+            for (int i = 0; i < 64; i++)
+            {
+                string squad = "archive-" + i;
+                accepted &= Ok(Commands.Execute(w, 0, Cmd("type", "squad", "name", squad)));
+                accepted &= Ok(Commands.Execute(w, 0, Cmd("type", "objective", "id", "plan-" + i, "squad", squad,
+                    "verb", "hold", "at", ObjectivePoint(30, 30), "radius", 4)));
+                accepted &= Ok(Commands.Execute(w, 0, Cmd("type", "squad", "name", squad, "disband", true)));
+            }
+            Check(accepted && team.Squads.Count == 0 && team.Objectives.Count == 64 && team.Objectives.Values.All(o => o.Paused),
+                "retained disband-paused objectives count toward a separate 64-record capacity");
+            Commands.Execute(w, 0, Cmd("type", "squad", "name", "new-squad"));
+            var refused = Commands.Execute(w, 0, Cmd("type", "objective", "id", "overflow", "squad", "new-squad",
+                "verb", "hold", "at", ObjectivePoint(30, 30), "radius", 4));
+            Check(!Ok(refused) && team.Objectives.Count == 64 && !team.Objectives.ContainsKey("overflow"),
+                "creating and disbanding squads cannot grow retained objectives past their independent capacity");
+            Check(Ok(Commands.Execute(w, 0, Cmd("type", "objective", "id", "plan-0", "squad", "new-squad",
+                "verb", "hold", "at", ObjectivePoint(30, 30), "radius", 4))) && team.Objectives.Count == 64,
+                "an existing objective id can be replaced at capacity");
+            Check(Ok(Commands.Execute(w, 0, Cmd("type", "objective", "id", "same-squad-replacement", "squad", "new-squad",
+                "verb", "hold", "at", ObjectivePoint(30, 30), "radius", 4))) && team.Objectives.Count == 64 && !team.Objectives.ContainsKey("plan-0"),
+                "a new objective id can replace the same squad's record at capacity without growing retention");
+            Check(Ok(Commands.Execute(w, 0, Cmd("type", "objective", "id", "plan-1", "cancel", true))) && team.Objectives.Count == 63,
+                "explicit objective cancellation frees retained capacity");
+            Commands.Execute(w, 0, Cmd("type", "squad", "name", "last-squad"));
+            Check(Ok(Commands.Execute(w, 0, Cmd("type", "objective", "id", "last-plan", "squad", "last-squad",
+                "verb", "hold", "at", ObjectivePoint(30, 30), "radius", 4))) && team.Objectives.Count == 64,
+                "a freed objective slot can be reused without automatic eviction");
+            Check(Resume(Snap(game)).World.Teams[0].Objectives.Count == 64, "retained objective capacity round-trips through snapshots");
         }
 
         static void SquadRally()

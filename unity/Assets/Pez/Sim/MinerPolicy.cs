@@ -92,6 +92,13 @@ namespace Pez.Sim
         public bool Stealth;
     }
 
+    // Scratch for one World.Step: no transition is exposed to another tick or a saved world.
+    internal class MinerPolicyFrame
+    {
+        internal readonly HashSet<MinerField> Resuming = new HashSet<MinerField>();
+        internal readonly Dictionary<Entity, MinerResume> Withdrawing = new Dictionary<Entity, MinerResume>();
+    }
+
     public static class MinerPolicies
     {
         public const float WithdrawalCooldown = 20f, ExitMargin = 1f;
@@ -170,9 +177,27 @@ namespace Pez.Sim
 
         public static void Hit(World w, Entity truck)
         {
-            if (truck.Team < 0 || !Mining(truck)) return;
+            if (truck.Team < 0) return;
             var team = w.Teams[truck.Team];
             if (!team.Miners.WithdrawOnAttack || team.Miners.Detached.Contains(truck.Id)) return;
+            // A resume stays an intent until every hit in the tick is known. The truck still has its old withdrawal
+            // order, so Mining alone cannot identify this hit as a veto of the pending return to the field.
+            var resuming = team.Miners.Fields.FirstOrDefault(f => f.Trucks.ContainsKey(truck.Id) &&
+                w.MinerPolicyFrame != null && w.MinerPolicyFrame.Resuming.Contains(f));
+            if (resuming != null)
+            {
+                w.MinerPolicyFrame.Resuming.Remove(resuming);
+                resuming.LastWithdrawal = w.Time; resuming.ClearSince = -1;
+                foreach (var enemy in SeenThreats(w, team.Id).Where(e => NearField(resuming, e.Pos, e.Def.Weapon.Range))) Remember(resuming, enemy);
+                foreach (var pair in resuming.Trucks)
+                {
+                    var member = w.Get(pair.Key);
+                    if (member != null && !member.Dead) QueueWithdrawal(w, member, pair.Value);
+                }
+                Note(w, team, resuming, "miners_withdrawn", "hit", resuming.Trucks.Keys.Cast<object>().ToList(), truck.Id);
+                return;
+            }
+            if (!Mining(truck)) return;
             var field = Field(w, team, truck);
             if (field == null) return;
             Withdraw(w, team, field, "hit", truck.Id);
@@ -180,6 +205,25 @@ namespace Pez.Sim
 
         public static bool Controls(World w, Entity truck) => truck.Team >= 0 && w.Teams[truck.Team].Miners.WithdrawOnAttack &&
             w.Teams[truck.Team].Miners.Fields.Any(f => f.Withdrawn && f.Trucks.ContainsKey(truck.Id));
+
+        internal static bool Pending(World w, Entity truck) => truck.IsHarvester && w.MinerPolicyFrame != null &&
+            (w.MinerPolicyFrame.Withdrawing.ContainsKey(truck) ||
+             w.MinerPolicyFrame.Resuming.Any(f => f.Trucks.ContainsKey(truck.Id)));
+
+        internal static void BeginTick(World w) => w.MinerPolicyFrame =
+            w.Teams.Any(team => team.Miners.WithdrawOnAttack) ? new MinerPolicyFrame() : null;
+
+        internal static void Resolve(World w)
+        {
+            var frame = w.MinerPolicyFrame;
+            w.MinerPolicyFrame = null;
+            if (frame == null) return;
+            foreach (var pair in frame.Withdrawing.OrderBy(pair => pair.Key.Id))
+                if (!pair.Key.Dead) ApplyWithdrawal(w, pair.Key, pair.Value);
+            foreach (var team in w.Teams)
+                foreach (var field in team.Miners.Fields)
+                    if (frame.Resuming.Contains(field)) Resume(w, team, field);
+        }
 
         /// <summary>Capture a witnessed disappearance immediately, before snapshots discard the feed's transient SeenBy.</summary>
         internal static void WitnessGone(World w, Entity gone)
@@ -247,20 +291,27 @@ namespace Pez.Sim
                 if (!clear) { field.ClearSince = -1; continue; }
                 if (field.ClearSince < 0) field.ClearSince = w.Time;
                 if (w.Time - field.ClearSince < p.ResumeAfterS || w.Time - field.LastWithdrawal < WithdrawalCooldown) continue;
-                var resumed = new List<object>();
-                foreach (var pair in field.Trucks)
-                {
-                    var truck = w.Get(pair.Key);
-                    if (truck == null || truck.Dead || p.Detached.Contains(truck.Id)) continue;
-                    var r = pair.Value;
-                    w.SetOrder(truck, Order.Harvest, r.Target);
-                    truck.LastOrderBy = "miner_policy";
-                    truck.HarvestType = r.HarvestType; truck.HarvestTile = r.HarvestTile;
-                    resumed.Add(truck.Id);
-                }
-                field.Withdrawn = false; field.Trucks.Clear(); field.Threats.Clear(); field.ClearSince = -1;
-                if (resumed.Count > 0) Note(w, team, field, "miners_resumed", "field_visibly_clear", resumed, 0);
+                if (w.MinerPolicyFrame != null && w.MinerPolicyFrame.Withdrawing.Keys.Any(truck => field.Trucks.ContainsKey(truck.Id))) continue;
+                if (w.MinerPolicyFrame != null) w.MinerPolicyFrame.Resuming.Add(field);
+                else Resume(w, team, field);
             }
+        }
+
+        static void Resume(World w, Team team, MinerField field)
+        {
+            var resumed = new List<object>();
+            foreach (var pair in field.Trucks)
+            {
+                var truck = w.Get(pair.Key);
+                if (truck == null || truck.Dead || team.Miners.Detached.Contains(truck.Id)) continue;
+                var r = pair.Value;
+                w.SetOrder(truck, Order.Harvest, r.Target);
+                truck.LastOrderBy = "miner_policy";
+                truck.HarvestType = r.HarvestType; truck.HarvestTile = r.HarvestTile;
+                resumed.Add(truck.Id);
+            }
+            field.Withdrawn = false; field.Trucks.Clear(); field.Threats.Clear(); field.ClearSince = -1;
+            if (resumed.Count > 0) Note(w, team, field, "miners_resumed", "field_visibly_clear", resumed, 0);
         }
 
         static void Withdraw(World w, Team team, MinerField field, string reason, int hitTruck)
@@ -284,9 +335,20 @@ namespace Pez.Sim
             {
                 field.Trucks[truck.Id] = new MinerResume { Target = truck.HarvestTile?.Center ?? truck.OrderPos,
                     HarvestTile = truck.HarvestTile, HarvestType = truck.HarvestType, WithdrawalTarget = slots[truck] };
-                w.SetOrder(truck, Order.Move, slots[truck]);
-                truck.LastOrderBy = "miner_policy"; truck.LastRetreatTick = w.Tick;
+                QueueWithdrawal(w, truck, field.Trucks[truck.Id]);
             }
+        }
+
+        static void QueueWithdrawal(World w, Entity truck, MinerResume resume)
+        {
+            if (w.MinerPolicyFrame != null) w.MinerPolicyFrame.Withdrawing[truck] = resume;
+            else ApplyWithdrawal(w, truck, resume);
+        }
+
+        static void ApplyWithdrawal(World w, Entity truck, MinerResume resume)
+        {
+            w.SetOrder(truck, Order.Move, resume.WithdrawalTarget);
+            truck.LastOrderBy = "miner_policy"; truck.LastRetreatTick = w.Tick;
         }
 
         static void Note(World w, Team team, MinerField field, string kind, string reason, List<object> trucks, int hitTruck)

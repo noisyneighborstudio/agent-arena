@@ -389,6 +389,27 @@ namespace Pez.Sim
         {
             if (g.SupportWithin <= 0) return;
             var going = live.Where(e => !e.IsAir && CanControl(w, e) && !Stronger(g, State(g, e)) && Traveling(Base(State(g, e), e))).ToList();
+            // Death or a higher-priority native order can remove the rear without closing the distance band.
+            // Release obsolete holds before the single-traveller early return; Apply restores the supplied route.
+            var travelling = new HashSet<int>(going.Select(e => e.Id));
+            foreach (var unit in live)
+            {
+                if (going.Count >= 2 && travelling.Contains(unit.Id)) continue;
+                var u = State(g, unit);
+                if (u.SupportHeld && w.Time - u.SupportAt >= Cooldown)
+                {
+                    u.SupportHeld = false; u.SupportAt = w.Time;
+                    Record(w, team, squad, "guard_released", "hold_for_support", new JObj().Set("reason", "support_unavailable")
+                        .Set("unit", unit.Id).Set("travelling_members", going.Count).Set("unit_travelling", travelling.Contains(unit.Id))
+                        .Set("cooldown_s", Cooldown));
+                }
+                if (!u.SupportHeld && u.PaceApplied && u.Continuation != null)
+                {
+                    unit.SpeedCap = u.Continuation.SpeedCap;
+                    if (unit.Order == Order.Refuel) unit.ResumeSpeedCap = u.Continuation.SpeedCap;
+                    u.PaceApplied = false;
+                }
+            }
             if (going.Count < 2) return;
             float pace = going.Min(e => e.Def.Speed);
             foreach (var e in going)

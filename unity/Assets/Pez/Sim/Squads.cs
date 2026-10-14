@@ -46,6 +46,7 @@ namespace Pez.Sim
 
     public static class Squads
     {
+        public const int MaxPerTeam = 32;
         internal static bool ValidName(string name) => name != null && name.Length >= 1 && name.Length <= 24 && Text.Clean(name, 24) == name;
         public static List<object> View(World w, int team) => w.Teams[team].Squads.Values.OrderBy(s => s.Name, StringComparer.Ordinal)
             .Select(s => (object)s.View(w, team)).ToList();
@@ -107,7 +108,11 @@ namespace Pez.Sim
                 foreach (var building in w.Owned(team).Where(e => e.IsStructure && e.RallySquad == name)) building.RallySquad = null;
                 return new JObj().Set("ok", true).Set("result", "squad '" + name + "' disbanded; existing orders stay in place");
             }
-            if (!squads.TryGetValue(name, out var squad)) squads[name] = squad = new Squad { Name = name };
+            if (!squads.TryGetValue(name, out var squad))
+            {
+                if (squads.Count >= MaxPerTeam) return Fail("at most " + MaxPerTeam + " squads per team, including empty squads; disband one before creating another");
+                squads[name] = squad = new Squad { Name = name };
+            }
             var amended = new HashSet<Squad>();
             if (c.ContainsKey("add") || c.ContainsKey("remove")) amended.Add(squad);
             foreach (int id in add)

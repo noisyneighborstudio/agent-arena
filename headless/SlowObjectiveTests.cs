@@ -110,11 +110,11 @@ namespace Pez.Headless
             Check(!mission.Paused && fresh.ObjectiveId == mission.Id && !mission.Assembled,
                 "a rallied fresh unit joins the still-active eight-member assembly before its next slow turn");
             commander.Tick(game, metric);
-            Check(fresh.RetreatBelow == .4f && fresh.ObjectiveId == mission.Id && !mission.Detached.Contains(fresh.Id) && metric.ObjectiveHandbacks == 1,
-                "fresh P0 retreat configuration is followed by one explicit handback to its active objective");
+            Check(fresh.RetreatBelow == .4f && fresh.ObjectiveId == mission.Id && !mission.Detached.Contains(fresh.Id) && metric.ObjectiveHandbacks == 0,
+                "fresh P0 retreat configuration preserves its active objective without an unnecessary handback");
             Check(w.CommandLog.Count(c => c.Tick == SlowAgent.TurnTicks && c.Cmd.Str("type") == "objective" &&
-                c.Cmd.TryGetValue("resume", out var flag) && flag is bool yes && yes) == 1,
-                "fresh-member handback uses a single resume and does not restart an assembling mission");
+                c.Cmd.TryGetValue("resume", out var flag) && flag is bool yes && yes) == 0,
+                "fresh-member retreat configuration needs no resume and does not restart an assembling mission");
         }
     }
 }

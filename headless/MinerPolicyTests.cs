@@ -9,7 +9,7 @@ namespace Pez.Headless
     {
         public static int RunMinerPolicy()
         {
-            MinerProtection(); GateMinerProtection();
+            MinerProtection(); GateMinerProtection(); GateMinerArbitration();
             Console.WriteLine(failures == 0 ? "All tests passed." : $"{failures} miner policy tests FAILED.");
             return failures == 0 ? 0 : 1;
         }
@@ -18,6 +18,7 @@ namespace Pez.Headless
         {
             MinerPolicyData(); MinerPolicyDefaults(); MinerPolicyTriggers(); MinerPolicyFog();
             MinerPolicyOverride(); MinerPolicyPersistence(); MinerPolicyCooldown(); MinerPolicyPrivateField(); MinerPolicyDeaths(); MinerPolicyNewcomers();
+            MinerPolicyResumeHitArbitration();
         }
 
         static (Game game, List<Entity> trucks, Entity scout) MinerScene(int count = 3)
@@ -259,6 +260,35 @@ namespace Pez.Headless
                 "explicit harvest hands a miner back into an ongoing field withdrawal");
             Check(trucks.All(t => t.LastOrderBy == "miner_policy" && t.LastRetreatTick == w.Tick),
                 "miner policy orders record their source and withdrawal tick for stale-command facts");
+        }
+
+        static (Game game, List<Entity> trucks) MinerResumeHitScene()
+        {
+            var (game, trucks, _) = MinerScene(); var w = game.World;
+            EnableMiners(w, 0); w.Hurt(trucks[0], 1, null, 1);
+            var field = w.Teams[0].Miners.Fields.Single(); field.ClearSince = 0;
+            // A shot already in flight lands after the policy's first eligible resume evaluation.
+            // Its shooter is gone: no currently visible enemy can pre-empt the hit during policy evaluation.
+            w.Tick = 20 * World.TickRate - 1;
+            w.Projectiles.Add(new Projectile { Team = 1, TargetId = trucks[0].Id,
+                Pos = trucks[0].Pos, TargetPos = trucks[0].Pos, Weapon = Defs.Get("light_tank").Weapon });
+            return (game, trucks);
+        }
+
+        static void MinerPolicyResumeHitArbitration()
+        {
+            var (game, trucks) = MinerResumeHitScene(); var w = game.World;
+            var copy = Resume(Snap(game)); var touched = new List<Entity>(); w.Touched = touched;
+            try { w.Step(); } finally { w.Touched = null; }
+            copy.World.Step();
+            var field = w.Teams[0].Miners.Fields.Single();
+            Check(trucks.All(t => touched.Count(e => e.Id == t.Id) <= 1),
+                "MinerPolicyResumeHitArbitration: a policy resume and later projectile hit write each truck's order at most once in a tick");
+            Check(field.Withdrawn && field.LastWithdrawal == w.Time && trucks.All(t => t.Order != Order.Harvest) &&
+                !Events(w, 0).Any(e => e.Str("kind") == "miners_resumed"),
+                "MinerPolicyResumeHitArbitration: the later hit wins without executing or announcing the staged harvest resume");
+            Check(Json.Write(w.Teams[0].Miners.Save()) == Json.Write(copy.World.Teams[0].Miners.Save()),
+                "MinerPolicyResumeHitArbitration: snapshot replay resolves simultaneous resume and hit identically");
         }
 
         static void MinerPolicyData()

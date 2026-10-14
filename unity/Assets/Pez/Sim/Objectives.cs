@@ -65,18 +65,20 @@ namespace Pez.Sim
 
     public class ObjectiveMember
     {
-        public Vec2 Goal;
+        public Vec2 Goal, ProgressPos;
         public bool Assigned, Holding, Arrived, Returning;
-        public float GoalAt = -999;
+        public float GoalAt = -999, ProgressAt;
         public int IntentRevision;
         public GuardContinuation Intent;
         internal JObj Save() => new JObj().Set("goal", SnapIO.V(Goal)).Set("assigned", Assigned).Set("holding", Holding).Set("arrived", Arrived)
-            .Set("returning", Returning).Set("goal_at", SnapIO.X(GoalAt)).Set("intent_revision", IntentRevision).Set("intent", Intent?.Save());
+            .Set("returning", Returning).Set("goal_at", SnapIO.X(GoalAt)).Set("progress_pos", SnapIO.V(ProgressPos)).Set("progress_at", SnapIO.X(ProgressAt))
+            .Set("intent_revision", IntentRevision).Set("intent", Intent?.Save());
         internal static ObjectiveMember Load(Dictionary<string, object> d)
         {
             var m = new ObjectiveMember(); d.Load("goal", ref m.Goal); d.Load("assigned", ref m.Assigned); d.Load("holding", ref m.Holding); d.Load("arrived", ref m.Arrived);
             d.Load("returning", ref m.Returning);
-            d.Load("goal_at", ref m.GoalAt); d.Load("intent_revision", ref m.IntentRevision); if (d.Obj("intent") is Dictionary<string, object> c) m.Intent = GuardContinuation.Load(c); return m;
+            d.Load("goal_at", ref m.GoalAt); d.Load("progress_pos", ref m.ProgressPos); d.Load("progress_at", ref m.ProgressAt);
+            d.Load("intent_revision", ref m.IntentRevision); if (d.Obj("intent") is Dictionary<string, object> c) m.Intent = GuardContinuation.Load(c); return m;
         }
     }
 
@@ -97,6 +99,7 @@ namespace Pez.Sim
 
     public static class Objectives
     {
+        public const int MaxPerTeam = 64;
         public const float AnchorCadence = 1f, GoalBand = 1f;
         public static List<object> View(World w, int team) => w.Teams[team].Objectives.Values.Select(o => (object)o.View()).ToList();
         public static Objective ForSquad(World w, int team, string name) => name != null && team >= 0 && team < w.Teams.Count
@@ -163,7 +166,9 @@ namespace Pez.Sim
             }
             if (verb == "patrol")
             {
-                foreach (var raw in c.Arr("waypoints"))
+                var waypoints = c.Arr("waypoints");
+                if (waypoints.Count > 20) return Fail("patrol accepts at most 20 waypoints");
+                foreach (var raw in waypoints)
                 {
                     var one = new Dictionary<string, object> { ["point"] = raw };
                     if (!Point(w, one, "point", out var at)) return Fail("patrol waypoints must be points inside the map");
@@ -193,6 +198,8 @@ namespace Pez.Sim
                     if (!o.Wake.Contains(wake)) o.Wake.Add(wake);
                 }
             }
+            if (w.Teams[team].Objectives.Count >= MaxPerTeam && !w.Teams[team].Objectives.ContainsKey(id) && !w.Teams[team].Objectives.Values.Any(old => old.Squad == squadName))
+                return Fail("at most " + MaxPerTeam + " objectives may be retained per team; cancel an old objective first");
             if (w.Teams[team].Objectives.TryGetValue(id, out var previous)) o.Version = previous.Version + 1;
             foreach (var old in w.Teams[team].Objectives.Values.Where(old => old.Squad == squadName || old.Id == id).ToList())
             { Release(w, team, old); w.Teams[team].Objectives.Remove(old.Id); }
@@ -427,6 +434,7 @@ namespace Pez.Sim
                 {
                     var m = o.Members[unit.Id];
                     m.Arrived |= Vec2.Dist(unit.Pos, m.Goal) <= MathF.Max(0.75f, World.TakenReach(unit));
+                    if (o.Verb == "go" && !o.Done && !(o.HasAssembly && !o.Assembled) && !m.Arrived && BlockedGo(w, team, o, unit, m)) break;
                     bool holdingPhase = o.HasAssembly && !o.Assembled || o.Verb == "hold" || o.Verb == "escort" || o.Verb == "go" && (o.Done || m.Arrived) || o.Verb == "patrol" && m.Arrived;
                     if (holdingPhase && Vec2.Dist(unit.Pos, o.Anchor) <= o.Radius) m.Holding = true;
                     if (m.Holding && Vec2.Dist(unit.Pos, o.Anchor) > o.Radius + 0.5f) m.Returning = true;
@@ -435,6 +443,7 @@ namespace Pez.Sim
                     if (holdingPhase && m.Holding && !m.Returning) order = Order.Idle;
                     Queue(w, team, o, unit, m, order);
                 }
+                if (o.Paused) continue;
                 bool allThere = attached.Count > 0 && attached.All(e => o.Members[e.Id].Arrived);
                 if (o.HasAssembly && !o.Assembled) continue;
                 if (o.Verb == "go" && !o.Done && allThere)
@@ -467,7 +476,22 @@ namespace Pez.Sim
                 if (taken.Any(other => Vec2.DistSq(other, goal) < gap * gap * 0.81f)) return false;
                 taken.Add(goal);
             }
-            foreach (var unit in units) { var m = o.Members[unit.Id]; m.Goal = goals[unit]; m.GoalAt = w.Time; m.Assigned = true; m.Arrived = false; m.Holding = false; m.Returning = false; }
+            foreach (var unit in units) { var m = o.Members[unit.Id]; m.Goal = goals[unit]; m.GoalAt = w.Time; m.ProgressPos = unit.Pos; m.ProgressAt = w.Time; m.Assigned = true; m.Arrived = false; m.Holding = false; m.Returning = false; }
+            return true;
+        }
+        static bool BlockedGo(World w, int team, Objective o, Entity unit, ObjectiveMember m)
+        {
+            // Native movement can finish at the closest reachable point. A cached intent is not evidence of arrival.
+            // Track actual displacement, so a valid route around terrain need not get closer on every segment.
+            if (m.Intent == null || unit.IsCarried || unit.Stranded || unit.Retreating || unit.Order == Order.Refuel ||
+                unit.GuardMotionPaused || w.Time < unit.SettledUntil || MinerPolicies.Controls(w, unit) || SquadGuards.Controls(w, unit) ||
+                w.Time - unit.LastFiredAt < 6f || Vec2.DistSq(unit.Pos, m.ProgressPos) >= 0.25f)
+            { m.ProgressPos = unit.Pos; m.ProgressAt = w.Time; return false; }
+            bool stopped = unit.Order == Order.Idle && m.Intent.Order == Order.AttackMove && w.Time - m.GoalAt >= AnchorCadence;
+            if (!stopped && w.Time - m.ProgressAt < 6f) return false;
+            Pause(w, team, o, stopped ? "destination_unreachable" : "no_progress", new JObj().Set("unit", unit.Id)
+                .Set("at", SnapIO.V(unit.Pos)).Set("goal", SnapIO.V(m.Goal)).Set("remaining", Vec2.Dist(unit.Pos, m.Goal))
+                .Set("no_progress_s", w.Time - m.ProgressAt));
             return true;
         }
         static void Queue(World w, int team, Objective o, Entity unit, ObjectiveMember m, Order order)

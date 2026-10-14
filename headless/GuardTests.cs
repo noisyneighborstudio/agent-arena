@@ -10,14 +10,14 @@ namespace Pez.Headless
     {
         public static int RunGuards()
         {
-            SquadGuardBehaviors(); GateSquadGuards(); SnapshotCoversEveryField();
+            SquadGuardBehaviors(); GateSquadGuards(); GateSupportRelease(); SnapshotCoversEveryField();
             Console.WriteLine(failures == 0 ? "All tests passed." : $"{failures} guard tests FAILED.");
             return failures == 0 ? 0 : 1;
         }
 
         static void SquadGuardBehaviors()
         {
-            GuardData(); GuardConfiguration(); GuardSupport(); GuardScreen(); GuardContinuationAndPriorities(); GuardRetreats(); GuardPriorityAndLoadedTruck(); GuardMotionHandoff();
+            GuardData(); GuardConfiguration(); GuardSupport(); GuardSupportUnavailable(); GuardScreen(); GuardContinuationAndPriorities(); GuardRetreats(); GuardPriorityAndLoadedTruck(); GuardMotionHandoff();
         }
 
         static (Game game, List<Entity> units) GuardScene(params string[] keys)
@@ -89,6 +89,36 @@ namespace Pez.Headless
             GuardConfig(w, "hold_for_support", Cmd("within", 6)); Run(w, 1);
             Check(healer.units[0].Order == Order.Idle && Vec2.Dist(healer.units[0].Pos, new Vec2(44.5f, 30.5f)) < 0.1f,
                 "a held unarmed leader cannot replace the guard order with a medical trip to a nearby casualty");
+        }
+
+        static void GuardSupportUnavailable()
+        {
+            foreach (string unavailable in new[] { "destroyed", "refuel", "retreat" })
+            {
+                var (game, units) = GuardScene("light_tank", "light_tank"); var w = game.World;
+                At(units[0], new Vec2(44.5f, 30.5f));
+                Commands.Execute(w, 0, Cmd("type", "move", "squad", "west", "x", 65, "y", 30));
+                GuardConfig(w, "hold_for_support", Cmd("within", 6)); Run(w, 0.1f);
+                var guard = w.Teams[0].Squads["west"].Guards; var lead = guard.Units[units[0].Id];
+                Check(lead.SupportHeld, $"support-unavailable {unavailable}: the leader initially waits for its rear squadmate");
+                if (unavailable == "destroyed") w.Remove(units[1]);
+                else if (unavailable == "refuel")
+                {
+                    units[1].Fuel = units[1].FuelMax * 0.3f;
+                    w.BeginRefuel(units[1], w.Owned(0).First(e => e.Def.Key == "command_center"));
+                }
+                else { units[1].RetreatBelow = 0.8f; units[1].Hp = units[1].Def.MaxHp * 0.5f; }
+                Run(w, 1);
+                Check(lead.SupportHeld, $"support-unavailable {unavailable}: the hold still observes its existing cooldown");
+                Run(w, 5);
+                var releases = guard.Notes.Select(n => (Dictionary<string, object>)Json.Parse(n))
+                    .Where(n => n.Str("kind") == "guard_released" && n.Str("rule") == "hold_for_support").ToList();
+                Check(!lead.SupportHeld && !units[0].GuardMotionPaused && units[0].Order == Order.Move &&
+                    units[0].OrderPos.Equals(lead.Continuation.Pos) && units[0].SpeedCap == lead.Continuation.SpeedCap,
+                    $"support-unavailable {unavailable}: the sole traveller resumes its supplied route and original pace");
+                Check(releases.Count == 1 && releases[0].Str("reason") == "support_unavailable" && releases[0].In("travelling_members") == 1,
+                    $"support-unavailable {unavailable}: one explanation records the now-obsolete hold");
+            }
         }
 
         static void GuardScreen()

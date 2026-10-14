@@ -20,7 +20,7 @@ namespace Pez.Headless
 
         static void StrategyRecordsTests()
         {
-            StrategyValues(); StrategyOnlyDescribes(); StrategyHumanVersions(); StrategyAdvisories(); StrategyRetries(); StrategyPersistence(); StrategyWaiting();
+            CommandReviewRegressions(); StrategyValues(); StrategyOnlyDescribes(); StrategyHumanVersions(); StrategyAdvisories(); StrategyRetries(); StrategyPersistence(); StrategyWaiting();
         }
 
         static void StrategyValues()

@@ -31,8 +31,8 @@ namespace Pez.Sim
         /// 4: economy and endgame (salvage from kills, ore regrowth, construction trucks, the match clock, derricks, defence upkeep).
         /// 5: turn safety (ready seats and preparation clock, retry receipts, own losses and order provenance). 6: opt-in miner policy and withdrawal state.
         /// 7: named squads, formation HP and rally enrollment. 8: squad guards, saved continuations and motion pauses. 9: literal objectives, decision baselines and pinned reinforcement.
-        /// 10: nonexecuting strategy records and shared plan versions.</summary>
-        public const int Schema = 10;
+        /// 10: nonexecuting strategy records and shared plan versions. 11: saved objective progress clocks.</summary>
+        public const int Schema = 11;
         public const int MinReader = 1;
         /// <summary>Events kept: the last two minutes, plus recent chat, at most MaxEvents. Alerts: the last minute.</summary>
         const int MaxEvents = 1500;
