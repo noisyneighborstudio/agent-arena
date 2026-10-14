@@ -2288,10 +2288,11 @@ namespace Pez.Sim
         /// truck used to drive to the nearest tile, take a unit or two, and drive a tile again: a slide-pause rhythm.
         /// `collects` is that ore, at the tile it returns.
         /// </summary>
-        Int2? RichestNear(Vec2 from, float radius, Func<Int2, bool> ok, int want, Vec2? home, out int collects)
+        internal Int2? RichestNear(Vec2 from, float radius, Func<Int2, bool> ok, int want, Vec2? home, out int collects)
         {
             collects = int.MaxValue;
-            Int2? best = null; float bestScore = float.MinValue, bestHome = 0;
+            Int2? best = null; float bestScore = float.MinValue, bestHome = 0, bestRight = 0;
+            var right = home.HasValue ? RightOf(home.Value) : new Vec2(0, 0);
             int r = (int)MathF.Ceiling(radius), cx = (int)from.X, cy = (int)from.Y;
             bool Good(int x, int y) => Map.InBounds(x, y) && Map.OreAt(x, y) > 0 && (want < 0 || Map.OreType[Map.Idx(x, y)] == want) && ok(new Int2(x, y));
             for (int y = cy - r; y <= cy + r; y++)
@@ -2303,11 +2304,14 @@ namespace Pez.Sim
                     int sum = 0;
                     for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) if (Good(x + dx, y + dy)) sum += Map.OreAt(x + dx, y + dy);
                     float score = sum - 4f * d;
-                    // (Equal scores: the tile nearer home, as NearestOre breaks its ties, not the scan order, which favours one seat.)
-                    float toHome = home.HasValue ? Vec2.DistSq(new Int2(x, y).Center, home.Value) : 0f;
+                    // (Equal scores: as NearestOre breaks its ties, the tile nearer home, then the one on the right as home faces the middle of
+                    // the map, never the scan order, which favours one seat.)
+                    var centre = new Int2(x, y).Center;
+                    float toHome = home.HasValue ? Vec2.DistSq(centre, home.Value) : 0f, toRight = (centre.X - from.X) * right.X + (centre.Y - from.Y) * right.Y;
                     int cmp = best == null ? -1 : TieCmp(bestScore, score);
                     if (cmp == 0) cmp = TieCmp(toHome, bestHome);
-                    if (cmp < 0) { bestScore = score; bestHome = toHome; best = new Int2(x, y); collects = sum; }
+                    if (cmp == 0) cmp = TieCmp(bestRight, toRight); // the further right wins
+                    if (cmp < 0) { bestScore = score; bestHome = toHome; bestRight = toRight; best = new Int2(x, y); collects = sum; }
                 }
             return best;
         }

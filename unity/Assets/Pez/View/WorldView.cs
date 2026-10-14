@@ -928,7 +928,7 @@ namespace Pez.View
                 if (e.Def.Key == "barracks" && e.IsComplete && e.Team >= 0)
                 {
                     bool next = QueueHead(e, out float tp, out float tT);
-                    var queue = next ? World.Teams[e.Team].UnitQueues[e.Def.Produces] : null;
+                    var queue = next ? QueuedAt(e) : null;
                     Fx.Audience = AudienceFor(e);
                     (v.Bunks ??= BarracksWorks.For(rig.Model, e.Team, e.Id)).Tick(next, tp, tT, queue, Time.deltaTime);
                     Fx.Audience = null;
@@ -949,8 +949,15 @@ namespace Pez.View
                 if (v.Dock != null)
                 {
                     var phase = v.DockFrame >= Time.frameCount - 1 ? v.DockBest : DockView.Phase.Idle;
-                    // The bay can change side mid-match (a building that blocked the south lane is destroyed): the dock follows.
-                    if ((Time.frameCount + e.Id) % 6 == 0) { var (bayNow, _, facingNow, _) = World.Bay(e); v.Dock.Rebay(facingNow, bayNow); }
+                    // The bay can change side mid-match (a building that blocked the south lane is destroyed): the dock follows. The dock works
+                    // in the model's own frame, and the model is turned to face the bay (TurnToBay), so the sim's bay direction goes in as the
+                    // model sees it: its south (the door) once the model has turned, a side wall only in the moment before FollowBay turns it.
+                    if ((Time.frameCount + e.Id) % 6 == 0)
+                    {
+                        var (bayNow, _, facingNow, _) = World.Bay(e);
+                        var bayLocal = rig.Model.transform.InverseTransformDirection(new Vector3(Mathf.Cos(facingNow), 0f, Mathf.Sin(facingNow)));
+                        v.Dock.Rebay(Mathf.Atan2(bayLocal.z, bayLocal.x), bayNow);
+                    }
                     v.Dock.Tick(phase, Time.deltaTime);
                     // The door is up from Align until the truck has pulled out, and rolls down 0.5 s after.
                     if (phase != DockView.Phase.Idle && v.Dock.DoorSide) { rig.Motion.SetDoorOpen(true); v.DoorTimer = Mathf.Max(v.DoorTimer, 0.5f); }
@@ -1132,6 +1139,20 @@ namespace Pez.View
             p = Mathf.Clamp01(item.Progress / def.BuildTime);
             T = (def.BuildTime - item.Progress) / (t.LowPower ? 0.5f : 1f);
             return true;
+        }
+
+        readonly List<ProdItem> queuedAt = new List<ProdItem>();
+
+        /// <summary>The soldiers queued at this barracks: the one it works on itself first (ProdItem.WorkerId; QueueHead says it has one),
+        /// then those still waiting for a barracks that this one may take. The team's queue is shared, so its head can be another
+        /// barracks' soldier. Reused between calls: the caller reads it at once.</summary>
+        List<ProdItem> QueuedAt(Entity e)
+        {
+            queuedAt.Clear();
+            var q = World.Teams[e.Team].UnitQueues[e.Def.Produces];
+            foreach (var p in q) if (p.WorkerId == e.Id) queuedAt.Add(p);
+            foreach (var p in q) if (p.WorkerId == 0 && (p.StructureId == 0 || p.StructureId == e.Id || World.Get(p.StructureId) == null)) queuedAt.Add(p);
+            return queuedAt;
         }
 
         static float DoorH(Transform door)

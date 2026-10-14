@@ -274,11 +274,12 @@ namespace Pez.View
             s.Unit.transform.localPosition += Vector3.up * (-bottom - s.Half);
         }
 
-        /// <param name="training">This barracks is the one training the team's next soldier.</param>
+        /// <param name="training">This barracks is working on a soldier (each barracks works its own item of the team's queue).</param>
         /// <param name="p">That soldier's progress, 0..1.</param>
         /// <param name="T">Seconds until it's out (`trained`).</param>
-        /// <param name="queue">The team's soldiers queued at this barracks, the one in training first (null if it isn't
-        /// training): the top one is spat out as that unit's model, and the case's figurines are the ones queued.</param>
+        /// <param name="queue">The soldiers queued at this barracks, the one it is training first (null if it isn't training):
+        /// the top one is spat out as that unit's model, and the case's figurines are the ones queued. Not the team's queue
+        /// itself, whose head can be another barracks' soldier (WorldView.QueuedAt).</param>
         /// <remarks>Call with Fx.Audience set: the landing kicks up dust.</remarks>
         public void Tick(bool training, float p, float T, List<Pez.Sim.ProdItem> queue, float dt)
         {

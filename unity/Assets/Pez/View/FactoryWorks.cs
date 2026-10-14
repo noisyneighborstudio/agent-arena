@@ -90,19 +90,10 @@ namespace Pez.View
 
         public static FactoryWorks For(GameObject model, int seed) => new FactoryWorks(model.transform, seed);
 
-        /// <summary>The item this factory is making right now (the sim's rule: the chosen building while it stands, else
-        /// the team's first), or null.</summary>
-        static ProdItem Making(World w, Entity e)
-        {
-            var t = w.Teams[e.Team];
-            if (!t.UnitQueues.TryGetValue(e.Def.Produces, out var q) || q.Count == 0) return null;
-            var item = q[0];
-            var chosen = item.StructureId != 0 ? w.Get(item.StructureId) : null;
-            if (chosen != null && chosen.Team == e.Team && chosen.IsComplete && chosen.Def.Produces == e.Def.Produces) return chosen == e ? item : null;
-            foreach (var o in w.Entities)
-                if (!o.Dead && o.Team == e.Team && o.IsStructure && o.IsComplete && o.Def.Produces == e.Def.Produces) return o == e ? item : null;
-            return null;
-        }
+        /// <summary>The item this factory is making right now, or null: each building works its own item of the team's shared queue
+        /// (ProdItem.WorkerId), so a second factory shows its own and not the head's.</summary>
+        static ProdItem Making(World w, Entity e) =>
+            w.Teams[e.Team].UnitQueues.TryGetValue(e.Def.Produces, out var q) ? q.Find(p => p.WorkerId == e.Id) : null;
 
         /// <summary>`seen`: this view's team sees its live state; `clean`: not burning (a burning stack's smoke is the fire's).
         /// `audience`: the cameras that may see its effects (WorldView.AudienceFor).</summary>

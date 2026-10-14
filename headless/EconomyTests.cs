@@ -898,6 +898,15 @@ namespace Pez.Headless
             var seat1Tile = map.NearestOre(new Vec2(68.5f, 68.5f), 10, null, -1, new Vec2(70.5f, 70.5f));
             Check(seat0Tile.HasValue && seat1Tile.HasValue && seat1Tile.Value.X == 79 - seat0Tile.Value.X && seat1Tile.Value.Y == 79 - seat0Tile.Value.Y,
                   $"a truck on a mined-out tile turns to the equally near tile the mirrored truck does ({seat0Tile} and {seat1Tile}, not the lowest-numbered one)");
+            // The spot a loaded truck drives to next (RichestNear) too: ore as rich the same way off, the same distance from home, either side
+            // of the line to the middle. The first tile scanned won, so the mirrored seat took the other one.
+            var rich = new World(2, 1, 80);
+            Array.Clear(rich.Map.Ore, 0, rich.Map.Ore.Length);
+            foreach (var (x, y) in new[] { (24, 20), (20, 24), (55, 59), (59, 55) }) { rich.Map.Ore[rich.Map.Idx(x, y)] = 100; rich.Map.OreType[rich.Map.Idx(x, y)] = Map.Iron; }
+            var spot0 = rich.RichestNear(new Vec2(20.5f, 20.5f), 8f, t => true, -1, new Vec2(10.5f, 10.5f), out _);
+            var spot1 = rich.RichestNear(new Vec2(59.5f, 59.5f), 8f, t => true, -1, new Vec2(69.5f, 69.5f), out _);
+            Check(spot0.HasValue && spot1.HasValue && spot1.Value.X == 79 - spot0.Value.X && spot1.Value.Y == 79 - spot0.Value.Y,
+                  $"a truck choosing its next spot among equal ones, equally near home, takes the mirrored one at the mirrored seat ({spot0} and {spot1})");
             var open = new World(2, 1, 80);
             Array.Clear(open.Map.Tiles, 0, open.Map.Tiles.Length);
             foreach (var (x, y) in new[] { (20, 20), (59, 59) }) open.Map.Tiles[open.Map.Idx(x, y)] = Terrain.Rock;
