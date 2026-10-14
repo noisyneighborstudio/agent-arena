@@ -3212,12 +3212,12 @@ namespace Pez.Headless
             double fieldBefore = EconReport.FieldOreTotal(pm);
             int bare = Enumerable.Range(0, pm.Ore.Length).First(i => pm.Ore[i] == 0 && pm.OreBase[i] == 0 && pm.TerrainPassable(i % pm.W, i / pm.W));
             pm.Ore[bare] = 100; pm.Salvage[bare] = 100; pm.OreType[bare] = Map.Iron;
-            // (A passive game no longer has kills to leave any, so the setup lays some on the 40 bare tiles farthest from both bases: the trucks reach them last.)
+            // (A passive game no longer has kills to leave any, so the setup lays some on the 80 bare tiles farthest from both bases: the trucks reach them last. Forty were all eaten by minute 12 on some runs, which left nothing to check.)
             var played = EconReport.PlayGame(1, 80, 1f, true, 12, setup: g =>
             {
                 var gm = g.Map;
                 foreach (int far in Enumerable.Range(0, gm.Ore.Length).Where(i => gm.Ore[i] == 0 && gm.OreBase[i] == 0 && gm.TerrainPassable(i % gm.W, i / gm.W))
-                                              .OrderByDescending(i => g.Teams.Min(t => Vec2.Dist(new Vec2(i % gm.W + .5f, i / gm.W + .5f), t.StartPos))).Take(40))
+                                              .OrderByDescending(i => g.Teams.Min(t => Vec2.Dist(new Vec2(i % gm.W + .5f, i / gm.W + .5f), t.StartPos))).Take(80))
                 { gm.Ore[far] = 100; gm.Salvage[far] = 100; gm.OreType[far] = Map.Iron; }
             });
             Check(EconReport.FieldOreTotal(pm) == fieldBefore && pm.Ore.Sum() == (int)fieldBefore + 100 && played.SalvageEnd > 0 && played.SurfaceByMinute[12] == played.SurfaceEnd,

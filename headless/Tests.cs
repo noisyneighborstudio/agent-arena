@@ -1294,31 +1294,37 @@ namespace Pez.Headless
         }
 
         /// <summary>A tank parked on the head of a lane with rock beside the lane, and a truck stopped by it on the far side of the rock: it
-        /// never stands on the rock (swinging in to Align from there carried it across), and docks once the tank has gone.</summary>
+        /// never stands on the rock (swinging in from there carried it across), and docks. Once with the rock beside the head, and once
+        /// with the rock further down the lane and the truck already facing out of the bay (it used to go straight on to back in, slantwise).</summary>
         static void DockBesideRock()
         {
-            var w = new World(2, 7, 80);
-            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
-            var refinery = w.SpawnStructure(0, "mining_refinery", w.FindPlacement(0, "mining_refinery").Value, 1f);
-            var (dock, head, _, _) = w.Bay(refinery);
-            var outward = (head - dock).Normalized;
-            var across = new Vec2(-outward.Y, outward.X);
-            foreach (var o in w.Owned(0).Where(e => e.IsHarvester).ToList()) w.Remove(o);
-            var rock = Int2.Of(head + across);
-            w.Map.Tiles[w.Map.Idx(rock.X, rock.Y)] = Terrain.Rock; // the tile beside the head of the lane
-            var tank = At(w.SpawnUnit(0, "heavy_tank", hq), head); w.SetOrder(tank, Order.Idle, tank.Pos);
-            var truck = At(w.SpawnUnit(0, "mining_truck", refinery), head + across * 1.55f); // within reach of the head, across the rock
-            truck.Cargo = 150; truck.CargoType = 0; w.SetOrder(truck, Order.ReturnOre, truck.Pos);
-            int mined0 = w.Teams[0].Stats.OreMined;
-            bool onRock = false, parked = true;
-            for (int k = 0; k < 30 * World.TickRate && w.Teams[0].Stats.OreMined - mined0 < 150; k++)
+            for (int c = 0; c < 2; c++)
             {
-                if (parked && k == 8 * World.TickRate) { w.Remove(tank); parked = false; }
-                w.Step();
-                var at = Int2.Of(truck.Pos);
-                if (!w.Map.Passable(at.X, at.Y)) onRock = true;
+                var w = new World(2, 7, 80);
+                var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+                var refinery = w.SpawnStructure(0, "mining_refinery", w.FindPlacement(0, "mining_refinery").Value, 1f);
+                var (dock, head, facing, _) = w.Bay(refinery);
+                var outward = (head - dock).Normalized;
+                var across = new Vec2(-outward.Y, outward.X);
+                foreach (var o in w.Owned(0).Where(e => e.IsHarvester).ToList()) w.Remove(o);
+                var rock = Int2.Of(head + across - outward * (c == 0 ? 0f : 1f)); // beside the head of the lane, or one tile down it (towards the bay)
+                w.Map.Tiles[w.Map.Idx(rock.X, rock.Y)] = Terrain.Rock;
+                var tank = At(w.SpawnUnit(0, "heavy_tank", hq), head); w.SetOrder(tank, Order.Idle, tank.Pos);
+                var truck = At(w.SpawnUnit(0, "mining_truck", refinery), head + across * 1.55f); // within reach of the head, across the rock
+                if (c == 1) truck.Facing = facing;
+                truck.Cargo = 150; truck.CargoType = 0; w.SetOrder(truck, Order.ReturnOre, truck.Pos);
+                int mined0 = w.Teams[0].Stats.OreMined;
+                bool onRock = false, parked = true;
+                for (int k = 0; k < 30 * World.TickRate && w.Teams[0].Stats.OreMined - mined0 < 150; k++)
+                {
+                    if (parked && c == 0 && k == 8 * World.TickRate) { w.Remove(tank); parked = false; } // beside the head it waits for the tank to go
+                    w.Step();
+                    var at = Int2.Of(truck.Pos);
+                    if (!w.Map.Passable(at.X, at.Y)) onRock = true;
+                }
+                Check(!onRock && w.Teams[0].Stats.OreMined - mined0 >= 150,
+                      $"a truck held off the lane head by a parked tank never crosses the rock {(c == 0 ? "beside the head" : "down the lane")}, and docks{(c == 0 ? " once the tank is gone" : "")} (on rock {onRock}, delivered {w.Teams[0].Stats.OreMined - mined0}, {truck.Dock}, t {w.Time:0.0})");
             }
-            Check(!onRock && w.Teams[0].Stats.OreMined - mined0 >= 150, $"a truck held off the lane head by a parked tank never crosses the rock beside the lane, and docks once the tank is gone (on rock {onRock}, delivered {w.Teams[0].Stats.OreMined - mined0}, {truck.Dock}, t {w.Time:0.0})");
         }
 
         static void NoGridlock()

@@ -139,7 +139,8 @@ After phase 3 the guard should never fire in play; its counter staying at zero i
   clock; the ore regrows no faster for the hurry (the 16 seeds mine 0.7% less, and the longest beat falls from 8 to 5).
   A truck pulling into a bay swings in from where it was stopped short by a unit parked on the lane's head, and the
   bay shoves that unit aside (Align holds the line), instead of waiting in Enter for it to leave. It only swings in
-  over open ground: stopped across rock beside the lane, it stays in Enter until the unit moves.
+  over open ground: stopped across rock beside the lane, it stays in Enter until the unit moves. Align hands over to
+  Reverse only once the truck is on the lane (within 0.1 of the head), not on facing alone.
 - **Phase 3:** not started. What's left for it: units shoved while standing (a queued truck nudged by one passing, an
   idle soldier pushed by separation) still slide without turning.
 
