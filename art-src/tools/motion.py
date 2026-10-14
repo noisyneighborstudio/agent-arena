@@ -70,13 +70,13 @@ UNITS = [
    "Recoil is 0.16 with a 0.5 s return. The hull kicks back 2.5°. It must stop to fire when the target is more than 30° off the hull heading.",
    dict(**TURRET(80), **BARREL(.16, .05, .5)), "Turret scans ±25° every 4–6 s."),
  U('artillery', 'Long-range indirect fire. Must stop to fire.', 'factory', 'tracked', 1.5, 1.0, 80, True,
-   TRACKED.format(t=80) + " Fire cycle: stop and deploy 0.6 s (hull lowers 0.04, spades plant). The turret yaws toward the target and the barrel stays at a fixed 60° elevation. "
+   TRACKED.format(t=80) + " Fire cycle: stop and deploy 0.6 s (hull lowers 0.04; spade_l and spade_r, folded up 105° for travel, slam down in 0.25 s and bite, kicking dust at their blades; the gun, stowed for travel on the bow's travel lock at about −3°, rises to its fixed −60° over 0.6 s as it nears firing range and snaps up if a shot comes first; moving again, the spades fold and the gun stows once the turret faces forward). The turret yaws toward the target and the barrel stays at a fixed 60° elevation. "
    "On firing, the barrel recoils 0.2 along its own axis over 0.05 s and returns over 0.6 s, and the hull pitches back 3°. "
    "It must undeploy (0.4 s) before moving. Shells fly a ballistic arc with an apex at 0.35 × range.",
-   dict(**TURRET(60), **BARREL(.2, .05, .6, pitch=-60)), "Barrel stays elevated; no idle scan."),
+   dict(**TURRET(60), **BARREL(.2, .05, .6, pitch=-60), **{'spade_l`, `spade_r': "hinged at the hull's rear; rest pose planted (deployed), +105° about local X folded for travel", 'cradle': "the recoil cradle, a child of `turret` on the trunnion, pitched with `barrel` (−60° rest); the view pitches both +57° to stow the gun"}), "Barrel stays elevated; no idle scan."),
  U('long_range_artillery', 'Range-12 indirect fire. Needs a spotter. Must stop to fire.', 'factory', 'tracked', 1.3, 0.9, 70, True,
    TRACKED.format(t=70) + " Same family as artillery with a longer hull and a far longer gun (range 12). Fire cycle as artillery: stop and deploy (hull lowers 0.04; spade_l and spade_r, folded up 105° for travel, slam down in 0.25 s and bite, kicking dust at their blades; the gun, stowed for travel on the bow's travel lock at about −3°, rises to its fixed −60° over 0.6 s as it nears firing range and snaps up if a shot comes first; moving again, the spades fold and the gun stows once the turret faces forward). On firing, the barrel recoils 0.24 along its own axis over 0.05 s and returns over 0.7 s, and the hull pitches back 3°.",
-   dict(**TURRET(50), **BARREL(.24, .05, .7, pitch=-60)), "Barrel stays elevated; no idle scan."),
+   dict(**TURRET(50), **BARREL(.24, .05, .7, pitch=-60), **{'spade_l`, `spade_r': "hinged at the hull's rear; rest pose planted (deployed), +105° about local X folded for travel", 'cradle': "the recoil cradle, a child of `turret` on the trunnion, pitched with `barrel` (−60° rest); the view pitches both +57° to stow the gun"}), "Barrel stays elevated; no idle scan."),
  U('laser_tank', 'Beam tank that keeps a continuous lock on its target.', 'factory', 'tracked', 1.8, 1.4, 100, True,
    TRACKED.format(t=100) + " Laser: no recoil. Charge 0.4 s (the cyan coils brighten one after another, back to front), then a beam lasts 0.8 s while the turret keeps tracking. "
    "Cooldown is 1.2 s and the coils fade out. The barrel vibrates 0.004 at 30 Hz while the beam is on.",
@@ -463,7 +463,8 @@ ALL = STRUCTURES + UNITS + ORES
 def md():
     L = ["# Pez — motion and mechanics spec (Unity)", "",
          "Units are tiles (1 tile = 1 Unity unit) and seconds. Rotation speeds are in degrees per second, spinners in rpm. "
-         "Node names match the .glb files. `PezMotion.cs` drives the named nodes and `PezEmerge.cs` runs the emerge and remove transforms.", "",
+         "Node names match the .glb files. `PezMotion.cs` drives the named nodes and `PezEmerge.cs` runs the emerge and remove transforms."
+         " This file is generated from `art-src/tools/motion.py`: change an entry there and splice it in with `art-src/tools/kit/motion_splice.py` (see `docs/art/ASSET_GUIDE.md` §6).", "",
          "## Global rules", "",
          "- **Nothing pops in or out.** Every spawn, build, deploy, regrowth, sale and death is a transform over time; nothing is toggled with SetActive mid-frame.",
          "- **Structures** rise out of their pad in four stages (`stage_0`…`stage_3`) as build progress advances, then their functional nodes unfold.",
@@ -487,7 +488,7 @@ def md():
                 L.append(f"- **Locomotion:** {lo['type']} · max {lo['max_speed']} t/s · accel {lo['accel']} t/s² · decel {lo['decel']} t/s² · turn {lo['turn_rate_deg']}°/s · turns in place: {'yes' if lo['turn_in_place'] else 'no'}")
             L.append(f"- **Mechanics:** {a['mechanics']}")
             for n, v in a['nodes'].items():
-                L.append(f"- **`{n}`:** " + ", ".join(f"{k}={vv}" for k, vv in v.items()))
+                L.append(f"- **`{n}`:** " + (v if isinstance(v, str) else ", ".join(f"{k}={vv}" for k, vv in v.items())))
             if a.get('idle'): L.append(f"- **Idle:** {a['idle']}")
             if a['kind'] != 'structure':
                 L.append(f"- **Emerge:** {a['emerge']}")

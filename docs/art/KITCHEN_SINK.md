@@ -91,7 +91,7 @@ Nothing here is staged in the view; it's the real sim, held in place:
 
 ## Adding a new asset or state
 
-When something ships that the room doesn't show yet:
+When something ships that the room doesn't show yet (every asset change does this as part of `ASSET_GUIDE.md` §7):
 
 1. **A new unit or structure def** shows up as a failure of `KitchenSinkRoom` ("every unit and structure def is on show").
    Add its key to the right row in `KitchenSink.cs`: `BaseRow` or `TechRow` for structures, `Infantry`, `Vehicles`, `Heavy`

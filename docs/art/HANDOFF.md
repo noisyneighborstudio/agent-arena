@@ -1,5 +1,7 @@
 # Pez art handoff, v0.3
 
+> **Process has moved on.** For how to make, refine, verify and ship an asset today, follow [`ASSET_GUIDE.md`](ASSET_GUIDE.md). This document is kept for its history and decisions log; where it disagrees with the guide about process, the guide wins.
+
 **Start here:** read `BRIEF_v2.md` for the art direction, then `assets/README.md` to get the models into Unity, then `assets/unity/MOTION.md` for how everything moves.
 
 ## Contents
