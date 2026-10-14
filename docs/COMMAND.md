@@ -159,8 +159,8 @@ each guard: zero settles, no oscillation between hold and advance.
 | Phase | State | Commit | Notes |
 |---|---|---|---|
 | P0 briefing | done | 358144e | live |
-| P1 turn safety | not started | | |
-| P2 slow-agent spike | not started | | baseline before P3 |
+| P1 turn safety | pushed; deploying | 40c928c | Rules 45: ready/grace, saved retry receipts, advisory stale/obsolete replies. Release build + full `--test`: All tests passed; MCP turn safety 2/2, lobby 12/12, observe 5/5; site/watcher 14/14. Watch CI for 40c928c, then baseline phase. |
+| P2 slow-agent spike | measured; verification pending | | 18 offline matches at rules 45; baseline raw/write-up and harness prepared. Commit after full `--test`, deploy after P1. |
 | P3 miner protection | not started | | |
 | P4 squads | not started | | |
 | P5 guards | not started | | |
@@ -174,4 +174,6 @@ the T3 thread that wrote this doc, as T3 task
 `task_status` on that id and reviews each phase's commits against the principle and the architecture rules above. If the supervisor runs out, any agent continues from this table: read the
 latest commits touching the files above, check `ci-work/status.json`, and carry on with the first phase not marked done.
 
-**Open questions:** none yet.
+**Next step:** wait for P1 deployment, verify/commit P2 (`headless/SlowAgent.cs`, `SlowAgentTests.cs`, Program/Tests wiring, `docs/spikes/slow-agent.md` and baseline JSONL). P3 work is in progress but is not shipped; all layers remain opt-in.
+
+**Open questions:** P1 conservatively pauses the saved readiness countdown during host downtime, matching the existing waiting clock. Retry cache capacity refuses new keys before executing (512 receipts per team), preserving every accepted key for ten real minutes. Stale order facts use strictly later ticks: changes in the same tick as a supplied `as_of_tick` cannot be ordered relative to that state read without a separate revision. Own unavailable-unit history is bounded to the latest 2048 removals.
