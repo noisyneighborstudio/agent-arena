@@ -2188,8 +2188,12 @@ namespace Pez.Sim
                 case DockStep.Align:
                     // Turn on the spot to face away from the building (the bin end toward it), settling onto the lane.
                     e.Moving = false;
+                    // It only ever steps onto open ground (the check before Align samples the line, and can miss a clipped corner): a
+                    // step that wouldn't be sends it back to Enter with a fresh path, to find its way round.
+                    var settle = e.Pos + (head - e.Pos) * MathF.Min(1f, 4f * Dt);
+                    if (!StepOpen(e.Pos, settle)) { e.Dock = DockStep.Enter; e.Path = null; return; }
                     e.Facing = RotateToward(e.Facing, bayFacing, AlignTurnRate * Dt);
-                    e.Pos = e.Pos + (head - e.Pos) * MathF.Min(1f, 4f * Dt);
+                    e.Pos = settle;
                     // Reverse moves straight to the bay, so the truck must be on the lane first, not just facing the right way
                     // (one that came in beside the head already faced out, and backed in at a slant, across what lay beside the lane).
                     if (MathF.Abs(AngleDiff(e.Facing, bayFacing)) < 0.02f && Vec2.Dist(e.Pos, head) < 0.1f) { e.Facing = bayFacing; e.Dock = DockStep.Reverse; }
@@ -3215,6 +3219,14 @@ namespace Pez.Sim
                 if (e.RepathTimer > 3f) { e.Moving = false; return true; }
             }
             return false;
+        }
+
+        /// <summary>Can a unit step from a to b: onto open ground, and a diagonal step not squeezing between two blocked tiles?</summary>
+        bool StepOpen(Vec2 a, Vec2 b)
+        {
+            Int2 ta = Int2.Of(a), tb = Int2.Of(b);
+            bool Open(int x, int y) => Map.InBounds(x, y) && Map.Passable(x, y);
+            return Open(tb.X, tb.Y) && (ta.X == tb.X || ta.Y == tb.Y || Open(tb.X, ta.Y) || Open(ta.X, tb.Y));
         }
 
         /// <summary>Open ground all along the straight line from a to b (sampled every quarter tile).</summary>
