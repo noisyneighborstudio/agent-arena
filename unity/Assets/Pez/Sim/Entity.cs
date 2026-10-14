@@ -32,6 +32,7 @@ namespace Pez.Sim
         public Int2 Origin;
         public float BuildProgress = 1f;   // 0..1, structures only
         public Vec2? Rally;
+        public string RallySquad;
         public bool IsComplete => BuildProgress >= 1f;
 
         // Units

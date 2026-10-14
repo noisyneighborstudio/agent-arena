@@ -175,7 +175,8 @@ namespace Pez.Sim
             var log = Log(team);
             if (log == null) return exec();
             var type = (c.Str("type", "") ?? "").ToLowerInvariant();
-            var requested = c.TryGetValue("units", out var ur) && ur is List<object> ? c.Ids("units") : new List<int>();
+            var requested = Squads.Selector(c, out _) || c.TryGetValue("units", out var ur) && ur is List<object>
+                ? Commands.RequestedUnits(w, team, c) : new List<int>();
             int entsBefore = w.Entities.Count;
             var t = w.Teams[team];
             var queued = new HashSet<ProdItem>(t.StructureQueue.Concat(t.UnitQueues.Values.SelectMany(q => q)));
@@ -1203,6 +1204,7 @@ namespace Pez.Sim
                     .Set("units", t.UnitQueues.Where(kv => kv.Value.Count > 0).ToDictionary(kv => ProducerName(kv.Key), kv => (object)kv.Value.Select(p => (object)p.Key).ToList())))
                 .Set("stockpile", StateView.Stockpile(t)).Set("power", new List<object> { t.PowerUsed, t.PowerProduced })
                 .Set("policies", new JObj().Set("miners", t.Miners.View()))
+                .Set("squads", Squads.View(w, Team))
                 .Set("standing_orders", new JObj().Set("version", t.OrdersVersion).Set("text", t.StandingOrders).Set("src", "human"))
                 .Set("open_cmds", cmds.Values.Select(c => (object)new JObj().Set("cmd", c.Id).Set("type", c.Type).Set("units", c.Units.Where(u => !c.Outcome.ContainsKey(u)).Cast<object>().ToList())).ToList())
                 .Set("match", StateView.MatchJson(w));

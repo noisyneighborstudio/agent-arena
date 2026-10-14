@@ -122,9 +122,7 @@ namespace Pez.Sim
         {
             var facts = new List<object>();
             if (!asOf.HasValue) return facts;
-            var ids = c.Ids("units");
-            if (c.TryGetValue("units", out var selector) && selector is string s && (s == "all" || s == "idle"))
-                ids = w.Owned(team).Where(e => !e.IsStructure && e.IsArmed && (s != "idle" || e.Order == Order.Idle)).Select(e => e.Id).ToList();
+            var ids = Commands.RequestedUnits(w, team, c);
             foreach (int id in ids.Distinct())
             {
                 var e = w.Get(id);

@@ -81,6 +81,7 @@ namespace Pez.Headless
             JoinFlow();
             TurnSafety();
             MinerProtection();
+            NamedSquads();
             WaitPacing();
             DeepMining();
             Prospecting();

@@ -40,6 +40,7 @@ namespace Pez.Sim
             o.Set("last_alert_seq", w.Alerts.LastSeq);
             o.Set("standing_orders", t.StandingOrders.Length == 0 ? null : t.StandingOrders);
             o.Set("orders_version", t.OrdersVersion);
+            o.Set("squads", Squads.View(w, team));
             o.Set("policies", new JObj().Set("miners", t.Miners.View()));
             o.Set("opponents", w.Teams.Where(x => x.Id != team && !x.Left).Select(x => (object)new JObj()
                 .Set("team", x.Id).Set("name", x.Name).Set("player", x.PlayerName ?? x.Controller)

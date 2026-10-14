@@ -29,8 +29,9 @@ namespace Pez.Sim
         public const string Format = "pezz-snapshot";
         /// <summary>1: first version. 2: mining zones, prospecting surveyors, drill rigs' zones, arena champion. 3: agent inventions.
         /// 4: economy and endgame (salvage from kills, ore regrowth, construction trucks, the match clock, derricks, defence upkeep).
-        /// 5: turn safety (ready seats and preparation clock, retry receipts, own losses and order provenance). 6: opt-in miner policy and withdrawal state.</summary>
-        public const int Schema = 6;
+        /// 5: turn safety (ready seats and preparation clock, retry receipts, own losses and order provenance). 6: opt-in miner policy and withdrawal state.
+        /// 7: named squads, formation HP and rally enrollment.</summary>
+        public const int Schema = 7;
         public const int MinReader = 1;
         /// <summary>Events kept: the last two minutes, plus recent chat, at most MaxEvents. Alerts: the last minute.</summary>
         const int MaxEvents = 1500;
@@ -92,6 +93,7 @@ namespace Pez.Sim
             if (t.Miners.WithdrawOnAttack || t.Miners.Fields.Count > 0 || t.Miners.Detached.Count > 0 ||
                 t.Miners.ToBase || t.Miners.Destination.LengthSq > 0 || t.Miners.ResumeAfterS != 0) o.Set("miner_policy", t.Miners.Save());
             if (t.CommandReceipts.Count > 0) o.Set("command_receipts", t.CommandReceipts.Select(r => (object)new JObj().Set("id", r.Id).Set("at", r.At.ToString("O", CultureInfo.InvariantCulture)).Set("reply", r.Reply)).ToList());
+            if (t.Squads.Count > 0) o.Set("squads", t.Squads.Values.OrderBy(s => s.Name, StringComparer.Ordinal).Select(s => (object)s.Save()).ToList());
             if (t.GoneUnits.Count > 0) o.Set("gone_units", t.GoneUnits.Select(kv => (object)new List<object> { kv.Key, kv.Value }).ToList());
             if (t.Granted.Count > 0) o.Set("granted", SnapIO.Floats(t.Granted));
             if (t.Visible != null) o.Set("visible", SnapIO.PackBits(t.Visible));
@@ -140,6 +142,7 @@ namespace Pez.Sim
             d.Load("start", ref t.StartPos); d.Load("defeated", ref t.Defeated); d.Load("left", ref t.Left); d.Load("resigned", ref t.Resigned);
             d.Load("stalled_since", ref t.StalledSince); d.Load("house", ref t.House); d.Load("seat", ref t.Seat);
             d.Load("ready", ref t.Ready);
+            foreach (var row in d.Objs("squads")) { var squad = Squad.Load(row); if (squad != null) t.Squads[squad.Name] = squad; }
             d.Load("protected_until", ref t.ProtectedUntil); d.Load("surface_warned_at", ref t.SurfaceWarnedAt); d.Load("home_ore_warned", ref t.HomeOreWarned); d.Load("last_active_at", ref t.LastActiveAt);
             if (d.Str("scatter") is string sc && ulong.TryParse(sc, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var scState)) t.Scatter.State = scState; // (a save from before: from the start)
             foreach (var r in d.Objs("command_receipts").TakeLast(CommandSafety.MaxReceipts))
@@ -196,6 +199,7 @@ namespace Pez.Sim
             if (e.IsStructure) o.Set("origin", new List<object> { e.Origin.X, e.Origin.Y });
             o.Put("build_progress", e.BuildProgress, 1f);
             if (e.Rally.HasValue) o.Set("rally", SnapIO.V(e.Rally.Value));
+            o.Put("rally_squad", e.RallySquad);
             o.PutEnum("order", e.Order, Order.Idle).PutV("order_pos", e.OrderPos).PutV("guard_pos", e.GuardPos).Put("target", e.TargetId).Put("until_capturable", e.UntilCapturable).Put("engage_derricks", e.EngageDerricks);
             if (e.Path != null) o.Set("path", SnapIO.Vs(e.Path)).Put("path_idx", e.PathIdx);
             o.Put("cooldown", e.Cooldown).Put("speed_cap", e.SpeedCap).Put("group", e.Group, 0)
@@ -237,6 +241,7 @@ namespace Pez.Sim
             if (d.Has("origin", out var og) && og is List<object> ol && ol.Count >= 2) e.Origin = new Int2(SnapIO.ToI(ol[0]), SnapIO.ToI(ol[1]));
             d.Load("build_progress", ref e.BuildProgress);
             if (d.Has("rally", out _)) { var r = default(Vec2); d.Load("rally", ref r); e.Rally = r; }
+            d.Load("rally_squad", ref e.RallySquad);
             d.LoadEnum("order", ref e.Order); d.Load("order_pos", ref e.OrderPos); d.Load("guard_pos", ref e.GuardPos); d.Load("target", ref e.TargetId); d.Load("until_capturable", ref e.UntilCapturable); d.Load("engage_derricks", ref e.EngageDerricks);
             if (d.Has("path", out _)) { e.Path = SnapIO.ToVecs(d.Arr("path")); d.Load("path_idx", ref e.PathIdx); }
             d.Load("cooldown", ref e.Cooldown); d.Load("speed_cap", ref e.SpeedCap); d.Load("group", ref e.Group);

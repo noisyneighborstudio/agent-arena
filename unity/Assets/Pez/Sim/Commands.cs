@@ -41,6 +41,8 @@ namespace Pez.Sim
   {""type"":""prospect"", ""units"":[SURVEYOR IDS], ""x"":X, ""y"":Y, ""radius"":R}  surveyors roam on their own: survey, flag what they find, move on to the nearest unsurveyed spot, until nothing is left within R tiles of x,y (all optional: default 40 tiles around each surveyor) or you give another order
   {""type"":""drill"", ""units"":[DRILL RIG IDS], ""zone"":ID}  a drill_rig drives to that mining zone and deploys into a Deep Mine on arrival (omit zone: each rig takes the nearest free zone)
   {""type"":""rally"", ""structure_id"":ID, ""x"":X, ""y"":Y} where new units from that building go
+      add ""squad"":""west"" to enroll new units in that squad; a later rally without squad clears enrollment (rally applies to your producers of this building's kind)
+  {""type"":""squad"", ""name"":""west"", ""add"":[IDS], ""remove"":[IDS]}  name live own units (1-24 chars, one squad each); disband:true clears it. No movement by itself. Unit commands accept ""squad"":""west"" or ""units"":""squad:west"".
   {""type"":""sell"", ""structure_id"":ID}                 sell for 50% refund (your only one of a tech or production building needs ""confirm"":true)
   {""type"":""reserve"", ""item"":""iron_ore"", ""amount"":300}  converters (refineries, plants) leave this much of an item alone, so raw-ore costs (power_plant, mining_refinery, mining_truck) stay payable; amount 0 clears it
   {""type"":""save_for"", ""unit"":""drill_rig""}           save up for one unit or structure: converters leave its cost alone until you train/build it (no unit: cancel)
@@ -68,6 +70,7 @@ POST /command may wrap commands with ""request_id"":""unique retry key"" and ""a
                     return Err($"you're under newcomer protection for {(int)(w.Teams[team].ProtectedUntil - w.Time)}s more and can't attack yet; use the time to build up");
                 switch (type)
                 {
+                    case "squad": return Squads.Configure(w, team, c);
                     case "set_policy": return MinerPolicies.Configure(w, team, c);
                     case "build": return Build(w, team, c);
                     case "train": return Train(w, team, c);
@@ -250,8 +253,9 @@ POST /command may wrap commands with ""request_id"":""unique retry key"" and ""a
             return Ok($"queued {queued}x {key}" + (at != null ? $" at {at.Def.Key} #{at.Id}" : "") + (queued < count ? $" (could only afford {queued})" : "") + $"; {t.UnitQueues[def.BuiltBy].Count} in the queue {shared}" + saved);
         }
 
-        static List<Entity> ResolveUnits(World w, int team, Dictionary<string, object> c)
+        internal static List<Entity> ResolveUnits(World w, int team, Dictionary<string, object> c)
         {
+            if (Squads.Selector(c, out var name)) return Squads.Resolve(w, team, name);
             if (c.TryGetValue("units", out var v) && v is string s)
             {
                 var mine = w.Owned(team).Where(e => !e.IsStructure && e.IsArmed);
@@ -259,6 +263,13 @@ POST /command may wrap commands with ""request_id"":""unique retry key"" and ""a
                 return mine.ToList();
             }
             return c.Ids("units").Select(w.Get).Where(e => e != null && e.Team == team && !e.IsStructure && !e.IsMine && !e.IsCarried).ToList();
+        }
+
+        internal static List<int> RequestedUnits(World w, int team, Dictionary<string, object> c)
+        {
+            if (c.Str("type", "").ToLowerInvariant() == "rally") return new List<int>(); // squad here enrolls future production
+            if (Squads.Selector(c, out var name)) return Squads.Resolve(w, team, name).Select(e => e.Id).ToList();
+            return c.TryGetValue("units", out var raw) && raw is string ? ResolveUnits(w, team, c).Select(e => e.Id).ToList() : c.Ids("units");
         }
 
         static JObj UnitOrder(World w, int team, Dictionary<string, object> c, Order order)
@@ -460,8 +471,14 @@ POST /command may wrap commands with ""request_id"":""unique retry key"" and ""a
             if (s == null) return Err("structure_id must be one of your structures");
             float x = c.Num("x"), y = c.Num("y");
             if (float.IsNaN(x) || float.IsNaN(y)) return Err("x and y are required");
+            string squad = null;
+            if (c.TryGetValue("squad", out var raw))
+            {
+                if (!(raw is string name) || !w.Teams[team].Squads.ContainsKey(name)) return Err("rally squad must name one of your squads");
+                squad = name;
+            }
             // Rally applies to every producer of the same kind, which is what players expect.
-            foreach (var o in w.Owned(team).Where(o => o.IsStructure && o.Def.Produces == s.Def.Produces)) o.Rally = new Vec2(x, y);
+            foreach (var o in w.Owned(team).Where(o => o.IsStructure && o.Def.Produces == s.Def.Produces)) { o.Rally = new Vec2(x, y); o.RallySquad = squad; }
             // New units drive there on their own tank: say what the trip costs the shortest-legged one this building makes.
             float dist = Vec2.Dist(s.Center, new Vec2(x, y));
             float Tank(EntityDef d) => d.RangeMaps > 0 ? w.DroneFuel(d) : d.Fuel; // drones' tanks are sized to the map

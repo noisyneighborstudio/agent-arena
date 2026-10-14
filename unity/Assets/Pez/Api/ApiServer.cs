@@ -786,6 +786,7 @@ namespace Pez.Api
                                               "save_for", "save_for_cost", "zones", "stalled_since", "surface_warned_at", "home_ore_warned", "last_active_at", "orders_version", "plasma_owed" })
                         t.Remove(k);
                     t.Remove("miner_policy"); // only this team's explicit policy executes in its fogged mirror
+                    t.Remove("squads"); // rival membership and intentions belong to its commander
                     if (t["stats"] is JObj st) t["stats"] = new JObj().Set("kills", st["kills"] ?? 0);
                     // Where a rival's base is, is for scouting: their start goes far off the map (not 0,0, a real corner, where
                     // the client's copy would then think a protected rival's reserved ore lay).
@@ -824,7 +825,7 @@ namespace Pez.Api
                         if (next.Count > 0) eo["order_pos"] = next[next.Count - 1];
                     }
                     else eo.Remove("order_pos");
-                    foreach (var k in new[] { "last_order_by", "last_order_tick", "last_retreat_tick", "rally", "waypoints", "waypoint_loop", "resume_order", "resume_pos", "resume_guard", "resume_target", "resume_waypoints",
+                    foreach (var k in new[] { "last_order_by", "last_order_tick", "last_retreat_tick", "rally_squad", "rally", "waypoints", "waypoint_loop", "resume_order", "resume_pos", "resume_guard", "resume_target", "resume_waypoints",
                                               "mine_queue", "home_pos", "harvest_tile", "prospect_center", "prospect_radius", "skip_sites", "passengers", "retreat_below", "fuel", "fuel_cap", "until_capturable", "engage_derricks", "output", "granted_share", "cargo_salvage" })
                         eo.Remove(k);
                     eo["guard_pos"] = eo["pos"];

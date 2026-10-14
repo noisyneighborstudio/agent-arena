@@ -23,7 +23,7 @@ namespace Pez.Headless
         {
             string Arg(string key, string def) { int i = Array.IndexOf(args, key); return i >= 0 && i + 1 < args.Length ? args[i + 1] : def; }
             string layer = Arg("--slow-agent-layer", "baseline");
-            if (layer != "baseline" && layer != "miners") { Console.Error.WriteLine("--slow-agent-layer takes baseline or miners."); return 2; }
+            if (layer != "baseline" && layer != "miners" && layer != "squads") { Console.Error.WriteLine("--slow-agent-layer takes baseline, miners or squads."); return 2; }
             int minutes = int.Parse(Arg("--slow-agent-minutes", "12"), CultureInfo.InvariantCulture);
             int[] seeds = Arg("--slow-agent-seeds", "1,2,3").Split(',').Select(int.Parse).ToArray();
             if (minutes < 1 || seeds.Length == 0) { Console.Error.WriteLine("Use positive minutes and at least one seed."); return 2; }
@@ -68,7 +68,7 @@ namespace Pez.Headless
                 foreach (var metric in metrics.Where(m => m != null))
                 {
                     metric.Sample(w, lastEvent, ownBefore);
-                    if (layer != "baseline") metric.SampleExecutor(w);
+                    if (layer == "miners") metric.SampleExecutor(w);
                 }
             }
             return new JObj().Set("layer", layer).Set("rules_version", StateView.RulesVersion).Set("seed", seed)
@@ -150,7 +150,7 @@ namespace Pez.Headless
                 .Set("turns", commander.Turns).Set("commands", commander.Commands).Set("rejected_commands", commander.Rejected)
                 .Set("score", w.Scores().FirstOrDefault(s => s.Team == Team)?.Score ?? 0)
                 .Set("ore_mined", w.Teams[Team].Stats.OreMined).Set("units_lost", w.Teams[Team].Stats.UnitsLost);
-                if (layer != "baseline") result.Set("executor", new JObj().Set("withdrawals", interventions.Count).Set("resumes", resumes)
+                if (layer == "miners") result.Set("executor", new JObj().Set("withdrawals", interventions.Count).Set("resumes", resumes)
                     .Set("hit_triggered", Latencies(hitDelays)).Set("visible_range_triggered", Latencies(sightDelays))
                     .Set("unmatched", unmatched).Set("interventions", interventions));
                 return result;
@@ -170,6 +170,9 @@ namespace Pez.Headless
             readonly bool habits;
             readonly string layer;
             readonly HashSet<int> retreated = new HashSet<int>(), rallied = new HashSet<int>();
+            readonly HashSet<int> armyMembers = new HashSet<int>();
+            internal const string ArmySquad = "army";
+            bool squadReady;
             long cursor;
             string stream;
             int nextTurn;
@@ -217,13 +220,31 @@ namespace Pez.Headless
                     Send(game, "type", "harvest", "units", Ids(new[] { truck }), "ore", Id(truck) % 3 == 0 ? "copper_ore" : "iron_ore");
 
                 var army = units.Where(u => Defs.Get((string)u["type"])?.Weapon != null).ToList();
+                if (layer == "squads")
+                {
+                    var squad = Rows(state, "squads").FirstOrDefault(s => (string)s["name"] == ArmySquad);
+                    armyMembers.Clear();
+                    if (squad != null) foreach (var id in (List<object>)squad["members"]) armyMembers.Add(Convert.ToInt32(id));
+                    squadReady = squad != null;
+                    var additions = army.Where(u => !armyMembers.Contains(Id(u))).ToList();
+                    if ((!squadReady || additions.Count > 0) && Send(game, "type", "squad", "name", ArmySquad, "add", Ids(additions)))
+                    {
+                        squadReady = true;
+                        foreach (var u in additions) armyMembers.Add(Id(u));
+                    }
+                }
                 if (habits)
                 {
                     var fresh = units.Where(u => !retreated.Contains(Id(u))).ToList();
                     if (fresh.Count > 0 && Send(game, "type", "set_retreat", "units", Ids(fresh), "below_pct", 40))
                         foreach (var u in fresh) retreated.Add(Id(u));
                     foreach (var s in structures.Where(s => Defs.Get((string)s["type"])?.Produces is Producer.Barracks or Producer.Factory))
-                        if (!rallied.Contains(Id(s)) && Send(game, "type", "rally", "structure_id", Id(s), "x", staging.X, "y", staging.Y)) rallied.Add(Id(s));
+                        if (!rallied.Contains(Id(s)))
+                        {
+                            var rally = new List<object> { "type", "rally", "structure_id", Id(s), "x", staging.X, "y", staging.Y };
+                            if (layer == "squads") { rally.Add("squad"); rally.Add(ArmySquad); }
+                            if (Send(game, rally.ToArray())) rallied.Add(Id(s));
+                        }
                 }
 
                 var responded = new List<JObj>();
@@ -260,7 +281,8 @@ namespace Pez.Headless
                 }
             }
 
-            bool Advance(Game game, List<JObj> units, Vec2 at) => Send(game, "type", "attack_move", "units", Ids(units), "x", at.X, "y", at.Y, "together", habits);
+            internal object ArmySelector(List<JObj> units) => squadReady && armyMembers.SetEquals(units.Select(Id)) ? (object)("squad:" + ArmySquad) : Ids(units);
+            bool Advance(Game game, List<JObj> units, Vec2 at) => Send(game, "type", "attack_move", "units", ArmySelector(units), "x", at.X, "y", at.Y, "together", habits);
             bool Send(Game game, params object[] kv)
             {
                 var command = new Dictionary<string, object>();

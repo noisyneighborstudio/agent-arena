@@ -52,6 +52,7 @@ namespace Pez.Sim
         /// <summary>Standing instructions from the human commander to whoever (usually an LLM) plays this team.</summary>
         public string StandingOrders = "";
         public int OrdersVersion;
+        public readonly Dictionary<string, Squad> Squads = new Dictionary<string, Squad>(StringComparer.Ordinal);
         public readonly MinerPolicy Miners = new MinerPolicy();
         /// <summary>Recent command replies, per seat, for safe retries across restarts.</summary>
         public readonly List<CommandReceipt> CommandReceipts = new List<CommandReceipt>();
@@ -837,6 +838,7 @@ namespace Pez.Sim
             e.GuardPos = e.Pos;
             e.FuelCap = DroneFuel(def);
             e.Fuel = e.FuelMax;
+            Sim.Squads.EnrollSpawn(this, e, at.RallySquad);
             if (e.IsHarvester) SetOrder(e, Order.Harvest, e.Pos);
             else if (at.Rally.HasValue) SetOrder(e, Order.Move, at.Rally.Value);
             else if (!def.IsAir)
@@ -921,6 +923,7 @@ namespace Pez.Sim
         {
             if (e.Dead) return;
             e.Dead = true;
+            Sim.Squads.Remove(this, e);
             if (e.Team >= 0 && e.Team < Teams.Count)
             {
                 var gone = Teams[e.Team].GoneUnits;
@@ -1775,6 +1778,7 @@ namespace Pez.Sim
             int old = t.Team;
             t.Team = e.Team;
             t.Rally = null;
+            t.RallySquad = null;
             // A capture is a capture: the engineer puts any fire out and patches it up to 50%, and whoever hurt it before
             // has no claim on it (a fire burning on would hand the kill and salvage to a third team).
             t.Burning = false; t.LastAttackerTeam = -1; t.LastAttackerId = 0;

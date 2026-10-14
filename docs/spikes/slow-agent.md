@@ -127,3 +127,35 @@ dotnet run -c Release --no-build -- --slow-agent --slow-agent-layer miners \
   --slow-agent-seeds 1,2,3 --slow-agent-minutes 12 \
   --slow-agent-out ../docs/spikes/slow-agent-miners.jsonl
 ```
+
+## P4 rerun: named addressing (rules 47)
+
+Run before P5 after P4's source was frozen and its dedicated tests passed, using P3 commit `77961b4` plus the P4 source awaiting its phase commit. The `squads` layer creates one stable `army` squad from the current own armed units and adds only newly observed members as needed. Existing P0 producer rally commands enroll their future combat units in this same squad. It configures no miner policy or guard and issues no new movement.
+
+An army order uses `units:"squad:army"` only when the requested IDs exactly equal the squad's current live members in the own fogged state. An idle advance affecting a subset retains explicit IDs. Fresh-unit `set_retreat` also retains explicit IDs. This matters: substituting the whole squad for an idle subset would silently change which units advance, and would no longer measure addressing alone. Tests lock both selector cases, incremental amendments, producer enrollment and the absence of redundant membership commands.
+
+Raw results: [slow-agent-squads.jsonl](slow-agent-squads.jsonl), eighteen games with zero sim errors. A companion default-off run [slow-agent-floor-rules47.jsonl](slow-agent-floor-rules47.jsonl) again reproduces all eighteen P2 rows exactly after removing the rules-version label. The squads run reproduces **every battle, economy, elapsed-time, alert, response, unresolved, latency and rejected-command metric exactly** after excluding the intentional layer/rules labels and the added command counts. Both matrices hold the same seeds, cap, seat swaps and plain/P0 order as P2; wall times were 11.2 and 10.8 seconds respectively, with the two independent checks running concurrently.
+
+Cells are mean / nearest-rank p50 / p95 across six slow seats. All other numerical metrics are identical to the baseline tables.
+
+| Opponent | Variant + squad addressing | Undefended miner losses | Unsupported armed losses | Final score | Extra configuration commands |
+|---|---|---:|---:|---:|---:|
+| simple_ai | plain | 7.17 / 7.00 / 8.00 | 19.67 / 19.00 / 28.00 | 0.00 / 0.00 / 0.00 | 8.00 / 7.00 / 10.00 |
+| simple_ai | p0_habits | 7.17 / 7.00 / 8.00 | 18.33 / 18.00 / 21.00 | 0.00 / 0.00 / 0.00 | 1.00 / 1.00 / 1.00 |
+| self | plain | 3.00 / 0.00 / 9.00 | 25.67 / 19.00 / 41.00 | 150.00 / 138.00 / 189.00 | 17.67 / 19.00 / 19.00 |
+| self | p0_habits | 0.17 / 0.00 / 1.00 | 7.50 / 3.00 / 20.00 | 150.00 / 147.00 / 172.00 | 1.00 / 1.00 / 1.00 |
+
+### Where P4 did not win and decision
+
+P4 causes no reduction in losses or commander reaction time and no win-rate change. That is the expected result for a naming and persistence layer with no executor. Plain commanders need repeated membership amendments as units are trained; P0 commanders need only one initial squad command because the existing rallies enroll later production. This is configuration persistence, not stronger autonomous play.
+
+**Go to controlled P5 guards:** P4 passes the stricter criterion appropriate to addressing: selected units and every gameplay metric remain unchanged. Keep the stable named army for the next experiment; add only explicitly configured guards, then measure whether those conditions reduce unsupported loss or preserve intent. Do not turn this unchanged result into permission for the squad itself to choose a fight, target, build or destination.
+
+The dedicated harness suite now has 21 passing checks, including exact full-squad versus subset selectors and rally enrollment. Reproduce with:
+
+```sh
+cd headless
+dotnet run -c Release --no-build -- --slow-agent --slow-agent-layer squads \
+  --slow-agent-seeds 1,2,3 --slow-agent-minutes 12 \
+  --slow-agent-out ../docs/spikes/slow-agent-squads.jsonl
+```

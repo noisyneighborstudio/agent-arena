@@ -70,6 +70,7 @@ namespace Pez.Headless
             Check(!game.World.Teams[0].Miners.WithdrawOnAttack && !((JObj)((System.Collections.Generic.List<object>)a["seats"])[0]).Contains("executor"),
                 "baseline commander never enables miner policy or adds executor metrics");
             SlowMinerLayerHarness();
+            SlowSquadLayerHarness();
         }
 
         static void SlowMinerLayerHarness()
@@ -98,6 +99,35 @@ namespace Pez.Headless
                 "executor measurements separate hit/sight triggers, preserve unmatched and consume observations once");
             Check(Math.Abs(Convert.ToSingle(((JObj)executor["hit_triggered"])["mean_s"]) - .05f) < .001f,
                 "executor trigger-to-order time is separate from commander alert response");
+        }
+
+        static void SlowSquadLayerHarness()
+        {
+            var game = new Game(new GameConfig { Seed = 1, MapSize = 80, Controllers = new[] { "llm", "llm" }, MatchHours = 0 });
+            var commander = new SlowAgent.Commander(0, true, "squads");
+            var metric = new SlowAgent.Metrics(0, "squads");
+            commander.Tick(game, metric);
+            var state = StateData.Team(game.World, 0);
+            var army = ((System.Collections.Generic.List<object>)state["units"]).Cast<JObj>().Where(u => Defs.Get((string)u["type"]).Weapon != null).ToList();
+            Check((string)commander.ArmySelector(army) == "squad:army" && commander.ArmySelector(army.Take(1).ToList()) is System.Collections.Generic.List<object>,
+                "squad addressing substitutes exactly the full live army and preserves explicit subsets");
+            Check(game.World.Teams[0].Squads[SlowAgent.Commander.ArmySquad].Members.Count == army.Count && !game.World.Teams[0].Miners.WithdrawOnAttack,
+                "squads layer enrolls only the own combat army and leaves miner behaviour off");
+            var hq = game.World.Owned(0).First(e => e.Def.Key == "command_center");
+            var newcomer = game.World.SpawnUnit(0, "rifleman", hq);
+            var barracks = game.World.SpawnStructure(0, "barracks", game.World.FindPlacement(0, "barracks").Value, 1f);
+            game.World.Tick = SlowAgent.TurnTicks;
+            commander.Tick(game, metric);
+            var amendments = game.World.CommandLog.Where(c => c.Cmd.Str("type") == "squad").ToList();
+            Check(amendments.Count == 2 && amendments[1].Cmd.Arr("add").Count == 1 && Convert.ToInt32(amendments[1].Cmd.Arr("add")[0]) == newcomer.Id,
+                "later squad amendments add only new combat members without recreating the squad");
+            Check(barracks.RallySquad == SlowAgent.Commander.ArmySquad && game.World.SpawnUnit(0, "rifleman", barracks) is var trained &&
+                game.World.Teams[0].Squads[SlowAgent.Commander.ArmySquad].Members.Contains(trained.Id),
+                "existing P0 producer rally enrolls newly trained combat units in the same named army");
+            game.World.Tick += SlowAgent.TurnTicks;
+            commander.Tick(game, metric);
+            Check(!game.World.CommandLog.Any(c => c.Tick == game.World.Tick && c.Cmd.Str("type") == "squad") && !metric.Report(game.World, commander).Contains("executor"),
+                "rally enrollment needs no redundant membership command or executor metric schema");
         }
     }
 }

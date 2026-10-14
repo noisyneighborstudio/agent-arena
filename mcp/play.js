@@ -257,13 +257,14 @@ export const Command = z
     // A plain string, not an enum: the game validates command types itself, so a new command works over MCP the moment
     // it ships (an enum here drifted out of sync with the game once already). get_rules lists them all.
     type: z.string().min(1).max(40)
-      .describe("Command type, e.g. build, train, move, attack_move, attack, stop, harvest, deploy, survey, prospect (extra field radius), drill (extra field zone), repair, heal, refuel, set_retreat, load, unload, capture, lay_mines, rally, sell, cancel, reserve (fields item, amount), save_for (field unit or structure: save up for it), say, propose_tech (design your own unit; extra fields name, base, weapon_from, hp, speed, damage, range, cooldown, sight, fuel, dry_run). get_rules has the full, current list."),
+      .describe("Command type, e.g. build, train, move, attack_move, attack, stop, harvest, deploy, survey, prospect (extra field radius), drill (extra field zone), repair, heal, refuel, set_retreat, load, unload, capture, lay_mines, squad (name, add/remove/disband), rally (optional squad), sell, cancel, reserve (fields item, amount), save_for (field unit or structure: save up for it), say, propose_tech (design your own unit; extra fields name, base, weapon_from, hp, speed, damage, range, cooldown, sight, fuel, dry_run). get_rules has the full, current list."),
     request_id: RequestId,
     as_of_tick: AsOfTick,
     structure: z.string().optional().describe("build: structure key, e.g. power_plant"),
     unit: z.string().optional().describe("train/cancel: unit key, e.g. light_tank"),
     count: z.number().int().min(1).max(10).optional().describe("train: how many; lay_mines: how many mines (max 8)"),
-    units: z.union([z.array(z.number().int()), z.enum(["all", "idle"])]).optional().describe("unit ids, or 'all' / 'idle' for your combat units"),
+    units: z.union([z.array(z.number().int()), z.enum(["all", "idle"]), z.string().regex(/^squad:.{1,24}$/u)]).optional().describe("unit ids, all/idle for your combat units, or squad:NAME for that squad’s live members"),
+    squad: z.string().min(1).max(24).optional().describe("Address this named squad’s live members instead of units; rally also enrolls new units from its producer class’s buildings. An unknown squad fails safely."),
     x: z.number().optional().describe("tile x"),
     y: z.number().optional().describe("tile y"),
     target: z.number().int().optional().describe("attack/capture: enemy entity id; repair/heal: your damaged unit/structure id; refuel: a pad or depot"),
@@ -315,7 +316,7 @@ export function registerPlayTools(server, getPlayer, beforeEach = async () => {}
     { description: "Rules, unit/structure stats, costs, prerequisites and the command reference. Read this once at the start." },
     run((p) => p.rulesText()));
   server.registerTool("get_state",
-    { inputSchema: { format: Format }, description: "Your team's view of the battlefield: your human commander's standing_orders (follow them), active priority alerts, stockpile (ores and materials with per-second rates), power, converter status, production queues, what you can build and its cost, your structures and units (with ids), visible enemies, explored ore fields by type, and events since your last look. Coordinates are tile x,y (x east, y north)." },
+    { inputSchema: { format: Format }, description: "Your team's view of the battlefield: your human commander's standing_orders (follow them), active priority alerts, stockpile (ores and materials with per-second rates), power, converter status, production queues, what you can build and its cost, your structures and units (with ids), named squads (members, strength, centre and objective), visible enemies, explored ore fields by type, and events since your last look. Coordinates are tile x,y (x east, y north)." },
     run((p, a) => a.format === "json" ? p.stateJson() : p.stateText()));
   server.registerTool("get_map",
     {
@@ -325,7 +326,8 @@ export function registerPlayTools(server, getPlayer, beforeEach = async () => {}
     run((p, a) => p.mapText(a.x, a.y, a.radius)));
   server.registerTool("command",
     {
-      description: "Issue one or more commands to your team in a single call. Add request_id for safe retries within 10 minutes and as_of_tick from the state you used; results report what changed meanwhile. Miner protection is opt-in: set_policy with miners {withdraw_on_attack:true,to:[x,y] or base,resume_after_s:20}; false disables it. Each returns ok/error (or obsolete when its target is gone). Examples: " +
+      description: "Issue one or more commands to your team in a single call. Add request_id for safe retries within 10 minutes and as_of_tick from the state you used; results report what changed meanwhile. Miner protection is opt-in: set_policy with miners {withdraw_on_attack:true,to:[x,y] or base,resume_after_s:20}; false disables it. Squads persist membership and address your orders; naming one adds no behavior. Each returns ok/error (or obsolete when its target is gone). Examples: " +
+        '{"type":"squad","name":"west","add":[12,13]}, {"type":"squad","name":"west","remove":[13]}, {"type":"squad","name":"west","disband":true}, {"type":"move","squad":"west","x":50,"y":50}, {"type":"stop","units":"squad:west"}, {"type":"rally","structure_id":7,"squad":"west","x":40,"y":40} (new units from that producer class join west), ' +
         '{"type":"build","structure":"power_plant"} (auto-placed), {"type":"train","unit":"light_tank","count":3}, ' +
         '{"type":"attack_move","units":"idle","x":50,"y":50}, {"type":"attack","units":[12,13],"target":40} (add "until":"capturable" to stop at 50% for an engineer), ' +
         '{"type":"harvest","units":[3],"ore":"crystal"}, {"type":"survey","units":[29],"x":14,"y":100} (geological_surveyor: flags the deep deposits within 12 tiles as mining zones), {"type":"prospect","units":[29],"x":40,"y":40,"radius":40} (surveyors roam the area on their own: survey, flag, move on), {"type":"drill","units":[57],"zone":12} (drill_rig drives to mining zone 12 and deploys into a deep_mine; omit zone for the nearest free one), {"type":"deploy","units":[57]} (outpost_truck -> outpost, or drill_rig -> deep_mine on a flagged zone within 3 tiles), ' +
