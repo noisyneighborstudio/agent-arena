@@ -250,7 +250,7 @@ namespace Pez.Sim
                 HouseAIs = c.HouseAIs, HouseResignAbove = c.HouseResignAbove, MatchHours = c.MatchHours, MinPlayers = c.MinPlayers,
             };
             Restart(cfg);
-            World.Emit("chat", -1, text: Waiting ? $"The next match is open: it starts when {cfg.MinPlayers} players are seated. Join again for a seat."
+            World.Emit("chat", -1, text: Waiting ? $"The next match is open: it starts when {cfg.MinPlayers} players are ready, or 120 seconds after they are seated. Join again for a seat."
                                                  : $"A new match has begun ({(cfg.MatchHours > 0 ? $"{cfg.MatchHours:0.#} h until sudden death" : "no time limit")}). Join again for a seat.");
             Restarted?.Invoke();
         }
@@ -259,39 +259,62 @@ namespace Pez.Sim
 
         /// <summary>
         /// A room that waits for players (GameConfig.MinPlayers): frozen (no ticks, no game time) until that many outside
-        /// agents are seated, so everyone starts together at t=0 and no match ages with one agent sitting alone. Separate
-        /// from the operator's Paused. Commands other than say and start_match are refused (Execute).
+        /// agents are ready (or 120 real seconds after enough seats fill), so everyone starts together at t=0. Separate
+        /// from the operator's Paused. Commands other than ready, say and start_match are refused (Execute).
         /// </summary>
         public bool Waiting;
         /// <summary>Real seconds a lone agent waits before it may start against the scripted AI instead (start_match).</summary>
         public const float ChoiceAfter = 300f;
+        public const float ReadyGraceSeconds = 120f;
         /// <summary>The wall clock for the real time waited (tests set their own).</summary>
         public Func<DateTime> Now = () => DateTime.UtcNow;
         /// <summary>Real seconds waited before waitingSince (a resumed room keeps how long it's waited); waitedSeen: as of the last frame.</summary>
         float waitedBefore, waitedSeen;
         DateTime waitingSince;
+        // Like the room's waiting clock, save elapsed time and resume it on the new host's wall clock.
+        float readyFilledBefore = -1f;
+        DateTime readyFilledSince;
 
         public float WaitedSeconds => Waiting ? waitedBefore + (float)(Now() - waitingSince).TotalSeconds : waitedBefore;
         /// <summary>Outside agents seated (not house AI, not gone): what MinPlayers counts.</summary>
-        public int OutsidePlayers => World.Teams.Count(t => t.Controller == "llm" && !t.Left);
+        public int OutsidePlayers => World.Teams.Count(IsOutsideSeat);
+        public int OutsideReadyPlayers => World.Teams.Count(t => IsOutsideSeat(t) && t.Ready);
+        static bool IsOutsideSeat(Team t) => t.Controller == "llm" && !t.House && !t.Left && !t.Defeated;
+        float ReadyFilledSeconds => Waiting && OutsidePlayers >= Config.MinPlayers && readyFilledBefore >= 0
+            ? readyFilledBefore + MathF.Max(0, (float)(Now() - readyFilledSince).TotalSeconds) : -1f;
+        /// <summary>-1 until enough seats fill; otherwise real seconds left before an unready match starts.</summary>
+        public float ReadyCountdownSeconds => ReadyFilledSeconds < 0 ? -1f : MathF.Max(0, ReadyGraceSeconds - ReadyFilledSeconds);
+
+        void CheckReadyStart()
+        {
+            if (!Waiting) return;
+            if (OutsidePlayers < Config.MinPlayers) { readyFilledBefore = -1f; return; }
+            if (readyFilledBefore < 0) { readyFilledBefore = 0; readyFilledSince = Now(); }
+            if (OutsideReadyPlayers >= Config.MinPlayers) BeginMatch($"{OutsideReadyPlayers} players are ready");
+            else if (ReadyFilledSeconds >= ReadyGraceSeconds) BeginMatch($"{OutsidePlayers} players are seated and the 120-second preparation period has ended");
+        }
 
         /// <summary>Every frame while waiting: once a lone agent has waited ChoiceAfter, an alert says what it can do.</summary>
         void WaitingClock()
         {
+            CheckReadyStart();
+            if (!Waiting) return;
             float waited = WaitedSeconds;
             if (waitedSeen < ChoiceAfter && waited >= ChoiceAfter && OutsidePlayers == 1)
-                foreach (var t in World.Teams.Where(t => t.Controller == "llm" && !t.Left))
+                foreach (var t in World.Teams.Where(IsOutsideSeat))
                     World.Alerts.Raise(World, t.Id, "waiting_choice", Priority.High, t.StartPos, hit: false).Lost.Add(WaitingText());
             waitedSeen = waited;
         }
 
-        /// <summary>A player takes a seat (ApiServer's register). In a waiting room it's a founder, and enough of them start the match.</summary>
+        /// <summary>A player takes a seat (ApiServer's register). In a waiting room it's a founder; enough seats start a preparation countdown.</summary>
         public Team Join(string controller, string playerName, string teamName, out string error, out string nameProblem)
         {
+            // A seat may have left since the last frame: clear its preparation clock before filling it again.
+            CheckReadyStart();
             var t = World.AddTeam(controller, playerName, teamName, out error, out nameProblem);
             if (t == null || !Waiting) return t;
             t.ProtectedUntil = 0; // founders start together: no newcomer protection (and at game time 0, no catch-up kit)
-            if (OutsidePlayers >= Config.MinPlayers) BeginMatch($"{OutsidePlayers} players are seated");
+            CheckReadyStart();
             return t;
         }
 
@@ -306,12 +329,25 @@ namespace Pez.Sim
         public JObj Execute(int team, Dictionary<string, object> c)
         {
             var type = c.Str("type", "").ToLowerInvariant();
+            if (type == "ready") return SetReady(team);
             if (type == "start_match") return StartMatch(team, c.Str("opponent"));
-            if (Waiting && type != "say") return Fail($"waiting_for_players: {WaitingText()} Until then only say and start_match work.");
+            if (Waiting && type != "say") return Fail($"waiting_for_players: {WaitingText()} Until then only ready, say and start_match work.");
             return Commands.Execute(World, team, c);
         }
 
         static JObj Fail(string error) => new JObj().Set("ok", false).Set("error", error);
+
+        JObj SetReady(int team)
+        {
+            if (team < 0 || team >= World.Teams.Count || !IsOutsideSeat(World.Teams[team]))
+                return Fail("ready needs your own live outside seat");
+            World.Teams[team].Ready = true;
+            CheckReadyStart();
+            var reply = new JObj().Set("ok", true).Set("ready", true).Set("ready_players", OutsideReadyPlayers).Set("room_status", RoomStatus)
+                .Set("result", Waiting ? "ready; the room is still waiting" : "ready; the match is running");
+            if (Waiting) reply.Set("waiting", WaitingJson());
+            return reply;
+        }
 
         /// <summary>A lone agent who has waited ChoiceAfter starts now against the scripted AI: the aggressive one (attack waves), seated as house.</summary>
         JObj StartMatch(int team, string opponent)
@@ -319,7 +355,7 @@ namespace Pez.Sim
             if (!Waiting) return Fail("start_match: the match is already running");
             if (opponent != "scripted") return Fail("start_match needs \"opponent\":\"scripted\" (the scripted AI is the only sparring partner)");
             int seated = OutsidePlayers;
-            if (seated != 1) return Fail($"start_match is for a player waiting alone; {seated} players are seated, and the match starts by itself when {Config.MinPlayers} are");
+            if (seated != 1) return Fail($"start_match is for a player waiting alone; {seated} players are seated, and the match starts when {Config.MinPlayers} are ready or 120 seconds after enough seats fill");
             float left = ChoiceAfter - WaitedSeconds;
             if (left > 0) return Fail($"start_match opens after {ChoiceAfter / 60:0} minutes of waiting: {StateView.Secs(left)}s to go. Until then the room waits for players");
             var ai = World.AddTeam("ai", "Scripted AI", out var err);
@@ -337,7 +373,8 @@ namespace Pez.Sim
         {
             int seated = OutsidePlayers, min = Config.MinPlayers;
             float waited = WaitedSeconds;
-            var s = $"waiting for players: {seated} of {min} seated, {StateView.Hms(waited)} waited. The match starts by itself when {min} are seated; no game time passes until then.";
+            var s = $"waiting for players: {seated} of {min} seated, {OutsideReadyPlayers} ready, {StateView.Hms(waited)} waited. Send {{\"type\":\"ready\"}} when prepared. The match starts when {min} are ready, or 120 seconds after enough seats fill; no game time passes until then.";
+            if (ReadyCountdownSeconds >= 0) s += $" Automatic start in {StateView.Secs(ReadyCountdownSeconds)}s.";
             if (seated != 1) return s;
             return waited < ChoiceAfter ? s + $" If you're still alone in {StateView.Hms(ChoiceAfter - waited)}, you can start against the scripted AI instead."
                 : s + " You've waited 5 minutes alone, so choose: keep waiting (do nothing); leave, then join a running room by its code (the lobby lists them); " +
@@ -345,6 +382,9 @@ namespace Pez.Sim
         }
 
         public JObj WaitingJson() => new JObj().Set("players", OutsidePlayers).Set("min_players", Config.MinPlayers)
+            .Set("ready_players", OutsideReadyPlayers).Set("ready_seats", World.Teams.Where(IsOutsideSeat).Select(t => (object)new JObj()
+                .Set("team", t.Id).Set("team_name", t.Name).Set("player", t.PlayerName).Set("ready", t.Ready)).ToList())
+            .Set("start_after_s", ReadyCountdownSeconds < 0 ? -1 : StateView.Secs(ReadyCountdownSeconds))
             .Set("waited_s", StateView.Secs(WaitedSeconds)).Set("choose_after_s", StateView.Secs(ChoiceAfter - WaitedSeconds)).Set("text", WaitingText());
 
         // ------------------------------------------------------------------ the lobby

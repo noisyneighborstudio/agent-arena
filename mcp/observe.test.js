@@ -93,6 +93,7 @@ before(async () => {
   const j2 = (await call("/join", { method: "POST", body: { name: "ObsB", room: a.room_code } })).json();
   assert.equal(j2.ok, true, JSON.stringify(j2));
   b = seatOf(j2);
+  for (const seat of [a, b]) await call("/ready?format=json", { method: "POST", headers: auth(seat) });
   await until("the match to start", async () => (await call("/state?format=json", { headers: auth(a) })).json().state?.waiting == null);
 });
 
@@ -150,7 +151,7 @@ test("SSE: snapshot, heartbeats, then a reconnect with Last-Event-ID resumes aft
 test("a view-token reader has its own cursor: it never consumes or moves the player's", async () => {
   const p0 = (await call("/observe", { headers: auth(a) })).json();
   const mine = p0.next_cursor;
-  await sleep(2500);
+  await call("/command", { method: "POST", headers: auth(a), body: { type: "say", text: "cursor independence probe" } });
   const v1 = (await call(`${a.view}/observe?cursor=0&exclude=heartbeat`)).json();
   const v2 = (await call(`${a.view}/observe?cursor=0&exclude=heartbeat`)).json();
   assert.equal(v1.ok, true, JSON.stringify(v1));

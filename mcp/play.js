@@ -99,7 +99,7 @@ export class Player {
     if (r.new_alerts?.length) this.lastAlertSeq = Math.max(this.lastAlertSeq, ...r.new_alerts.map((a) => a.seq));
     const ordersChanged = r.state.orders_version > this.lastOrdersVersion;
     this.lastOrdersVersion = Math.max(this.lastOrdersVersion, r.state.orders_version);
-    return JSON.stringify({ waited_s: r.waited_s, asked_s: seconds, interrupted: r.interrupted, new_priority_alerts: r.new_alerts ?? [], orders_changed: ordersChanged, whats_new: this.news ? await this.news() : [], state: r.state }, null, 1);
+    return JSON.stringify({ waited_s: r.waited_s, asked_s: seconds, interrupted: r.interrupted, ready_changed: r.ready_changed ?? false, new_priority_alerts: r.new_alerts ?? [], orders_changed: ordersChanged, whats_new: this.news ? await this.news() : [], state: r.state }, null, 1);
   }
 
   /** Headers for a command: the controller lease (this session's, or one the caller passes through). */
@@ -133,8 +133,8 @@ export class Player {
     return r;
   }
 
-  async commandJson(commands, lease) {
-    const result = await this.call("/api/command", { method: "POST", body: { commands }, headers: this.leaseHeaders(lease) });
+  async commandJson(commands, lease, metadata = {}) {
+    const result = await this.call("/api/command", { method: "POST", body: { commands, ...metadata }, headers: this.leaseHeaders(lease) });
     this.onCommands?.(commands, result);
     const u = await this.unseen();
     if (u.alerts?.length) this.lastAlertSeq = Math.max(this.lastAlertSeq, ...u.alerts.map((a) => a.seq));
@@ -149,8 +149,8 @@ export class Player {
     return await this.newsBanner() + u.orders + this.banner(u.alerts, "PRIORITY ALERT: deal with this before continuing your plan:") + JSON.stringify(s, null, 1);
   }
 
-  async commandText(commands, lease) {
-    const result = await this.call("/api/command", { method: "POST", body: { commands }, headers: this.leaseHeaders(lease) });
+  async commandText(commands, lease, metadata = {}) {
+    const result = await this.call("/api/command", { method: "POST", body: { commands, ...metadata }, headers: this.leaseHeaders(lease) });
     this.onCommands?.(commands, result);
     const u = await this.unseen();
     return u.orders + this.banner(u.alerts, "NEW PRIORITY ALERT since your last look:") + result;
@@ -163,7 +163,7 @@ export class Player {
     const orders = this.ordersBanner(r.state.orders_version, r.state.standing_orders === "none" ? "" : r.state.standing_orders);
     const head = r.interrupted && r.new_alerts?.length
       ? this.banner(r.new_alerts, `PRIORITY ALERT: your wait was cut short after ${r.waited_s}s of ${seconds}s by something new. Respond to this first:`)
-      : r.interrupted ? `Your wait was cut short after ${r.waited_s}s of ${seconds}s by new orders.\n\n`
+      : r.interrupted ? `Your wait was cut short after ${r.waited_s}s of ${seconds}s by ${r.state.waiting || r.ready_changed ? "waiting-room news" : "new orders"}.\n\n`
       : r.new_alerts?.length ? `Waited ${r.waited_s}s. ` + this.banner(r.new_alerts, "Ongoing (the fight you already know about; it didn't interrupt the wait):")
       : `Waited ${r.waited_s}s. No new priority alerts.\n\n`;
     return await this.newsBanner() + orders + head + JSON.stringify(r.state, null, 1);
@@ -247,6 +247,9 @@ export function cropMap(text, cx, cy, r) {
   return out.join("\n");
 }
 
+const RequestId = z.string().min(1).max(128).optional().describe("Stable retry id: repeating it within 10 minutes returns the first result without executing again. Keep the same id only when retrying the same intent.");
+const AsOfTick = z.number().int().min(0).optional().describe("Tick of the state used to decide this command: reports affected units destroyed, reordered (and by whom), or retreated since then; stale commands still execute when possible.");
+
 const Format = z.enum(["text", "json"]).optional().describe("json: plain structured data (numbers, ids, objects; alerts and news as fields) instead of the readable text form");
 
 export const Command = z
@@ -255,6 +258,8 @@ export const Command = z
     // it ships (an enum here drifted out of sync with the game once already). get_rules lists them all.
     type: z.string().min(1).max(40)
       .describe("Command type, e.g. build, train, move, attack_move, attack, stop, harvest, deploy, survey, prospect (extra field radius), drill (extra field zone), repair, heal, refuel, set_retreat, load, unload, capture, lay_mines, rally, sell, cancel, reserve (fields item, amount), save_for (field unit or structure: save up for it), say, propose_tech (design your own unit; extra fields name, base, weapon_from, hp, speed, damage, range, cooldown, sight, fuel, dry_run). get_rules has the full, current list."),
+    request_id: RequestId,
+    as_of_tick: AsOfTick,
     structure: z.string().optional().describe("build: structure key, e.g. power_plant"),
     unit: z.string().optional().describe("train/cancel: unit key, e.g. light_tank"),
     count: z.number().int().min(1).max(10).optional().describe("train: how many; lay_mines: how many mines (max 8)"),
@@ -320,14 +325,17 @@ export function registerPlayTools(server, getPlayer, beforeEach = async () => {}
     run((p, a) => p.mapText(a.x, a.y, a.radius)));
   server.registerTool("command",
     {
-      description: "Issue one or more commands to your team in a single call. Each returns ok/error. Examples: " +
+      description: "Issue one or more commands to your team in a single call. Add request_id for safe retries within 10 minutes and as_of_tick from the state you used; results report what changed meanwhile. Each returns ok/error (or obsolete when its target is gone). Examples: " +
         '{"type":"build","structure":"power_plant"} (auto-placed), {"type":"train","unit":"light_tank","count":3}, ' +
         '{"type":"attack_move","units":"idle","x":50,"y":50}, {"type":"attack","units":[12,13],"target":40} (add "until":"capturable" to stop at 50% for an engineer), ' +
         '{"type":"harvest","units":[3],"ore":"crystal"}, {"type":"survey","units":[29],"x":14,"y":100} (geological_surveyor: flags the deep deposits within 12 tiles as mining zones), {"type":"prospect","units":[29],"x":40,"y":40,"radius":40} (surveyors roam the area on their own: survey, flag, move on), {"type":"drill","units":[57],"zone":12} (drill_rig drives to mining zone 12 and deploys into a deep_mine; omit zone for the nearest free one), {"type":"deploy","units":[57]} (outpost_truck -> outpost, or drill_rig -> deep_mine on a flagged zone within 3 tiles), ' +
         '{"type":"move","units":[4,5,6],"x":60,"y":60,"together":true,"waypoints":[[70,60],[70,70]],"loop":false}, {"type":"set_retreat","units":"all","below_pct":30}, {"type":"refuel","units":[12]}, {"type":"repair","units":[61],"target":12} (repair truck), {"type":"heal","units":[70],"target":33} (medic), {"type":"load","units":[20,21],"transport":40}, {"type":"unload","units":[40]}, {"type":"capture","units":[52],"target":7} (engineer), {"type":"lay_mines","units":[60],"x":30,"y":30,"count":4}, {"type":"say","text":"gg"}, {"type":"propose_tech","name":"Lancer","base":"light_tank","weapon_from":"rocket_soldier","hp":360,"dry_run":true} (quote your own unit design; drop dry_run to research it, then train its key), {"type":"start_match","opponent":"scripted"} (in a room waiting for players, after 5 minutes alone: start now against the scripted AI)',
-      inputSchema: { commands: z.array(Command).min(1).max(40).describe("Commands to execute in order"), format: Format },
+      inputSchema: { commands: z.array(Command).min(1).max(40).describe("Commands to execute in order"), request_id: RequestId, as_of_tick: AsOfTick, format: Format },
     },
-    run((p, a) => a.format === "json" ? p.commandJson(a.commands) : p.commandText(a.commands)));
+    run((p, a) => a.format === "json" ? p.commandJson(a.commands, undefined, { request_id: a.request_id, as_of_tick: a.as_of_tick }) : p.commandText(a.commands, undefined, { request_id: a.request_id, as_of_tick: a.as_of_tick })));
+  server.registerTool("ready",
+    { description: "Mark your waiting-room seat ready after reading the rules and choosing your opening. The match starts when enough outside players are seated and ready, or 120 seconds after the required seats fill. Readiness and joins interrupt waits.", inputSchema: { format: Format } },
+    run((p, a) => a.format === "json" ? p.commandJson([{ type: "ready" }]) : p.commandText([{ type: "ready" }])));
   const Sev = z.enum(["info", "notice", "warning", "critical"]);
   server.registerTool("observe",
     {
@@ -357,7 +365,7 @@ export function registerPlayTools(server, getPlayer, beforeEach = async () => {}
     run(async (p, a) => JSON.stringify(await p.controller(a.action, a), null, 1)));
   server.registerTool("wait",
     {
-      description: "Let the game run for up to `seconds` (1-30), then get your updated state. The wait is cut short when something new needs you (a priority alert in a new place or a worse one: base under attack, trucks or units under attack, enemies or aircraft near your base, salvage available) or your commander issues new orders; more alerts from a fight you already know about don't cut it short. The game is real-time and does not pause while you think (except in a room waiting for players: there wait returns when someone joins or the match starts). Every wait, get_state or command call keeps your seat: after 20 minutes of game time with none, your team is resigned.",
+      description: "Let the game run for up to `seconds` (1-30), then get your updated state. The wait is cut short when something new needs you (a priority alert in a new place or a worse one: base under attack, trucks or units under attack, enemies or aircraft near your base, salvage available) or your commander issues new orders; more alerts from a fight you already know about don't cut it short. The game is real-time and does not pause while you think (except in a room waiting for players: there wait returns when someone joins, marks ready or the match starts). Every wait, get_state or command call keeps your seat: after 20 minutes of game time with none, your team is resigned.",
       inputSchema: {
         seconds: z.number().min(1).max(30).describe("Maximum seconds to wait"),
         interrupt_on: z.enum(["high", "critical", "none"]).optional().describe("Lowest alert priority that ends the wait early (default high)"),

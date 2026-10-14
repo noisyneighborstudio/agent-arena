@@ -612,11 +612,13 @@ namespace Pez.Sim
         ///     its next spot at most every two seconds, not every second; a truck pulling into a bay swings in and shoves aside
         ///     a unit parked on the head of its lane, rather than waiting for it to leave.
         /// </summary>
-        public const int RulesVersion = 44;
+        /// 45: waiting seats explicitly ready up (120-second grace); command retries and stale decision facts survive saves.
+        public const int RulesVersion = 45;
 
         public static JObj Rules()
         {
             var o = new JObj().Set("rules_version", RulesVersion);
+            o.Set("turn_safety", "Waiting rooms start when the required seats are ready, or 120 real seconds after they fill. Send ready after reading your state. Command request_id retries return the first reply for 10 real minutes (bounded to 512 receipts per team). Optional as_of_tick reports newer orders, retreats and own losses without rejecting stale orders; a missing target returns obsolete.");
             o.Set("overview", "Real-time strategy with a production chain. Mining trucks mine four ores (iron_ore, copper_ore, crystal, uranium) into your stockpile. Converter buildings turn ore into materials (steel, copper, circuits, lenses, plasma, composite) that higher-tier structures and units cost. Your command_center builds structures; barracks/factory/airfield build units. A team is defeated when it has no structures left (and no construction_truck to deploy a new command center). Real time at 20 ticks/s; it does not wait for you.");
             o.Set("chain", Defs.All.Values.Where(d => d.Recipes.Length > 0).SelectMany(d => d.Recipes.Select(r => $"{d.Key}: {r}")).Append($"fusion_reactor: burns {World.FusionBurn} plasma/s for +500 power").ToList());
             o.Set("tips", new List<string> {

@@ -52,6 +52,10 @@ namespace Pez.Sim
         /// <summary>Standing instructions from the human commander to whoever (usually an LLM) plays this team.</summary>
         public string StandingOrders = "";
         public int OrdersVersion;
+        /// <summary>Recent command replies, per seat, for safe retries across restarts.</summary>
+        public readonly List<CommandReceipt> CommandReceipts = new List<CommandReceipt>();
+        /// <summary>Recent unavailable own entities, id to removal tick; never enemy intelligence.</summary>
+        public readonly Dictionary<int, int> GoneUnits = new Dictionary<int, int>();
         /// <summary>Team stockpile: raw ores and manufactured materials (see Defs.Items).</summary>
         public readonly Dictionary<string, float> Stock = new Dictionary<string, float>();
         /// <summary>Net change per second of each item over the last second, for display.</summary>
@@ -151,6 +155,8 @@ namespace Pez.Sim
         public float StalledSince = -1;
         /// <summary>Open arena: a scripted house player that keeps the world populated.</summary>
         public bool House;
+        /// <summary>The outside player has finished preparing for this match (ready command).</summary>
+        public bool Ready;
         /// <summary>Unique per occupant. Seats are recycled, so tokens bind to this, not just the team index.</summary>
         public int Seat;
         /// <summary>Open arena newcomer protection: until this game time the team can't be hurt and can't attack.</summary>
@@ -228,8 +234,10 @@ namespace Pez.Sim
         public void LogCommand(int team, Dictionary<string, object> cmd)
         {
             var type = cmd.Str("type", "").ToLowerInvariant();
-            if (type == "say" || type == "propose_tech" || type == "start_match") return;
-            CommandLog.Add(new LoggedCommand { Seq = ++CommandSeq, Tick = Tick, Team = team, Cmd = cmd });
+            if (type == "say" || type == "propose_tech" || type == "start_match" || type == "ready") return;
+            var replay = new Dictionary<string, object>(cmd);
+            replay.Remove("request_id"); replay.Remove("as_of_tick");
+            CommandLog.Add(new LoggedCommand { Seq = ++CommandSeq, Tick = Tick, Team = team, Cmd = replay });
             int cut = 0;
             while (cut < CommandLog.Count && (CommandLog[cut].Tick < Tick - CommandLogTicks || CommandLog.Count - cut > 400)) cut++;
             if (cut > 0) CommandLog.RemoveRange(0, cut);
@@ -912,6 +920,12 @@ namespace Pez.Sim
         {
             if (e.Dead) return;
             e.Dead = true;
+            if (e.Team >= 0 && e.Team < Teams.Count)
+            {
+                var gone = Teams[e.Team].GoneUnits;
+                gone[e.Id] = Tick;
+                if (gone.Count > CommandSafety.MaxGoneUnits) gone.Remove(gone.OrderBy(kv => kv.Value).ThenBy(kv => kv.Key).First().Key);
+            }
             if (e.IsCarried) Get(e.CarrierId)?.Passengers.Remove(e.Id);
             foreach (var pid in e.Passengers.ToList())
             {
@@ -1143,6 +1157,8 @@ namespace Pez.Sim
         public void SetOrder(Entity e, Order o, Vec2 pos, int target = 0)
         {
             Touched?.Add(e);
+            e.LastOrderTick = Tick;
+            e.LastOrderBy = CommandActor ?? "sim";
             // The dance guard's two-second averages describe the order in progress: given an order, a unit that had stopped starts them afresh.
             // (One that arrives and is sent straight back the way it came has the old direction in its average velocity for a second or so,
             // which reads as "getting nowhere" and, with a short jam in a doorway, settled a soldier walking out of its base.)
@@ -1582,6 +1598,7 @@ namespace Pez.Sim
             }
             else SetOrder(e, Order.Move, e.IsAir ? home.Center : DockPoint(home));
             e.Retreating = true;
+            e.LastRetreatTick = Tick;
             Emit("retreating", e.Team, e.Id, home.Id, e.Pos, key: e.Def.Key,
                  text: $"{e.Def.Key} #{e.Id} fell below {StateView.Pct(e.RetreatBelow)}% HP ({(int)e.Hp}/{e.Def.MaxHp}) and is pulling back to {home.Def.Key} #{home.Id}" +
                        (e.IsAir && IsFuelPoint(e, home) ? " to land" : "") + ". It won't pull back again until it's repaired above that, so an order you give it now sticks.");

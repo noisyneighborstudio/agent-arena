@@ -45,13 +45,17 @@ namespace Pez.Sim
   {""type"":""save_for"", ""unit"":""drill_rig""}           save up for one unit or structure: converters leave its cost alone until you train/build it (no unit: cancel)
   {""type"":""cancel"", ""unit"":KEY}                       cancel the last queued unit of that type (full refund)
   {""type"":""say"", ""text"":""...""}                      broadcast a chat message (shown on screen)
+  {""type"":""ready""}                                after reading your starting state, mark your waiting-room seat ready
   {""type"":""start_match"", ""opponent"":""scripted""}     in a room waiting for players, after 5 minutes alone: start now against the scripted AI (it attacks)
   {""type"":""propose_tech"", ""name"":""Lancer"", ""base"":""light_tank"", ""weapon_from"":""rocket_soldier"", ""hp"":360, ""damage"":70, ""dry_run"":true}
       design your own unit from one you can build (see inventions in the rules); dry_run quotes it, without dry_run it's researched, then train its key
+POST /command may wrap commands with ""request_id"":""unique retry key"" and ""as_of_tick"":T. Retries return the first reply for 10 real minutes (512 receipts per team); stale facts are reported without rejecting orders.
 'units' may also be the string ""all"" (all your combat units) or ""idle"" (idle combat units).";
 
         public static JObj Execute(World w, int team, Dictionary<string, object> c)
         {
+            string previousActor = w.CommandActor;
+            if (previousActor == null && team >= 0 && team < w.Teams.Count) w.CommandActor = w.Teams[team].PlayerName ?? w.Teams[team].Controller;
             try
             {
                 if (team < 0 || team >= w.Teams.Count) return Err("bad team");
@@ -99,6 +103,7 @@ namespace Pez.Sim
                 }
             }
             catch (Exception ex) { return Err(ex.Message); }
+            finally { w.CommandActor = previousActor; }
         }
 
         static JObj Ok(string msg = null) { var o = new JObj().Set("ok", true); if (msg != null) o.Set("result", msg); return o; }

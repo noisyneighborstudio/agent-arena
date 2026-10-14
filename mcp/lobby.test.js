@@ -32,6 +32,9 @@ fs.writeFileSync(process.env.PEZZ_STUB_DIR + "/engine-" + port + ".json", JSON.s
 const s = { status: min ? "waiting" : "playing", joinable: true, why: null, verdict: "fresh", verdict_text: "fresh room", age_s: 0,
   match_hours: Number(arg("--match-hours")) || 4, sudden_death_in_s: 14400, ends_in_s: min ? null : 18000, next_match_in_s: null, teams: [] };
 const outside = () => s.teams.filter((t) => !t.house).length;
+const ready = () => s.teams.filter((t) => !t.house && t.ready).length;
+const tokens = new Map();
+const waitingInfo = () => ({ players: outside(), min_players: min, ready_players: ready(), ready_seats: s.teams.map((t, team) => ({ team, team_name: t.team_name, player: t.player, ready: t.ready })), start_after_s: outside() >= min ? 120 : -1, waited_s: 0, choose_after_s: 300 });
 const hex = () => randomBytes(24).toString("hex");
 const reply = (res, code, body) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
 http.createServer((req, res) => {
@@ -40,17 +43,27 @@ http.createServer((req, res) => {
     if (req.url === "/api/status") return reply(res, 200, { ok: true });
     if (req.url === "/stub") { Object.assign(s, body); return reply(res, 200, { ok: true }); }
     if (req.url === "/api/lobby") return reply(res, 200, { open: true, rules_version: 30, players: s.teams.length, max_players: 8, seats_free: 8 - s.teams.length,
-      ...s, ...(s.status === "waiting" ? { min_players: min, waiting_s: 10 } : {}) });
+      ...s, ready_players: ready(), ...(s.status === "waiting" ? { min_players: min, waiting_s: 10, waiting_ready_s: outside() >= min ? 120 : null } : {}) });
     if (req.url === "/api/register") {
       if (s.status === "closing" || s.status === "results") return reply(res, 409, { ok: false, error: "room_closed_to_joins: sudden death has started", code: "room_closed_to_joins", next_match_in_s: s.next_match_in_s });
       if (s.teams.length >= 8) return reply(res, 409, { ok: false, error: "the arena is full" });
-      s.teams.push({ flavor: "Lime", team_name: "Lime", player: body.name, status: "playing", house: false, active: true, idle_s: 0, score: 0, structures: 1, kills: 0 });
-      const waiting = s.status === "waiting" && outside() < min;
+      s.teams.push({ flavor: "Lime", team_name: "Lime", player: body.name, ready: false, status: "playing", house: false, active: true, idle_s: 0, score: 0, structures: 1, kills: 0 });
+      const waiting = s.status === "waiting";
+      const token = hex(); tokens.set(token, s.teams.length - 1);
       if (s.status === "waiting" && !waiting) s.status = "playing";
-      return reply(res, 200, { ok: true, token: hex(), view_token: hex(), team: s.teams.length - 1, flavor: "Lime", team_name: "Lime", name: body.name, base: "10,10 sector A8", map: "64x64",
+      return reply(res, 200, { ok: true, token, view_token: hex(), team: s.teams.length - 1, flavor: "Lime", team_name: "Lime", name: body.name, base: "10,10 sector A8", map: "64x64",
         match: { phase: "normal" }, match_summary: "3h to sudden death", room_status: waiting ? "waiting" : "playing",
-        ...(waiting ? { waiting: { players: outside(), min_players: min, waited_s: 0, choose_after_s: 300 } } : {}) });
+        ready: false, ready_players: ready(), ...(waiting ? { waiting: waitingInfo() } : {}) });
     }
+    if (req.url === "/api/command") {
+      const team = tokens.get((req.headers.authorization || "").replace(/^Bearer /, ""));
+      if (body.commands?.[0]?.type === "ready" && team != null) {
+        s.teams[team].ready = true;
+        if (outside() >= min && ready() >= min) s.status = "playing";
+        return reply(res, 200, { results: [{ ok: true, ready: true, ready_players: ready(), room_status: s.status }] });
+      }
+    }
+    if (req.url.startsWith("/api/alerts")) return reply(res, 200, { new_alerts: [], last_alert_seq: 0, orders_version: 0 });
     reply(res, 404, { ok: false, error: "not found" });
   });
 }).listen(port, "127.0.0.1");
@@ -66,6 +79,12 @@ async function call(port, pathname, { method = "GET", body, ip = "10.0.0.1" } = 
   return { status: r.status, json: await r.json() };
 }
 const join = (body, ip) => call(GW, "/join", { method: "POST", body: { name: "Tester", ...body }, ip });
+const markReady = async (seat) => {
+  const r = await fetch(`http://127.0.0.1:${GW}/ready?format=json`, { method: "POST", headers: { authorization: `Bearer ${seat.token}` } });
+  const body = await r.json();
+  assert.equal(r.status, 200);
+  assert.equal(body.results.results[0].ok, true);
+};
 /** The stub engine the gateway started for a room (its port and command line), found by the room's port in the gateway's state. */
 function engineOf(roomId) {
   const saved = JSON.parse(fs.readFileSync(path.join(DIR, "home", ".config", "pezz", "rooms.json"), "utf8")).rooms.find((r) => r.id === roomId);
@@ -138,7 +157,7 @@ test("a private waiting room is room 1: the engine gets its options, the lobby h
   privateRoom = r.json.room;
   assert.equal(privateRoom, 1, "ids start at 1");
   assert.equal(r.json.room_status, "waiting");
-  assert.deepEqual(r.json.waiting, { players: 1, min_players: 3, waited_s: 0, choose_after_s: 300 });
+  assert.deepEqual(r.json.waiting, { players: 1, min_players: 3, ready_players: 0, ready_seats: [{ team: 0, team_name: "Lime", player: "Tester", ready: false }], start_after_s: -1, waited_s: 0, choose_after_s: 300 });
   assert.match(r.json.note, /private/);
   assert.match(r.json.note, /"start_match","opponent":"scripted"/);
   const e = engineOf(privateRoom);
@@ -154,7 +173,7 @@ test("a private waiting room is room 1: the engine gets its options, the lobby h
   assert.equal(listed.min_players, 3);
 });
 
-test("a join with no code opens a public waiting room (never the private one), and the next join starts it", async () => {
+test("a join with no code opens a public waiting room (never the private one), and players explicitly ready it", async () => {
   const a = await join({}, "10.3.0.1");
   assert.equal(a.status, 200, JSON.stringify(a.json));
   playingRoom = a.json.room;
@@ -167,7 +186,12 @@ test("a join with no code opens a public waiting room (never the private one), a
   assert.equal((await lobby()).find((x) => x.room === playingRoom).code, e.saved.code, "public rooms keep their code");
   const b = await join({}, "10.3.0.2");
   assert.equal(b.json.room, playingRoom, "the public waiting room before opening another");
-  assert.equal(b.json.room_status, "playing", "the second player starts it");
+  assert.equal(b.json.room_status, "waiting", "the second seat waits for readiness");
+  await markReady(a.json);
+  await markReady(b.json);
+  const started = (await lobby()).find((room) => room.room === playingRoom);
+  assert.equal(started.status, "playing");
+  assert.equal(started.ready_players, 2);
 });
 
 test("placement: a playing room that isn't late; when it's late, a new public waiting room, then that one", async () => {
@@ -186,7 +210,10 @@ test("placement: a playing room that isn't late; when it's late, a new public wa
   assert.equal(b.json.room_status, "waiting");
   const c = await join({}, "10.4.0.3");
   assert.equal(c.json.room, waitingRoom);
-  assert.equal(c.json.room_status, "playing");
+  assert.equal(c.json.room_status, "waiting");
+  await markReady(b.json);
+  await markReady(c.json);
+  assert.equal((await lobby()).find((room) => room.room === waitingRoom).status, "playing");
 });
 
 test("a code join to a late room works and says what it walked into", async () => {

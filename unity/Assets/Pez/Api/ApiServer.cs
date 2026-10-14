@@ -33,7 +33,7 @@ namespace Pez.Api
             public long AlertSince, EventSince;
             public int OrdersSince = -1;
             /// <summary>In a waiting room: the players seated when the wait began (another joining, or the match starting, ends it). -1 otherwise.</summary>
-            public int Seated = -1;
+            public int Seated = -1, Ready = -1;
             public Priority Min;
             public bool Interruptible, Json;
             public DateTime Started, Deadline;
@@ -196,8 +196,8 @@ namespace Pez.Api
                 // New commander's orders also end the wait: the model should read them right away.
                 bool newOrders = !restarted && wt.OrdersSince >= 0 && w.Teams[wt.Team].OrdersVersion > wt.OrdersSince;
                 // A waiting room has no ticks: a join or the start is the news (time-outs above are on the real clock).
-                bool seating = wt.Seated >= 0 && (!game.Waiting || game.OutsidePlayers != wt.Seated);
-                bool interrupt = wt.Interruptible && (news || newOrders || seating) && (now - wt.Started).TotalSeconds >= 1.0;
+                bool seating = wt.Seated >= 0 && (!game.Waiting || game.OutsidePlayers != wt.Seated || game.OutsideReadyPlayers != wt.Ready);
+                bool interrupt = (seating || wt.Interruptible && (news || newOrders)) && (now - wt.Started).TotalSeconds >= 1.0;
                 if (!interrupt && !restarted && now < wt.Deadline && !w.GameOver) continue;
                 waiters.RemoveAt(i);
                 Respond(wt.Ctx, 200, Json.Write(WaitResult(game, wt, interrupt, fresh, now)), "application/json");
@@ -218,6 +218,7 @@ namespace Pez.Api
                 .Set("interrupted", interrupted)
                 .Set("waited_s", (float)Math.Round((now - wt.Started).TotalSeconds, 1))
                 .Set("new_alerts", wt.Json ? fresh.OrderByDescending(a => a.Priority).Select(a => (object)StateData.Alert(w, a)).ToList() : StateView.AlertsJson(w, fresh.OrderByDescending(a => a.Priority)))
+                .Set("ready_changed", wt.Ready >= 0 && game.OutsideReadyPlayers != wt.Ready)
                 .Set("orders_changed", wt.OrdersSince >= 0 && w.Teams.Count > wt.Team && w.Teams[wt.Team].OrdersVersion > wt.OrdersSince)
                 .Set("state", w.Teams.Count == 0 ? null // a new match that waits for players starts with no seats
                     : WithWaiting(game, wt.Json ? StateData.Team(w, Math.Min(wt.Team, w.Teams.Count - 1), wt.EventSince) : StateView.TeamState(w, Math.Min(wt.Team, w.Teams.Count - 1), wt.EventSince), wt.Json));
@@ -351,6 +352,7 @@ namespace Pez.Api
                             Json = req.QueryString["format"] == "json",
                             Started = DateTime.UtcNow,
                             Seated = game.Waiting ? game.OutsidePlayers : -1,
+                            Ready = game.Waiting ? game.OutsideReadyPlayers : -1,
                         };
                         wt.Deadline = wt.Started.AddSeconds(secs);
                         waiters.Add(wt);
@@ -389,7 +391,7 @@ namespace Pez.Api
                             .Set("map", $"{w.Map.W}x{w.Map.H}")
                             // Late joiners: how long this match has left, and what comes next.
                             .Set("match", StateView.MatchJson(w)).Set("match_summary", StateView.MatchText(w))
-                            .Set("room_status", game.RoomStatus);
+                            .Set("room_status", game.RoomStatus).Set("ready", team.Ready).Set("ready_players", game.OutsideReadyPlayers);
                         if (game.Waiting) reply.Set("waiting", game.WaitingJson());
                         return Json.Write(reply);
                     }
@@ -419,10 +421,12 @@ namespace Pez.Api
                             .Set("sudden_death_in_s", clock ? (object)StateView.Secs(w.SuddenDeathAt - w.Time) : null)
                             .Set("ends_in_s", clock ? (object)StateView.Secs(w.MatchEndsAt - w.Time) : null)
                             .Set("seats_free", w.SeatsFree);
-                        if (waiting) lobby.Set("min_players", game.Config.MinPlayers).Set("waiting_s", StateView.Secs(game.WaitedSeconds));
+                        lobby.Set("ready_players", game.OutsideReadyPlayers);
+                        if (waiting) lobby.Set("min_players", game.Config.MinPlayers).Set("waiting_s", StateView.Secs(game.WaitedSeconds))
+                            .Set("waiting_ready_s", game.ReadyCountdownSeconds < 0 ? null : (object)StateView.Secs(game.ReadyCountdownSeconds));
                         return Json.Write(lobby
                             .Set("teams", w.Teams.Select(t => new JObj().Set("flavor", t.Name).Set("team_name", t.Name).Set("player", t.PlayerName ?? t.Controller)
-                                .Set("status", t.Resigned ? "resigned" : t.Left ? "left" : t.Defeated ? "eliminated" : "playing").Set("house", t.House)
+                                .Set("ready", t.Ready).Set("status", t.Resigned ? "resigned" : t.Left ? "left" : t.Defeated ? "eliminated" : "playing").Set("house", t.House)
                                 .Set("score", scores.TryGetValue(t.Id, out var sc) ? (object)sc : null) // null: not on the scoreboard (left or out)
                                 .Set("structures", w.Owned(t.Id).Count(e => e.IsStructure)).Set("kills", t.Stats.Kills)
                                 // Game seconds since this seat's player last called command, state or wait (null for house AI, which has no
@@ -500,19 +504,8 @@ namespace Pez.Api
                         if (lease != null) lease.Expires = DateTime.UtcNow.AddSeconds(lease.Ttl);
                         w.Teams[team].LastActiveAt = w.Time;
                         var parsed = Json.Parse(p.Body ?? "[]");
-                        List<object> cmds = parsed is List<object> l ? l
-                            : parsed is Dictionary<string, object> d && d.TryGetValue("commands", out var c) && c is List<object> cl ? cl
-                            : new List<object> { parsed };
-                        var results = new List<object>();
-                        foreach (var cmd in cmds)
-                        {
-                            // Tracked: each command gets an id (cmd), the units it affected, and observations of what they then do.
-                            var r = cmd is Dictionary<string, object> cd ? w.Observe.Track(team, cd, () => game.Execute(team, cd)) : new JObj().Set("ok", false).Set("error", "each command must be an object");
-                            if (r["ok"] is bool done && done) w.LogCommand(team, (Dictionary<string, object>)cmd); // browser copies replay it (ViewSnapshot)
-                            results.Add(r);
-                            OnCommand?.Invoke(team, Json.Write(cmd), Json.Write(r));
-                        }
-                        return Json.Write(new JObj().Set("results", results).Set("stockpile", StateView.Stockpile(w.Teams[team])).Set("time_s", (float)Math.Round(w.Time, 1)));
+                        return Json.Write(CommandSafety.ExecuteBatch(game, team, parsed,
+                            lease?.Holder ?? w.Teams[team].PlayerName ?? w.Teams[team].Controller, OnCommand));
                     }
                 case "/api/observe":
                 case "/api/observe/snapshot":
@@ -783,6 +776,8 @@ namespace Pez.Api
                 foreach (var t in teams.OfType<JObj>())
                 {
                     int id = (int)Num(t["id"]);
+                    t.Remove("command_receipts"); // retry receipts belong to the server, never a rendered mirror
+                    t.Remove("gone_units");
                     if (id == team) continue;
                     t.Remove("standing_orders"); // a commander's orders are the team's plan
                     if (team < 0) continue;
@@ -828,7 +823,7 @@ namespace Pez.Api
                         if (next.Count > 0) eo["order_pos"] = next[next.Count - 1];
                     }
                     else eo.Remove("order_pos");
-                    foreach (var k in new[] { "rally", "waypoints", "waypoint_loop", "resume_order", "resume_pos", "resume_guard", "resume_target", "resume_waypoints",
+                    foreach (var k in new[] { "last_order_by", "last_order_tick", "last_retreat_tick", "rally", "waypoints", "waypoint_loop", "resume_order", "resume_pos", "resume_guard", "resume_target", "resume_waypoints",
                                               "mine_queue", "home_pos", "harvest_tile", "prospect_center", "prospect_radius", "skip_sites", "passengers", "retreat_below", "fuel", "fuel_cap", "until_capturable", "engage_derricks", "output", "granted_share", "cargo_salvage" })
                         eo.Remove(k);
                     eo["guard_pos"] = eo["pos"];

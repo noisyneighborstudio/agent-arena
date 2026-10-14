@@ -53,21 +53,21 @@ namespace Pez.Headless
         /// </summary>
         static readonly Dictionary<Type, string> SavedFields = new Dictionary<Type, string>
         {
-            [typeof(Entity)] = "Id Team Def Pos PrevPos Facing TurretFacing Hp Dead Origin BuildProgress Rally Order OrderPos GuardPos TargetId UntilCapturable EngageDerricks Path PathIdx Cooldown " +
+            [typeof(Entity)] = "LastOrderTick LastRetreatTick LastOrderBy Id Team Def Pos PrevPos Facing TurretFacing Hp Dead Origin BuildProgress Rally Order OrderPos GuardPos TargetId UntilCapturable EngageDerricks Path PathIdx Cooldown " +
                 "SpeedCap Group ProgressPos ProgressAt GhostUntil ProgressDist Waypoints WaypointLoop RetreatBelow Retreating RetreatSpent GivingWay OwnBlockedSince DodgeUntil DanceVel DanceStep DanceHeading DanceSpeed DanceFor DanceFlips SettledUntil QueuedAt RepathTimer Moving LastAttackerId LastHitTime " +
                 "LastCallForHelp LastAttackerTeam Responding HomePos Cargo CargoType HarvestType HarvestTile WorkTimer Burning Dock DockAt BaySide DepositId Working Output Offline CarrierId Passengers Fuel Landed Stranded " +
                 "GrantedShare CargoSalvage FuelCap AtDepot FuelWarned NoAutoRefuelUntil ResumeOrder ResumePos ResumeGuard ResumeTarget ResumeWaypoints ResumeSpeedCap MineQueue LastFiredAt Arming ArmingTarget " +
                 "Prospecting ProspectCenter ProspectRadius SkipSites SurveyFailure SurveyFailedAt ZoneId | CmdId", // CmdId: the observation feed's command tracking, which restarts (as a new stream) with the process
-            [typeof(Team)] = "Id Name Controller PlayerName StandingOrders OrdersVersion Stock Rates PowerProduced PowerUsed PlasmaOwed Detected Revealed Defeated StartPos " +
-                "Visible Explored Left Resigned StalledSince House Seat ProtectedUntil StructureQueue UnitQueues KnownEnemyStructures Surveyed SurveySites Zones " +
+            [typeof(Team)] = "Id Name Controller PlayerName StandingOrders OrdersVersion CommandReceipts GoneUnits Stock Rates PowerProduced PowerUsed PlasmaOwed Detected Revealed Defeated StartPos " +
+                "Visible Explored Left Resigned StalledSince House Ready Seat ProtectedUntil StructureQueue UnitQueues KnownEnemyStructures Surveyed SurveySites Zones " +
                 "SurfaceWarnedAt HomeOreWarned LastActiveAt Reserve SaveFor SaveForCost Stats Granted Scatter",
             [typeof(World)] = "Map Paths MapVersion Open MaxPlayers MaxMapSize GrowStep SafeJoinDistance ProtectionSeconds Teams ById Entities Projectiles Events " +
                 "EventCounts Alerts Tick GameOver Winner Errors LastError nextId nextSeq seatCounter rng rateSnapshot airWarned derrickHinted StallGrace ArenaChampion contested Inventions GameId Regrown SuddenDeathAt DerrickRespawns CommandSeq SettleCounts " +
-                "| barredBases ErrorLog loggedErrors cells cellsW cellsH nearTarget nearHelp nearMine nearSep nearSpot nearCrush nearThreat padSlots nearVis Showcase OreVersion oreDirty beingMined regrowNow scoreCache scoreCacheTick NextMatchIn derricksChecked groupSpan Mirror MirrorScores Feed Touched CommandLog", // CommandLog: the last few seconds of orders, for browser copies (a restart loses them: a copy just slides once); Feed: the observation feed starts a new stream on resume (readers get a gap and a snapshot); Showcase: the kitchen sink room is never saved (rebuilt from code); Mirror: set by the browser client on its copy
+                "| barredBases ErrorLog loggedErrors cells cellsW cellsH nearTarget nearHelp nearMine nearSep nearSpot nearCrush nearThreat padSlots nearVis Showcase OreVersion oreDirty beingMined regrowNow scoreCache scoreCacheTick NextMatchIn derricksChecked groupSpan Mirror MirrorScores Feed Touched CommandLog CommandActor", // CommandLog: the last few seconds of orders, for browser copies (a restart loses them: a copy just slides once); Feed: the observation feed starts a new stream on resume (readers get a gap and a snapshot); Showcase: the kitchen sink room is never saved (rebuilt from code); Mirror: set by the browser client on its copy
             [typeof(Invention)] = "Key Name Chassis WeaponFrom Summary Team Def ResearchCost ResearchTime Progress Novelty PriceFactor ProposedAt ResearchedAt Built Lost Kills",
             [typeof(Map)] = "W H Tiles Ore OreType Occupant Spawns Deep OreScale nextDepositId OreBase OreBaseType Salvage | writable fieldsChanged fieldTiles fieldRoots BaseMissing SalvageMissing",
             [typeof(SimpleAI)] = "team Passive nextThink waveSize outpostTargets nextProspect prospectRadius knownSurface stuckSince wantCopper wantCrystal wantUranium wentDeep oreRate ratedAt ratedMined copperStarvedSince",
-            [typeof(Game)] = "World Config Speed Paused ais accumulator nextHouseCheck ResumedFrom LastSaved restartIn Waiting waitedBefore waitedSeen waitingSince | RenderFps Restarted Now Replay", // Replay: the browser copy's queue, from the snapshots it fetches
+            [typeof(Game)] = "World Config Speed Paused ais accumulator nextHouseCheck ResumedFrom LastSaved restartIn Waiting waitedBefore waitedSeen waitingSince readyFilledBefore readyFilledSince | RenderFps Restarted Now Replay", // Replay: the browser copy's queue, from the snapshots it fetches
             [typeof(AlertLog)] = "All open nextSeq",
             [typeof(Alert)] = "Seq Team Kind Priority Pos StartTick LastTick Count Victims Attackers Lost Amount",
             [typeof(GameEvent)] = "Seq Tick Type Team A B Pos Pos2 Key Text | SeenBy",
@@ -75,6 +75,7 @@ namespace Pez.Headless
             [typeof(DeepDeposit)] = "Id Pos Type Amount Initial MineId",
             [typeof(ProdItem)] = "Key Progress StructureId WorkerId GrantedShare | CmdId",
             [typeof(ZoneFlag)] = "ZoneId FlaggedBy FlaggedAt",
+            [typeof(CommandReceipt)] = "Id Reply At",
             [typeof(TeamStats)] = "UnitsBuilt StructuresBuilt UnitsLost StructuresLost Kills OreMined Built KillValue KillsValued SalvageLeft DeepMined DerricksCaptured DerrickSteel SalvageMined UpkeepPaid",
             [typeof(GameConfig)] = "Seed MapSize Speed Controllers Orders Open MaxPlayers MaxMapSize OreScale HouseAIs HouseResignAbove MatchHours MinPlayers | KitchenSink",
         };

@@ -34,7 +34,7 @@ The design principle: games are won or lost by strategy, not by when you happene
 - **`joinable` and `why`:** for example `"joinable": false, "why": "sudden death: closed to new players"`.
 - **`verdict`:** `fresh` (waiting, or the first 15 minutes), `early`, `midgame` or `late` (less than 30 minutes to sudden death), with one plain line, e.g. "2h10m to sudden death; 3 active players; the leader has 41% of the points."
 - **Match:** `age_s`, `match_hours`, `sudden_death_in_s`, `ends_in_s`.
-- **Players:** each team's `team_name`, `player`, `score`, `structures`, `house`, and `active` with `idle_s`. Idle counts orders and `state`/`wait` calls (below), not orders alone.
+- **Players:** each team's `team_name`, `player`, `score`, `structures`, `house`, `ready`, and `active` with `idle_s`. Idle counts orders and `state`/`wait` calls (below), not orders alone.
 - **Seats:** `seats_free`. For a waiting room, also `min_players` and `waiting_s`.
 - **Private rooms** appear with their status and seats but **without their code**.
 
@@ -50,19 +50,29 @@ The design principle: games are won or lost by strategy, not by when you happene
 
   Placement never seats anyone in sudden death or later.
 
-The join reply gains `room_status`. In a waiting room it also has `waiting: {players, min_players, waited_s, choose_after_s}`.
+The join reply gains `room_status` and your `ready` status. In a waiting room it also has
+`waiting: {players, min_players, ready_players, ready_seats, start_after_s, waited_s, choose_after_s}`.
+`ready_seats` names each outside player's team and readiness. `start_after_s` is -1 until enough seats fill,
+then the remaining real seconds before automatic start. `wait` and the lobby report the same readiness.
 
 ## Rooms that wait for players
 
-A new room doesn't start until enough outside agents are in it. Everyone then starts together at t=0, with no head start and no match aging while one agent sits alone.
+A new room waits while outside agents join and prepare. Everyone starts together at t=0, with no head start and no match aging while one agent sits alone.
 
 - **The engine owns the waiting state.** It's a new `Game.Waiting` with `MinPlayers`, separate from the operator's `Paused`.
   - The world doesn't advance.
   - `state` says what it's waiting for.
-  - Commands are refused with `waiting_for_players` (frozen-world commands would otherwise run and let a lone seat queue up an opening).
-  - `wait` returns when someone joins or the match starts.
+  - Commands other than `ready`, `say` and `start_match` are refused with `waiting_for_players` (frozen-world commands would otherwise run and let a lone seat queue up an opening).
+  - `wait` returns when someone joins, becomes ready, or the match starts.
   - The waiting state is saved and resumed like everything else.
-- **It starts on its own** when the number of outside players seated reaches `min_players`. The clock starts at that moment. Players seated before the start get no newcomer protection and no catch-up kit, because they're all founders.
+- **Preparation handshake.** Read the briefing and state, then send `{"type":"ready"}` (or use the MCP `ready` tool).
+  Only your live outside seat can mark itself ready; repeating the command is harmless. Readiness belongs to that occupant,
+  so a reused seat starts unready.
+- **It starts on its own** when `min_players` outside players are seated and ready, or 120 real seconds after the last
+  required seat filled, whichever comes first. Extra players need not all be ready. If seats drop below `min_players`,
+  the countdown resets; filling the required seats again starts a fresh 120 seconds. Readiness and elapsed countdown
+  survive saves, with the countdown resuming from its saved elapsed time after a host restart. The clock starts at
+  that moment. Players seated before the start get no newcomer protection and no catch-up kit, because they're all founders.
 - **The 5-minute choice.** After 5 real minutes with only the creator seated, `state`, `wait` and the alert say so. The creator then chooses:
   - **Keep waiting:** do nothing.
   - **Join a running room:** `leave`, then `join` with that room's code.

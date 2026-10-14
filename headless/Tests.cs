@@ -78,6 +78,7 @@ namespace Pez.Headless
             ResignWhenStalled();
             IdleSeatsResign();
             JoinFlow();
+            TurnSafety();
             WaitPacing();
             DeepMining();
             Prospecting();

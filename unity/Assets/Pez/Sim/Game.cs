@@ -26,7 +26,7 @@ namespace Pez.Sim
         public bool KitchenSink;
         /// <summary>Game hours until sudden death (the match clock, Match.cs); the match ends on points an hour after. 0 = no clock.</summary>
         public float MatchHours = 4f;
-        /// <summary>Open arena: each match waits, frozen, until this many outside agents are seated (Game.Waiting). 0 = it starts at once.</summary>
+        /// <summary>Open arena: each match waits for this many outside players to be ready, or 120 s after they are seated. 0 = it starts at once.</summary>
         public int MinPlayers;
     }
 
@@ -52,6 +52,8 @@ namespace Pez.Sim
             Waiting = cfg.MinPlayers > 0;
             waitedBefore = waitedSeen = 0;
             waitingSince = Now();
+            readyFilledBefore = -1f;
+            readyFilledSince = waitingSince;
             World = cfg.KitchenSink ? Sim.KitchenSink.Build()
                   : new World(Waiting ? 0 : cfg.Controllers.Length, cfg.Seed, cfg.MapSize, cfg.OreScale) { Open = cfg.Open, MaxPlayers = cfg.MaxPlayers, MaxMapSize = cfg.MaxMapSize };
             ais.Clear();

@@ -15,6 +15,7 @@ namespace Pez.Headless
         {
             Console.WriteLine("\n-- join flow");
             WaitingRoom();
+            ReadyHandshake();
             ResumedRoomWaits();
             Sparring();
             LobbyAndCutoff();
@@ -60,7 +61,10 @@ namespace Pez.Headless
             game = back; w = back.World; a = w.Teams[0];
 
             var b = game.Join("llm", "Bo", null, out _, out _);
-            Check(!game.Waiting && b.ProtectedUntil == 0 && a.ProtectedUntil == 0 && w.Time == 0, "the second agent starts the match at t=0, with both founders unprotected");
+            Check(game.Waiting && b.ProtectedUntil == 0 && a.ProtectedUntil == 0 && w.Time == 0 && game.ReadyCountdownSeconds == 120,
+                  "the second agent begins the 120-second preparation period at t=0, with both founders unprotected");
+            Check(Ok(game.Execute(a.Id, Cmd("type", "ready"))) && game.Waiting && a.Ready && !b.Ready, "the first ready player still waits for the other");
+            Check(Ok(game.Execute(b.Id, Cmd("type", "ready"))) && !game.Waiting && w.Time == 0, "both ready players start together at t=0");
             Check(w.Events.Any(e => e.Type == "chat" && e.Text.StartsWith("The match has started")) && w.Alerts.Active(w, a.Id).Any(a1 => a1.Kind == "match_clock") && w.Alerts.Active(w, b.Id).Any(a1 => a1.Kind == "match_clock"),
                   "a chat line and an alert to each player say it has started");
             Check(Ok(game.Execute(a.Id, Cmd("type", "build", "structure", "power_plant"))), "commands work now");
@@ -72,6 +76,74 @@ namespace Pez.Headless
             game.NextMatch();
             Check(game.Waiting && game.World.Teams.Count == 0 && game.Config.MinPlayers == 2 && game.Config.MatchHours == 4, "the next match opens waiting too, with the same min_players and match length");
             Check(w.Errors == 0 && game.World.Errors == 0, $"no sim errors ({w.LastError})");
+        }
+
+        static void ReadyHandshake()
+        {
+            var clock = DateTime.UtcNow;
+            var game = WaitingGame(2, () => clock);
+            var a = game.Join("llm", "Ada", null, out _, out _);
+            Check(game.ReadyCountdownSeconds < 0 && game.OutsideReadyPlayers == 0, "a lone seat has no preparation timeout");
+            Check(Ok(game.Execute(a.Id, Cmd("type", "ready"))) && game.Waiting && game.OutsideReadyPlayers == 1, "a lone seat can mark itself ready without starting");
+            var b = game.Join("llm", "Bo", null, out _, out _);
+            var waiting = game.WaitingJson();
+            var seats = ((List<object>)waiting["ready_seats"]).OfType<JObj>().ToList();
+            Check((int)waiting["ready_players"] == 1 && seats.Count == 2 && (bool)seats[0]["ready"] && !(bool)seats[1]["ready"], "waiting state identifies who is ready");
+            clock = clock.AddSeconds(50);
+            Check(Ok(game.Execute(a.Id, Cmd("type", "ready"))) && game.ReadyCountdownSeconds == 70, "repeating ready is harmless and does not reset the timeout");
+            var back = new Game(new GameConfig()) { Now = () => clock };
+            back.Restore(Snapshot.Parse(Snap(game)));
+            Check(back.Waiting && back.World.Teams[a.Id].Ready && !back.World.Teams[b.Id].Ready && back.ReadyCountdownSeconds == 70,
+                  "save/resume preserves readiness and elapsed preparation time");
+            clock = clock.AddSeconds(69);
+            back.Advance(0.05f);
+            Check(back.Waiting && back.World.Tick == 0 && back.ReadyCountdownSeconds == 1, "the world stays frozen until 120 real seconds after required seats filled");
+            clock = clock.AddSeconds(1);
+            back.Advance(0.05f);
+            Check(!back.Waiting && back.World.Tick == 0, "the 120-second fallback starts an unready match without advancing its clock");
+            back.Advance(0.05f);
+            Check(back.World.Tick == 1 && Ok(back.Execute(b.Id, Cmd("type", "ready"))), "ready after the start succeeds without changing game progress");
+
+            var reset = WaitingGame(2, () => clock);
+            var one = reset.Join("llm", "One", null, out _, out _);
+            var two = reset.Join("llm", "Two", null, out _, out _);
+            reset.Execute(one.Id, Cmd("type", "ready"));
+            clock = clock.AddSeconds(100);
+            reset.World.Leave(two.Id);
+            Check(reset.ReadyCountdownSeconds < 0 && !Ok(reset.Execute(two.Id, Cmd("type", "ready"))), "a departed seat cannot become ready and removes the countdown");
+            var replacement = reset.Join("llm", "Replacement", null, out _, out _);
+            Check(!replacement.Ready && reset.ReadyCountdownSeconds == 120, "refilling a required seat resets its timeout and does not inherit readiness");
+            clock = clock.AddSeconds(30);
+            reset.Join("llm", "Extra", null, out _, out _);
+            Check(reset.ReadyCountdownSeconds == 90, "an extra seat does not reset the preparation period");
+            reset.Execute(replacement.Id, Cmd("type", "ready"));
+            Check(!reset.Waiting && reset.OutsideReadyPlayers == 2, "min_players ready is sufficient even if an extra seat is unready");
+
+            var invalid = WaitingGame(3, () => clock);
+            var p = invalid.Join("llm", "Player", null, out _, out _);
+            var house = invalid.Join("ai", "House", null, out _, out _); house.House = true;
+            Check(!Ok(invalid.Execute(-1, Cmd("type", "ready"))) && !Ok(invalid.Execute(999, Cmd("type", "ready"))) && !Ok(invalid.Execute(house.Id, Cmd("type", "ready"))),
+                  "ready rejects nonexistent and house seats");
+            p.Defeated = true;
+            Check(!Ok(invalid.Execute(p.Id, Cmd("type", "ready"))) && invalid.OutsidePlayers == 0, "defeated players neither ready nor count toward starting");
+
+            var oldRoot = Snapshot.Parse(Snap(game));
+            oldRoot.Obj("game").Remove("ready_filled_s");
+            foreach (var team in oldRoot.Obj("world").Objs("teams")) team.Remove("ready");
+            var old = new Game(new GameConfig()) { Now = () => clock };
+            old.Restore(oldRoot); old.Advance(0);
+            Check(old.Waiting && old.OutsideReadyPlayers == 0 && old.ReadyCountdownSeconds == 120, "older waiting saves load with unready seats and a fresh preparation period");
+
+            var three = WaitingGame(3, () => clock);
+            var first = three.Join("llm", "First", null, out _, out _);
+            var second = three.Join("llm", "Second", null, out _, out _);
+            three.Execute(first.Id, Cmd("type", "ready")); three.Execute(second.Id, Cmd("type", "ready"));
+            clock = clock.AddSeconds(121); three.Advance(0);
+            Check(three.Waiting && three.ReadyCountdownSeconds < 0, "two ready seats do not start a three-player room, even after 120 seconds");
+            var third = three.Join("llm", "Third", null, out _, out _);
+            Check(three.ReadyCountdownSeconds == 120 && three.Waiting, "the final required seat starts a three-player room's countdown");
+            three.Execute(third.Id, Cmd("type", "ready"));
+            Check(!three.Waiting, "all three ready seats start the configured room together");
         }
 
         /// <summary>A room saved before waiting rooms (min_players 0) that the gateway relaunches with --min-players 2: its match plays on, the next one waits.</summary>
@@ -160,14 +232,17 @@ namespace Pez.Headless
             var cmd = Call(http.PostAsync($"{Url}/api/command?token={tok}", new StringContent("[{\"type\":\"train\",\"unit\":\"rifleman\"}]")));
             Check(((List<object>)cmd["results"]).OfType<Dictionary<string, object>>().First().Str("error").StartsWith("waiting_for_players:"), "a command over HTTP is refused with waiting_for_players");
 
-            // A wait while alone comes back when the second player joins (and the match starts), not at its deadline.
+            // A wait while alone comes back when the second player joins, while preparation is still frozen.
             var waitReq = http.GetAsync($"{Url}/api/wait?seconds=30&token={tok}");
             var until = DateTime.UtcNow.AddSeconds(0.3);
             while (DateTime.UtcNow < until) { api.Pump(game); Thread.Sleep(10); }
             var rb = Register("Bo");
             var waited = Call(waitReq);
-            Check(rb.Str("room_status") == "playing" && !rb.ContainsKey("waiting") && waited["interrupted"] is bool wi && wi && (double)waited["waited_s"] < 5,
-                  $"the second player starts the match, and the first one's wait returns early ({waited["waited_s"]}s)");
+            Check(rb.Str("room_status") == "waiting" && rb.ContainsKey("waiting") && waited["interrupted"] is bool wi && wi && (double)waited["waited_s"] < 5,
+                  $"the second player joins without starting, and the first one's wait returns early ({waited["waited_s"]}s)");
+            Call(http.PostAsync($"{Url}/api/command?token={tok}", new StringContent("[{\"type\":\"ready\"}]")));
+            Call(http.PostAsync($"{Url}/api/command?token={rb.Str("token")}", new StringContent("[{\"type\":\"ready\"}]")));
+            Check(!game.Waiting, "both ready commands over HTTP start the match");
 
             var w = game.World;
             l = Lobby();

@@ -41,6 +41,9 @@ namespace Pez.Sim
         public int TargetId;
         /// <summary>The API command (observation feed id) whose order this unit is carrying out; 0 = none.</summary>
         public long CmdId;
+        /// <summary>Last order and retreat facts for decisions made from an earlier tick.</summary>
+        public int LastOrderTick = -1, LastRetreatTick = -1;
+        public string LastOrderBy;
         public bool UntilCapturable;  // attack "until":"capturable": hold fire while an engineer could take the target
         public bool EngageDerricks;   // attack_move "derricks":true: shoot enemy-held derricks too (left alone by default)
         public List<Vec2> Path;
