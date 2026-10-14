@@ -49,6 +49,7 @@ namespace Pez.Headless
             Alerts();
             InterruptibleWait();
             Observe();
+            SlowCommanderHarness();
             CommanderOrders();
             Transports();
             Engineers();

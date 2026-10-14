@@ -59,10 +59,12 @@ namespace Pez.Headless
             if (args.Contains("--test")) return Tests.Run();
             if (args.Contains("--gate")) return Tests.RunGate();
             if (args.Contains("--test-observe")) return Tests.RunObserve();
+            if (args.Contains("--test-slow-agent")) return Tests.RunSlowAgent();
             if (args.Contains("--bench-swarm")) return Tests.BenchSwarm();
             if (args.Contains("--test-kitchen-sink")) return Tests.RunKitchenSink();
             if (args.Contains("--test-economy")) return Tests.RunEconomy();
             if (args.Contains("--econ-report")) return EconReport.Run(args);
+            if (args.Contains("--slow-agent")) return SlowAgent.Run(args);
             if (args.Contains("--drift")) return DanceCheck.Drift(Arg("--drift", ""), Arg("--to", ""));
             if (args.Contains("--dance-check")) return DanceCheck.Run(Arg("--dance-check", ""), float.Parse(Arg("--seconds", "60"), System.Globalization.CultureInfo.InvariantCulture), args.Contains("--verbose"));
             if (args.Contains("--resume-check")) return ResumeCheck(Arg("--resume-check", ""), float.Parse(Arg("--seconds", "600"), System.Globalization.CultureInfo.InvariantCulture));
