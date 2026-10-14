@@ -21,7 +21,9 @@ namespace Pez.EditorTools
         public static void RenderMissing()
         {
             int made = 0;
-            var keys = Pez.Sim.Defs.All.Keys.Where(k => !File.Exists($"{Dir}/{k}.png") && k != "mine").OrderBy(k => k).ToList();
+            // Every def, and the deep mine's per-ore models (each its own icon: deep_mine_iron.png and so on).
+            var keys = Pez.Sim.Defs.All.Keys.Where(k => k != "mine").Concat(Models.DeepMineModels.Where(k => Models.ModelFor(k) != null))
+                .Where(k => !File.Exists($"{Dir}/{k}.png")).OrderBy(k => k).ToList();
             var root = new GameObject("IconStage");
             float shadowWas = QualitySettings.shadowDistance; // a project setting: put it back afterwards
             try
@@ -51,20 +53,23 @@ namespace Pez.EditorTools
                     Rig rig;
                     // Units that borrow another's model until they have art (ModelAs) are drawn the way the game draws them.
                     var def = Pez.Sim.Defs.Get(key);
-                    try { rig = Models.Build(def?.ModelKey ?? key, 0); }
+                    bool mine = System.Array.IndexOf(Models.DeepMineModels, key) >= 0;
+                    try { rig = mine ? Models.Build("deep_mine", 0, key) : Models.Build(def?.ModelKey ?? key, 0); }
                     catch (System.Exception ex) { Debug.LogWarning($"PEZICON {key}: no model ({ex.Message})"); continue; }
                     var go = rig.Root.gameObject;
                     go.transform.SetParent(root.transform, false);
                     // Aircraft sit at their flying height in game: bring them down to the stage.
                     rig.Root.position = Vector3.zero;
                     if (rig.Body != null) rig.Body.localPosition = new Vector3(0, rig.Altitude > 0 ? 0.35f : 0f, 0);
-                    rig.Root.rotation = Quaternion.Euler(0, -35f, 0);
+                    // Structures turn their front (doors and chutes: -Z) to the camera, the corner the game's camera sees them from.
+                    bool building = mine || def?.IsStructure == true;
+                    rig.Root.rotation = Quaternion.Euler(0, building ? 145f : -35f, 0);
                     if (def?.ModelAs != null && rig.Model != null && def.ModelScale != 1f) rig.Model.transform.localScale *= def.ModelScale;
                     var b = new Bounds(rig.Root.position, Vector3.zero);
                     foreach (var r in go.GetComponentsInChildren<Renderer>()) b.Encapsulate(r.bounds);
                     // Three-quarter view from the front left, framed so the model fills about two thirds of the height.
                     float radius = Mathf.Max(0.35f, b.extents.magnitude);
-                    float dist = radius / Mathf.Sin(cam.fieldOfView * 0.5f * Mathf.Deg2Rad) * 0.78f;
+                    float dist = radius / Mathf.Sin(cam.fieldOfView * 0.5f * Mathf.Deg2Rad) * (building ? 0.66f : 0.78f);
                     var dir = Quaternion.Euler(32f, 210f, 0f) * Vector3.forward;
                     camGo.transform.position = b.center - dir * dist;
                     camGo.transform.rotation = Quaternion.LookRotation(dir);

@@ -64,7 +64,8 @@ namespace Pez.View
             public LaserWorks Laser;     // laser tower: the head's pitch, the coils charging and the lens
             public FusionWorks Fusion;   // fusion reactor: the plasma ring, the pellet injector and the steam
             public FactoryWorks Factory; // factory: the line, the gantry, the press and the flip-top head
-            public DeepMineWorks Headframe; // deep mine (and derrick): the hoist, the sheave and drum, the stem of what's left
+            public DeepMineWorks Headframe; // deep mine: its machine (by ore), the stem of what's left, the lamp
+            public DerrickWorks Derrick; // derrick: the flywheel, the steel bricks it pours, the head flipping on capture
             public bool GlowHidden;
             public Sheen Sheen;          // newcomer protection: the sheen over its parts (null when its team isn't protected)
             public Renderer[] Halos;     // power plant: the light rising out of its open stacks      // the neutral "last seen" glow is applied (a stream render of fogged enemy state)
@@ -835,9 +836,19 @@ namespace Pez.View
             v.Rig.Motion.AimAt(v.Rig.Root.position + dir * 5f);
         }
 
+        /// <summary>A derrick the sim placed in the last few seconds (its "derrick" event).</summary>
+        bool JustPlaced(Entity e)
+        {
+            var evs = World.Events;
+            for (int i = evs.Count - 1; i >= 0 && (World.Tick - evs[i].Tick) * World.Dt < 3f; i--)
+                if (evs[i].Type == "derrick" && evs[i].A == e.Id) return true;
+            return false;
+        }
+
         EV Create(Entity e)
         {
-            var rig = Models.Build(e.Def.ModelKey, e.Team); // an invention looks like its base unit (plus a badge: Bars)
+            // An invention looks like its base unit (plus a badge: Bars); a deep mine looks like the ore it pumps.
+            var rig = Models.Build(e.Def.ModelKey, e.Team, e.Def.Key == "deep_mine" ? Models.DeepMineModel(World.Map.DepositById(e.DepositId)?.Type ?? -1) : null);
             // Units drawn with another unit's model (new drones without art yet): their own size and flying height.
             if (e.Def.ModelAs != null && rig.Model != null && e.Def.ModelScale != 1f) rig.Model.transform.localScale *= e.Def.ModelScale;
             if (e.Def.HighAltitude) rig.Altitude = 5f;
@@ -854,6 +865,15 @@ namespace Pez.View
             var v = new EV { E = e, Rig = rig, Ring = ring, Born = Time.frameCount, Bars = e.IsMine ? null : new Bars(rig.Root, e, 0f), TeamShown = e.Team };
             if (e.IsStructure) { rig.Root.position = W(e.Center); TurnToBay(v); Plinths.Register(e.Id, rig.Root.position, rig.Plinth, v.BayYaw); }
             if (e.IsStructure && !e.IsComplete && rig.HasModel) v.Site = new SiteView(rig.Root, e.Def.SizeX, e.Def.SizeY);
+            if (e.Def.Key == "derrick" && rig.HasModel && JustPlaced(e))
+            {
+                // A fresh derrick (a new map's, or one rising again where the last was destroyed) is placed whole by the sim:
+                // here it rises out of the ground, stage by stage, rather than popping in.
+                v.BuiltShown = e.BuildProgress;
+                rig.Emerge.SetBuildProgress(0f);
+                rig.Emerge.StartCoroutine(rig.Emerge.PlayBuild(1f));   // within a second: the sim has it whole and capturable already
+                Fx.StageDust(rig.Root.position, e.Def.SizeX, e.Def.SizeY);
+            }
             if (e.IsStructure && e.Def.DropOff && rig.HasModel)
             {
                 // The model is turned so its door faces the bay, so in the model's own frame the bay is always on its -Z (south) side.
@@ -916,7 +936,8 @@ namespace Pez.View
                 if (e.Def.Key == "power_plant" || e.Def.Power < 0) Power(v);
                 if (e.IsComplete || v.SmokeK > 0f || v.Sim != null) Damage(v);
                 Construction(v);
-                if (e.Def.ModelKey == "deep_mine") { Fx.Audience = AudienceFor(e); (v.Headframe ??= DeepMineWorks.For(rig.Model, e.Id, ref v.Glows)).Tick(World, e, SeesState(e, PovTeam), Time.deltaTime); Fx.Audience = null; }
+                if (e.Def.Key == "deep_mine") { Fx.Audience = AudienceFor(e); (v.Headframe ??= DeepMineWorks.For(rig.Model, e.Id, ref v.Glows)).Tick(World, e, SeesState(e, PovTeam), Time.deltaTime); Fx.Audience = null; }
+                if (e.Def.Key == "derrick") { Fx.Audience = AudienceFor(e); (v.Derrick ??= DerrickWorks.For(rig.Model, v.TeamShown, e.Id)).Tick(e, v.TeamShown, SeesState(e, PovTeam), Time.deltaTime); Fx.Audience = null; }
                 if (e.Def.Key == "mining_refinery" && e.IsComplete && e.Team >= 0) Refinery(v);
                 if (e.Def.Key == "outpost" && e.IsComplete && e.Team >= 0) (v.Depot ??= OutpostWorks.For(rig.Model, e.Id)).Tick(World, e, SeesState(e, PovTeam), Time.deltaTime);
                 if (e.Def.Key == "enrichment_plant" && e.Team >= 0) { Fx.Audience = AudienceFor(e); (v.Enrich ??= EnrichWorks.For(rig.Model, e.Id, ref v.Glows)).Tick(World.Teams[e.Team], e.IsComplete, e.Working, SeesState(e, PovTeam), v.FireK < 0.15f, Time.deltaTime); Fx.Audience = null; }
@@ -976,8 +997,8 @@ namespace Pez.View
                 }
                 else if (rig.Turret != null && e.Def.Key == "radar_dome")
                     rig.Turret.localRotation = Quaternion.Euler(0, e.IsComplete ? Time.time * 50f + e.Id * 47f : 0, 0);
-                else if (rig.Turret != null && e.Def.ModelKey == "deep_mine") // a deep mine, or a derrick drawn as one
-                    rig.Turret.localRotation = Quaternion.Euler(e.Working ? Time.time * 140f + e.Id * 47f : 0, 0, 0); // the sheave turns while it pumps
+                else if (rig.Turret != null && (e.Def.Key == "deep_mine" || e.Def.Key == "derrick")) // the code-built fallbacks
+                    rig.Turret.localRotation = Quaternion.Euler(e.Working ? Time.time * (e.Def.Key == "derrick" ? 90f : 140f) + e.Id * 47f : 0, 0, 0); // the sheave (or the derrick's flywheel) turns while it works
                 else if (rig.Turret != null && e.Def.Key == "construction_yard")
                 {
                     bool building = World.Teams[e.Team].StructureQueue.Count > 0;

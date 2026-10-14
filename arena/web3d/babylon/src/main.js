@@ -62,7 +62,16 @@ const ORE = { i: C(138, 58, 36), c: C(200, 116, 47), x: C(143, 228, 255), u: C(1
 const OREV = { i: G(138, 58, 36), c: G(200, 116, 47), x: G(143, 228, 255), u: G(182, 255, 59) };
 const MODEL_AS = { long_range_drone: "gunship", reaper_drone: "stealth_bomber", recon_drone: "gunship", transport_chopper: "gunship", mammoth_tank: "heavy_tank",
   flak_track: "light_tank", apc: "light_tank", minelayer: "mining_truck", commando: "rifleman", sniper: "rifleman", engineer: "medic",
-  construction_truck: "outpost_truck", derrick: "deep_mine" };
+  construction_truck: "outpost_truck" };
+// A deep mine is drawn as the machine for the ore it pumps, found from the deposit under it in the frame's `deposits`
+// ([x, y, type, % left]; a player's frame has only the ones they surveyed). Unknown, or its model missing: the shared deep_mine.
+const MINE_MODELS = ["deep_mine_iron", "deep_mine_copper", "deep_mine_crystal", "deep_mine_uranium"];
+let deposits = [];
+function mineModel(x, y) {
+  let ore = -1, best = 2.5;
+  for (const [dx, dy, type] of deposits) { const d = Math.hypot(dx - x, dy - y); if (d < best) { best = d; ore = type; } }
+  return MINE_MODELS[ore] ?? null;
+}
 const AIR = new Set(["gunship", "stealth_bomber", "recon_drone", "long_range_drone", "reaper_drone", "transport_chopper"]);
 const INFANTRY = /rifle|soldier|trooper|medic|engineer|sniper|commando/;
 
@@ -243,6 +252,14 @@ function model(key) {
   }
   return containers.get(file);
 }
+// The deep mine's reserve pieces (M_OreTint) in its ore's colour; crystal and uranium glow, as in the field.
+const oreMats = new Map();
+function oreMat(base, ore) {
+  const c = [ORE.i, ORE.c, ORE.x, ORE.u][ore]; if (!c) return base;
+  const k = `${base.uniqueId}:${ore}`;
+  if (!oreMats.has(k)) { const m = base.clone(`${base.name}_o${ore}`); m.albedoColor = c; if (ore >= 2) m.emissiveColor = c.scale(0.8); oreMats.set(k, m); }
+  return oreMats.get(k);
+}
 const teamMats = new Map();
 function teamMat(base, team) {
   const k = `${base.uniqueId}:${team}`;
@@ -324,7 +341,8 @@ function upsert(e, now) {
     s = { key, team, a: { x, y, f: facing, t: now }, b: { x, y, f: facing, t: now }, build, hp, size };
     s.root = new Mesh(`e${id}`, scene); s.root.metadata = { id };
     ents.set(id, s);
-    model(key).then((c) => {
+    const variant = key === "deep_mine" ? mineModel(x, y) : null;
+    (variant ? model(variant).then((c) => c ?? model(key)) : model(key)).then((c) => {
       if (!ents.has(id)) return;
       let body;
       if (c) {
@@ -332,6 +350,7 @@ function upsert(e, now) {
         body = inst.rootNodes[0];
         for (const m of body.getChildMeshes(false)) {
           if (m.material?.name?.startsWith("M_Team")) m.material = teamMat(m.material, team);
+          if (variant && m.material?.name?.startsWith("M_OreTint")) m.material = oreMat(m.material, MINE_MODELS.indexOf(variant));
           m.receiveShadows = true; shadows.addShadowCaster(m, false); m.metadata = { id };
         }
         s.stages = [0, 1, 2, 3].map((i) => {
@@ -390,6 +409,7 @@ function applyFrame(f, size) {
   if (!booted) BOOT.step("data", "ok", `${(size / 1024).toFixed(1)} KB · ${f.entities.length} things`);
   if (f.tick === lastTick) return; lastTick = f.tick;
   const now = performance.now(), live = new Set();
+  if (f.deposits) deposits = f.deposits;
   for (const e of f.entities) { upsert(e, now); live.add(e[0]); }
   for (const e of f.effects ?? []) effect(e);
   for (const [id, s] of ents) if (!live.has(id)) { s.root.dispose(false, false); ents.delete(id); }
