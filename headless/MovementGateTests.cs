@@ -32,6 +32,8 @@ namespace Pez.Headless
                 ("room2-refuel-and-outpost-jam.json", 60f, 0),
                 ("room2-after-rules38.json", 60f, 0),
                 ("room2-spinning-soldiers.json", 60f, 0),
+                // A scripted-AI game (seed 5, 96x96) 217 s in: a soldier that has just arrived is sent back the way it came, through a one-tile gap between buildings.
+                ("ai-seed5-base-exit.json", 10f, 0),
             })
                 GateFixture(file, seconds, budget);
         }

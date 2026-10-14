@@ -1143,6 +1143,10 @@ namespace Pez.Sim
         public void SetOrder(Entity e, Order o, Vec2 pos, int target = 0)
         {
             Touched?.Add(e);
+            // The dance guard's two-second averages describe the order in progress: given an order, a unit that had stopped starts them afresh.
+            // (One that arrives and is sent straight back the way it came has the old direction in its average velocity for a second or so,
+            // which reads as "getting nowhere" and, with a short jam in a doorway, settled a soldier walking out of its base.)
+            if (e.Order == Order.Idle && o != Order.Idle) { e.DanceVel = default; e.DanceSpeed = 0f; }
             e.Order = o;
             e.OrderPos = pos;
             e.TargetId = target;
