@@ -31,7 +31,7 @@ namespace Pez.Sim
         public bool Ok => Errors.Count == 0;
         public string Key, Name, Chassis, WeaponFrom;
         public EntityDef Def;
-        public float Novelty, CurveFactor, NeutralFactor, PriceFactor, CostSe, ChassisSe, Efficiency, MassRatio;
+        public float Novelty, CurveFactor, NeutralFactor, DonorFactor, PriceFactor, CostSe, ChassisSe, Efficiency, DonorEfficiency, MassRatio;
         public Dictionary<string, int> ResearchCost = new Dictionary<string, int>();
         public float ResearchTime;
 
@@ -49,6 +49,8 @@ namespace Pez.Sim
                  .Set("efficiency_vs_base", R2(Efficiency)).Set("mass_ratio", R2(MassRatio)))
              .Set("research_cost", string.Join(", ", ResearchCost.Select(kv => $"{kv.Value} {kv.Key}")))
              .Set("research_time_s", ResearchTime);
+            if (WeaponFrom != null)
+                ((JObj)o["price"]).Set("weapon_unit_floor", R2(DonorFactor)).Set("efficiency_vs_weapon_unit", R2(DonorEfficiency));
             return o;
         }
 
@@ -58,8 +60,9 @@ namespace Pez.Sim
     /// <summary>
     /// The deterministic guardrails for agent-invented units, and the propose_tech command.
     /// Prices are anchored to the chassis (a playtested unit): improvements cost at the elasticities fitted from the
-    /// existing defs (docs/spikes/fit_tech_costs.py), downgrades only refund half as much, and no design may be more
-    /// cost-efficient in a straight fight (Lanchester square law: HP x DPS / cost^2) than the chassis it came from.
+    /// existing defs (docs/spikes/fit_tech_costs.py), downgrades only refund half as much (slowing a unit refunds nothing), and no
+    /// design may be more cost-efficient in a straight fight (Lanchester square law: HP x DPS / cost^2) than the chassis it came
+    /// from, or than the unit whose weapon it borrows.
     /// </summary>
     public static class Tech
     {
@@ -88,7 +91,9 @@ namespace Pez.Sim
         // ---- Envelope and caps.
         public const float MinRatio = 0.5f, MaxRatio = 2f;
         public const float MinSpeedRatio = 0.5f, MaxSpeedRatio = 1.5f;
-        public const float MaxRangeShift = 2f, MaxRange = 12f, MinRange = 0.8f, MaxSight = 12f;
+        public const float MaxRangeShift = 2f, MaxRange = 12f, MinRange = 0.8f, MinSight = 3f, MaxSight = 12f;
+        /// <summary>An invention's hp can't pass this multiple of the toughest armed unit its team can build today: no hulls a tier early.</summary>
+        public const float MaxHpOverTier = 1.5f;
         public const float MinCooldown = 0.4f, MinHp = 50f, MinAirFuel = 60f;
         public const float MaxPowerToWeight = 1.10f, MaxReachTimesPunch = 1.6f;
         public const float MinNovelty = 0.05f, MaxNovelty = 2f, WeaponSwapNovelty = 0.5f;
@@ -128,18 +133,25 @@ namespace Pez.Sim
             return A * MathF.Pow(d.MaxHp, HpExp) * MathF.Pow(EffectiveDps(d.Weapon), DpsExp) * MathF.Exp(RangeK * d.Weapon.Range) * MathF.Exp(SpeedK * d.Speed) * flags;
         }
 
-        /// <summary>Lanchester fighting value relative to the chassis (HP x DPS, with range and speed at twice their cost elasticity).</summary>
+        /// <summary>Lanchester fighting value relative to a reference unit: the chassis, or the unit a borrowed weapon came from (HP x DPS, with range and speed at twice their cost elasticity).</summary>
         static float RelativeValue(float rHp, float rDps, float dRange, float dSpeed) =>
             rHp * rDps * MathF.Exp(2 * RangeK * dRange) * MathF.Exp(2 * SpeedK * dSpeed);
 
         public static bool IsChassis(EntityDef d) =>
             d != null && !d.IsStructure && !d.IsMine && d.Weapon != null && d.Buildable && d.BuiltBy != Producer.None && d.OwnerTeam < 0 && !d.HighAltitude; // high altitude isn't priced
 
-        /// <summary>Weapon weight class: 0 infantry-portable, 1 vehicle-mounted, 2 aircraft-only.</summary>
-        static int MountClass(EntityDef donor) => donor.IsAir ? 2 : donor.Armor == Armor.Infantry ? 0 : 1;
+        /// <summary>
+        /// A demolition charge: a ground weapon that can't hurt infantry (the commando's C4). Averaged over the pricing mix its
+        /// 1.0x against structures is hidden, and its range of 1 earns a "downgrade" discount, so it only goes on infantry.
+        /// </summary>
+        static bool IsCharge(WeaponDef w) => w.HitsGround && w.VsInfantry <= 0f;
+
+        /// <summary>Weapon weight class: 0 infantry-portable, 1 vehicle-mounted, 2 aircraft-only, 3 a charge somebody has to carry to the target.</summary>
+        static int MountClass(EntityDef donor) => donor.IsAir ? 2 : IsCharge(donor.Weapon) ? 3 : donor.Armor == Armor.Infantry ? 0 : 1;
         static bool CanMount(EntityDef chassis, EntityDef donor)
         {
             int w = MountClass(donor);
+            if (w == 3) return !chassis.IsAir && chassis.Armor == Armor.Infantry; // charges are planted by hand
             if (chassis.IsAir) return w == 2 || w == 0;       // aircraft: their own ordnance or light (infantry) weapons
             if (chassis.Armor == Armor.Infantry) return w == 0;
             return w <= 1;                                     // vehicles: infantry or vehicle weapons, no bombs
@@ -173,6 +185,10 @@ namespace Pez.Sim
                 if (Fields.Contains(k)) continue;
                 q.Errors.Add(Computed.TryGetValue(k, out var why) ? $"'{k}' can't be set: {why}" : $"unknown field '{k}'. Allowed: {string.Join(", ", Fields.Skip(1))}");
             }
+
+            // dry_run is a JSON boolean. Anything else (the string "true") would read as "not a dry run" and pay for real research and a permanent slot.
+            if (c.TryGetValue("dry_run", out var dryRun) && dryRun != null && !(dryRun is bool))
+                q.Errors.Add("dry_run must be true or false (a JSON boolean, not a string or number): true quotes the design without paying, leaving it out starts the research");
 
             // Name: the only free text, shown to other players as a unit type. Same cleaning as player names.
             var rawName = c.Str("name", "");
@@ -218,7 +234,9 @@ namespace Pez.Sim
                 var dm = w.MissingPrereq(team, donor);
                 if (dm != null) q.Errors.Add($"weapon_from {donor.Key} {dm} (you can only mount weapons you can already field)");
                 if (!CanMount(chassis, donor))
-                    q.Errors.Add($"a {chassis.Key} ({(chassis.IsAir ? "aircraft" : chassis.Armor.ToString().ToLowerInvariant())}) can't carry the {donor.Weapon.Name} of a {donor.Key} ({(donor.IsAir ? "aircraft ordnance" : MountClass(donor) == 1 ? "vehicle-mounted" : "infantry weapon")}): weapons go on the same or a heavier class of chassis");
+                    q.Errors.Add($"a {chassis.Key} ({(chassis.IsAir ? "aircraft" : chassis.Armor.ToString().ToLowerInvariant())}) can't carry the {donor.Weapon.Name} of a {donor.Key} " +
+                                 (MountClass(donor) == 3 ? "(a demolition charge): someone has to plant it by hand, so it only goes on infantry"
+                                  : $"({(donor.IsAir ? "aircraft ordnance" : MountClass(donor) == 1 ? "vehicle-mounted" : "infantry weapon")}): weapons go on the same or a heavier class of chassis"));
             }
 
             float Field(string k, float def)
@@ -244,6 +262,10 @@ namespace Pez.Sim
             // Envelope: an invention is a variant, not a new unit.
             if (hp < MinHp) q.Errors.Add($"hp {F(hp)} is below the minimum of {F(MinHp)}");
             Ratio("hp", hp, chassis.MaxHp, MinRatio, MaxRatio, chassis.Key);
+            // Hit points are cheap on the fitted curve, so also keep them a tier apart: a heavy tank can't be built up to a mammoth's hull before the plasma for one.
+            var toughest = Defs.All.Values.Where(d => IsChassis(d) && (d == chassis || w.MissingPrereq(team, d) == null)).OrderByDescending(d => d.MaxHp).First();
+            if (hp > toughest.MaxHp * MaxHpOverTier + 1e-4f)
+                q.Errors.Add($"hp {F(hp)} is above {F(toughest.MaxHp * MaxHpOverTier)}: {F(MaxHpOverTier)}x the {toughest.MaxHp} hp of the {toughest.Key}, the toughest armed unit you can build now (tougher hulls come with higher tiers)");
             Ratio("damage", dmg, bw.Damage, MinRatio, MaxRatio, $"{bw.Name} (from {donor.Key})");
             if (cd < MinCooldown) q.Errors.Add($"cooldown {F(cd)}s is below the {F(MinCooldown)}s minimum (no weapon reloads faster)");
             Ratio("cooldown", cd, bw.Cooldown, MinRatio, MaxRatio, $"{bw.Name}");
@@ -259,6 +281,7 @@ namespace Pez.Sim
                 float cap = chassis.IsAir ? 5f : chassis.Armor == Armor.Infantry ? 2.2f : 4.5f;
                 if (speed > cap) q.Errors.Add($"speed {F(speed)} exceeds the {(chassis.IsAir ? "aircraft" : chassis.Armor.ToString().ToLowerInvariant())} limit of {F(cap)} tiles/s");
             }
+            if (sight < MinSight) q.Errors.Add($"sight {F(sight)} is below the minimum of {F(MinSight)} tiles (artillery relies on spotters, but a crew still sees its own surroundings)");
             if (sight > MaxSight) q.Errors.Add($"sight {F(sight)} exceeds {F(MaxSight)} (only radar sees further)");
             if (!indirect && sight < range) q.Errors.Add($"sight {F(sight)} is shorter than range {F(range)}: a direct-fire weapon can't hit what its crew can't see (only artillery fires on spotters' sight)");
             if (chassis.UsesFuel)
@@ -287,32 +310,40 @@ namespace Pez.Sim
             if (reach * punch > MaxReachTimesPunch + 1e-4f)
                 q.Errors.Add($"range ratio {F(reach)} x damage-per-second ratio {F(punch)} = {F(reach * punch)} > {F(MaxReachTimesPunch)}: longer reach costs punch (lighter rounds) and vice versa");
 
-            // Price, relative to the chassis.
+            // Price, relative to the chassis. Speed is only priced going up: slowing a unit earns no discount (it isn't a saving, and halving a
+            // bomber's speed alone must not make it cheaper than the bomber).
             float eDps = EffectiveDps(weapon), eDpsC = EffectiveDps(cw);
             float rDps = eDps / eDpsC;
             float dRange = range - cw.Range, dSpeed = speed - chassis.Speed, dSight = sight - chassis.Sight;
+            float dSpeedPriced = MathF.Max(0, dSpeed);
             float rFuel = chassis.UsesFuel ? fuel / chassis.Fuel : 1f;
-            float[] logs = { HpExp * MathF.Log(rHp), DpsExp * MathF.Log(rDps), RangeK * dRange, SpeedK * dSpeed, SightK * dSight, FuelExp * MathF.Log(rFuel) };
+            float[] logs = { HpExp * MathF.Log(rHp), DpsExp * MathF.Log(rDps), RangeK * dRange, SpeedK * dSpeedPriced, SightK * dSight, FuelExp * MathF.Log(rFuel) };
             q.CurveFactor = MathF.Exp(logs.Sum(x => x > 0 ? x : DowngradeCredit * x));
-            q.NeutralFactor = MathF.Sqrt(RelativeValue(rHp, rDps, dRange, dSpeed));
+            q.NeutralFactor = MathF.Sqrt(RelativeValue(rHp, rDps, dRange, dSpeedPriced));
             q.Novelty = MathF.Abs(MathF.Log(rHp)) + MathF.Abs(MathF.Log(rDps)) + MathF.Abs(dRange) / 5f + MathF.Abs(MathF.Log(rSpeed))
                       + MathF.Abs(dSight) / 10f + MathF.Abs(MathF.Log(rFuel)) + (donor != chassis ? WeaponSwapNovelty : 0);
             if (q.Novelty < MinNovelty) q.Errors.Add($"novelty {F(q.Novelty)} is under {F(MinNovelty)}: that's a {chassis.Key}, not an invention");
             if (q.Novelty > MaxNovelty) q.Errors.Add($"novelty {F(q.Novelty)} is over {F(MaxNovelty)}: too big a leap for one research project (change less at once)");
-            q.PriceFactor = MathF.Max(q.CurveFactor, q.NeutralFactor) * (1 + NoveltyPremium * q.Novelty);
-
-            // Materials: the chassis bill scaled to the price; a borrowed weapon brings its own exotic materials (a laser needs lenses).
+            // A borrowed weapon must not make a bargain copy of its own unit either: the same floor, against the donor and the donor's price.
             q.ChassisSe = Se(chassis.Cost);
+            float donorSe = Se(donor.Cost);
+            float rHpD = hp / donor.MaxHp, rDpsD = eDps / EffectiveDps(bw), dRangeD = range - bw.Range, dSpeedD = MathF.Max(0, speed - donor.Speed);
+            q.DonorFactor = donor == chassis ? 0 : donorSe / q.ChassisSe * MathF.Sqrt(RelativeValue(rHpD, rDpsD, dRangeD, dSpeedD));
+            q.PriceFactor = MathF.Max(MathF.Max(q.CurveFactor, q.NeutralFactor), q.DonorFactor) * (1 + NoveltyPremium * q.Novelty);
+
+            // Materials: the chassis bill scaled to the price; a borrowed weapon brings the materials its unit needs that the chassis doesn't (a laser needs lenses).
             float target = q.ChassisSe * q.PriceFactor;
-            var extra = donor.Cost.Where(kv => !chassis.Cost.ContainsKey(kv.Key) && Value[kv.Key] > 1.5f).ToDictionary(kv => kv.Key, kv => kv.Value);
+            var extra = donor.Cost.Where(kv => !chassis.Cost.ContainsKey(kv.Key)).ToDictionary(kv => kv.Key, kv => kv.Value);
             float scale = MathF.Max(0.25f, (target - Se(extra)) / q.ChassisSe);
             var cost = chassis.Cost.ToDictionary(kv => kv.Key, kv => Round5(kv.Value * scale));
             foreach (var kv in extra) cost[kv.Key] = kv.Value;
             q.CostSe = Se(cost);
 
-            // Safety net: by construction no design out-fights its chassis per unit of cost. Checked on the rounded bill.
+            // Safety net: by construction no design out-fights its chassis, or the unit its weapon came from, per unit of cost. Checked on the rounded bill.
             q.Efficiency = RelativeValue(rHp, rDps, dRange, dSpeed) / MathF.Pow(q.CostSe / q.ChassisSe, 2);
             if (q.Efficiency > 1.02f) q.Errors.Add($"cost-efficiency {F(q.Efficiency)}x {chassis.Key}'s exceeds 1.02x (internal pricing check)");
+            q.DonorEfficiency = donor == chassis ? q.Efficiency : RelativeValue(rHpD, rDpsD, dRangeD, speed - donor.Speed) / MathF.Pow(q.CostSe / donorSe, 2);
+            if (q.DonorEfficiency > 1.02f) q.Errors.Add($"cost-efficiency {F(q.DonorEfficiency)}x {donor.Key}'s exceeds 1.02x (internal pricing check)");
 
             var def = MakeDef(chassis, donor, team, q.Key ?? $"t{team}:unnamed", q.Name ?? "Unnamed", weapon, hp, speed, sight, fuel);
             def.Cost = cost;
@@ -331,7 +362,7 @@ namespace Pez.Sim
         public static WeaponDef MakeWeapon(WeaponDef bw, float dmg, float range, float cd) => new WeaponDef
         {
             Name = bw.Name, Damage = dmg, Range = range, Cooldown = cd, ProjectileSpeed = bw.ProjectileSpeed, SplashRadius = bw.SplashRadius,
-            HitsGround = bw.HitsGround, HitsAir = bw.HitsAir, VsInfantry = bw.VsInfantry, VsVehicle = bw.VsVehicle, VsStructure = bw.VsStructure, VsAir = bw.VsAir,
+            HitsGround = bw.HitsGround, HitsAir = bw.HitsAir, HitsHighAir = bw.HitsHighAir, VsInfantry = bw.VsInfantry, VsVehicle = bw.VsVehicle, VsStructure = bw.VsStructure, VsAir = bw.VsAir,
             ArmTime = bw.ArmTime,
         };
 
@@ -465,17 +496,17 @@ namespace Pez.Sim
         /// <summary>For get_rules: the schema, the guardrails and the price formula, with the numbers.</summary>
         public static JObj RulesJson() => new JObj()
             .Set("command", "{\"type\":\"propose_tech\", \"name\":\"Lancer\", \"base\":\"light_tank\", \"weapon_from\":\"rocket_soldier\", \"hp\":360, \"damage\":70, \"range\":6, \"dry_run\":true}")
-            .Set("what", "Design your own unit: start from a standard armed unit you can already build (base), optionally mount the weapon of another unit you can build (weapon_from), and tune hp, speed, damage, range, cooldown, sight, fuel (absolute values; omit to keep). dry_run:true returns the verdict and price without paying. Without it, a valid design is researched at your electronics_plant, then you train it with its key (t<team>:<name>). Only your team can build it; others see its type and stats when they meet it.")
+            .Set("what", "Design your own unit: start from a standard armed unit you can already build (base), optionally mount the weapon of another unit you can build (weapon_from), and tune hp, speed, damage, range, cooldown, sight, fuel (absolute values; omit to keep). dry_run:true (a JSON boolean, not the string \"true\") returns the verdict and price without paying. Without it, a valid design is researched at your electronics_plant, then you train it with its key (t<team>:<name>). Only your team can build it; others see its type and stats when they meet it.")
             .Set("limits", new List<object> {
-                $"hp, damage, cooldown and damage-per-second within {F(MinRatio)}-{F(MaxRatio)}x of the base unit / donor weapon; hp >= {F(MinHp)}; cooldown >= {F(MinCooldown)}s",
-                $"range within +/-{F(MaxRangeShift)} tiles of the donor weapon, at most {F(MaxRange)}; sight <= {F(MaxSight)} and >= range (except artillery)",
+                $"hp, damage, cooldown and damage-per-second within {F(MinRatio)}-{F(MaxRatio)}x of the base unit / donor weapon; hp >= {F(MinHp)} and at most {F(MaxHpOverTier)}x the toughest armed unit you can build now (tougher hulls come with higher tiers); cooldown >= {F(MinCooldown)}s",
+                $"range within +/-{F(MaxRangeShift)} tiles of the donor weapon, at most {F(MaxRange)}; sight {F(MinSight)}-{F(MaxSight)} and >= range (except artillery)",
                 $"speed {F(MinSpeedRatio)}-{F(MaxSpeedRatio)}x the base (caps: infantry 2.2, vehicles 4.5, aircraft 5); fuel {F(MinRatio)}-1.5x, aircraft >= {F(MinAirFuel)}s",
                 $"power-to-weight: speed ratio x mass ratio <= {F(MaxPowerToWeight)}, mass = 0.6 x hp ratio + 0.4 x (dps x range) ratio",
                 $"reach vs punch: range ratio x dps ratio (vs the donor weapon) <= {F(MaxReachTimesPunch)}",
-                "weapons mount on the same or a heavier class: infantry weapons on anything, vehicle weapons on vehicles, bombs and gunship rockets on aircraft",
+                "weapons mount on the same or a heavier class: infantry weapons on anything, vehicle weapons on vehicles, bombs and gunship rockets on aircraft; the commando's C4 charge is planted by hand, so it only goes on infantry",
                 $"novelty {F(MinNovelty)}-{F(MaxNovelty)} (sum of |log ratio| of each stat, +{F(WeaponSwapNovelty)} for a weapon swap); {MaxPerTeam} inventions per player, one in research at a time, {MaxPerGame} per game",
             })
-            .Set("price", $"chassis-relative: improvements cost hp^{F(HpExp)} x dps^{F(DpsExp)} x e^({F(RangeK)} x range change) x e^({F(SpeedK)} x speed change) (fitted from the standard units); downgrades refund half that; never below the Lanchester-neutral sqrt(hp x dps x ...) ratio; then x(1 + {F(NoveltyPremium)} x novelty). Exotic materials of a borrowed weapon come with it.")
+            .Set("price", $"chassis-relative: improvements cost hp^{F(HpExp)} x dps^{F(DpsExp)} x e^({F(RangeK)} x range change) x e^({F(SpeedK)} x speed change) (fitted from the standard units); downgrades refund half that, except speed: slowing a unit is never a discount; never below the Lanchester-neutral sqrt(hp x dps x ...) ratio, measured against the base unit and (for a borrowed weapon) against the unit the weapon came from, at that unit's price; then x(1 + {F(NoveltyPremium)} x novelty). A borrowed weapon brings every material its unit needs that the base doesn't (lenses for a laser, copper for a rocket).")
             .Set("research", $"costs 100 + 150 x novelty steel and 50 + 100 x novelty circuits; takes 20 + 60 x novelty seconds at an {ResearchLab}");
 
         // ---- Recipes (designed, not yet wired to a command): conservation checks for agent-invented converter recipes.

@@ -24,7 +24,9 @@ namespace Pez.Headless
         {
             ObserveArmyFinishesAndIdles();
             ObserveFog();
+            ObserveDismantled();
             ObserveProduction();
+            ObserveParallelProduction();
             ObserveBlockedAndStuck();
             ObserveCursorsAndGaps();
             ObserveHttp();
@@ -144,6 +146,38 @@ namespace Pez.Headless
             Check(!Events(w, 0, 0).Any(e => (string)e["kind"] is "unit_trained" or "construction_completed" && Json.Write(e).Contains("\"team\":1")), "never another team's production");
         }
 
+        /// <summary>A team knocked out has its units dismantled: the ones we watched go are gone for sure, the ones in the fog are only remembered.</summary>
+        static void ObserveDismantled()
+        {
+            var w = new World(3, 7);
+            var hq = w.Owned(0).First(e => e.Def.Key == "command_center");
+            var post = At(Mine0(w, "rifleman"), Clear(w, hq.Center + new Vec2(6, 0)));
+            var hq2 = w.Owned(2).First(e => e.Def.Key == "command_center");
+            Entity Spy(Vec2 at) => At(w.SpawnUnit(2, "engineer", hq2), at); // unarmed: nobody fights
+            var near = Spy(post.Pos + new Vec2(4, 0));
+            var strayed = Spy(post.Pos + new Vec2(4, 2));
+            var far = Clear(w, new Vec2(w.Map.W / 2f, w.Map.H / 2f));
+            w.UpdateVisibility();
+            Run(w, 1.05f);
+            long c0 = w.Observe.Log(0).Head;
+            string seen = Json.Write(w.Observe.Log(0).Snapshot());
+            Check(seen.Contains($"\"id\":{near.Id},") && seen.Contains($"\"id\":{strayed.Id},"), "setup: both enemy engineers are in sight");
+            At(strayed, far);
+            w.UpdateVisibility();
+            Run(w, 4.05f);
+            Check(Json.Write(w.Observe.Log(0).Snapshot()).Contains($"\"id\":{strayed.Id},\"key\":\"engineer\",\"team\":2,\"last_pos\""), "setup: one slipped out of sight and is remembered");
+            // Team 2 loses every structure and is knocked out; its engineers are dismantled where they stand.
+            long c1 = w.Observe.Log(0).Head;
+            foreach (var s in w.Owned(2).Where(e => e.IsStructure).ToList()) w.Remove(s);
+            Run(w, 2.1f);
+            Check(w.Teams[2].Defeated && !w.Owned(2).Any(), "team 2 is out and its units are dismantled");
+            var snap = Json.Write(w.Observe.Log(0).Snapshot());
+            var ev = Events(w, 0, c1);
+            Check(!snap.Contains($"\"id\":{near.Id},"), "an enemy seen dismantled leaves no contact behind");
+            Check(!ev.Any(e => (string)e["kind"] == "contacts_lost" && Json.Write(e).Contains($"\"id\":{near.Id},")), "nor is it reported as an enemy that merely left sight");
+            Check(snap.Contains($"\"id\":{strayed.Id},\"key\":\"engineer\",\"team\":2,\"last_pos\""), "one that went in the fog is still only a memory: nobody saw it go");
+        }
+
         static void ObserveProduction()
         {
             var w = new World(2, 7);
@@ -169,6 +203,59 @@ namespace Pez.Headless
             Check(!Ok(bad) && rej != null && rej["now"] is bool nb && nb && Json.Write(rej).Contains("error"), "a rejected command is logged at once with its error");
         }
 
+        /// <summary>Several buildings work at once, so the feed follows every unit being trained, not just the head of the queue.</summary>
+        static void ObserveParallelProduction()
+        {
+            // Two barracks, three riflemen: the first two start together, the third as soon as a barracks is free.
+            {
+                var w = new World(2, 7);
+                for (int i = 0; i < 3; i++) w.SpawnStructure(0, "power_plant", w.FindPlacement(0, "power_plant").Value, 1f);
+                var b1 = w.SpawnStructure(0, "barracks", w.FindPlacement(0, "barracks").Value, 1f);
+                var b2 = w.SpawnStructure(0, "barracks", w.FindPlacement(0, "barracks").Value, 1f);
+                w.Teams[0].Add("steel", 1000);
+                Run(w, 1.05f);
+                long c0 = w.Observe.Log(0).Head;
+                var r = Tracked(w, 0, Cmd("type", "train", "unit", "rifleman", "count", 3));
+                Run(w, 2.5f);
+                var started = Events(w, 0, c0).Where(e => (string)e["kind"] == "training_started").ToList();
+                var at = started.Select(e => (int)(double)e["building"]).ToList();
+                Check(Ok(r) && started.Count == 2 && at.Distinct().Count() == 2 && at.Contains(b1.Id) && at.Contains(b2.Id) && started.All(e => (string)e["producer"] == "barracks" && e.ContainsKey("cmd")),
+                      $"two barracks working at once give two training_started, one for each building ({string.Join(", ", started.Select(e => $"#{e["building"]}"))})");
+                Run(w, 3);
+                started = Events(w, 0, c0).Where(e => (string)e["kind"] == "training_started").ToList();
+                var third = started.Skip(2).ToList();
+                Check(started.Count == 3 && third.Count == 1 && at.Contains((int)(double)third[0]["building"]), $"the third is announced when a barracks frees up, with the building it went to ({started.Count} started)");
+                Run(w, 6);
+                var ev = Events(w, 0, c0);
+                Check(ev.Count(e => (string)e["kind"] == "unit_trained") == 3 && ev.Count(e => (string)e["kind"] == "queue_empty" && (string)e["producer"] == "barracks") == 1 && !ev.Any(e => (string)e["kind"] == "queue_blocked"),
+                      "all three are trained, the queue empties once, and it is never reported stuck");
+            }
+
+            // Two factories, two mammoth tanks (24 s each): both get progress milestones, not just the head.
+            {
+                var w = new World(2, 7);
+                for (int i = 0; i < 4; i++) w.SpawnStructure(0, "power_plant", w.FindPlacement(0, "power_plant").Value, 1f);
+                var f1 = w.SpawnStructure(0, "factory", w.FindPlacement(0, "factory").Value, 1f);
+                var f2 = w.SpawnStructure(0, "factory", w.FindPlacement(0, "factory").Value, 1f);
+                w.SpawnStructure(0, "enrichment_plant", w.FindPlacement(0, "enrichment_plant").Value, 1f);
+                foreach (var item in new[] { "steel", "circuits", "plasma" }) w.Teams[0].Add(item, 5000);
+                Run(w, 1.05f);
+                long c0 = w.Observe.Log(0).Head;
+                var r = Tracked(w, 0, Cmd("type", "train", "unit", "mammoth_tank", "count", 2));
+                Run(w, 7.5f);
+                var ev = Events(w, 0, c0);
+                var items = ev.Where(e => (string)e["kind"] == "production_progress").SelectMany(e => ((List<object>)e["items"]).Cast<Dictionary<string, object>>()).ToList();
+                Check(Ok(r) && items.Count == 2 && items.All(i => (string)i["key"] == "mammoth_tank" && (double)i["pct"] == 25), $"each mammoth tank in production reports its 25% ({items.Count} reports)");
+                var hb = ev.Where(e => (string)e["kind"] == "heartbeat" && ((List<object>)e["training"]).Count == 2).ToList();
+                Check(hb.Count > 0 && ((List<object>)hb[0]["training"]).Cast<Dictionary<string, object>>().Select(x => x["building"]).Distinct().Count() == 2,
+                      $"the heartbeat lists each unit being trained, with its building ({hb.Count} heartbeats with both)");
+                var frame = D(ApiServer.ViewFrame(w, 0));
+                var rows = ((List<object>)((Dictionary<string, object>)frame["you"])["production"]).Cast<Dictionary<string, object>>().ToList();
+                Check(rows.Count == 2 && rows.Select(x => x["building"]).Distinct().Count() == 2 && rows.All(x => (double)x["pct"] >= 25 && (double)x["pct"] <= 35) && (double)rows[0]["count"] == 2 && (double)rows[1]["count"] == 1,
+                      $"the viewer's production list has a row for each ({string.Join("; ", rows.Select(x => Json.Write(x)))})");
+            }
+        }
+
         static void ObserveBlockedAndStuck()
         {
             var w = new World(2, 7);
@@ -190,7 +277,7 @@ namespace Pez.Headless
             var v = At(Mine0(w, "light_tank"), Clear(w, hq.Center + new Vec2(-7, 0)));
             Run(w, 1.05f);
             long c1 = w.Observe.Log(0).Head;
-            Tracked(w, 0, Cmd("type", "move", "units", new[] { v.Id }, "x", v.Pos.X - 15, "y", v.Pos.Y));
+            Tracked(w, 0, Cmd("type", "move", "units", new[] { v.Id }, "x", v.Pos.X, "y", v.Pos.Y + 15)); // along the map's edge: west of the base is off the map
             var pin = v.Pos;
             for (int i = 0; i < 9 * World.TickRate; i++) { w.Step(); v.Pos = v.PrevPos = pin; }
             var stuck = Events(w, 0, c1).FirstOrDefault(e => (string)e["kind"] == "no_progress");

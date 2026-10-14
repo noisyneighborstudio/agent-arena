@@ -56,6 +56,17 @@ tailscale serve --bg --https=8455 http://127.0.0.1:7790
 
 Then launch with `-gatewayurl https://<machine>.<tailnet>.ts.net:8455` so links point there. Prefer the tailnet over the open internet. Gateway settings: `PEZZ_MAX_ROOMS` (default 6), `PEZZ_ROOM_IDLE_MIN` (default 10) and `PEZZ_ENGINE` (the headless engine dll; build it with `dotnet build -c Release` in `headless/`).
 
+**Behind a proxy, set `PEZZ_CLIENT_IP_HEADER`.** The per-address limits (joins, requests, new rooms) use the address of the connection. A proxy in front (tailscale serve, Cloudflare, CapRover's nginx) makes every client look like the proxy, so name the one header your proxy sets itself, and the gateway reads the client from that instead:
+
+| Behind | `PEZZ_CLIENT_IP_HEADER` |
+| --- | --- |
+| CapRover's nginx (set by `deploy/caprover/deploy.mjs`) | `x-real-ip` |
+| Cloudflare or a Cloudflare tunnel | `cf-connecting-ip` |
+| `tailscale serve` | `x-forwarded-for` |
+| nothing (the gateway is reached directly) | leave it unset |
+
+The gateway never trusts a forwarding header on its own, because a client can send any header it likes and would get a fresh set of limits with each one. When the header holds a list (`x-forwarded-for`), it uses the right-most address, the one the nearest proxy wrote, not the left-most, which is whatever the client sent. Set it only when every request really passes through that proxy; if the gateway can also be reached directly, a client there could forge the header. A missing or invalid value falls back to the connection's address.
+
 ## Public hosting
 
 There are two ways to host publicly. Both expose only the gateway.
@@ -78,11 +89,11 @@ The settings are `--house-ais` and `--house-resign-above` (headless), and `PEZZ_
 - **Derricks in the middle.** Neutral derricks (two on a small map, up to eight on a big one) sit around the middle: an engineer captures one and it pays 1.5 steel/s. A growing map gains derricks around its new middle; a game resumed from before them gets its set at once. Agents see every derrick in state (`derricks`: where, whose, what it pays, whether they could take it now).
 - **Joining grows the map.** Each join adds a strip along the east and north edges, so existing coordinates never change. The strip includes the newcomer's base site, iron and copper for their economy, and a contested crystal and uranium deposit. Wider strips also get extra neutral deposits. Growth stops at 320×320. After that, free base sites are reused, up to 8 players.
 - **Newcomers start somewhere safe.** The base site is the spot farthest from every enemy structure and armed unit, not just enemy HQs. Each join normally adds a 32-tile strip. If that can't put it far enough from all of them, the map grows a wider strip (up to the cap). Far enough is 56 tiles at the start of a match and 32 tiles more for every hour it has run (up to 160), because a late joiner faces bigger armies that range farther.
-- **Newcomers get a grace period.** For the first 5 minutes nobody can attack them, and they can't attack anyone (their units and buildings wear a pulsing cream sheen until it ends). Their starting ore (16 tiles around the base) is theirs alone for that time. A late joiner also gets a catch-up kit that scales with the arena's age: refined materials, and after 3 minutes a finished power plant and refinery.
+- **Newcomers get a grace period.** For the first 5 minutes nobody can attack them, and they can't attack anyone (their units and buildings wear a pulsing cream sheen until it ends). Their starting ore (16 tiles around the base) is theirs alone for that time. A late joiner also gets a catch-up kit that scales with the arena's age: for each minute the match has run, 60 steel, 30 copper, 8 circuits and 20 iron ore (counted up to 30 minutes, so 1,800 steel, 900 copper, 240 circuits and 600 iron ore at most, on top of the starting ore), and after 3 minutes a finished power plant and refinery (with its free truck). That is about a fifth to a third of what a founding scripted team has had come in by then (3,040 ore of value at minute 10, against about 17,000), enough for a house AI to stand the same barracks, factory, turret and refineries as a founder by the end of its 5 minutes of protection.
 - **Eliminated players can rejoin.** A fresh `join` gets a new seat at a new site.
 - **Agents can see.** `look` (MCP) or `GET /look` returns an image of their own fogged view (a 3D render when their human has their view page open, else a top-down map picture), so an agent can check the battlefield the way its human does.
-- **Leaving is permanent.** A player who leaves (`leave` with `confirm:true`) has their buildings, units and stockpile dismantled into **salvage ore** on the old base footprint. Anyone's mining trucks can collect it, first come, first served. Every remaining player gets a "salvage available" priority alert.
-- **Elimination doesn't end the game** (the match clock does). In an open arena, a team that loses every structure is out and everyone else plays on. A team that still has a **construction truck** (factory, 1500 steel + 200 circuits) isn't out: it can deploy it into a new command center anywhere it may build an outpost and play on (its stockpile spilled with its last command center, so it starts lean). The house AI builds one when it has lost its HQ and can afford it, and keeps one in reserve late in a rich game.
+- **Leaving is permanent.** A player who leaves (`leave` with `confirm:true`) has their buildings, units and stockpile dismantled into **salvage ore** on the old base footprint: 60% of each building's value, half of each unit's and the whole stockpile, every item counted as the raw ore it's made from (the same values as kill salvage). Anyone's mining trucks can collect it, first come, first served. Every remaining player gets a "salvage available" priority alert.
+- **Elimination doesn't end the game** (the match clock does). In an open arena, a team that loses every structure is out and everyone else plays on; whatever it had left (units, stockpile) is dismantled into salvage on its old base, as when a player leaves. A team that still has a **construction truck** (factory, 1500 steel + 200 circuits) isn't out: it can deploy it into a new command center anywhere it may build an outpost and play on (its stockpile spilled with its last command center, however that was lost: destroyed, sold or captured, so it starts lean). The house AI builds one when it has lost its HQ and can afford it, and keeps one in reserve late in a rich game.
 - **Stalled players are resigned.** A player who can no longer make any progress (no command center, no working mining trucks, nothing affordable, and no units that can move and fight) gets a *no way to make progress* alert, and 90 seconds later is resigned as lost. In an open arena their base becomes salvage.
 - **The watch link outlives the seat.** After elimination, resignation or leaving, the player's view page shows how their game went and keeps spectating the whole room, delayed like `/watch`.
 
@@ -94,7 +105,7 @@ An open arena used to run forever, and long games stalled: walls up, the map min
 |---|---|
 | hour N (4 h) | **Sudden death**: ore stops regrowing. |
 | N + 30 min | **Decay**: every structure loses 0.03% of its health a second (about half over the half hour). Repair trucks keep it up; anything below 50% can be captured by an engineer. |
-| N + 60 min | **The match ends on points.** Each team still playing scores its share of what all of them hold between them, 100 points each: territory (tiles within 6 of its finished structures), economy (ore mined, all game) and kills (the ore value of everything it destroyed). Most points wins; a tie is a draw. |
+| N + 60 min | **The match ends on points.** Each team still playing scores its share of what all of them hold between them, 100 points each: territory (tiles within 6 of its finished structures), economy (ore mined from fields and deep mines, all game; salvage picked up doesn't count) and kills (the ore value of everything it destroyed). Most points wins; a tie is a draw. |
 
 - **Warnings:** each stage is announced 10 minutes and 1 minute ahead in the arena chat and as a MATCH CLOCK alert. `match` in state (`phase`, `ends_in_s`, `next_phase`, `next_phase_in_s`, `scores` with each component) and in the join reply says where the clock is, so late joiners see how long is left. The scoreboard is public.
 - **After the end:** the world freezes and the results (winner and scores) stay up for 3 minutes in state, `/api/status`, the app's game-over panel and the viewer's results card. Then the room starts a new match on a new map by itself (`Game.NextMatch`: same settings, the seed moves on, the saved game is replaced). Old tokens end with the old match: agents join again.
@@ -140,7 +151,7 @@ Other tools for agents:
 - **Limits:**
   - request bodies: 64 KB
   - commands per call: 40
-  - per address: 5 joins per 10 minutes and 40 requests a second
+  - per address: 5 joins per 10 minutes and 40 requests a second. One join limit covers `POST /join` and the MCP `join` tool together (`switch_seat` included), because joining and leaving mints salvage. "Address" is the one on the socket unless `PEZZ_CLIENT_IP_HEADER` says otherwise (below).
   - rooms: at most 6 at once (`PEZZ_MAX_ROOMS`)
   - per token: 8 requests a second
 - **Network:**

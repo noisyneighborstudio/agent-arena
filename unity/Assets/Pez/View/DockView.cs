@@ -67,7 +67,7 @@ namespace Pez.View
 
         /// <param name="halfX">Half the footprint across X.</param>
         /// <param name="halfY">Half the footprint across Y (the sim's Y is world Z).</param>
-        /// <param name="facing">The sim's bay facing (World.Bay: south unless terrain blocks that lane).</param>
+        /// <param name="facing">The bay's facing in the model's own frame (WorldView turns a drop-off's model so its door faces the bay: always south, -Z).</param>
         public static DockView For(Rig rig, float halfX, float halfY, float facing, Vec2 bayPoint)
         {
             var m = rig.Model;
@@ -198,7 +198,9 @@ namespace Pez.View
         }
 
         /// <summary>The sim's bay now (World.Bay): the point trucks use at once; the chute and hatch follow in Tick when its
-        /// side has changed (a building that blocked the south lane was destroyed, or one now stands on it).</summary>
+        /// side has changed (a building that blocked the south lane was destroyed, or one now stands on it). `facing` is the bay's
+        /// direction in the model's own frame, like For's (WorldView turns the model to face its bay, so that is south, -Z, except in
+        /// the moment between the sim moving the bay and the model turning after it); a world-space angle would be turned twice.</summary>
         public void Rebay(float facing, Vec2 bayPoint)
         {
             BayPoint = bayPoint;

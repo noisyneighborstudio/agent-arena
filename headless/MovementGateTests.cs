@@ -21,7 +21,9 @@ namespace Pez.Headless
             GateGuardCatchesADance();
             GateAirfieldRush();
             GateCrowd(budget: 0);
-            GateEconomy();
+            GateEconomy(seed: 4, size: 80);
+            GateEconomy(seed: 7, size: 80); // other maps: under Rules 42 alone, seeds 1 and 7 (at 80) and 2 (at 96) reached the beat of 8 too
+            GateEconomy(seed: 2, size: 96);
             GateAiGame(minutes: 8, budget: 0);
             GateAiSeeds(new[] { 1, 2, 3, 4 }, minutes: 8, budget: 4); // other base layouts: a rare truck or surveyor (seed 1's three, seed 2's one)
             foreach (var (file, seconds, budget) in new[]
@@ -30,6 +32,8 @@ namespace Pez.Headless
                 ("room2-refuel-and-outpost-jam.json", 60f, 0),
                 ("room2-after-rules38.json", 60f, 0),
                 ("room2-spinning-soldiers.json", 60f, 0),
+                // A scripted-AI game (seed 5, 96x96) 217 s in: a soldier that has just arrived is sent back the way it came, through a one-tile gap between buildings.
+                ("ai-seed5-base-exit.json", 10f, 0),
             })
                 GateFixture(file, seconds, budget);
         }
@@ -103,9 +107,9 @@ namespace Pez.Headless
 
         /// <summary>The starting economy on thin ore, mining and delivering for three minutes: no truck settled, and none goes stop-go
         /// (drive a tile, stop, drive a tile: the slide-pause rhythm of trucks hopping across thin ore).</summary>
-        static void GateEconomy()
+        static void GateEconomy(int seed, int size)
         {
-            var game = new Game(new GameConfig { Seed = 4, MapSize = 80, Controllers = new[] { "llm", "llm" } });
+            var game = new Game(new GameConfig { Seed = seed, MapSize = size, Controllers = new[] { "llm", "llm" } });
             var w = game.World;
             // Thin ore, as a field is late in a game: a few loads' worth per tile, where trucks used to hop tile to tile.
             for (int k = 0; k < w.Map.Ore.Length; k++) if (w.Map.Ore[k] > 12) w.Map.Ore[k] = 12;
@@ -135,8 +139,8 @@ namespace Pez.Headless
             }
             int Beat(List<float> t) { int best = 0; for (int a = 0, b = 0; b < t.Count; b++) { while (t[b] - t[a] > 10f) a++; best = Math.Max(best, b - a + 1); } return best; }
             var stopGo = stops.Where(kv => Beat(kv.Value) >= 8).Select(kv => w.Get(kv.Key)).Where(e => e != null).ToList();
-            Check(w.SettleCounts.Count == 0, $"three minutes of mining and delivering settles no truck ({Settles(w)})");
-            Check(stopGo.Count == 0, $"nothing goes stop-go on a beat while mining ({string.Join(", ", stopGo.Select(e => $"{e.Def.Key} #{e.Id}: {Beat(stops[e.Id])} short stops in 10 s"))})");
+            Check(w.SettleCounts.Count == 0, $"three minutes of mining and delivering settles no truck (seed {seed}, {size}x{size}: {Settles(w)})");
+            Check(stopGo.Count == 0, $"nothing goes stop-go on a beat while mining (seed {seed}, {size}x{size}: {string.Join(", ", stopGo.Select(e => $"{e.Def.Key} #{e.Id}: {Beat(stops[e.Id])} short stops in 10 s"))})");
         }
 
         /// <summary>Two scripted AIs fight for a while: settles within budget (the firing-line edge, phase 2), none of aircraft.</summary>

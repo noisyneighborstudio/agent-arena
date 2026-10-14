@@ -82,6 +82,7 @@ namespace Pez.View
             public Bounds? Roof;
             // Drop-offs: the dock lamps and chute, and what the bay's truck reported this frame or last.
             public DockView Dock;
+            public float BayYaw;         // degrees: how far its model is turned so its door faces the side its trucks or units use (a quarter turn each; 0 = south)
             public int DockFrame = -10;
             public DockView.Phase DockBest;
             // Construction: the staked site, the last progress seen (stage landings) and the crane's beam cadence.
@@ -413,7 +414,7 @@ namespace Pez.View
             foreach (var v in Views.Values)
             {
                 var e = v.E;
-                bool want = !e.Dead && !e.IsCarried && sheenTeams.TryGetValue(e.Team, out var st) && st.mat != null && st.fade > 0f;
+                bool want = !e.Dead && !e.IsCarried && e.Def.Key != "derrick" && sheenTeams.TryGetValue(e.Team, out var st) && st.mat != null && st.fade > 0f;
                 if (!want || (v.Sheen != null && v.Sheen.Team != e.Team)) { if (v.Sheen != null) { v.Sheen.Clear(); v.Sheen = null; } if (!want) continue; }
                 if (!v.Rig.Root.gameObject.activeSelf) continue;
                 var sh = v.Sheen ??= new Sheen { Team = e.Team };
@@ -553,7 +554,7 @@ namespace Pez.View
             var t = World.Teams[e.Team];
             if (e.Def.Key == "command_center") return t.StructureQueue.Count > 0;
             if (e.Def.Key == "radar_dome") return e.IsComplete && !t.LowPower;
-            if (e.Def.Produces != Producer.None && t.UnitQueues.TryGetValue(e.Def.Produces, out var q)) return q.Count > 0;
+            if (e.Def.Produces != Producer.None && t.UnitQueues.TryGetValue(e.Def.Produces, out var q)) return q.Exists(p => p.WorkerId == e.Id);
             return e.Working;
         }
 
@@ -851,20 +852,54 @@ namespace Pez.View
             ring.localScale = new Vector3(r, 1f, r);
             ring.gameObject.SetActive(false);
             var v = new EV { E = e, Rig = rig, Ring = ring, Born = Time.frameCount, Bars = e.IsMine ? null : new Bars(rig.Root, e, 0f), TeamShown = e.Team };
-            if (e.IsStructure) { rig.Root.position = W(e.Center); Plinths.Register(e.Id, rig.Root.position, rig.Plinth); }
+            if (e.IsStructure) { rig.Root.position = W(e.Center); TurnToBay(v); Plinths.Register(e.Id, rig.Root.position, rig.Plinth, v.BayYaw); }
             if (e.IsStructure && !e.IsComplete && rig.HasModel) v.Site = new SiteView(rig.Root, e.Def.SizeX, e.Def.SizeY);
             if (e.IsStructure && e.Def.DropOff && rig.HasModel)
             {
-                var (bay, _, facing, _) = World.Bay(e);
-                v.Dock = DockView.For(rig, e.Def.SizeX * 0.5f, e.Def.SizeY * 0.5f, facing, bay);
+                // The model is turned so its door faces the bay, so in the model's own frame the bay is always on its -Z (south) side.
+                var (bay, _, _, _) = World.Bay(e);
+                v.Dock = DockView.For(rig, e.Def.SizeX * 0.5f, e.Def.SizeY * 0.5f, -Mathf.PI / 2f, bay);
             }
             return v;
+        }
+
+        /// <summary>
+        /// A drop-off's model faces its bay, and a barracks' or factory's its door (the side its units come out on): the pack's doors
+        /// face -Z (south), so the model (and the plinth ramp that goes with the door) turns a quarter turn per side about its centre.
+        /// Footprints are square, so it still fits. Everything built on the model (door, lamps, crane, stacks) turns with it. The side
+        /// is kept for life, unless an enemy building goes up on a drop-off's lane and the sim moves its bay to a clear side
+        /// (World.Bay), so FollowBay checks for that.
+        /// </summary>
+        void TurnToBay(EV v)
+        {
+            if (!World.HasDoorSide(v.E.Def)) return;
+            float yaw = YawOfDoor(World.DoorFacing(v.E)); // the door (-Z) turns from south to the side its units and trucks use
+            v.BayYaw = yaw;
+            v.Rig.Body.localRotation = Quaternion.Euler(0f, v.BayYaw, 0f);
+        }
+
+        /// <summary>The yaw (degrees, a quarter turn each) that turns a model's -Z door to face the sim's direction `facing` (radians).</summary>
+        static float YawOfDoor(float facing) => Mathf.Round((-90f - facing * Mathf.Rad2Deg) / 90f) * 90f;
+
+        /// <summary>
+        /// Twice a second, a drop-off whose bay the sim has moved to another side (its lane was built over) turns its model, plinth
+        /// ramp and dock point after it, so the door is always where the trucks and new units are.
+        /// </summary>
+        void FollowBay(EV v)
+        {
+            var e = v.E;
+            if (!e.IsStructure || !World.HasDoorSide(e.Def) || (Time.frameCount + e.Id) % 30 != 0) return;
+            if (Mathf.Approximately(YawOfDoor(World.DoorFacing(e)), v.BayYaw)) return;
+            TurnToBay(v);
+            Plinths.Register(e.Id, v.Rig.Root.position, v.Rig.Plinth, v.BayYaw);
+            if (v.Dock != null) v.Dock.BayPoint = World.Bay(e).bay;
         }
 
         void UpdateView(EV v, float alpha)
         {
             var e = v.E;
             var rig = v.Rig;
+            FollowBay(v);
             if (e.IsStructure && rig.HasModel && v.TeamShown != e.Team)
             {
                 // Captured (an engineer took it; a derrick claimed or released): it wears its new owner's colours, as the
@@ -893,7 +928,7 @@ namespace Pez.View
                 if (e.Def.Key == "barracks" && e.IsComplete && e.Team >= 0)
                 {
                     bool next = QueueHead(e, out float tp, out float tT);
-                    var queue = next ? World.Teams[e.Team].UnitQueues[e.Def.Produces] : null;
+                    var queue = next ? QueuedAt(e) : null;
                     Fx.Audience = AudienceFor(e);
                     (v.Bunks ??= BarracksWorks.For(rig.Model, e.Team, e.Id)).Tick(next, tp, tT, queue, Time.deltaTime);
                     Fx.Audience = null;
@@ -914,8 +949,15 @@ namespace Pez.View
                 if (v.Dock != null)
                 {
                     var phase = v.DockFrame >= Time.frameCount - 1 ? v.DockBest : DockView.Phase.Idle;
-                    // The bay can change side mid-match (a building that blocked the south lane is destroyed): the dock follows.
-                    if ((Time.frameCount + e.Id) % 6 == 0) { var (bayNow, _, facingNow, _) = World.Bay(e); v.Dock.Rebay(facingNow, bayNow); }
+                    // The bay can change side mid-match (a building that blocked the south lane is destroyed): the dock follows. The dock works
+                    // in the model's own frame, and the model is turned to face the bay (TurnToBay), so the sim's bay direction goes in as the
+                    // model sees it: its south (the door) once the model has turned, a side wall only in the moment before FollowBay turns it.
+                    if ((Time.frameCount + e.Id) % 6 == 0)
+                    {
+                        var (bayNow, _, facingNow, _) = World.Bay(e);
+                        var bayLocal = rig.Model.transform.InverseTransformDirection(new Vector3(Mathf.Cos(facingNow), 0f, Mathf.Sin(facingNow)));
+                        v.Dock.Rebay(Mathf.Atan2(bayLocal.z, bayLocal.x), bayNow);
+                    }
                     v.Dock.Tick(phase, Time.deltaTime);
                     // The door is up from Align until the truck has pulled out, and rolls down 0.5 s after.
                     if (phase != DockView.Phase.Idle && v.Dock.DoorSide) { rig.Motion.SetDoorOpen(true); v.DoorTimer = Mathf.Max(v.DoorTimer, 0.5f); }
@@ -1063,12 +1105,13 @@ namespace Pez.View
                 if (show) { var sc = v.Bay.localScale; sc.y = v.DoorHeight * open; v.Bay.localScale = sc; var lp = v.Bay.localPosition; lp.y = v.Door.localPosition.y - v.DoorHeight + sc.y * 0.5f; v.Bay.localPosition = lp; }
             }
             v.Blink = 1f;
-            if (!t.UnitQueues.TryGetValue(e.Def.Produces, out var q) || q.Count == 0) { v.Vents = 0; return; }
-            if (!IsFirstProducer(e)) return;
-            var def = Defs.Get(q[0].Key);
+            // Each building rolls out the unit it is working on itself.
+            var item = t.UnitQueues.TryGetValue(e.Def.Produces, out var q) ? q.Find(p => p.WorkerId == e.Id) : null;
+            if (item == null) { v.Vents = 0; return; }
+            var def = Defs.Get(item.Key);
             if (def == null) return;
             float rate = t.LowPower ? 0.5f : 1f;
-            float T = (def.BuildTime - q[0].Progress) / rate;
+            float T = (def.BuildTime - item.Progress) / rate;
             if (T < 1.5f) v.Blink = (Time.time * 4f + e.Id * 0.731f) % 2f < 1f ? 1.6f : 0.15f; // each factory blinks on its own phase
             if (T > 0.8f) v.Vents = 0;
             else if (v.Vents < 3 && T < 0.8f - v.Vents * 0.2f)
@@ -1083,19 +1126,38 @@ namespace Pez.View
             if (T < lead && v.Door != null) { rig.Motion.SetDoorOpen(true); v.DoorTimer = Mathf.Max(v.DoorTimer, T + 1.4f); }
         }
 
-        /// <summary>Is this the producer making the team's next unit of its kind, and if so how far along it is (0..1) and
-        /// how many seconds until it's out (half speed on low power)?</summary>
+        /// <summary>Is this producer making a unit (each building works its own item of the shared queue), and if so how far along
+        /// it is (0..1) and how many seconds until it's out (half speed on low power)?</summary>
         bool QueueHead(Entity e, out float p, out float T)
         {
             p = 0f; T = float.MaxValue;
             var t = World.Teams[e.Team];
-            if (!t.UnitQueues.TryGetValue(e.Def.Produces, out var q) || q.Count == 0 || !IsFirstProducer(e)) return false;
-            var def = Defs.Get(q[0].Key);
+            var item = t.UnitQueues.TryGetValue(e.Def.Produces, out var q) ? q.Find(x => x.WorkerId == e.Id) : null;
+            if (item == null) return false;
+            var def = Defs.Get(item.Key);
             if (def == null || def.BuildTime <= 0f) return false;
-            p = Mathf.Clamp01(q[0].Progress / def.BuildTime);
-            T = (def.BuildTime - q[0].Progress) / (t.LowPower ? 0.5f : 1f);
+            p = Mathf.Clamp01(item.Progress / def.BuildTime);
+            T = (def.BuildTime - item.Progress) / (t.LowPower ? 0.5f : 1f);
             return true;
         }
+
+        readonly List<ProdItem> queuedAt = new List<ProdItem>();
+
+        /// <summary>The soldiers queued at this barracks: the one it works on itself first (ProdItem.WorkerId; QueueHead says it has one),
+        /// then those still waiting for a barracks that this one may take. The team's queue is shared, so its head can be another
+        /// barracks' soldier. Reused between calls: the caller reads it at once.</summary>
+        List<ProdItem> QueuedAt(Entity e)
+        {
+            queuedAt.Clear();
+            var q = World.Teams[e.Team].UnitQueues[e.Def.Produces];
+            foreach (var p in q) if (p.WorkerId == e.Id) queuedAt.Add(p);
+            foreach (var p in q) if (p.WorkerId == 0 && (p.StructureId == 0 || p.StructureId == e.Id || !Trains(World.Get(p.StructureId), e))) queuedAt.Add(p);
+            return queuedAt;
+        }
+
+        /// <summary>Is b a building that can still train for e's team and kind (as World.AssignWorkers counts one)? An item queued at one that
+        /// isn't (gone, captured, unfinished) goes to whichever is free.</summary>
+        static bool Trains(Entity b, Entity e) => b != null && !b.Dead && b.Team == e.Team && b.IsStructure && b.IsComplete && b.Def.Produces == e.Def.Produces;
 
         static float DoorH(Transform door)
         {
@@ -1127,13 +1189,6 @@ namespace Pez.View
             t.GetComponent<Renderer>().shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             t.gameObject.SetActive(false);
             return t;
-        }
-
-        bool IsFirstProducer(Entity e)
-        {
-            foreach (var o in World.Entities)
-                if (!o.Dead && o.Team == e.Team && o.IsStructure && o.IsComplete && o.Def.Produces == e.Def.Produces) return o == e;
-            return false;
         }
 
         /// <summary>
@@ -1542,15 +1597,18 @@ namespace Pez.View
                                 // An aircraft rides the airfield's lift up and lifts off from its deck (AirfieldWorks).
                                 bool onLift = def2.IsAir && producer.E.Def.Key == "airfield";
                                 if (onLift && producer.Field == null) { producer.Rig.Motion.SnapLiftDown(); producer.Rig.Motion.SetLiftUp(true); }
-                                // Start at the door (south face) and roll out to where the sim placed it.
+                                // Start at the door (south face, or a drop-off's bay side: where the sim puts new units) and roll out to where it placed it.
                                 var c = producer.E.Center;
                                 // From 0.6 inside the door (hidden in the dark bay) when the model has one.
                                 var door = producer.Rig.HasModel ? PezMotion.FindDeep(producer.Rig.Model.transform, "door") : null;
+                                float doorAt = World.DoorFacing(producer.E);
+                                var doorDir = new Vec2(Mathf.Cos(doorAt), Mathf.Sin(doorAt));
+                                float inside = (Mathf.Abs(doorDir.X) > 0.5f ? producer.E.Def.SizeX : producer.E.Def.SizeY) * 0.5f - 0.3f; // 0.3 in from the wall
                                 tv2.SpawnFrom = onLift && producer.Field != null ? producer.Field.Board(tv2)
                                               : def2.IsAir ? W(c, 0.2f)
                                               : producer.Bunks is { HasExit: true } ? producer.Bunks.Exit // where it stood up after its tuck and roll
-                                              : door != null ? new Vector3(door.position.x, 0f, door.position.z + 0.6f)
-                                              : W(new Vec2(c.X, producer.E.Origin.Y + 0.3f));
+                                              : door != null ? new Vector3(door.position.x, 0f, door.position.z) + producer.Rig.Model.transform.forward * 0.6f
+                                              : W(c + doorDir * inside);
                                 tv2.SpawnT = 0;
                                 tv2.Rig.Root.position = tv2.SpawnFrom.Value; // this frame too: it was already drawn where the sim put it
                                 if (producer.Bunks is { HasExit: true }) tv2.Rig.Root.rotation = producer.Bunks.ExitFacing; // and facing the way it stood up

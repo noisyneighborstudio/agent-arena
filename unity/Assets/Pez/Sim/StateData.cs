@@ -54,6 +54,7 @@ namespace Pez.Sim
                     .Set("working", e.Def.Recipes.Length > 0 || e.Def.Key == "fusion_reactor" ? (object)e.Working : null)
                     .Set("under_attack", w.Time - e.LastHitTime < 5);
                 if (e.IsArmed) s.Set("offline", e.Offline);
+                if (e.Def.Key == "fusion_reactor") s.Set("power_pct", StateView.Pct(e.Output)); // the share of its +500 its plasma pays for
                 var d = e.Def.Key == "deep_mine" ? w.Map.DepositById(e.DepositId) : null;
                 if (d != null) s.Set("ore", Defs.Ores[d.Type]).Set("deposit_left", (int)d.Amount).Set("runs_dry_in_s", (int)World.DeepMineSecondsLeft(d, t));
                 return (object)s;
@@ -128,16 +129,17 @@ namespace Pez.Sim
             var prod = new JObj();
             prod.Set("structures", t.StructureQueue.Select(p => { var s = w.Get(p.StructureId); return (object)new JObj().Set("type", p.Key).Set("id", p.StructureId).Set("progress_pct", StateView.Pct(s?.BuildProgress ?? 0)); }).ToList());
             foreach (var kv in t.UnitQueues)
-                prod.Set(Defs.ProducerKey(kv.Key), kv.Value.Select((p, i) => (object)new JObj().Set("type", p.Key)
-                    .Set("progress_pct", i == 0 ? StateView.Pct(p.Progress / w.Def(p.Key).BuildTime) : 0)
-                    .Set("at", p.StructureId != 0 ? (object)p.StructureId : null)).ToList());
+                prod.Set(Defs.ProducerKey(kv.Key), kv.Value.Select(p => (object)new JObj().Set("type", p.Key)
+                    .Set("progress_pct", StateView.Pct(p.Progress / w.Def(p.Key).BuildTime))
+                    .Set("at", p.StructureId != 0 ? (object)p.StructureId : null)
+                    .Set("working_at", w.Get(p.WorkerId) != null ? (object)p.WorkerId : null)).ToList());
             o.Set("production", prod);
             o.Set("build_options", BuildOptions(w, team));
             o.Set("inventions", Tech.OwnJson(w, team));
             o.Set("enemy_inventions_seen", Tech.SeenJson(w, team));
 
             o.Set("stats", new JObj().Set("kills", t.Stats.Kills).Set("units_lost", t.Stats.UnitsLost)
-                .Set("structures_lost", t.Stats.StructuresLost).Set("ore_mined", t.Stats.OreMined)
+                .Set("structures_lost", t.Stats.StructuresLost).Set("ore_mined", t.Stats.OreMined).Set("salvage_mined", t.Stats.SalvageMined)
                 .Set("kill_value", t.Stats.KillValue).Set("salvage_left", t.Stats.SalvageLeft)
                 .Set("derricks_captured", t.Stats.DerricksCaptured).Set("derrick_steel", (int)t.Stats.DerrickSteel).Set("upkeep_paid", (int)t.Stats.UpkeepPaid));
             o.Set("events", StateView.EventList(w, team, sinceSeq, 25).Select(e => (object)new JObj()
