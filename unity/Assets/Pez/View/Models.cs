@@ -18,20 +18,11 @@ namespace Pez.View
         /// tracers start here.</summary>
         public Vector3 MuzzleLocal;
         public bool HasMuzzle;
-        /// <summary>Twin barrels: each barrel's muzzle in barrel space; shots alternate L, R.</summary>
+        /// <summary>Authored twin barrels: each barrel's muzzle in barrel space; shots alternate L, R.</summary>
         public Vector3 MuzzleL, MuzzleR;
         public bool Twin;
         public Gait Gait;            // infantry walk cycle (legs, hips) or null
         public Plinths.Spec Plinth;  // a structure's foundation (its pad turned into a plinth with driveway ramps) or null
-        /// <summary>Artillery stabilisers (spade_l / spade_r, hinged at the hull's rear), their rest (planted) rotation and
-        /// the toothed blade's lowest rear point in spade space (where deploy dust kicks up).</summary>
-        public Transform SpadeL, SpadeR;
-        public Quaternion SpadeRestL, SpadeRestR;
-        public Vector3 SpadeTipL, SpadeTipR;
-        /// <summary>Artillery: the gun's cradle (pitched with the barrel), the rest (firing) rotations of the cradle and
-        /// barrel, and the turret's rest rotation (the gun only stows onto the bow lock with the turret facing forward).</summary>
-        public Transform Cradle;
-        public Quaternion CradleRest, BarrelRestRot, TurretRest;
     }
 
     /// <summary>
@@ -479,22 +470,16 @@ namespace Pez.View
         /// <summary>The artillery family's models (standard and long-range): spades, deploy, ram, no idle scan.</summary>
         public static bool IsArtillery(string key) => key == "artillery" || key == "long_range_artillery";
 
-        /// <summary>A spade's blade edge in spade space: the bottom of its meshes, at their far (-Z) end.</summary>
-        static Vector3 SpadeTip(Transform spade)
+        /// <summary>A twin-cannon model's two muzzles (muzzle_l, muzzle_r) in barrel space, if it has barrel_l and barrel_r.</summary>
+        static bool TwinMuzzles(Transform barrel, out Vector3 muzzleL, out Vector3 muzzleR)
         {
-            var lo = new Vector3(float.MaxValue, float.MaxValue, float.MaxValue);
-            var hi = -lo;
-            foreach (var mf in spade.GetComponentsInChildren<MeshFilter>(true))
-            {
-                if (mf.sharedMesh == null) continue;
-                var b = mf.sharedMesh.bounds;
-                for (int c = 0; c < 8; c++)
-                {
-                    var p = spade.InverseTransformPoint(mf.transform.TransformPoint(new Vector3((c & 1) == 0 ? b.min.x : b.max.x, (c & 2) == 0 ? b.min.y : b.max.y, (c & 4) == 0 ? b.min.z : b.max.z)));
-                    lo = Vector3.Min(lo, p); hi = Vector3.Max(hi, p);
-                }
-            }
-            return new Vector3((lo.x + hi.x) * 0.5f, lo.y, lo.z);
+            muzzleL = muzzleR = Vector3.zero;
+            var l = PezMotion.FindDeep(barrel, "muzzle_l");
+            var r = PezMotion.FindDeep(barrel, "muzzle_r");
+            if (l == null || r == null || PezMotion.FindDeep(barrel, "barrel_l") == null || PezMotion.FindDeep(barrel, "barrel_r") == null) return false;
+            muzzleL = barrel.InverseTransformPoint(l.position);
+            muzzleR = barrel.InverseTransformPoint(r.position);
+            return true;
         }
 
         /// <summary>The deep mine's model for the ore it pumps (0 iron .. 3 uranium): each ore has its own machine. The
@@ -530,6 +515,8 @@ namespace Pez.View
                 rig.Barrel = PezMotion.FindDeep(go.transform, "barrel");
                 rig.Spinner = PezMotion.FindDeep(go.transform, "spinner");
                 rig.Bin = PezMotion.FindDeep(go.transform, "bin");
+                // Authored twin cannons and flak pods recoil independently; the heavy tank remains a single gun.
+                if (rig.Barrel != null) rig.Twin = TwinMuzzles(rig.Barrel, out rig.MuzzleL, out rig.MuzzleR);
                 // Soldiers get hips and legs cut from their body mesh before PezMotion caches the turret's rest pose.
                 if (Pez.Sim.Defs.Get(key)?.Armor == Pez.Sim.Armor.Infantry) rig.Gait = Gait.FromModel(rig.Body, go, ++gaitSeed);
                 rig.Motion = go.AddComponent<PezMotion>();
@@ -538,14 +525,6 @@ namespace Pez.View
                 // Idle scan per class (MOTION.md): heavies sweep +-25 deg, artillery holds still.
                 if (key == "recon_drone") rig.Motion.scanAmp = 120f; // the camera is curious: glances up to +-72 deg
                 if (IsArtillery(key)) rig.Motion.idleScan = false;
-                rig.SpadeL = PezMotion.FindDeep(go.transform, "spade_l");
-                rig.SpadeR = PezMotion.FindDeep(go.transform, "spade_r");
-                if (rig.SpadeL != null) { rig.SpadeRestL = rig.SpadeL.localRotation; rig.SpadeTipL = SpadeTip(rig.SpadeL); }
-                if (rig.SpadeR != null) { rig.SpadeRestR = rig.SpadeR.localRotation; rig.SpadeTipR = SpadeTip(rig.SpadeR); }
-                rig.Cradle = PezMotion.FindDeep(go.transform, "cradle");
-                if (rig.Cradle != null) rig.CradleRest = rig.Cradle.localRotation;
-                if (rig.Barrel != null) rig.BarrelRestRot = rig.Barrel.localRotation;
-                if (rig.Turret != null) rig.TurretRest = rig.Turret.localRotation;
                 rig.Emerge = go.AddComponent<PezEmerge>();
                 if (Altitudes.TryGetValue(key, out var alt)) rig.Altitude = alt;
                 if (rig.Barrel != null) { rig.BarrelRest = rig.Barrel.localPosition; rig.HasMuzzle = BarrelTip(rig.Barrel, out rig.MuzzleLocal); }

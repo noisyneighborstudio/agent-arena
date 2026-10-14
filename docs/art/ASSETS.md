@@ -28,9 +28,9 @@ These are blockout assets, built to the brief's exact technical contract (footpr
 - **Doors face −Z (south).**
 - **Functional nodes:**
   - `turret` yaws about local Y.
-  - `barrel` is a child of `turret` and recoils along its own local −Z. The artillery barrel is pitched −60° and the SAM rack −25°; recoil follows that axis.
-  - Artillery (`artillery`, `long_range_artillery`): −60° is the rest and firing pose. `cradle` (a child of `turret` on the same trunnion, pitched with the barrel) carries the recoil cradle. The view stows the gun for travel by pitching `cradle` and `barrel` +57° (to about −3°, onto the bow's travel lock); that pose is view-only.
-  - `spade_l` / `spade_r` are the artillery's stabilisers, hinged at the hull's rear. Their rest pose is planted (deployed); the view folds them up 105° about local X for travel.
+  - `barrel` is a child of `turret` and recoils along its own local −Z. The SAM rack is pitched −25°; recoil follows that axis. The artillery family elevates its whole head to the shell's launch angle with ArtilleryWorks.
+  - Artillery (`artillery`, `long_range_artillery`): the rest pose is the head shut and gun level on its travel lock. `cradle` hinges the hollow head back to the shell's real launch angle (14–62°); `arty_round` lifts from the stem into the open breech during reload and stays inside the tube through the shot. ArtilleryWorks owns the head, reload ram and round; PezMotion owns turret yaw and shot recoil.
+  - `spade_l` / `spade_r` are the artillery's stabilisers, hinged under the tail bar and splayed 14° out. Their rest pose is folded back, 10° above flat; ArtilleryWorks swings them down 55° to plant.
   - `spinner` is the cutter, crane, rotor, prism, core or dish. Its axis is listed in MOTION.md. More rotors on one model are `spinner_1`, `spinner_2`, ... and turn with it; author a counter-rotating one upside down (rolled 180° about Z).
   - `bin` tips about its rear edge. Its child `bin_ore` scales Y with the load.
   - `door` is a roll-up door with its pivot at the top edge. Animate scale Y from 1 to 0.05 to open it.
@@ -67,16 +67,3 @@ Add `PezCliffs` (with a MeshFilter and MeshRenderer) to an empty GameObject at t
 - **No FBX.** glTF is the delivery format; Blender converts to FBX in one step if you need it.
 - **Untested inside Unity.** The C# compiles against a Unity API stub but hasn't run in a Unity project.
 - **Check the axes once on import.** glTFast converts glTF to Unity by negating X, so models should come in facing +Z with doors toward the camera. Confirm this on the factory.
-
-## Preserved browser model
-
-`unity/Assets/Pez/Resources/PezModels/heavy_tank_legacy.glb` is the unchanged heavy-tank model from
-`bcae70dcefe31028f4ad7bff95027281b809360a`, retained only for the three browser viewers' `mammoth_tank` alias.
-The approved heavy tank now has one gun; the mammoth keeps its previous browser appearance until its own revision is
-approved. Unity still uses the mammoth's existing procedural twin-cannon fallback; it never loads this archive for that
-unit. The gateway and publish script serve/copy every model in `PezModels`, including this archive.
-
-To reproduce it, use that commit's `build_models.py` builder `V_tank('heavy_tank', 1.2, .8, twin=True)` and the
-`round_models.py --only heavy_tank` pipeline from the same commit, then retain the output under the archive name.
-Its SHA-256 is `890d9159afafafc4c9a88fa9a04037826e8f28fef5b82266f00ec5101f618b17`; rebuilding and rounding it
-was checked byte-for-byte. Do not regenerate it from the current heavy-tank builder.

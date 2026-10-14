@@ -23,8 +23,7 @@ const NEUTRAL = C(185, 174, 152);
 const GROUND_A = C(125, 110, 85), GROUND_B = C(142, 127, 99), DIRT = C(106, 92, 70), WATER = C(58, 34, 24), ROCK = C(70, 56, 50);
 const ORE = { i: C(138, 58, 36), c: C(200, 116, 47), x: C(143, 228, 255), u: C(182, 255, 59) };
 // Units without their own model yet share one (as the 2D viewer's icons do).
-const MODEL_AS = { long_range_drone: "gunship", reaper_drone: "stealth_bomber", recon_drone: "gunship", transport_chopper: "gunship", mammoth_tank: "heavy_tank_legacy",
-  flak_track: "light_tank", apc: "light_tank", commando: "rifleman", sniper: "rifleman", engineer: "medic" };
+const MODEL_AS = { long_range_drone: "gunship", reaper_drone: "stealth_bomber", recon_drone: "gunship", transport_chopper: "gunship", commando: "rifleman", sniper: "rifleman", engineer: "medic" };
 // A deep mine is drawn as the machine for the ore it pumps, found from the deposit under it in the frame's `deposits`
 // ([x, y, type, % left]; a player's frame has only the ones they surveyed). Unknown, or its model missing: the shared deep_mine.
 const MINE_MODELS = ["deep_mine_iron", "deep_mine_copper", "deep_mine_crystal", "deep_mine_uranium"];

@@ -60,6 +60,7 @@ namespace Pez.View
         struct HullClass { public float Period, Damping, Up, Down, Kick, Roll; }
         static readonly HullClass LightHull = new HullClass { Period = 0.25f, Damping = 0.35f, Up = 2f, Down = 3f, Kick = 1.5f, Roll = 1.5f };  // bobs twice
         static readonly HullClass HeavyHull = new HullClass { Period = 0.6f, Damping = 0.55f, Up = 1.5f, Down = 2.5f, Kick = 2.5f, Roll = 1f };   // one slow rock
+        static readonly HullClass SuperHull = new HullClass { Period = 0.7f, Damping = 0.6f, Up = 1f, Down = 1.8f, Kick = 2f, Roll = 0.8f };    // the mammoth: a slower, smaller rock
         static readonly HullClass ArtyHull = new HullClass { Period = 0.5f, Damping = 0.7f, Up = 2f, Down = 3f, Kick = 3f, Roll = 1f };
         // The construction truck: long, laden and slow, it rocks once, shallowly (its 1.5-long hull's ends travel the most;
         // at these limits its track guards stay clear of the sprockets and idlers).
@@ -69,7 +70,8 @@ namespace Pez.View
         static HullClass ClassOf(EntityDef d) => d.ModelKey switch
         {
             "light_tank" or "laser_tank" or "scout_buggy" => LightHull,
-            "heavy_tank" or "mammoth_tank" or "drill_rig" => HeavyHull,
+            "heavy_tank" or "drill_rig" => HeavyHull,
+            "mammoth_tank" => SuperHull,
             "construction_truck" => CarrierHull,
             "artillery" or "long_range_artillery" => ArtyHull,
             _ => OtherHull,
@@ -81,9 +83,11 @@ namespace Pez.View
         class Tread { public Transform T; public Vector3 Rest; public float Side, Phase; }
         class Knuckle { public Transform T; public Quaternion Rest; }
 
-        readonly Transform body, hull, exhaust, lid, carried, carriedFoot;
+        readonly Transform body, hull, exhaust, lid, carried, carriedFoot, carriedHead, exhaust2, trunnion, repairBeacon;
         readonly Carry carry;
-        readonly Quaternion hullRest, lidRest;
+        readonly Quaternion hullRest, lidRest, trunnionRest, repairBeaconRest;
+        readonly Renderer[] repairBeaconLamps;
+        readonly GlowCaster repairBeaconLight;
         readonly Vector3 hullPos;
         readonly Tread[] treads;
         readonly Turner[] turners;
@@ -91,16 +95,23 @@ namespace Pez.View
         readonly SurveyorAct survey;   // the surveyor's dish, thumper and lamps (its own sv_* nodes)
         readonly DrillRigAct drill;    // the drill rig's lamp on the road (its deploy runs from HandOff)
         readonly HullClass hc;
+        readonly LaserTankAct laserAct;
+        readonly FlakAct flakAct;
+        public ArtilleryWorks Gun { get; }
         readonly bool wheeled;
         readonly float length, width, gauge, wheelbase, seed;
 
         // The minelayer's dispenser (its act: see the summary).
-        const float LaySlide = 0.25f;
-        class Part { public Transform T; public Vector3 Rest; public Renderer[] R; public bool Shown = true; }
-        readonly Part[] candies;
+        public const float RampOpen = 127f;
+        const float SeatStep = 0.12f, LaySlide = 0.25f;
+        class Part { public Transform T; public Vector3 Rest; public Quaternion Q; public Renderer[] R; public float K; public bool Shown = true; }
+        readonly Transform ramp, bay, foot;
+        readonly Quaternion rampRest;
+        readonly Part[] seats, beads, screen, candies;
         readonly Part dropCandy;
         readonly bool secret;           // its act is its own team's business (the minelayer)
-        float lidAngle, layT = 99f, candyPitch;
+        float rampK, unloadT = 99f, beadT = 99f, lidAngle, layT = 99f, candyPitch;
+        int prevPax, leaving;
         int candiesShown = 6;
         bool owner = true;              // the camera being drawn is its team's (or a spectator's): it sees the private act
         static readonly List<int> ownerAudience = new List<int>();
@@ -108,17 +119,21 @@ namespace Pez.View
         // The work trucks (see Work).
         readonly Renderer[] beacon, torch;
         readonly GlowCaster beaconLight;
-        readonly Transform boom, jib;
+        readonly Transform spinner, boom, jib;
+        readonly Transform[] oreSets;
         readonly Quaternion boomRest, jibRest;
         const float JibRest = 85f, BoomLift = 28f;
-        float beaconK, beaconShown = -1f, torchShown = -1f, weldAt = -99f, weldFlare, boomK, jibAngle = JibRest;
+        float beaconK, beaconShown = -1f, torchShown = -1f, weldAt = -99f, weldFlare, boomK, jibAngle = JibRest, chipT, chipDustT, cutAt = -99f;
+        int oreShown = -2;
         Vector3 weldPoint; bool hasWeld;
 
         Vector3 lastPos; float lastYaw; bool primed;
         float simSpeed, drawnSpeed, yawRate;          // smoothed: the sim's speed (t/s), the drawn forward speed, yaw (deg/s)
         float pitch, pitchVel, roll, rollVel, heave, heaveVel, startSquat, travel;
         float slopePitch, slopeRoll, steer, lidK, lidGoal, lidBounce = -1f;
-        float dustT, scrubT, wispAt, puffT, puffRest; int puffs;
+        float dustT, scrubT, wispAt, puffT, puffRest; int puffs, puffSide;
+        float elev, airUntil = -1f, beaconAngle, beaconSpin, repairGlow, sparkT; int airTarget;
+        const float MaxElev = 35f, ElevRate = 120f;
 
         VehicleWorks(Rig rig, EntityDef def, int id)
         {
@@ -128,9 +143,17 @@ namespace Pez.View
             seed = id * 0.618f;
             length = def.Radius * 2f; width = def.Radius * 1.5f;
             wispAt = Time.time + 2f + (id % 7) * 0.4f;
-            if (m == null) { treads = new Tread[0]; turners = new Turner[0]; knuckles = new Knuckle[0]; candies = new Part[0]; return; }
+            if (m == null) { treads = new Tread[0]; turners = new Turner[0]; knuckles = new Knuckle[0]; seats = candies = beads = screen = new Part[0]; return; }
             survey = SurveyorAct.For(m);
             drill = DrillRigAct.For(m);
+            ramp = PezMotion.FindDeep(m, "apc_ramp");
+            bay = PezMotion.FindDeep(m, "apc_bay");
+            foot = PezMotion.FindDeep(m, "apc_foot");
+            if (ramp) rampRest = ramp.localRotation;
+            seats = Parts(m, "apc_seat_");
+            screen = Parts(m, "apc_screen_");
+            beads = Parts(m, "apc_bead_");
+            foreach (var b in beads) b.Q = b.T.localRotation;
             candies = Parts(m, "ml_candy_");
             if (PezMotion.FindDeep(m, "ml_drop_candy") is Transform dc) dropCandy = new Part { T = dc, Rest = dc.localPosition, R = dc.GetComponentsInChildren<Renderer>(true) };
             if (candies.Length > 1) candyPitch = candies[1].Rest.y - candies[0].Rest.y;
@@ -141,6 +164,12 @@ namespace Pez.View
                 beaconLight = GlowCaster.For(rig.Model, m.InverseTransformPoint(bc.position) + Vector3.up * 0.03f, PezPalette.EmissiveAmberIndustryDocking,
                                              light: 0.7f, range: 1.4f, pool: 0.5f);
             }
+            if (PezMotion.FindDeep(m, "mt_ore_0") != null)
+            {
+                oreSets = new Transform[4];
+                for (int i = 0; i < 4; i++) oreSets[i] = PezMotion.FindDeep(m, "mt_ore_" + i);
+                spinner = PezMotion.FindDeep(m, "spinner");
+            }
             boom = PezMotion.FindDeep(m, "rt_boom");
             jib = PezMotion.FindDeep(m, "rt_jib");
             if (boom) boomRest = boom.localRotation;
@@ -150,11 +179,27 @@ namespace Pez.View
             hull = PezMotion.FindDeep(m, "hull");
             if (hull) { hullRest = hull.localRotation; hullPos = hull.localPosition; }
             exhaust = PezMotion.FindDeep(m, "exhaust");
+            exhaust2 = PezMotion.FindDeep(m, "exhaust_l");   // a second stack (the mammoth's): the puffs alternate
+            trunnion = PezMotion.FindDeep(m, "trunnion");
+            if (trunnion) trunnionRest = trunnion.localRotation;
+            repairBeacon = def.SelfRepairRate > 0f ? PezMotion.FindDeep(m, "beacon") : null;
+            if (repairBeacon)
+            {
+                repairBeaconRest = repairBeacon.localRotation;
+                repairBeaconLamps = PezShade.Emissive(repairBeacon.gameObject);
+                PezShade.Set(repairBeaconLamps, 0.35f, 0f);
+                // The beam: carried on the turning repairBeacon itself, 0.5 out on the lamp's open side (the reflector is on the
+                // model's -x, which the glTF import mirrors to +x here), so the real light and its pool sweep round the tank,
+                // over the head, the deck and the ground, as the repairBeacon turns.
+                repairBeaconLight = GlowCaster.For(repairBeacon.gameObject, new Vector3(-0.5f, 0.04f, 0f), PezPalette.EmissiveAmberIndustryDocking,
+                    light: 2.6f, range: 2.2f, pool: 1.3f);
+            }
             lid = PezMotion.FindDeep(m, "lid");
             if (lid) lidRest = lid.localRotation;
             if (CarryOf(def.ModelKey) is Carry c && PezMotion.FindDeep(m, c.Node) is Transform cn && PezMotion.FindDeep(cn, c.Foot) is Transform cf)
             {
                 carry = c; carried = cn; carriedFoot = cf;
+                carriedHead = c.Head != null ? PezMotion.FindDeep(cn, c.Head) : null;
             }
             var tr = new List<Tread>();
             var tu = new List<Turner>();
@@ -179,6 +224,10 @@ namespace Pez.View
                 }
             }
             treads = tr.ToArray(); turners = tu.ToArray(); knuckles = kn.ToArray();
+            if (treads.Length > 0 && wheeled) { wheeled = false; zBack = m.InverseTransformPoint(treads[0].T.position).z; }
+            if (def.ModelKey == "laser_tank") laserAct = new LaserTankAct(rig, m, id);
+            if (def.ModelKey == "flak_track") flakAct = new FlakAct(rig, m, id);
+            if (Models.IsArtillery(def.ModelKey)) Gun = ArtilleryWorks.For(m);
             wheelbase = zFront > float.MinValue && zBack < float.MaxValue ? zFront - zBack : length * 0.6f;
         }
 
@@ -245,6 +294,7 @@ namespace Pez.View
             Gear(fwd, dyaw * Mathf.Deg2Rad, dt);
             Steering(dt);
             owner = view.PovTeam < 0 || view.PovTeam == e.Team;
+            Bay(view, e, dt);
             Dispenser(view, e, dt);
             LidTick(dt);
             ShowPrivate();
@@ -254,14 +304,46 @@ namespace Pez.View
             if (beacon != null || boom) Work(view, v, dt);
             survey?.Tick(view, v, this, dt);
             drill?.Tick(view, v, dt);
+            Elevate(view, v, dt);
+            Repair(view, v, dt);
+            laserAct?.Tick(view, v, dt);
+            flakAct?.Tick(view, v, dt);
+            Gun?.Tick(view, v, dt);
             Fx.Audience = null;
         }
 
-        /// <summary>The work trucks' acts, from the sim: the beacon, and the repair truck's crane.</summary>
+        /// <summary>The work trucks' acts, from the sim: the beacon, the mining truck's load and chips, the repair truck's crane.</summary>
         void Work(WorldView view, WorldView.EV v, float dt)
         {
             var e = v.E;
             bool working = false;
+            if (oreSets != null)
+            {
+                // Mining: the sim's Harvest, parked on its tile (as PezMotion's cutter). The load wears its ore's shapes.
+                bool cutting = e.Order == Order.Harvest && !e.Moving && e.HarvestTile.HasValue;
+                working = cutting;
+                int ore = Mathf.Clamp(v.OreTint, 0, 3);
+                if (ore != oreShown)
+                {
+                    for (int i = 0; i < oreSets.Length; i++)
+                    {
+                        if (oreSets[i] == null) continue;
+                        oreSets[i].gameObject.SetActive(i == ore);
+                        if (i == ore) oreSets[i].localScale = Vector3.one;
+                    }
+                    oreShown = ore;
+                }
+                // Chips off the drum while the cargo rises (the sim takes 4 ore every 0.1 s): about three a second, and
+                // an ore-tinted puff every 0.5 s.
+                if (cutting && e.Cargo > v.PrevCargo) cutAt = Time.time;
+                if (cutting && Time.time - cutAt < 0.3f && spinner && e.CargoType >= 0)
+                {
+                    var c = WorldView.OreColors[Mathf.Clamp(e.CargoType, 0, WorldView.OreColors.Length - 1)];
+                    var fwd = v.Rig.Root.forward;
+                    if ((chipT -= dt) <= 0f) { chipT = Random.Range(0.25f, 0.45f); Fx.OreBrick(spinner.position + fwd * 0.08f, fwd * 0.5f, c, e.CargoType >= 2); }
+                    if ((chipDustT -= dt) <= 0f) { chipDustT = 0.5f; Fx.PourDust(spinner.position + fwd * 0.12f, c); }
+                }
+            }
             if (boom && jib)
             {
                 // Repair: deployed while the sim has it stopped at its patient, in range; welding while its welds land.
@@ -348,7 +430,7 @@ namespace Pez.View
             var q = Quaternion.Euler(slopePitch, 0f, slopeRoll);
             body.localRotation = hull != null ? q : q * Quaternion.Euler(pitch, 0f, 0f);
             var bp = body.localPosition;
-            bp.y = -0.015f * startSquat - 0.04f * v.Deploy - 0.03f * v.Squat;
+            bp.y = -0.015f * startSquat - 0.04f * (Gun?.Deploy ?? 0f) - 0.03f * v.Squat;
             body.localPosition = bp;
         }
 
@@ -387,6 +469,86 @@ namespace Pez.View
             foreach (var k in knuckles) k.T.localRotation = k.Rest * Quaternion.Euler(0f, steer, 0f);
         }
 
+        /// <summary>A shot leaves: at an aircraft, the guns are up before the shell leaves (they snap the rest of the way if
+        /// they weren't). Call before the shot's muzzle is read.</summary>
+        public void Fired(WorldView view, Entity shooter, Entity target)
+        {
+            laserAct?.ReadyShot(view, shooter, target);
+            flakAct?.ReadyShot(view, shooter, target);
+            if (!trunnion || target == null || !target.IsAir || shooter.Team < 0 || !view.World.IsVisibleTo(shooter.Team, target)) return;
+            airTarget = target.Id;
+            airUntil = Time.time + 2f;
+            elev = ElevationTo(view, target);
+            trunnion.localRotation = trunnionRest * Quaternion.Euler(-elev, 0f, 0f);
+        }
+
+        /// <summary>The aircraft the sim has this vehicle fighting, or null: its attack order's target, else (while it's
+        /// engaging: the sim stamps LastFiredAt every tick it has a target) a visible enemy aircraft in range that its turret
+        /// faces, else the one it last shot at, for 2 s.</summary>
+        Entity AirTarget(WorldView view, Entity e)
+        {
+            var w = view.World;
+            if (e.Order == Order.Attack && w.Get(e.TargetId) is Entity t && t.IsAir && !t.Dead && e.Team >= 0 && w.IsVisibleTo(e.Team, t)) return t;
+            if (e.Team >= 0 && w.Time - e.LastFiredAt <= 0.2f && e.Def.Weapon != null && e.Def.Weapon.HitsAir)
+            {
+                Entity best = null; float bestOff = 0.4f;
+                foreach (var o in w.Entities)
+                {
+                    if (!o.IsAir || o.Dead || o.Team == e.Team || o.Team < 0 || o.IsCarried) continue;
+                    if (o.DistFrom(e.Pos) > e.Def.Weapon.Range || !w.IsVisibleTo(e.Team, o)) continue;
+                    var d = o.Center - e.Pos;
+                    float off = Mathf.Abs(Mathf.DeltaAngle(d.Angle * Mathf.Rad2Deg, e.TurretFacing * Mathf.Rad2Deg)) * Mathf.Deg2Rad;
+                    if (off < bestOff) { bestOff = off; best = o; }
+                }
+                if (best != null) return best;
+            }
+            if (Time.time < airUntil && w.Get(airTarget) is Entity last && !last.Dead && e.Team >= 0 && w.IsVisibleTo(e.Team, last)) return last;
+            return null;
+        }
+
+        /// <summary>The guns' elevation (deg, up) from the trunnion to an aircraft's drawn height.</summary>
+        float ElevationTo(WorldView view, Entity t)
+        {
+            float h = view.Views.TryGetValue(t.Id, out var tv) ? tv.Rig.Root.position.y + 0.15f : 2.5f;
+            var p = trunnion.position;
+            float dx = t.Center.X - p.x, dz = t.Center.Y - p.z;
+            return Mathf.Clamp(Mathf.Atan2(h - p.y, Mathf.Sqrt(dx * dx + dz * dz)) * Mathf.Rad2Deg, 0f, MaxElev);
+        }
+
+        void Elevate(WorldView view, WorldView.EV v, float dt)
+        {
+            if (!trunnion) return;
+            var t = AirTarget(view, v.E);
+            float goal = t != null ? ElevationTo(view, t) : 0f;
+            elev = Mathf.MoveTowards(elev, goal, ElevRate * dt);
+            trunnion.localRotation = trunnionRest * Quaternion.Euler(-elev, 0f, 0f);
+        }
+
+        /// <summary>Self-repair: the repairBeacon lights and turns, amber light and weld sparks, only while the sim repairs it.</summary>
+        void Repair(WorldView view, WorldView.EV v, float dt)
+        {
+            if (!repairBeacon) return;
+            var e = v.E;
+            bool repairing = !e.Dead && !e.IsCarried && e.Hp < e.Def.MaxHp * e.Def.SelfRepairTo && view.SeesState(e, view.PovTeam);
+            repairGlow = Mathf.MoveTowards(repairGlow, repairing ? 1f : 0f, dt / (repairing ? 0.15f : 0.4f));
+            beaconSpin = Mathf.MoveTowards(beaconSpin, repairing ? 540f : 0f, 1080f * dt);   // 1.5 turns a second; it winds down to a stop
+            beaconAngle = Mathf.Repeat(beaconAngle + beaconSpin * dt, 360f);
+            repairBeacon.localRotation = repairBeaconRest * Quaternion.Euler(0f, beaconAngle, 0f);
+            // The lamp burns bright (it flares as its open side swings round), and its beam sweeps round with it.
+            float sweep = 0.8f + 0.2f * Mathf.Sin(beaconAngle * Mathf.Deg2Rad);
+            PezShade.Set(repairBeaconLamps, Mathf.Lerp(0.35f, 1f, repairGlow), repairGlow * 3f * sweep);
+            repairBeaconLight?.Set(repairGlow, Fx.Audience);
+            if (!repairing) { sparkT = 0.2f; return; }
+            if ((sparkT -= dt) > 0f) return;
+            sparkT = Random.Range(0.14f, 0.28f);
+            // A weld somewhere on the hull: its deck edges and flanks, where the damage is.
+            var root = v.Rig.Root;
+            float r = e.Def.Radius;
+            float side = Random.value < 0.5f ? -1f : 1f;
+            var at = root.position + root.right * side * r * Random.Range(0.45f, 0.7f) + root.forward * r * Random.Range(-0.8f, 0.8f) + Vector3.up * Random.Range(0.25f, 0.45f);
+            Fx.WeldSparks(at, root.right * side);
+        }
+
         void LidTick(float dt)
         {
             if (!lid) return;
@@ -405,6 +567,98 @@ namespace Pez.View
         }
 
         // ------------------------------------------------------------------ the minelayer's dispenser
+
+        /// <summary>Does it carry soldiers through a ramp (the APC)? WorldView walks them along BayPath.</summary>
+        public bool HasBay => ramp != null && bay != null && foot != null;
+
+        /// <summary>
+        /// The walk between a point on the ground outside and the bay, in world space, outside first: round the hull's
+        /// side if the point is beside or ahead of it, to the foot of the lowered ramp, up it and in through the doorway.
+        /// The last leg is the ramp, up to the wrapper curtain at the threshold, where he goes through it.
+        /// </summary>
+        public System.Collections.Generic.List<Vector3> BayPath(Vector3 outside)
+        {
+            var path = new System.Collections.Generic.List<Vector3> { outside };
+            var p = body.InverseTransformPoint(outside);
+            float side = p.x < 0f ? -1f : 1f, half = width * 0.5f + 0.32f, stern = -length * 0.5f;
+            if (p.z > length * 0.45f && Mathf.Abs(p.x) < half) path.Add(body.TransformPoint(new Vector3(side * half, 0f, length * 0.4f)));
+            else if (p.z > stern && Mathf.Abs(p.x) < half) path.Add(body.TransformPoint(new Vector3(side * half, 0f, p.z)));   // beside it: along its flank
+            if (p.z > stern - 0.2f) path.Add(body.TransformPoint(new Vector3(side * half, 0f, stern - 0.35f)));
+            // The foot of the ramp as it lies when it's down (wherever it is now), and the doorway inside.
+            var parent = ramp.parent;
+            var openFoot = parent.TransformPoint(ramp.localPosition + rampRest * Quaternion.Euler(-RampOpen, 0f, 0f) * foot.localPosition);
+            var fl = body.InverseTransformPoint(openFoot); fl.z -= 0.12f;                 // a step past its tip
+            var f = body.TransformPoint(fl); f.y = body.parent != null ? body.parent.position.y : 0f;
+            path.Add(f);
+            path.Add(bay.position);
+            return path;
+        }
+
+        /// <summary>The ramp, and the heads in the roof domes, from the sim's passengers and the boarders on their way.</summary>
+        void Bay(WorldView view, Entity e, float dt)
+        {
+            if (!HasBay) return;
+            int pax = e.Passengers.Count;
+            if (pax < prevPax) { unloadT = 0f; leaving = prevPax; }     // they're out (the sim put them on the ground)
+            prevPax = pax;
+            unloadT += dt;
+            int seated = 0; bool walking = false;
+            foreach (var pid in e.Passengers)
+                if (view.Views.TryGetValue(pid, out var pv)) { if (pv.BoardT >= 1f) seated++; else walking = true; }
+            bool coming = false;
+            if (!walking && pax < e.Def.Capacity)
+                foreach (var o in view.World.Entities)
+                    if (!o.Dead && o.Order == Order.Board && o.TargetId == e.Id && !o.IsCarried && Vec2.Dist(o.Pos, e.Pos) < e.Def.Radius + 2.2f) { coming = true; break; }
+            bool open = walking || coming || unloadT < 0.6f + leaving * SeatStep + 0.85f;
+            float goal = open ? (simSpeed < 0.4f ? 1f : 0.55f) : 0f;    // on the move it only opens to level: its tip never drags
+            float time = goal < rampK ? 0.5f : unloadT < 0.3f ? 0.2f : 0.35f;
+            rampK = Mathf.MoveTowards(rampK, goal, dt / time);
+            ramp.localRotation = rampRest * Quaternion.Euler(-RampOpen * Mathf.SmoothStep(0f, 1f, rampK), 0f, 0f);
+            // Its telescopic boarding screen rises as the ramp opens. The wrapper strips unroll only after the ramp
+            // has cleared their feet; parked they roll back onto the rail rather than intersecting the closing ramp.
+            beadT += dt;
+            float screenK = Mathf.SmoothStep(0f, 1f, rampK);
+            float curtainOpen = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01((rampK - 0.6f) / 0.4f));
+            foreach (var s in screen)
+                if (s.T.name == "apc_screen_2") s.T.localPosition = s.Rest + Vector3.up * (0.53f * screenK);
+                else s.T.localScale = new Vector3(1f, Mathf.Max(0.015f, screenK), 1f); // telescopic rods slide out of their sleeves
+            for (int i = 0; i < beads.Length; i++)
+            {
+                var b = beads[i];
+                b.T.localPosition = b.Rest + Vector3.up * (0.53f * screenK);
+                b.T.localScale = new Vector3(1f, Mathf.Lerp(0.018f, 1f, curtainOpen), 1f); // rolled vinyl, never a soldier scale
+                float a = 18f * curtainOpen * Mathf.Exp(-beadT * 4.5f) * Mathf.Abs(Mathf.Sin(beadT * 13f + i * 0.9f + 1.2f));
+                b.T.localRotation = b.Q * Quaternion.Euler(a, 0f, 0f);
+            }
+            // A head per seated soldier; leaving, they go seat by seat as each one steps out (WorldView's ExitDelay).
+            for (int i = 0; i < seats.Length; i++)
+            {
+                bool on = i < seated || (i < leaving && unloadT < ExitDelay(i));
+                seats[i].K = Mathf.MoveTowards(seats[i].K, on ? 1f : 0f, dt / (on ? 0.25f : 0.12f));
+            }
+        }
+
+        /// <summary>A soldier steps through the boarding screen's wrapper curtain (in or out): the strands swing.</summary>
+        public void Pass() => beadT = 0f;
+
+        /// <summary>Destroyed: the ramp slams shut under the blast (nobody gets out), and the private heads are hidden before the detached wreck becomes shared between cameras. Nothing ticks after this.</summary>
+        public void Wreck()
+        {
+            if (ramp) ramp.localRotation = rampRest;
+            rampK = 0f;
+            foreach (var s in screen)
+                if (s.T.name == "apc_screen_2") s.T.localPosition = s.Rest;
+                else s.T.localScale = new Vector3(1f, 0.015f, 1f);
+            foreach (var b in beads)
+            {
+                b.T.localRotation = b.Q;
+                b.T.localPosition = b.Rest;
+                b.T.localScale = new Vector3(1f, 0.018f, 1f);
+            }
+        }
+
+        /// <summary>When the soldier in seat i leaves the bay after an unload (seat 0 first).</summary>
+        public static float ExitDelay(int seat) => 0.22f + Mathf.Max(0, seat) * SeatStep;
 
         /// <summary>The sim just laid a mine under it: the stack steps down and the bottom candy drops through the floor.</summary>
         public void Laid(WorldView view, Entity e)
@@ -449,6 +703,14 @@ namespace Pez.View
 
         void ShowPrivate()
         {
+            foreach (var s in seats)
+            {
+                bool on = owner && s.K > 0.01f;
+                SetShown(s, on);
+                float k = s.K, back = 1.70158f;                                  // rises with a little overshoot (ease-out back)
+                float up = k <= 0f ? 0f : 1f + (back + 1f) * Mathf.Pow(k - 1f, 3f) + back * Mathf.Pow(k - 1f, 2f);
+                s.T.localPosition = s.Rest + Vector3.up * (-0.07f * (1f - up));
+            }
             if (candies.Length == 0) return;
             if (lid) lid.localRotation = lidRest * Quaternion.Euler(owner ? -lidAngle : 0f, 0f, 0f);
             float p = owner ? Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(layT / LaySlide)) : 1f;
@@ -498,15 +760,17 @@ namespace Pez.View
             }
         }
 
+        Transform ExhaustMouth() => exhaust2 && (puffSide++ & 1) == 1 ? exhaust2 : exhaust;
+
         /// <summary>The stack coughs as it pulls away (three puffs, 0.12 s apart) and breathes a wisp now and then idling.</summary>
         void Exhaust(Entity e, float dt)
         {
             puffRest -= dt;
             if (!exhaust) { puffs = 0; return; }
-            if (puffs > 0 && (puffT -= dt) <= 0f) { Fx.Exhaust(exhaust.position, 1f); puffT = 0.12f; if (--puffs == 0) puffRest = 1.5f; }
+            if (puffs > 0 && (puffT -= dt) <= 0f) { Fx.Exhaust(ExhaustMouth().position, 1f); puffT = 0.12f; if (--puffs == 0) puffRest = 1.5f; }
             if (Time.time >= wispAt)
             {
-                if (simSpeed < 0.35f) Fx.Exhaust(exhaust.position, 0f);
+                if (simSpeed < 0.35f) Fx.Exhaust(ExhaustMouth().position, 0f);
                 wispAt = Time.time + Random.Range(3f, 5f);
             }
         }
@@ -545,25 +809,27 @@ namespace Pez.View
         /// foot's own height. The part gives way to the structure's when the stage holding that one lands (`HideAt`, in build
         /// progress: stage_2 lands at 0.75).
         /// </summary>
-        class Carry { public string Node, Foot, Site; public float HideAt; }
+        class Carry { public string Node, Foot, Site, Head; public float HideAt, HeadAt; }
 
         static Carry CarryOf(string key) => key switch
         {
+            "outpost_truck" => new Carry { Node = "ot_stem", Foot = "ot_anchor", Site = "silo", HideAt = 0.75f, Head = "ot_head", HeadAt = 0.95f },
             "construction_truck" => new Carry { Node = "ct_mast", Foot = "ct_anchor", Site = "spinner", HideAt = 0.75f },
             _ => null,
         };
 
         /// <summary>The carried hand-off's phases (s): standing the part up, the structure's rise; lining up takes what the
         /// turn and the slide need, between the two bounds.</summary>
-        public const float RaiseTime = 0.5f, RiseTime = 1.0f, MinLineUp = 0.25f, MaxLineUp = 0.7f;
+        public const float RaiseTime = 0.5f, TwistTime = 0.35f, RiseTime = 1.0f, MinLineUp = 0.25f, MaxLineUp = 0.7f;
 
         /// <summary>
-        /// A carrying truck's act (HandOff); `site` is the structure's model (built, at build progress 0). The truck's
-        /// `model`: (1) pivots and slides (0.25-0.7 s, its gear turning with it) until the carried part's foot is over that
-        /// part's place in the structure, facing the structure's door side (-Z) with the part at its tail; (2) stands the
-        /// part up off the tail (0.5 s); (3) sinks under the ground while the structure rises (PezEmerge build progress over
-        /// 1 s), leaving the part planted on its spot until the structure's own identical part has risen into it. Everything
-        /// that goes away is underground or inside its twin, so nothing pops. Effects go to `audience`.
+        /// The sim has turned this truck into a structure, whole at once; `site` is that structure's model (built, at build
+        /// progress 0). The truck's `model`, taken off its rig: (1) pivots and slides (0.25-0.7 s, its gear turning with it)
+        /// until the carried part's foot is over that part's place in the structure, facing the structure's door side (-Z)
+        /// with the part at its tail; (2) stands the part up off the tail (0.5 s), and turns it on its pivot (0.35 s) if it lay rolled; (3) sinks under the ground while the
+        /// structure rises (PezEmerge build progress over 1 s), leaving the part planted on its spot until the structure's
+        /// own identical part has risen into it. Everything that goes away is underground or inside its twin, so nothing
+        /// pops. Effects go to `audience`.
         /// </summary>
         IEnumerator DeployInto(Transform model, Transform site, PezEmerge emerge, List<int> audience)
         {
@@ -614,13 +880,23 @@ namespace Pez.View
             model.SetPositionAndRotation(p1, rot1);
             drawnSpeed = yawRate = 0f;
 
-            // 2. Stand the part up off the tail: it swings up about its hinge and nods 3 deg past upright as it settles.
+            // 2. Stand the part up off the tail: it swings up about its pivot and nods 3 deg past upright as it settles. A part
+            //    that lies rolled (the outpost truck's dispenser, window up) stands up still rolled, then its turntable turns
+            //    it to face the way the structure's does.
+            var standRot = Quaternion.FromToRotation(lieRot * Vector3.up, Vector3.up) * lieRot;   // the tilt taken out
+            bool twist = Quaternion.Angle(standRot, Quaternion.identity) > 1f;
             for (float t = 0f; t < RaiseTime; t += Time.deltaTime)
             {
                 float k = t / RaiseTime;
                 float a = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(k / 0.8f)) + 0.035f * Mathf.Sin(Mathf.Clamp01((k - 0.8f) / 0.2f) * Mathf.PI);
-                carried.localRotation = Quaternion.SlerpUnclamped(lieRot, Quaternion.identity, a);
+                carried.localRotation = Quaternion.SlerpUnclamped(lieRot, standRot, a);
                 Steering(Time.deltaTime);
+                SettleHull(Time.deltaTime);
+                yield return null;
+            }
+            for (float t = 0f; twist && t < TwistTime; t += Time.deltaTime)
+            {
+                carried.localRotation = Quaternion.Slerp(standRot, Quaternion.identity, Mathf.SmoothStep(0f, 1f, t / TwistTime));
                 SettleHull(Time.deltaTime);
                 yield return null;
             }
@@ -629,9 +905,9 @@ namespace Pez.View
 
             // 3. The structure rises round the part as the truck sinks away under it. When the part's foot reaches its spot it
             //    stays there (planted: a puff of dust each side), and gives way to the structure's own once that has risen into it.
-            float sink = Height(model) + 0.05f;
+            float sink = Mathf.Max(Height(model) + 0.05f, carriedFoot.position.y - plant.y + 0.02f);   // gone, and deep enough to plant the part
             var start = model.position;
-            bool planted = false, hid = false;
+            bool planted = false, hid = false, headHid = carriedHead == null;
             for (float t = 0f; t < RiseTime; t += Time.deltaTime)
             {
                 float k = t / RiseTime;
@@ -644,7 +920,8 @@ namespace Pez.View
                     carried.position += plant - carriedFoot.position;   // exactly on its spot
                     Fx.Audience = audience; Fx.SpadeDust(plant, -model.right); Fx.SpadeDust(plant, model.right); Fx.Audience = null;
                 }
-                if (!hid && k >= carry.HideAt) { ShowParts(carried, false); hid = true; }
+                if (!hid && k >= carry.HideAt) { ShowParts(carried, false, carriedHead); hid = true; }
+                if (!headHid && k >= carry.HeadAt) { ShowParts(carriedHead, false, null); headHid = true; }
                 yield return null;
             }
             emerge.SetBuildProgress(1f);
@@ -672,12 +949,12 @@ namespace Pez.View
             return top - model.position.y;
         }
 
-        /// <summary>Turn a carried part's renderers on or off.</summary>
-        static void ShowParts(Transform t, bool on)
+        /// <summary>Turn a part's renderers on or off, all but those under `except`.</summary>
+        static void ShowParts(Transform t, bool on, Transform except)
         {
             if (!t) return;
             foreach (var r in t.GetComponentsInChildren<Renderer>(true))
-                r.enabled = on;
+                if (except == null || !r.transform.IsChildOf(except)) r.enabled = on;
         }
     }
 }

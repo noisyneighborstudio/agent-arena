@@ -356,6 +356,44 @@ def S_command_center():
     t.apply_translation((0, -.1, 0)); a.add(hk, 'steel', t)
     return a
 
+OUTPOST_STEM_W = .42
+
+
+def outpost_stem(a, node, sz=.63, silo='silo', bricks=5):
+    """The outpost's dispenser stem on `node`, its axis at (0, sz), from y 0.1 to 1.0: smoke walls, the clear window on its
+    +x side with the pressed-ore stack behind it (`silo` and its bricks `<silo>_0..`), a dark floor, team grip slats and the
+    licorice lip on its front (-z) face. The outpost truck carries the same stem (outpost_stem with its own names), so the
+    one it stands up on the site is the outpost's own. Returns (zf, zb, sw, s1)."""
+    sw, s0, s1 = OUTPOST_STEM_W, .1, 1.0
+    zf, zb = sz - sw / 2, sz + sw / 2
+    a.box('smoke', sw, s1 - s0, .05, y=(s0 + s1) / 2, z=zb - .025, node=node)                  # back
+    a.box('smoke', sw, s1 - s0, .05, y=(s0 + s1) / 2, z=zf + .025, node=node)                  # front
+    a.box('smoke', .05, s1 - s0, sw, x=-sw / 2 + .025, y=(s0 + s1) / 2, z=sz, node=node)       # -x side
+    w0, w1 = .46, .9                                                                         # the window, +x side
+    a.box('smoke', .05, w0 - s0, sw, x=sw / 2 - .025, y=(s0 + w0) / 2, z=sz, node=node)
+    a.box('smoke', .05, s1 - w1, sw, x=sw / 2 - .025, y=(w1 + s1) / 2, z=sz, node=node)
+    for s in (-1, 1): a.box('smoke', .05, w1 - w0, .07, x=sw / 2 - .025, y=(w0 + w1) / 2, z=sz + s * (sw / 2 - .035), node=node)
+    a.box('clear', .012, w1 - w0, sw - .14, x=sw / 2 - .01, y=(w0 + w1) / 2, z=sz, node=node)
+    a.box('dark', sw - .1, .02, sw - .1, y=s0 + .3, z=sz, node=node)                          # the stem's floor under the stack
+    for i in range(3):
+        for s in (-1, 1): a.box('team', .1, .05, .03, x=s * .13, y=.36 + i * .12, z=zf - .005, node=node)
+    a.box('licorice', sw - .04, .04, .06, y=s1 - .01, z=zf + .03, node=node)                  # the lip
+    silo = a.node(silo, node, (0, 0, sz))
+    for k in range(bricks):
+        b = a.node(f'{silo}_{k}', silo, (0, w0 + .05 + k * .085, 0))
+        a.box('crystal', sw - .14, .07, sw - .14, node=b)
+    return zf, zb, sw, s1
+
+
+def outpost_head(a, parent, zb, sw, s1, name='head'):
+    """The outpost stem's team flip-top head, hinged at the stem's back edge (zb) on its top (s1), its snout over the lip."""
+    hd = a.node(name, parent, (0, s1, zb + .02), rot=rx(4))
+    a.box('team', sw + .08, .24, sw + .06, y=.12, z=-(sw + .06) / 2, node=hd)
+    a.box('team', sw - .02, .08, .09, y=.04, z=-(sw + .06) - .02, node=hd)                    # snout
+    a.cyl('steel', .03, sw + .06, axis='x', node=hd, sections=8)                               # hinge pin
+    return hd
+
+
 def S_outpost():
     """A forward ore depot: a dispenser being filled. Trucks back up to the hopper on the south edge and tip their ore
     into it (its team trapdoors, flap_l and flap_r, swing open while a truck is in the bay); a cleated belt carries the
@@ -412,28 +450,9 @@ def S_outpost():
     # The dispenser stem at the back: smoke-plastic walls, a clear window on its +x side where the pressed ore stacks up
     # (silo_0..4, in crystal by default: the view tints them to the ore delivered), team grip slats on the front, the
     # licorice lip at the top front edge, and the team flip-top head hinged at its back edge.
-    sz, sw, s0, s1 = .63, .42, .1, 1.0
-    zf, zb = sz - sw / 2, sz + sw / 2
-    a.box('smoke', sw, s1 - s0, .05, y=(s0 + s1) / 2, z=zb - .025, node=S2)                  # back
-    a.box('smoke', sw, s1 - s0, .05, y=(s0 + s1) / 2, z=zf + .025, node=S2)                  # front
-    a.box('smoke', .05, s1 - s0, sw, x=-sw / 2 + .025, y=(s0 + s1) / 2, z=sz, node=S2)       # -x side
-    w0, w1 = .46, .9                                                                         # the window, +x side
-    a.box('smoke', .05, w0 - s0, sw, x=sw / 2 - .025, y=(s0 + w0) / 2, z=sz, node=S2)
-    a.box('smoke', .05, s1 - w1, sw, x=sw / 2 - .025, y=(w1 + s1) / 2, z=sz, node=S2)
-    for s in (-1, 1): a.box('smoke', .05, w1 - w0, .07, x=sw / 2 - .025, y=(w0 + w1) / 2, z=sz + s * (sw / 2 - .035), node=S2)
-    a.box('clear', .012, w1 - w0, sw - .14, x=sw / 2 - .01, y=(w0 + w1) / 2, z=sz, node=S2)
-    a.box('dark', sw - .1, .02, sw - .1, y=s0 + .3, z=sz, node=S2)                          # the stem's floor under the stack
-    for i in range(3):
-        for s in (-1, 1): a.box('team', .1, .05, .03, x=s * .13, y=.36 + i * .12, z=zf - .005, node=S2)
-    a.box('licorice', sw - .04, .04, .06, y=s1 - .01, z=zf + .03, node=S2)                  # the lip
-    silo = a.node('silo', S2, (0, 0, sz))
-    for k in range(5):
-        b = a.node(f'silo_{k}', silo, (0, w0 + .05 + k * .085, 0))
-        a.box('crystal', sw - .14, .07, sw - .14, node=b)
-    hd = a.node('head', S3, (0, s1, zb + .02), rot=rx(4))
-    a.box('team', sw + .08, .24, sw + .06, y=.12, z=-(sw + .06) / 2, node=hd)
-    a.box('team', sw - .02, .08, .09, y=.04, z=-(sw + .06) - .02, node=hd)                    # snout
-    a.cyl('steel', .03, sw + .06, axis='x', node=hd, sections=8)                               # hinge pin
+    zf, zb, sw, s1 = outpost_stem(a, S2)
+    sz = .63
+    outpost_head(a, S3, zb, sw, s1)
     a.node('drop', a.key, (0, .9, sz))                                                         # where the ore falls in
     # The blockhouse on the +x side: cream with a team wrapper band and a cream roof, a firing slit on its two faces and a
     # door; on its roof the lookout's collar, its mast (lookout_mast: a telescoping steel tube, raised once deployed) and
@@ -481,6 +500,7 @@ def S_outpost():
     hose.apply_transform(axis_rot('x')); hose.apply_translation((px - .12, .22, pz)); a.add(None, 'licorice', hose)
     a.box('steel', .03, .08, .03, x=px - .12, y=.33, z=pz)
     return a
+
 
 def S_power_plant():
     a = Asset('power_plant', 'structures', 2); pad(a, 2)
@@ -1837,30 +1857,154 @@ def V_tank(key, L, W, twin=False, laser=False, art=False):
             a.box('steel', .07, .07, .06, x=x, z=L * .55, node=br)
     return a
 
+def mining_truck_ore(a, parent, fw, tw, H, blen):
+    """The mining truck's load (bin_ore: PezMotion scales it in Y with the cargo, from inside the floor): a lumpy pile of
+    the ore's own field shapes, three courses heaped to an uneven crown over the hopper's rim: iron as cinnamon slabs
+    (set 0), copper as rounded nuggets (1), crystal as standing shards (2), uranium as rods (3). There is no smooth heap
+    under them: the dark hopper shows between the lumps as crevices, so the shapes read even where crystal and uranium
+    glow. Everything is M_Ore_Cinnamon, so Models.TintOre colours it. Sets 1-3 ship at scale 0.001; VehicleWorks shows
+    the one for the load's ore (mt_ore_<type>) and switches the others off."""
+    # The courses: (pieces, height of their middles over the floor, half spread across x and z). The bottom course sits
+    # just under the rim and fills the mouth; each course above is smaller, so the pile crowns off-centre and uneven.
+    courses = ((12, H - .04, .215, .17), (7, H, .16, .12), (3, H + .04, .07, .05))
+    zc = -.07                                    # the mouth runs further back than the floor (the raked tail)
+    # Under the lumps, a dark bed fills the hopper to just below them: the gaps between lumps read as shadowed crevices.
+    inner = lambda y: fw + (tw - fw) * y / H - .034
+    bed = [(x * inner(y) * k, y, z) for y, k in ((.03, 1), (H - .07, 1)) for x in (-1, 1) for z in (-.2, .18)]
+    bed += [(x * .2, H - .035, z) for x in (-1, 1) for z in (-.22, .13)]
+    chassis_solid(a, 'dark', bed, parent)
+    for t in range(4):
+        rng = np.random.default_rng(31 + t)
+        sn = a.node(f'mt_ore_{t}', parent, (0, 0, 0), scale=None if t == 0 else (.001, .001, .001))
+        for n, cy, sx, sz in courses:
+            for k in range(n):
+                f = 2 * math.pi * (k + rng.uniform(-.3, .3)) / n
+                u = .45 + .55 * rng.random() if n > 3 else rng.random()
+                x, z = math.cos(f) * sx * u, math.sin(f) * sz * u + zc
+                y = cy + rng.uniform(-.012, .012)
+                tilt = rx(rng.uniform(-25, 25)) @ rz(rng.uniform(-25, 25))
+                yaw = ry(rng.uniform(0, 180))
+                if t == 0:   # iron: slabs, as the field's
+                    a.box('cinnamon', .12, .036, .08, x=x, y=y, z=z, node=sn, rot=yaw @ tilt)
+                elif t == 1:   # copper: rounded nuggets
+                    a.cyl('cinnamon', .048, .036, x=x, y=y, z=z, node=sn, sections=5, rot=yaw @ tilt)
+                elif t == 2:   # crystal: the field's five-sided shards standing out of the pile
+                    c = trimesh.creation.cone(radius=.036, height=rng.uniform(.1, .14), sections=5)
+                    c.apply_transform(rx(rng.uniform(-12, 12)) @ rz(rng.uniform(-12, 12)) @ ry(rng.uniform(0, 90)) @ rx(-90))
+                    c.apply_translation((x * .88, y - .03, zc + (z - zc) * .88))   # pulled in: their bases sit low, where the walls narrow
+                    a.add(sn, 'cinnamon', c)
+                else:   # uranium: the field's cylindrical rods, crossing every which way
+                    a.cyl('cinnamon', .017, .12, x=x, y=y, z=z, axis='z', node=sn, sections=5, rot=yaw @ tilt)
+    return parent
+
+
 def V_mining_truck():
-    L, W = 1.0, .62; a = Asset('mining_truck', 'units', L); tracks(a, L, W)
-    a.box('smoke', W * .6, .16, L * .9, y=.18)
-    a.box('team', W * .55, .18, .28, y=.35, z=.25)
-    sp = a.node('spinner', a.key, (0, .17, L / 2 - .16))
-    a.cyl('steel', .15, W * .7, axis='x', node=sp)
-    for k in range(6):
-        ang = k * math.pi / 3
-        a.box('steel', W * .7, .05, .06, y=math.sin(ang) * .16, z=math.cos(ang) * .16, node=sp, rot=rx(math.degrees(ang)))
-    bn = a.node('bin', a.key, (0, .26, -.405))      # pivot on the rear bottom edge, so it tips to unload
-    a.box('dark', W * .55, .2, .45, y=.1, z=.225, node=bn)
-    ore = a.node('bin_ore', bn, (0, .16, .225))      # scale Y 0..1 with load
-    for (x, z, r) in ((-.08, -.08, 10), (.08, .05, -20), (0, .1, 30), (-.06, .1, 0)):
-        a.box('cinnamon', .12, .06, .07, x=x, y=.06, z=z, node=ore, rot=ry(r))
+    """The mining truck: a candy ore hauler on tracks. The hopper is the hero: a deep, flared tub riding high on its
+    subframe and hinged at its rear edge over a raked tail spout, its load a pile of the ore's own lumps above the rim.
+    The shared work cab sits up front, and a toothed cutter drum on two arms at the bow, under a short mudguard, digs the ore.
+    Nodes: spinner (the drum, PezMotion: X), bin (the hopper, hinged on its rear bottom edge: PezMotion tips it at the
+    dock), bin_ore (the load), mt_ore_0..3, cab_head, wt_beacon, exhaust."""
+    L, W = 1.0, .70
+    a = Asset('mining_truck', 'units', L)
+    ch = candy_chassis(a, L, W, gear='tracks', track_h=.2, track_w=.16, deck_h=.08, nose=.2, road_inset=.21)
+    hu, deck, HY = ch['hull'], ch['deck'], ch['HY']
+    # The cab, forward, its stack beside it on the right (the hopper covers the deck's own stack slot).
+    work_cab(a, ch, zf=ch['nose_z'] - .012, w=.32, d=.19)
+    st = a.node('mt_stack', hu, (-.17, deck, .1))
+    chassis_stack(a, st, h=.2, r=.022)
+    # The subframe the hopper rides on: two smoke rails ending in the hinge brackets at the tail. The hinge sits high so
+    # the dock's chute (DockView) slides in under the tail.
+    hinge_y, hinge_z = .38 - HY, -.4
+    for s in (1, -1):
+        a.box('smoke', .045, hinge_y - deck - .01, .4, x=s * .11, y=(deck + hinge_y) / 2 - .005, z=-.16, node=hu)
+        a.box('smoke', .05, hinge_y - deck - .03, .06, x=s * .15, y=(deck + hinge_y) / 2 - .015, z=hinge_z + .02, node=hu)   # the pin rests on it
+    # The hopper (bin), hinged on its rear bottom edge: the floor runs forward from the hinge, the walls flare out over
+    # the tracks, a raked spout over the hinge pours the load into the dock's chute when it tips.
+    fw, tw, H, blen, th = .19, .33, .3, .44, .026
+    bn = a.node('bin', hu, (0, hinge_y, hinge_z))
+    wall = lambda s, y, z, off=0: (s * (fw + (tw - fw) * y / H + off), y, z)
+    a.box('dark', 2 * fw, .03, blen, y=.015, z=blen / 2, node=bn)                                             # floor
+    chassis_solid(a, 'dark', [(x, y, z) for x in (-fw, fw) for y, z in ((0, -.02), (.03, .01), (.13, -.12), (.155, -.115))], bn)   # tail spout
+    for s in (1, -1):
+        chassis_solid(a, 'dark', [wall(s, y, z, o) for y, z in ((0, -.02), (0, blen), (H, -.12), (H, blen)) for o in (-th, 0)], bn)
+        # The outer skin: cream, with the team band round the top (the family's wrapper band) and a licorice lip.
+        chassis_solid(a, 'cream', [wall(s, y, z, o) for y, z in ((.012, -.012), (.012, blen - .005), (H - .075, -.1), (H - .075, blen - .005)) for o in (0, .01)], bn)
+        # A skirt under the wall, ahead of the chute's reach: it seats the hopper on the hull and tips with it.
+        chassis_solid(a, 'cream', [wall(s, y, z, o) for y, z in ((-.082, .12), (-.082, blen - .005), (.014, .1), (.014, blen - .005)) for o in (0, .01)], bn)
+        chassis_solid(a, 'team', [wall(s, y, z, o) for y, z in ((H - .075, -.1), (H - .075, blen + .003), (H - .02, -.115), (H - .02, blen + .003)) for o in (0, .012)], bn)
+        chassis_solid(a, 'licorice', [wall(s, y, z, o) for y, z in ((H - .02, -.118), (H - .02, blen + .01), (H + .012, -.122), (H + .012, blen + .01)) for o in (-th - .004, .016)], bn)
+        for z in (.1, .3):                                                                                      # steel ribs
+            chassis_solid(a, 'steel', [wall(s, y, z + dz, o) for y in (.01, H - .08) for dz in (-.014, .014) for o in (.008, .026)], bn)
+    # The front wall, its outer face cream and banded, and the licorice lip across it.
+    chassis_solid(a, 'dark', [(s * (fw + (tw - fw) * y / H), y, z) for s in (-1, 1) for y in (0, H) for z in (blen - th, blen)], bn)
+    a.box('cream', 2 * tw - .04, H - .09, .01, y=(H - .09) / 2 + .012, z=blen + .004, node=bn)
+    a.box('team', 2 * tw + .01, .055, .014, y=H - .047, z=blen + .006, node=bn)
+    a.box('licorice', 2 * tw + .03, .032, th + .03, y=H - .004, z=blen - th / 2 + .006, node=bn)
+    a.cyl('steel', .026, .36, axis='x', node=bn, sections=8)                                                # the hinge pin, over the brackets
+    mining_truck_ore(a, a.node('bin_ore', bn, (0, .006, blen / 2)), fw, tw, H, blen)
+    # The cutter drum at the bow, between the belts, on two arms under a short cream mudguard over its back: the drum's
+    # face and top, and the teeth turning, are in view from the camera.
+    dz, dy, R_ = ch['L'] / 2 + .125, .13 - HY, .085
+    for s in (1, -1):
+        a.strut('steel', (s * .165, deck - .03, .36), (s * .165, dy, dz), .022, node=hu, sections=6)
+        a.strut('licorice', (s * .1, deck - .01, .38), (s * .16, dy + .07, dz - .125), .014, node=hu, sections=6)  # its ram
+        a.cyl('steel', .03, .03, x=s * .163, y=dy, z=dz, axis='x', node=hu, sections=6)
+    hood = [(math.cos(math.radians(f)) * (R_ + .06), math.sin(math.radians(f)) * (R_ + .06)) for f in range(100, 176, 25)]
+    a.hoop('cream', [(0, dy + y, dz + z) for z, y in hood], .148, node=hu, closed=False, sides=8, side=(1, 0, 0), r2=.012)
+    a.hoop('team', [(0, dy + y, dz + z) for z, y in hood[:2]], .151, node=hu, closed=False, sides=8, side=(1, 0, 0), r2=.014)
+    sp = a.node('spinner', hu, (0, dy, dz))
+    a.cyl('dark', R_, .26, axis='x', node=sp, sections=8)
+    for s in (1, -1): a.cyl('steel', R_ + .012, .018, x=s * .135, axis='x', node=sp, sections=10)   # thin: a crisp end ring
+    for i in range(5):                                   # five rings of staggered blade teeth (thin: left sharp), so the spin reads
+        x = -.1 + i * .05
+        for k in range(6):
+            f = 2 * math.pi * k / 6 + i * .5
+            a.box('steel', .018, .05, .034, x=x, y=math.sin(f) * (R_ + .016), z=math.cos(f) * (R_ + .016), node=sp, rot=rx(-math.degrees(f)))
     return a
 
+
 def V_outpost_truck():
-    L, W = 1.1, .62; a = Asset('outpost_truck', 'units', L); wheels(a, L, W, n=3)
-    a.box('dark', W * .8, .08, L * .95, y=.2)
-    a.box('team', W * .78, .22, .24, y=.35, z=.4)
-    a.box('smoke', W * .7, .26, .6, y=.37, z=-.1)
-    a.box('team', W * .6, .06, .5, y=.53, z=-.1)
-    a.cyl('steel', .02, .3, x=.15, y=.66, z=-.3, axis='z', rot=rx(0))
+    """The outpost truck: the outpost's dispenser lying on a six-wheeled flatbed, window up. Its load is the outpost's own
+    stem and team flip-top head (outpost_stem, outpost_head), rolled onto its solid side so the clear window and the
+    pressed-ore bricks behind it face the sky and the team grip ribs face the right flank, the head over the front wheels
+    as its nose. It rests in a cream bed frame (two cream cradles and cream side boards with a team stripe), pivoted on the
+    tail's right corner. Deploying, VehicleWorks lines the truck up on the site and swings the dispenser up and round off
+    that corner (one turn that both stands it up and rolls it back), planting its foot (ot_anchor) where the outpost's stem
+    goes, and the outpost rises round it as the truck sinks away."""
+    L, W = 1.2, .7
+    a = Asset('outpost_truck', 'units', L)
+    ch = candy_chassis(a, L, W, gear='wheels', axles=[(.4, .088, True), (-.1, .115, False), (-.38, .115, False)], deck_h=.08, nose=.14,
+                      bow_clear=.035)
+    hu, deck, bw = ch['hull'], ch['deck'], ch['bw']
+    zr = -L / 2 + .015
+    k = 1.02
+    h = OUTPOST_STEM_W / 2 * k                                           # the carried stem's half width
+    cr = .165                                                            # the bed's height: the head clears the front wings
+    rx_, rz0, rz1 = h + .06, zr + .03, zr + .86                          # the side boards: just outside the load, tail to head
+    # The bed frame: two cream cradles (a block on the deck and a crossbar out to the boards) and a cream board
+    # down each side, clear of the wings below; the load lies between the boards on the cradles.
+    for z in (zr + .12, zr + .7):
+        a.box('cream', bw - .04, cr - .03, .07, y=deck + (cr - .03) / 2, z=z, node=hu)
+        a.box('cream', 2 * rx_ + .04, .04, .07, y=deck + cr - .02, z=z, node=hu)
+    sb = .17                                                             # the side boards: cream up to the load's middle
+    for sx in (1, -1):
+        a.box('cream', .04, sb, rz1 - rz0, x=sx * rx_, y=deck + cr - .02 + sb / 2, z=(rz0 + rz1) / 2, node=hu)
+        a.box('team', .046, .025, rz1 - rz0 - .06, x=sx * rx_, y=deck + cr + sb - .06, z=(rz0 + rz1) / 2, node=hu)   # a team stripe
+    # The dispenser: pivoted on the tail's right corner (ot_stem, its bottom corner as it lies). Lying, it's the outpost's
+    # stem and head laid forward and rolled onto the side opposite its window; upright (identity) it's exactly the outpost's
+    # own, turned to face the truck's bow, 2% fuller across so it never fights the outpost's own rising inside it.
+    st = a.node('ot_stem', hu, (-h, deck + cr, zr), rot=rx(90) @ ry(-90))
+    bd = a.node('ot_stem_body', st, (-h, -.1, -h), rot=ry(180), scale=(k, 1, k))
+    zf, zb, sw, s1 = outpost_stem(a, bd, sz=0, silo='ot_silo', bricks=2)
+    outpost_head(a, bd, zb, sw, s1, name='ot_head')
+    a.box('smoke', sw - .1, .03, sw - .1, y=.115, node=bd)                # its foot plate, inside the walls (the outpost's stands on its pad)
+    a.node('ot_anchor', bd, (0, .1, 0))                                  # the stem's foot: it lands on the outpost's
+    # The exhaust: a short stack on the left flank between the front and middle wheels, under the bed.
+    sk = a.node('ot_stack', hu, (bw / 2 + .022, deck - .06, .16))
+    a.cyl('steel', .016, .18, y=.09, node=sk, sections=8)                # a plain pipe (the kit's capped stack costs 350 triangles)
+    a.node('exhaust', sk, (0, .19, 0))
     return a
+
 
 def V_construction_truck():
     """The construction truck: the command center folded up on tracks. The bottom three panels of the command center's
@@ -1983,15 +2127,57 @@ def chassis_prism(a, m, prof, x0, x1, node=None, dy=0):
     chassis_solid(a, m, [(x, y + dy, z) for z, y in prof for x in (x0, x1)], node)
 
 def candy_chassis(a, L, W, gear='tracks', track_h=.17, track_w=None, axles=None, deck_h=.1, nose=.2, turret_z=None,
-                  lamps=True, grille=True):
+                  lamps=True, grille=True, belt=None, wings=True, bow_clear=0, road_inset=None):
     hl = L / 2
     g = a.node('gear', a.key)
     ch = dict(gear_kind=gear, L=L, W=W, gear=g)
-    if gear == 'tracks':
+
+    def tyre(i, z, r, steer, tw):
+        # One axle's pair of tyres (wheels, and a half-track's front): a steered one on a knuckle in a cycle fender.
+        for s, sd in ((1, 'l'), (-1, 'r')):
+            x = s * (W / 2 - tw / 2)
+            parent = g
+            if steer:
+                parent = a.node(f'steer_{sd}{i}', g, (x, r, z))
+                chassis_wing(a, parent, r, tw, (-15, 60), gap=.022)   # a cycle fender: it steers with the tyre
+                wh = a.node(f'wheel_{sd}{i}', parent)
+            else:
+                wh = a.node(f'wheel_{sd}{i}', g, (x, r, z))
+                # The wing over an unsteered tyre rides with the axle (unsprung, as the steered ones do), so it sits
+                # low over the tread and the body's bounce never brings the two together.
+                if wings: chassis_wing(a, a.node(f'wing_{sd}{i}', g, (x, r, z)), r, tw, (-40, 65), gap=.025)
+            # A fat licorice balloon tyre, a cream hub with three dark bolts (the spin reads), a dark cap.
+            a.cyl('licorice', r, tw, axis='x', node=wh, sections=14)
+            a.cyl('cream', r * .52, .014, x=s * (tw / 2 + .002), axis='x', node=wh, sections=14)
+            for k in range(3):
+                f = k * 2 * math.pi / 3
+                a.cyl('dark', r * .1, .01, x=s * (tw / 2 + .01), y=math.cos(f) * r * .3, z=math.sin(f) * r * .3, axis='x', node=wh, sections=6)
+            a.cyl('dark', r * .16, .012, x=s * (tw / 2 + .012), axis='x', node=wh, sections=8)
+
+    def narrow_bow(tw, bw):
+        # The bow narrows ahead of a steered axle, so the tyres swing to full lock (28 deg) clear of it.
+        steered = [(z, r) for z, r, st in axles if st]
+        if steered:
+            zs, rs = max(steered)
+            inner = W / 2 - tw
+            bow_w = 2 * (inner - rs * math.sin(math.radians(28)) - tw / 2 * (1 - math.cos(math.radians(28))) - .035 - bow_clear)
+            ch.update(bow_w=min(bw, bow_w), bow_z=zs - rs - .08 - bow_clear)
+
+    if gear in ('tracks', 'halftrack'):
         th = track_h
         tw = track_w or max(.12, min(.2, W * .22))
         xo, xi = W / 2, W / 2 - tw
-        lt = hl - .01                                    # the belt's half length
+        belt_z = 0
+        if gear == 'halftrack':
+            # A half-track: steered tyres up front (axles: [(z, r, True)]) and the belts under the back, from belt[0] to
+            # belt[1] along z (default: the stern to just behind the front tyres).
+            axles = axles or [(hl * .62, th * .62, True)]
+            zf_ax, rf_ax, _ = max(axles)
+            b0, b1 = belt or (-hl + .01, zf_ax - rf_ax - .075)
+            lt, belt_z = (b1 - b0) / 2, (b1 + b0) / 2
+        else:
+            lt = hl - .01                                # the belt's half length
+        Z = (lambda z: z + belt_z) if belt_z else (lambda z: z)  # along the hull: the belt's middle is at belt_z (0 on full tracks)
         flat = lt - .08                                  # the top run's half length (between the raked ends)
         HY = th * .7
         P = CHASSIS_TREAD_PITCH
@@ -1999,18 +2185,18 @@ def candy_chassis(a, L, W, gear='tracks', track_h=.17, track_w=None, axles=None,
             # The belt: a licorice loop with raked ends, the road wheels and their steel hubs on its outer face.
             prof = [(-lt + .07, 0), (lt - .07, 0), (lt, th * .42), (lt - .025, th * .8), (lt - .08, th),
                     (-lt + .08, th), (-lt + .025, th * .8), (-lt, th * .42)]
+            if belt_z: prof = [(Z(z), y) for z, y in prof]
             chassis_prism(a, 'licorice', prof, s * xi, s * xo, node=g)
             wr = th * .3
-            nw = max(3, int((2 * lt - .38) / .15) + 1)
-            # Clear of the sprocket's and idler's sweep: both grow with the belt's height, so a taller belt (over 0.17) keeps
-            # its end road wheels further in (the sprocket's teeth reach 0.36 th + 0.021 from its centre, a wheel 0.3 th).
-            ins = .21 if th <= .17 else max(.21, th * .66 + .105)
+            nw = max(3 if gear == 'tracks' else 2, int((2 * lt - .38) / .15) + 1)   # a half-track's short belt: 2
+            # Preserve the taller-belt clearance used by shipped vehicles; a reviewed legacy layout can override it.
+            ins = road_inset if road_inset is not None else (.21 if th <= .17 else max(.21, th * .66 + .105))
             for z in np.linspace(-lt + ins, lt - ins, nw):
-                a.cyl('dark', wr, .018, x=s * (xo + .006), y=wr + .016, z=z, axis='x', node=g, sections=10)
-                a.cyl('steel', wr * .45, .012, x=s * (xo + .019), y=wr + .016, z=z, axis='x', node=g, sections=8)
+                a.cyl('dark', wr, .018, x=s * (xo + .006), y=wr + .016, z=Z(z), axis='x', node=g, sections=10)
+                a.cyl('steel', wr * .45, .012, x=s * (xo + .019), y=wr + .016, z=Z(z), axis='x', node=g, sections=8)
             # Drive sprocket at the back (steel, toothed) and idler at the front (dark, three bolts): they turn.
             for nm, z, kind in (('sprocket_' + sd, -lt + .075, 's'), ('idler_' + sd, lt - .075, 'i')):
-                sp = a.node(nm, g, (s * (xo + .012), th * .48, z))
+                sp = a.node(nm, g, (s * (xo + .012), th * .48, Z(z)))
                 r = th * .36
                 if kind == 's':
                     a.cyl('steel', r, .018, axis='x', node=sp, sections=16)
@@ -2026,7 +2212,7 @@ def candy_chassis(a, L, W, gear='tracks', track_h=.17, track_w=None, axles=None,
                         a.cyl('dark', r * .13, .012, x=s * .02, y=math.cos(f) * r * .3, z=math.sin(f) * r * .3, axis='x', node=sp, sections=6)
             # The cleats on the top run: a strip VehicleWorks slides back by up to one pitch and wraps. The front-most
             # starts at the run's front end; the strip stops a pitch short of the back, so slid it still ends on the run.
-            tr = a.node('tread_' + sd, g, (s * (xo + xi) / 2, th, 0))
+            tr = a.node('tread_' + sd, g, (s * (xo + xi) / 2, th, Z(0)))
             n = int((2 * flat - P) / P) + 1
             for k in range(n):
                 a.box('smoke', tw, .014, .034, y=.007, z=flat - .02 - k * P, node=tr)
@@ -2034,42 +2220,23 @@ def candy_chassis(a, L, W, gear='tracks', track_h=.17, track_w=None, axles=None,
         bw = 2 * xi - .014                               # the tub sits between the belts
         cover = flat - P - .05                           # the track guards reach this far in from each belt end: they hide the wrap
         ch.update(tw=tw, th=th)
+        if gear == 'halftrack':
+            # The front tyres, their outer faces flush with the belts', and the bow narrowed between them.
+            twt = max(.07, W * .15)
+            for i, (z, r, steer) in enumerate(axles): tyre(i, z, r, steer, twt)
+            narrow_bow(twt, bw)
+            ch.update(axles=axles, tyre_w=twt, belt=(belt_z - lt, belt_z + lt))
     else:
         axles = axles or [(hl * .6, .095, True), (-hl * .55, .12, False)]
         tw = track_w or max(.07, W * .17)
         rmax = max(r for _, r, _ in axles)
         HY = rmax * 1.05
-        for i, (z, r, steer) in enumerate(axles):
-            for s, sd in ((1, 'l'), (-1, 'r')):
-                x = s * (W / 2 - tw / 2)
-                parent = g
-                if steer:
-                    parent = a.node(f'steer_{sd}{i}', g, (x, r, z))
-                    chassis_wing(a, parent, r, tw, (-15, 60), gap=.022)   # a cycle fender: it steers with the tyre
-                    wh = a.node(f'wheel_{sd}{i}', parent)
-                else:
-                    wh = a.node(f'wheel_{sd}{i}', g, (x, r, z))
-                    # The wing over an unsteered tyre rides with the axle (unsprung, as the steered ones do), so it sits
-                    # low over the tread and the body's bounce never brings the two together.
-                    chassis_wing(a, a.node(f'wing_{sd}{i}', g, (x, r, z)), r, tw, (-40, 65), gap=.025)
-                # A fat licorice balloon tyre, a cream hub with three dark bolts (the spin reads), a dark cap.
-                a.cyl('licorice', r, tw, axis='x', node=wh, sections=14)
-                a.cyl('cream', r * .52, .014, x=s * (tw / 2 + .002), axis='x', node=wh, sections=14)
-                for k in range(3):
-                    f = k * 2 * math.pi / 3
-                    a.cyl('dark', r * .1, .01, x=s * (tw / 2 + .01), y=math.cos(f) * r * .3, z=math.sin(f) * r * .3, axis='x', node=wh, sections=6)
-                a.cyl('dark', r * .16, .012, x=s * (tw / 2 + .012), axis='x', node=wh, sections=8)
+        for i, (z, r, steer) in enumerate(axles): tyre(i, z, r, steer, tw)
         hu = a.node('hull', a.key, (0, HY, 0))
         bw = W - 2 * tw - .04
         th = HY
         ch.update(tw=tw, axles=axles)
-        # The bow narrows ahead of a steered axle, so the tyres swing to full lock (28 deg) clear of it.
-        steered = [(z, r) for z, r, st in axles if st]
-        if steered:
-            zs, rs = max(steered)
-            inner = W / 2 - tw
-            bow_w = 2 * (inner - rs * math.sin(math.radians(28)) - tw / 2 * (1 - math.cos(math.radians(28))) - .035)
-            ch.update(bow_w=min(bw, bow_w), bow_z=zs - rs - .08)
+        narrow_bow(tw, bw)
     # ---- the sprung hull: a raked cream tub, its team band, track guards, bumper, lamps and the engine grille.
     dy = -HY
     deck_y = th + deck_h
@@ -2087,7 +2254,7 @@ def candy_chassis(a, L, W, gear='tracks', track_h=.17, track_w=None, axles=None,
         chassis_solid(a, m, pts, hu)
     tapered('cream', tub, bw / 2)
     tapered('team', band, bw / 2 + .004)
-    if gear == 'tracks':
+    if gear in ('tracks', 'halftrack'):
         # Track guards over both ends of the belts: a rounded cream band just the belt's width, tucked against the hull's
         # flank under its band, running flat over the end of the top run (where the cleats wrap) and curling down round
         # the sprocket or idler. They hide the wrap and leave the middle of the run, and its moving cleats, in view.
@@ -2101,7 +2268,7 @@ def candy_chassis(a, L, W, gear='tracks', track_h=.17, track_w=None, axles=None,
             path += [(xg, gy - R + math.cos(math.radians(f)) * R + dy, zc + end * math.sin(math.radians(f)) * R)
                      for f in range(0, 91, 18)]
             for s in (1, -1):
-                a.hoop('cream', [(s * x, y, z) for x, y, z in path], hw, node=hu, closed=False, sides=12, side=(1, 0, 0), r2=ht)
+                a.hoop('cream', [(s * x, y, Z(z)) for x, y, z in path], hw, node=hu, closed=False, sides=12, side=(1, 0, 0), r2=ht)
     # Bow: a licorice bumper; lamps at the glacis's top corners (bone lenses in steel rims, unlit: glow means state).
     a.box('licorice', bw - .01 if gear == 'tracks' else ch.get('bow_w', bw) * .85, .05, .05, y=th * .7 + dy, z=zf - .045, node=hu)   # tucked under the rounded nose
     gz, gy = zf - nose, deck_y
@@ -2128,6 +2295,7 @@ def candy_chassis(a, L, W, gear='tracks', track_h=.17, track_w=None, axles=None,
     ch['slot_lights'] = a.node('slot_lights', hu, (0, deck, gz + .02))
     return ch
 
+
 def chassis_wing(a, node, r, tw, arc=(-40, 70), gap=.03, m='cream'):
     """A wheel's wing: a curved cream plate over the tyre (radius r, width tw) on `node` at the axle, from arc[0] to
     arc[1] degrees (0 is straight up, + toward the bow), `gap` clear of the tread."""
@@ -2137,12 +2305,16 @@ def chassis_wing(a, node, r, tw, arc=(-40, 70), gap=.03, m='cream'):
     path = [(0, math.cos(math.radians(f)) * R, math.sin(math.radians(f)) * R) for f in np.linspace(arc[0], arc[1], 10)]
     a.hoop(m, path, tw / 2 + .01, node=node, closed=False, sides=12, side=(1, 0, 0), r2=ht)
 
-def chassis_head(a, ch, w, d, h, at=None, turret=True, lid=False, eyes=True, mouth=True, ring=True):
+def chassis_head(a, ch, w, d, h, at=None, turret=True, lid=False, eyes=True, mouth=True, ring=True, tilt=None, hollow=False):
     """The team flip-top head on the hull at `at` (hull space; default ch['turret_at']) on a smoke turret ring: a rounded
     block with a loaf crown, a chin over the dark mouth (the gun's port), two porthole eyes, and the dispenser's steel
     hinge pin across its back edge. turret=True puts it on a `turret` node (PezMotion yaws it); False leaves it fixed (a
-    cab's cap). lid=True puts the crown on a `lid` node hinged at the back edge. ring=False leaves out the turret ring (a
-    fixed cap seated on a cab, where it would only be hidden). Returns the nodes and the mouth (head space)."""
+    cab's cap). lid=True puts the crown on a `lid` node hinged at the back edge. tilt='<node>' hinges the whole head at
+    its back bottom edge on a node of that name under the turret (a dispenser's head tipping back: the artillery lays its
+    gun with it), with steel hinge knuckles on the turret; its owner pitches it. hollow=True builds the block as four
+    walls open underneath (HEAD_WALL thick) under a crown with a dark ceiling, so what the turret carries inside it shows
+    when a tilted head tips back. ring=False omits the neck on a fixed cab cap. Returns the nodes, `head` (the node the head is built on: the turret unless tilted),
+    the mouth (head space) and `inner` (the hollow's half width and half depth)."""
     hu = ch['hull']
     x, y, z = at or ch['turret_at']
     rr = min(w, d) * .4
@@ -2151,8 +2323,27 @@ def chassis_head(a, ch, w, d, h, at=None, turret=True, lid=False, eyes=True, mou
         a.cyl('dark', rr * .78, .02, x=x, y=y + .011, z=z, node=hu, sections=18)      # ...dark inside: the wreck shows it
     base = (x, y + .022, z)
     hn = a.node('turret', hu, base) if turret else a.node('cab_head', hu, base)
+    tn = hn
+    if tilt:
+        # The hinge at the head's back bottom edge: the tilt node sits on it and the head is built a half depth ahead.
+        pv = a.node(tilt, tn, (0, .012, -d / 2))
+        for s in (1, -1): a.cyl('steel', .0095, .03, x=s * (w / 2 + .015), y=.012, z=-d / 2, axis='x', node=tn, sections=10)
+        hn = a.node(tilt + '_head', pv, (0, -.012, d / 2))
     split = h * .58
-    a.box('team', w, split, d, y=split / 2, node=hn)
+    t = HEAD_WALL
+    if hollow:
+        a.box('team', w, split, t, y=split / 2, z=-d / 2 + t / 2, node=hn)              # back wall
+        # An actual opening through the front wall for the recoiling gun and its wrapped round.
+        port = .055
+        for s in (1, -1):
+            a.box('team', w / 2 - port, split, t, x=s * (w / 2 + port) / 2,
+                  y=split / 2, z=d / 2 - t / 2, node=hn)
+            a.box('team', t, split, d - 2 * t, x=s * (w / 2 - t / 2), y=split / 2, node=hn)  # the sides
+        for y in ((split / 2 - port) / 2, (split * 1.5 + port) / 2):
+            a.box('team', 2 * port, split / 2 - port, t, y=y, z=d / 2 - t / 2, node=hn)
+        a.box('dark', w - 2 * t, .008, d - 2 * t, y=split - .004, node=hn)                   # the ceiling inside
+    else:
+        a.box('team', w, split, d, y=split / 2, node=hn)
     top = a.node('lid', hn, (0, split, -d / 2)) if lid else hn
     oy, oz = (0, d / 2) if lid else (split, 0)              # the crown's centre line in `top` space
     # The loaf crown: a half-round across the head (its lower half sits inside the block), as on the factory's head.
@@ -2165,11 +2356,21 @@ def chassis_head(a, ch, w, d, h, at=None, turret=True, lid=False, eyes=True, mou
         t = np.linspace(0, math.pi, 13)
         loaf = trimesh.convex.convex_hull(np.array([(x, oy + (h - split) * math.sin(f), oz + d / 2 * math.cos(f))
                                                     for f in t for x in (-w * .49, w * .49)]))
+    if hollow:
+        # The crown is convex: its retained vertices close the flat cut without an optional polygon triangulator.
+        loaf = trimesh.convex.convex_hull(loaf.slice_plane([0, oy, 0], [0, 1, 0], cap=False).vertices)
     a.add(top, 'team', loaf)
     my = split * .5
     if mouth:
-        a.box('team', w * .9, .03, .04, y=split * .78, z=d / 2 + .012, node=hn)        # the chin over the mouth
-        a.box('dark', w * .5, split * .5, .02, y=my, z=d / 2 + .002, node=hn)          # the mouth: the gun's port
+        if hollow:
+            # The port is open; its cheeks frame it without a flat disc behind the gun.
+            for s in (1, -1):
+                a.box('team', w * .45 - .055, .03, .04, x=s * (w * .45 + .055) / 2,
+                      y=split * .78, z=d / 2 + .012, node=hn)
+                a.box('dark', .014, split * .5, .02, x=s * .062, y=my, z=d / 2 + .002, node=hn)
+        else:
+            a.box('team', w * .9, .03, .04, y=split * .78, z=d / 2 + .012, node=hn)        # the chin over the mouth
+            a.box('dark', w * .5, split * .5, .02, y=my, z=d / 2 + .002, node=hn)          # the mouth: the gun's port
     if eyes:
         # Two porthole eyes on the crown's face, a third of the way up it.
         ey, ez = oy + (h - split) * .3, oz + d / 2 * .95
@@ -2182,7 +2383,9 @@ def chassis_head(a, ch, w, d, h, at=None, turret=True, lid=False, eyes=True, mou
     a.node('crown', top, (0, oy + (h - split), oz))
     a.node('cheek_l', hn, (w / 2, split * .5, 0))
     a.node('cheek_r', hn, (-w / 2, split * .5, 0))
-    return dict(turret=hn, lid=top if lid else None, mouth=(0, my, d / 2), w=w, d=d, h=h)
+    return dict(turret=tn, head=hn, lid=top if lid else None, mouth=(0, my, d / 2), w=w, d=d, h=h,
+                inner=(w / 2 - t, d / 2 - t) if hollow else None)
+
 
 def chassis_cannon(a, hd, length, r=.03):
     """A cannon in the head's mouth: a smoke mantlet, a steel tube with a team band, a licorice muzzle brake, and the
@@ -2254,6 +2457,415 @@ def V_scout_buggy():
     for k in range(3): a.box('dark', .006, .035, .1, x=.104, y=deck + .03, z=-.25 + (k - 1) * .035, node=hu)
     chassis_stack(a, ch['slot_stack'], h=.07, r=.018)
     return a
+
+
+APC_L, APC_W = 1.0, .66
+
+
+APC_RAMP_LEN = .29                                 # VehicleWorks.RampOpen (127 deg) lays its tip just off the ground
+
+
+APC_BEADS = 7                                       # roll-down wrapper strips (VehicleWorks deploys and sways them)
+
+
+APC_SEATS = [(.15, -.17), (.15, -.29), (.15, -.41), (-.15, -.23), (-.15, -.37)]   # the domes on the roof: (x, z), hull space
+
+
+def apc_trooper_head(a, nd):
+    """A seated candy trooper's head on `nd`: the cream ball under the team helmet with its brim (the
+    candy_trooper's head at about 0.4 of its size), so the domes read as a count of team helmets from the high camera."""
+    a.sphere('cream', .036, y=.03, z=.003, node=nd, sub=1)
+    dome = trimesh.creation.icosphere(subdivisions=1, radius=.039)
+    dome.apply_scale((1, .92, 1)); dome.apply_translation((0, .038, -.003))
+    dome = dome.slice_plane([0, .038, 0], [0, 1, 0], cap=False)
+    a.add(nd, 'team', dome)
+    a.cyl('team', .043, .008, y=.038, z=-.003, node=nd, sections=12)                  # brim
+
+
+def V_apc():
+    """The APC: armoured transport for 5 infantry with a machine gun (Defs: 2.8 tiles/s, radius 0.5, 600 hp). A troop
+    box on six tyres, a rear ramp, five roof domes that show who's aboard, and the gunner's team head up front."""
+    L, W = APC_L, APC_W
+    a = Asset('apc', 'units', L)
+    ch = candy_chassis(a, L, W, gear='wheels', axles=[(.3, .1, True), (-.02, .11, False), (-.31, .11, False)], deck_h=.1, nose=.22,
+                       wings=False)
+    hu, HY, deck_y = ch['hull'], ch['HY'], ch['deck_y']
+    dy = -HY
+    zr = -L / 2 + .01                                   # the box's back face
+    lo_w, up_w, up_y0, roof = .37, .6, .31, .49         # lower box between the tyres, upper box over them
+    # The troop box: a narrow lower body between the tyres and a wide upper one over them, its sponsons the six tyres'
+    # fenders (clear of them and of the front fenders' sweep through the hull's pitch, roll and heave), its front raked.
+    chassis_prism(a, 'cream', [(zr, deck_y - .02), (.08, deck_y - .02), (.08, up_y0 + .01), (zr, up_y0 + .01)], -lo_w / 2, lo_w / 2, node=hu, dy=dy)
+    chassis_prism(a, 'cream', [(zr, up_y0), (.12, up_y0), (.04, roof), (zr, roof)], -up_w / 2, up_w / 2, node=hu, dy=dy)
+    # The team wrapper round the upper box, and a licorice rub strip along its lower edge.
+    chassis_prism(a, 'team', [(zr - .004, .39), (.093, .39), (.08, .42), (zr - .004, .42)], -up_w / 2 - .005, up_w / 2 + .005, node=hu, dy=dy)
+    for s in (1, -1):
+        a.box('licorice', .012, .018, .6, x=s * (up_w / 2 + .004), y=up_y0 + .012 + dy, z=-.17, node=hu)
+        # Vision slits on both flanks.
+        for k in range(3):
+            a.box('licorice', .008, .022, .07, x=s * (up_w / 2 + .002), y=.455 + dy, z=-.06 - k * .14, node=hu)
+    # A roll-down wrapper curtain makes a full-height boarding shelter behind the low troop box. The two telescopic
+    # steel uprights and top rail rise before the soldier arrives; seven licorice strips unroll once the ramp clears.
+    # It conceals the full-sized soldier at the threshold without growing him, or drawing his helmet through the roof.
+    dh = roof - deck_y - .07
+    a.box('licorice', .29, dh, .012, y=(deck_y + roof - .05) / 2 + .005 + dy, z=zr - .004, node=hu)
+    screen_z, screen_top, screen_h = zr - .11, 1.04, .80
+    for side, x in [('0', -.275), ('1', .275)]:
+        a.cyl('steel', .009, .2, x=x, y=.39 + dy, z=screen_z, node=hu, sections=8)   # telescoping sleeve
+        rail = a.node('apc_screen_' + side, hu, (x, .49 + dy, screen_z), scale=(1, .015, 1))
+        a.cyl('foil', .005, screen_top - .49, y=(screen_top - .49) / 2, node=rail, sections=8)
+    top = a.node('apc_screen_2', hu, (0, screen_top - .53 + dy, screen_z))
+    a.cyl('steel', .009, .57, axis='x', node=top, sections=8)
+    for i in range(APC_BEADS):
+        bd = a.node(f'apc_bead_{i}', hu, (-.222 + .444 * i / (APC_BEADS - 1), screen_top - .53 - .018 + dy, screen_z - .002), scale=(1, .018, 1))
+        # Thin overlapping-looking wrapper strips: the dark curtain conceals passage, team binding names the doorway.
+        for k in range(3):
+            a.box('team' if k == 0 else 'licorice', .071, screen_h / 3 - .002, .005, y=-(k + .5) * screen_h / 3, node=bd)
+    a.node('apc_bay', hu, (0, deck_y + .005 + dy, screen_z - .015))  # full-size passage behind the boarding screen
+    # The ramp, hinged at the deck on the box's back face: closed it stands up over the doorway; VehicleWorks drops it.
+    rp = a.node('apc_ramp', hu, (0, deck_y + dy, zr - .044))
+    RL = APC_RAMP_LEN
+    a.box('cream', .32, RL, .022, y=RL / 2, z=.011, node=rp)
+    a.box('team', .322, .03, .024, y=RL - .05, z=.011, node=rp)
+    for k in range(5): a.box('steel', .26, .008, .006, y=.04 + k * .05, z=.025, node=rp)          # treads on its inner face
+    a.cyl('steel', .012, .3, z=.004, axis='x', node=rp, sections=8)                                  # the hinge
+    a.node('apc_foot', rp, (0, RL, .011))                                                             # its tip
+    # Roof: five tinted glass domes on team rims (bubbles even when empty), a seated trooper's head in each (lowered
+    # into the roof while the seat is empty). The domes are open shells, revolved: smooth, and cheap.
+    R = .066
+    prof = [(0, R), (R * .5, R * .866), (R * .866, R * .5), (R * .97, R * .25), (R, 0)]
+    for i, (x, z) in enumerate(APC_SEATS):
+        ring = trimesh.creation.annulus(r_min=.062, r_max=.078, height=.018, sections=10)
+        ring.apply_transform(axis_rot('y')); ring.apply_translation((x, roof + .007 + dy, z)); a.add(hu, 'team', ring)
+        dm = trimesh.creation.revolve(np.array(prof, float)[::-1], sections=12)
+        dm.apply_transform(axis_rot('y')); dm.apply_translation((x, roof + .012 + dy, z)); a.add(hu, 'glass', dm)
+        apc_trooper_head(a, a.node(f'apc_seat_{i}', hu, (x, roof + .006 + dy, z), rot=ry(-35 if x > 0 else 35), scale=(.85, .85, .85)))
+    # The gunner: a team head on a smoke stem at the front of the roof, its gun sweeping over the domes.
+    pz = .0
+    a.cyl('smoke', .05, .07, y=roof + .035 + dy, z=pz, node=hu, sections=8)
+    hd = chassis_head(a, ch, w=.22, d=.22, h=.13, at=(0, roof + .07 + dy, pz))
+    chassis_mg(a, hd, length=.26)
+    # The exhaust: a thin steel pipe up the right flank by the cab, out of a licorice bracket under the sponson, with a
+    # licorice cap (thin enough to stay unrounded: the six tyres are the triangle budget's big spend).
+    st = a.node('apc_stack', hu, (-(up_w / 2 + .026), up_y0 - .03 + dy, .03))
+    a.box('licorice', .03, .02, .05, x=.012, y=.01, node=st)
+    a.tube('steel', [(0, 0, 0), (0, .2, 0)], .009, node=st, sides=8)
+    a.cyl('licorice', .013, .014, y=.2, node=st, sections=8)
+    a.node('exhaust', st, (0, .21, 0))
+    return a
+
+
+def chassis_twin(a, hd, length, r=.035, gap=.1, parent=None, at=None, sections=10):
+    """Twin cannons side by side: a `barrel` node (PezMotion recoils its two halves one per shot, left first) holding
+    barrel_l and barrel_r (gap either side of the middle; +X is the vehicle's left), each a steel tube with a team band and
+    a licorice muzzle brake, and its own empty muzzle_l / muzzle_r at the tip (the shell leaves the barrel that fires).
+    The pair sits in the head's mouth like chassis_cannon, or on `parent` at `at` (an elevating trunnion, say)."""
+    _, my, mz = hd['mouth']
+    br = a.node('barrel', parent or hd['turret'], at if at is not None else (0, my, mz - .06))
+    for s, sd in ((1, 'l'), (-1, 'r')):
+        b = a.node('barrel_' + sd, br, (s * gap, 0, 0))
+        a.cyl('steel', r, length + .03, z=(length + .03) / 2 - .03, axis='z', node=b, sections=sections)
+        a.cyl('team', r + .009, .05, z=length * .6, axis='z', node=b, sections=sections)
+        a.cyl('licorice', r * 1.55, .07, z=length - .02, axis='z', node=b, sections=sections)
+        a.node('muzzle_' + sd, b, (0, 0, length + .015))
+    return br
+
+
+def V_mammoth_tank():
+    """The mammoth tank: the biggest of the three, a whole Pez dispenser on tracks. Its team head rides high on the
+    dispenser's body, a smoke stem with team grip ribs, over a long, wide hull, with twin cannons in a drum mantlet for a
+    mouth: they fire one at a time, left then right, and the drum (the `trunnion`) raises them at aircraft. A big amber
+    beacon in a clear dome on the crown turns and lights only while it repairs itself; twin stacks at the stern.
+    Its size: 1.52 long and 1.12 wide over the tracks for the sim's radius of 0.7 (2.17 and 1.6 times the radius: the light
+    tank is 2.0 and 1.47, the heavy 2.04 and 1.53), so it's the longest and widest of the three by a step, and its corners
+    reach 1.35 radii out (the light tank's 1.24, the heavy's 1.27): the size ladder reads with a little more visual overhang beyond the sim collision circle."""
+    L, W = 1.52, 1.12
+    a = Asset('mammoth_tank', 'units', L)
+    ch = candy_chassis(a, L, W, gear='tracks', track_h=.25, deck_h=.14, nose=.28)
+    hu, deck = ch['hull'], ch['deck']
+    _, _, tz = ch['turret_at']
+    # The stem: the dispenser's body, a rounded smoke block with team grip ribs down its front, sides and back, carrying
+    # the head (and its guns) high over the deck. The game camera sees its front and flank under the head.
+    sh, SW, SD = .3, .56, .54                          # as wide and deep as the head, almost: it shows under it
+    a.box('smoke', SW, sh, SD, y=deck + sh / 2, z=tz, node=hu)
+    rib_h, rib_y = sh * .72, deck + sh * .5
+    for k in range(5):
+        x = (k - 2) * .09
+        for zs in (1, -1): a.box('team', .03, rib_h, .014, x=x, y=rib_y, z=tz + zs * (SD / 2 + .004), node=hu)
+    for k in range(5):
+        z = tz + (k - 2) * .09
+        for xs in (1, -1): a.box('team', .014, rib_h, .03, x=xs * (SW / 2 + .004), y=rib_y, z=z, node=hu)
+    hd = chassis_head(a, ch, w=.62, d=.6, h=.28, at=(0, deck + sh, tz), mouth=False)
+    tu = hd['turret']
+    _, my, mz = hd['mouth']
+    my += .03                                     # the mouth sits a little high: the breeches clear the stem at full elevation
+    a.box('dark', .44, .1, .02, y=my, z=mz + .002, node=tu)                       # the mouth the drum sits in
+    # The drum mantlet on its trunnion (VehicleWorks raises it at aircraft) and the twin cannons through it.
+    tn = a.node('trunnion', tu, (0, my, mz + .05))
+    a.cyl('smoke', .074, .42, axis='x', node=tn, sections=12)
+    for s in (1, -1): a.cyl('steel', .046, .016, x=s * .215, axis='x', node=tn, sections=12)   # its pivot caps
+    chassis_twin(a, hd, length=.8, r=.046, gap=.12, parent=tn, at=(0, 0, .0), sections=8)
+    # The repair beacon on the crown: a licorice base, a big clear dome, the amber lamp and its reflector turning inside.
+    a.cyl('licorice', .088, .03, y=.0, node='crown', sections=12)
+    bc = a.node('beacon', 'crown', (0, .015, 0))
+    a.cyl('amber', .042, .06, y=.035, node=bc, sections=10)
+    a.box('steel', .01, .05, .05, x=-.048, y=.035, node=bc)          # the reflector: the beam shines the other way
+    a.sphere('clear', .09, y=.015, node='crown', sub=2, scale=(1, 1.05, 1))
+    # The stern: twin stacks either side of an engine cover with cooling slats, under the guns' sweep.
+    chassis_stack(a, ch['slot_stack'], h=.15, r=.028)
+    sx, sy, sz = a.nodes[ch['slot_stack']][1][:3, 3]
+    chassis_stack(a, a.node('slot_stack_l', hu, (-sx, sy, sz)), h=.15, r=.028, name='exhaust_l')
+    ez = -L / 2 + .18
+    a.box('smoke', .32, .05, .2, y=deck + .025, z=ez, node=hu)
+    a.box('team', .24, .014, .14, y=deck + .056, z=ez, node=hu)
+    for s in (1, -1):
+        for k in range(3): a.box('dark', .006, .03, .03, x=s * .162, y=deck + .025, z=ez + (k - 1) * .055, node=hu)
+    return a
+
+
+HEAD_WALL = .022       # a hollow head's wall thickness (chassis_head hollow=True)
+
+
+ARTY_SPADE_FOLD = 10     # deg: the spades' rest (travel) pitch, folded back nearly flat behind the stern, tips a little up
+
+
+ARTY_SPADE_PLANT = 45    # deg: planted, they reach down and back (ArtilleryWorks turns them by -(FOLD + PLANT) = -55)
+
+
+ARTY_SPADE_TIP = .035    # planted, the teeth stop this far above the ground: the deploy squat (0.04) sinks them in
+
+
+ARTY_ROUND = (.05, .045, .11)    # a wrapped candy round (foil, a team wrapper band): across, high, long
+
+
+def artillery_round(a, node, along='z', **at):
+    """One wrapped candy round on `node`: a foil brick ARTY_ROUND long along `along` with a team wrapper band round its
+    middle. The rack's rounds and the round in the loading trough are the same candy."""
+    w, h, l = ARTY_ROUND
+    sx, sz = (w, l) if along == 'z' else (l, w)
+    a.box('foil', sx, h, sz, node=node, **at)
+    bx, bz = (w + .003, .036) if along == "z" else (.036, w + .003)
+    a.box('team', bx, h + .003, bz, node=node, **at)
+
+
+def artillery_sleeve(a, node, material, inner, outer, length, z, y=0):
+    """An open annular gun part: the candy passes through its physical bore, never a painted disc."""
+    mesh = trimesh.creation.annulus(r_min=inner, r_max=outer, height=length, sections=12)
+    mesh.apply_translation((0, y, z))
+    a.add(node, material, mesh)
+
+
+def artillery_cannon(a, hd, length, radius):
+    """The family's open breech, bore and muzzle; PezMotion owns its barrel node as on the light tank."""
+    _, my, mz = hd['mouth']
+    artillery_sleeve(a, hd['head'], 'smoke', .055, .06, .05, mz + .01, y=my)
+    br = a.node('barrel', hd['head'], (0, my, mz - .06))
+    artillery_sleeve(a, br, 'steel', .038, radius, length + .06, (length + .06) / 2 - .06)
+    artillery_sleeve(a, br, 'team', .038, radius + .009, .05, length * .62)
+    artillery_sleeve(a, br, 'licorice', .038, radius * 1.55, .07, length - .02)
+    artillery_sleeve(a, br, 'dark', .038, radius + .01, .03, -.045)
+    a.node('muzzle', br, (0, 0, length + .015))
+    return br
+
+
+def artillery_gun(key, L, W, head, barrel, recoup, spade, tz, whip, deck_h=.1, track_h=.16, lra=False):
+    """A Pez dispenser on tracks whose head lays the gun: the hollow team head is hinged at its back bottom edge
+    (`cradle`) and tips back like a dispenser's to elevate the gun in its mouth (the barrel recoils along the head's axis,
+    under two recuperators). Tipped back, it shows what it covered: the dispenser's stem top on the turret, with the next
+    candy round lying in its loading trough (`arty_round`). The gun travels level in a licorice fork at the bow; two
+    toothed spades fold back flat behind the stern and swing down to dig in; a radio whip for the spotter it fires for.
+    head=(w, d, h), barrel=(length, radius), recoup=length of the recuperators ahead of the mouth,
+    spade=(arm length, blade width, hinge height, x), whip=its height."""
+    a = Asset(key, 'units', L)
+    ch = candy_chassis(a, L, W, gear='tracks', track_h=track_h, deck_h=deck_h, nose=.2, turret_z=tz)
+    hu, deck, hl, bw = ch['hull'], ch['deck'], L / 2, ch['bw']
+    hw, hd_, hh = head
+    hd = chassis_head(a, ch, w=hw, d=hd_, h=hh, tilt='cradle', hollow=True)
+    tu = hd['turret']
+    bl, br_r = barrel
+    br = artillery_cannon(a, hd, length=bl, radius=br_r)
+    hn = hd['head']
+    _, my, mz = hd['mouth']
+    # Recuperators: two smoke cylinders over the barrel, out of the head's chin, tied by a licorice clamp at their ends
+    # (they ride with the head; the barrel slides back under them).
+    ry_ = my + br_r + .027
+    for s in (1, -1):
+        a.cyl('smoke', .021, recoup, x=s * .026, y=ry_, z=mz + recoup / 2 - .02, axis='z', node=hn, sections=8)
+    a.box('licorice', .1, .038, .03, y=ry_ + .01, z=mz + recoup - .04, node=hn)
+    if lra:
+        # The long gun: a bore evacuator (a steel bulge with dark rings) and a second team band.
+        z = bl * .74                                     # ahead of the recuperators even at full recoil
+        artillery_sleeve(a, br, 'steel', .038, br_r + .016, .1, z)
+        for dz in (-.05, .05): artillery_sleeve(a, br, 'dark', .038, br_r + .018, .012, z + dz)
+        artillery_sleeve(a, br, 'team', .038, br_r + .009, .04, bl * .88)
+    # The dispenser's stem top inside the hollow head, on the turret: a cream plate over the ring (the head covers it shut),
+    # a team loading cradle along the bore, and the next round lying in it. It sits under the head's whole sweep.
+    ix, iz = hd['inner']
+    zs = hd_ / 2 - .135                                   # behind the breech ring's spot: the plate runs thin under it
+    a.box('cream', 2 * (ix - .006), .02, zs + iz - .006, y=.01, z=(zs - iz + .006) / 2, node=tu)
+    a.box('cream', 2 * (ix - .006), .006, iz - .006 - zs, y=.003, z=(zs + iz - .006) / 2, node=tu)
+    zr = -hd_ / 2 + (hd_ - .12) * .55                    # the trough's middle, behind the breech's sweep
+    a.box('team', ARTY_ROUND[0] + .02, .012, ARTY_ROUND[2] + .02, y=.026, z=zr, node=tu)          # the team cradle it lies in
+    rn = a.node('arty_round', tu, (0, .032 + ARTY_ROUND[1] / 2, zr))
+    artillery_round(a, rn)
+    # The travel lock at the top of the glacis: a licorice fork the level gun lies in, on a steel roller.
+    lz = ch['nose_z'] + .01
+    axis_y = deck + .022 + my
+    top = axis_y - br_r - .005                          # 5 mm under the tube (the head yaws only with the gun lifted clear)
+    a.box('licorice', .05, top - deck - .009, .04, y=(top + deck - .009) / 2, z=lz, node=hu)
+    a.cyl('steel', .009, br_r * 2 + .03, y=top - .009, z=lz, axis='x', node=hu, sections=8)
+    for s in (1, -1):
+        cx = s * (br_r + .026)
+        a.box('licorice', .014, axis_y + .012 - (top - .02), .03, x=cx, y=(axis_y + .012 + top - .02) / 2, z=lz, node=hu)
+    # Ammunition on the rear deck: the same wrapped candy rounds, lying across a licorice rack.
+    n = 3 if lra else 2
+    rz0 = -hl + .02                                    # the back round; the rest ahead of it, clear of the head's sweep
+    a.box('licorice', ARTY_ROUND[2] + .04, .016, .05 + .05 * (n - 1), y=deck + .008, z=rz0 + .025 * (n - 1), node=hu)
+    for k in range(n):
+        artillery_round(a, hu, along='x', y=deck + .016 + ARTY_ROUND[1] / 2, z=rz0 + k * .05)
+    chassis_stack(a, ch['slot_stack'], h=.022)          # a stub: the laid gun sweeps over it
+    # The spotter's radio (sight 7: it fires on what others see): a licorice whip on the turret beside the hinge, with a
+    # team tip (it turns with the head, never under the gun).
+    x, z = -(hw / 2 + .035), -hd_ / 2 + .03
+    a.box('dark', .03, .024, .03, x=x, y=.012, z=z, node=tu)
+    a.cyl('licorice', .007, whip, x=x, y=.02 + whip / 2, z=z, node=tu, sections=6)
+    a.box('team', .018, .03, .018, x=x, y=.02 + whip, z=z, node=tu)
+    # Spades: a licorice bracket across the stern under the tail bar, and a spade hinged on its pin each side, splayed out:
+    # a licorice arm and a toothed steel blade in line with it, folded back flat behind for travel (they read from above).
+    arm, blade_w, hy, xs = spade
+    sz, hy0 = -hl - .025, hy - ch['HY']                  # hull space
+    a.box('licorice', 2 * xs + .07, .04, .04, y=hy0, z=sz + .005, node=hu)
+    a.cyl('steel', .009, 2 * xs + .1, y=hy0, z=sz, axis='x', node=hu, sections=8)            # the hinge pin
+    pa = math.radians(ARTY_SPADE_PLANT)
+    reach = (hy - ARTY_SPADE_TIP) / math.sin(pa)         # hinge to the teeth, planted
+    blade = reach - arm - .012
+    for s, sd in ((1, 'l'), (-1, 'r')):
+        sp = a.node('spade_' + sd, hu, (s * xs, hy0, sz), rot=ry(-s * 14) @ rx(ARTY_SPADE_FOLD))
+        a.box('licorice', .034, .03, arm + .02, z=-(arm + .02) / 2 + .015, node=sp)         # the arm, round the pin
+        a.box('steel', blade_w, .018, blade, z=-arm - blade / 2, node=sp)                  # the blade
+        a.box('team', blade_w + .004, .02, .03, z=-arm - .03, node=sp)                     # its team band
+        for k in range(4):
+            a.box('steel', .018, .016, .02, x=(k - 1.5) * blade_w / 4, z=-arm - blade - .006, node=sp)   # teeth
+    return a
+
+
+def V_artillery():
+    """Artillery: a Pez dispenser on tracks that lobs. Its hollow team head is hinged at its back edge and tips back to
+    lay a short, fat howitzer (to the shell's real launch angle), showing the next candy round on the stem; the gun
+    travels in a fork at the bow; two spades fold back flat behind and swing down to dig in. Range 11, fragile."""
+    return artillery_gun('artillery', L=1.0, W=.64, head=(.34, .36, .22), barrel=(.58, .042), recoup=.2,
+                         spade=(.08, .14, .2, .12), tz=-.06, whip=.22)
+
+
+def V_long_range_artillery():
+    """Long-range artillery: the same dispenser, built bigger to reach a tile further: a longer hull, a bigger head, a far
+    longer gun (a bore evacuator, two bands) under longer recuperators, bigger spades, a third round on the rack and a
+    taller whip. Range 12."""
+    return artillery_gun('long_range_artillery', L=1.14, W=.66, head=(.38, .42, .22), barrel=(1.08, .042), recoup=.36,
+                         spade=(.09, .18, .22, .14), tz=-.08, whip=.3, lra=True)
+
+
+def V_laser_tank():
+    """The laser tank: a laser tower on tracks. The tower's smoke pylon, wound with its cyan coils (coil_0 at the bottom ..
+    coil_2), stands on the hull and carries the team head as the turret; the beam projector (barrel: a steel lens barrel
+    with the tower's cyan lens and three glowing coil sleeves, barrel_coil_0..2, on a smoke ball mantlet in a round port) pitches in the head's face, down at tanks and up
+    at aircraft. Foil heat-sink fins on the crown and a rear vent (vent) as on the tower's emitter head; the tower's charge
+    bank, three cream capacitor cans with team caps, lies across the rear deck. A beam cannon: 2 s, ground and air."""
+    L, W = 1.1, .72
+    a = Asset('laser_tank', 'units', L)
+    ch = candy_chassis(a, L, W, gear='tracks', track_h=.17, deck_h=.12, turret_z=-.06)
+    hu, deck = ch['hull'], ch['deck']
+    _, _, tz = ch['turret_at']
+    # The pylon: a cream foot flange, the smoke stem and its three coils (each its own node: LaserTankAct lights them
+    # bottom to top as the beam charges), under a cream clamp ring.
+    PH = .21
+    a.cyl('cream', .14, .018, y=deck + .009, z=tz, node=hu, sections=12)
+    a.cyl('smoke', .082, PH, y=deck + PH / 2, z=tz, node=hu, sections=10)
+    for k in range(3):
+        c = a.node(f'coil_{k}', hu, (0, deck + .05 + k * .05, tz))
+        a.coil('cyan', .1, .015, -.021, .021, 1.6, node=c, per_turn=12, sides=5)
+    a.cyl('cream', .108, .018, y=deck + PH - .009, z=tz, node=hu, sections=12)
+    hd = chassis_head(a, ch, w=.36, d=.38, h=.19, at=(0, deck + PH, tz), mouth=False)
+    tu, d, h = hd['turret'], hd['d'], hd['h']
+    split = h * .58
+    _, my, _ = hd['mouth']
+    # The port in the head's face: a dark ring round the smoke ball mantlet the projector pitches in.
+    a.cyl('dark', .064, .014, y=my, z=d / 2 + .001, axis='z', node=tu, sections=12)
+    br = a.node('barrel', tu, (0, my, d / 2 - .012))
+    a.sphere('smoke', .052, node=br, sub=1)
+    a.cyl('steel', .027, .3, z=.15 + .03, axis='z', node=br, sections=10)        # the lens barrel
+    # The tower's coils carried out along the barrel: three cyan coil sleeves (barrel_coil_0 at the breech .. 2), each
+    # its own node, so the charge runs up the pylon and out to the lens; from the game's high camera they say "laser".
+    for k in range(3):
+        bc = a.node(f'barrel_coil_{k}', br, (0, 0, .085 + k * .065))
+        a.cyl('cyan', .045, .036, axis='z', node=bc, sections=12)
+    a.cyl('steel', .052, .08, z=.37, axis='z', node=br, sections=12)            # the lens housing (the tower's)
+    a.cyl('dark', .044, .01, z=.412, axis='z', node=br, sections=12)            # its rim
+    a.cyl('cyan', .04, .012, z=.414, axis='z', node=br, sections=12)            # the lens
+    a.node('muzzle', br, (0, 0, .425))
+    # Heat-sink fins on the crown, the rear vent under the hinge (it breathes out heat after a shot).
+    for x in (-.07, 0, .07): a.box('foil', .022, .05, .2, x=x, y=h + .006, z=-.02, node=tu)
+    a.box('dark', .18, .05, .02, y=split * .45, z=-d / 2 - .002, node=tu)
+    a.node('vent', tu, (0, split * .45, -d / 2 - .03))
+    # The charge bank on the rear deck: three cream capacitor cans lying fore and aft, team caps on their ends, in a
+    # licorice cradle.
+    zb = -.37
+    a.box('licorice', .3, .02, .05, y=deck + .01, z=zb + .06, node=hu)
+    a.box('licorice', .3, .02, .05, y=deck + .01, z=zb - .06, node=hu)
+    for x in (-.095, 0, .095):
+        a.cyl('cream', .042, .16, x=x, y=deck + .045, z=zb, axis='z', node=hu, sections=8)
+        a.cyl('team', .045, .024, x=x, y=deck + .045, z=zb - .08, axis='z', node=hu, sections=8)   # its cap
+    chassis_stack(a, ch['slot_stack'], h=.06)
+    return a
+
+
+def V_flak_track():
+    """The flak track: a candy half-track with the SAM site's launcher shrunk onto it as a quad flak mount. Steered tyres
+    up front, licorice tracks under the back; on the rear deck the SAM's cream drum with its team band and steel slewing
+    ring carries the team head (turret, its dark tracker visor in the mouth); the elevation axle (barrel, resting 20 deg
+    nose up) runs through the head with a gun pod on each end (barrel_l, barrel_r: the SAM's cream pods with their foil
+    wrappers and team caps, two steel autocannon barrels each). PezMotion recoils the pods in turn; FlakAct elevates the
+    axle fast to the aircraft it fires at, spins the little search radar on the head's back (flak_radar) and sets the
+    muzzle to the pod that fires next. Mobile anti-air: flak bursts every 0.8 s, air only."""
+    L, W = .9, .62
+    a = Asset('flak_track', 'units', L)
+    ch = candy_chassis(a, L, W, gear='halftrack', track_h=.16, axles=[(.3, .1, True)], deck_h=.1, nose=.2, turret_z=-.1, lamps=False, grille=False)
+    hu, deck = ch['hull'], ch['deck']
+    _, _, tz = ch['turret_at']
+    # The SAM's base, small: a cream drum with a team band and a steel slewing ring.
+    DH = .14                    # tall enough that the pods clear the deck at full elevation
+    a.cyl('cream', .135, DH, y=deck + DH / 2, z=tz, node=hu, sections=10)
+    a.cyl('team', .139, .028, y=deck + DH * .3, z=tz, node=hu, sections=10)
+    a.cyl('steel', .118, .014, y=deck + DH + .002, z=tz, node=hu, sections=10)
+    hd = chassis_head(a, ch, w=.26, d=.28, h=.17, at=(0, deck + DH + .008, tz))
+    tu, w, d, h = hd['turret'], hd['w'], hd['d'], hd['h']
+    split = h * .58
+    # The elevation axle through the head, a gun pod on each end.
+    ay = split * .5
+    br = a.node('barrel', tu, (0, ay, .0), rot=rx(-20))
+    PW = .095
+    px = w / 2 + .016 + PW / 2
+    a.cyl('steel', .022, 2 * px + PW * .6, axis='x', node=br, sections=8)
+    for sd, s in (('l', 1), ('r', -1)):
+        pod = a.node('barrel_' + sd, br, (s * px, 0, 0))
+        a.box('cream', PW, .112, .21, z=.02, node=pod)
+        a.box('foil', PW + .008, .12, .05, z=-.085, node=pod)                                 # the wrapper band
+        a.box('team', PW + .008, .12, .035, z=.135, node=pod)                                 # team cap round the mouths
+        for y in (.026, -.026):
+            a.cyl('steel', .009, .2, y=y, z=.23, axis='z', node=pod, sections=6)              # an autocannon barrel
+            a.cyl('licorice', .0094, .05, y=y, z=.315, axis='z', node=pod, sections=6)         # its licorice flash hider
+        a.node('muzzle_' + sd, pod, (0, 0, .35))
+        a.node('eject_' + sd, pod, (s * PW / 2, 0, -.02))                                       # spent wrappers flick out here
+    # The search radar on the head's back, over the hinge: a small foil dish on a short steel post (flak_radar, spun by FlakAct).
+    a.cyl('steel', .009, .034, y=h + .01, z=-d * .3, node=tu, sections=8)
+    rd = a.node('flak_radar', tu, (0, h + .034, -d * .3))
+    a.cyl('steel', .013, .012, node=rd, sections=8)
+    dd = a.node('flak_radar_dish', rd, (0, .009, 0), rot=rx(70))
+    a.rev('foil', [(0, 0), (.038, .014), (.038, .02), (0, .009)], node=dd, sections=12)
+    a.cyl('steel', .006, .028, y=.021, node=dd, sections=6)
+    chassis_stack(a, ch['slot_stack'], h=.02)
+    return a
+
 
 def V_heavy_tank():
     """The heavy tank: the light tank's big brother. The same Pez dispenser on tracks, a size up (1.12 long, a bigger,
@@ -3116,10 +3728,11 @@ BUILDERS = [S_command_center, S_outpost, S_power_plant, S_mining_refinery, S_bar
             S_airfield, S_radar_dome, S_gun_turret, S_sam_site, S_laser_tower,
             V_mining_truck, V_repair_truck, V_outpost_truck, V_construction_truck, V_scout_buggy,
             V_light_tank, V_heavy_tank, V_geological_surveyor, V_drill_rig, V_minelayer, V_mine,
-            lambda: V_tank('artillery', .9, .62, art=True), lambda: V_tank('laser_tank', 1.1, .7, laser=True),
+            V_apc, V_mammoth_tank, V_artillery, V_long_range_artillery, V_laser_tank, V_flak_track,
             V_gunship, V_stealth_bomber,
             V_rifleman, V_rocket_soldier, V_laser_trooper, V_medic, V_engineer, V_sniper, V_commando,
             lambda: O_ore('iron_ore'), lambda: O_ore('copper_ore'), lambda: O_ore('crystal'), lambda: O_ore('uranium')]
+
 
 if __name__ == '__main__':
     manifest = [b().export() for b in BUILDERS]

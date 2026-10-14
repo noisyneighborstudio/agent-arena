@@ -97,7 +97,7 @@ namespace Pez
             if (twinL && twinR) { if ((NextTwin++ & 1) == 0) recoilTL = 0f; else recoilTR = 0f; } // one barrel per shot, L-R-L
             else recoilT = 0f;
         }
-        /// <summary>Twin-barrel models (barrel_l / barrel_r, split from one mesh at load): which barrel fires next (even: L).</summary>
+        /// <summary>Authored twin-barrel models (barrel_l / barrel_r): which barrel fires next (even: L).</summary>
         public int NextTwin;
         public bool Twin => twinL && twinR;
         /// <summary>Artillery loading: the barrel slides back 0.06 along its axis and returns over 0.4 s (the ram).</summary>

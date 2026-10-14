@@ -26,17 +26,18 @@ namespace Pez.View
             // Drones tilt like quadcopters: the smoothed velocity, and the tilt (a world-space lean vector) on a spring.
             public Vector3 DroneVel, DroneTilt, DroneTiltVel;
             public Vector3? EaseFrom; public Vector3 EaseOff; // a resync moved the entity: where it was drawn, and the offset from where it now is (bleeds off)
-            // Mass in motion: artillery deployed (0..1) and whether it has rammed this cycle.
-            public float Deploy;
-            public float Elev;           // artillery: the gun's elevation, 0 stowed on the bow lock .. 1 raised to fire
-            public bool Rammed;
             public int OreTint = -1;     // deep mine: the ore its tube is tinted to; mining truck: the ore its load shows
             public float DustNext;       // decaying structure: when its next grit falls
             public int TeamShown;        // the team colour its model wears (a captured building changes hands)
             public float TintAt;         // ... and when it takes the new one: an engineer on screen lands his last blow first
             public int Born;             // frame the view was made (deploys pair a unit with the structure it became)
-            public float BoardT;         // boarding: 0..1 while the passenger shrinks into its carrier
+            public float BoardT;         // boarding: full-size APC path or other carrier shrink
             public Vector3 BoardedAt;    // ... and where its carrier is drawn (unloaded, it steps back out from there)
+            public int Carrier, Seat;    // ... the transport it rode in and its seat (an APC: its dome, and its turn to step out)
+            public List<Vector3> Walk;   // a soldier walking down an APC's ramp after an unload (VehicleWorks.BayPath, reversed)
+            public EV WalkVia;           // ... the APC he's leaving (its wrapper curtain swings as he comes through)
+            public float WalkScale = 1f; // 0 while he waits his turn inside the APC after an unload, else 1
+            public Vector3 WalkFrom;     // where a soldier boarding an APC set off for its ramp
             public Bars Bars;            // world-space health and fuel bars (seen by every camera)
             public bool MainShow = true; // the local view's visibility and fade scale, restored after a stream render
             public float MainScale = 1f;
@@ -202,7 +203,7 @@ namespace Pez.View
         }
 
         /// <summary>Does this view's team see a building's live state (power, damage), or only remember it under fog?</summary>
-        bool SeesState(Entity e, int team) => team < 0 || e.Team == team || World.IsVisibleTo(team, e);
+        public bool SeesState(Entity e, int team) => team < 0 || e.Team == team || World.IsVisibleTo(team, e);
 
         bool ShownFor(Entity e, int team) => !e.IsCarried && (team < 0 || World.IsVisibleTo(team, e) ||
                                              (e.IsStructure && World.Teams[team].KnownEnemyStructures.ContainsKey(e.Id)));
@@ -216,11 +217,12 @@ namespace Pez.View
             foreach (var v in Views.Values)
             {
                 bool main = team == PovTeam;
-                float vis = main ? (v.MainShow ? v.MainScale : 0f) : v.E.Dead ? 0f : Visibility(v.E, team);
+                float vis = main ? (v.MainShow ? v.MainScale : 0f) : v.E.Dead ? 0f
+                          : v.E.IsCarried && v.BoardT > 0f && v.BoardT < 1f && Views.TryGetValue(v.E.CarrierId, out var cv) ? Visibility(cv.E, team) : Visibility(v.E, team);
                 bool show = vis > 0f;
                 var go = v.Rig.Root.gameObject;
                 if (go.activeSelf != show) go.SetActive(show);
-                if (show && v.BoardT <= 0f) v.Rig.Root.localScale = Vector3.one * vis;
+                if (show && v.BoardT <= 0f) v.Rig.Root.localScale = Vector3.one * vis * v.WalkScale;
                 if (v.Drive != null && show) v.Drive.Show(team < 0 || v.E.Team == team); // its private act: its own team's to see
                 bool ring = team == PovTeam && Selected.Contains(v.E.Id) && !v.E.IsStructure;
                 if (v.Ring.gameObject.activeSelf != ring) v.Ring.gameObject.SetActive(ring);
@@ -332,10 +334,16 @@ namespace Pez.View
                 if (e.Dead) continue;
                 seen.Add(e.Id);
                 if (!Views.TryGetValue(e.Id, out var v)) Views[e.Id] = v = Create(e);
-                // Boarding: the passenger slides into its carrier and shrinks away instead of vanishing.
-                if (e.IsCarried) v.BoardedAt = Views.TryGetValue(e.CarrierId, out var ride) ? ride.Rig.Root.position : v.Rig.Root.position;
-                if (e.IsCarried && v.BoardT < 1f && v.Rig.Root.gameObject.activeSelf) { Board(v); continue; }
-                if (!e.IsCarried && v.BoardT > 0f) { v.BoardT = 0f; v.Rig.Root.localScale = Vector3.one; v.SpawnFrom = v.BoardedAt; v.SpawnT = 0f; } // out of its carrier, not out of thin air
+                // Boarding: the passenger walks to the APC screen, or shrinks into another kind of carrier.
+                if (e.IsCarried) { v.BoardedAt = Views.TryGetValue(e.CarrierId, out var ride) ? ride.Rig.Root.position : v.Rig.Root.position; if (v.Carrier != e.CarrierId && ride != null) { v.Carrier = e.CarrierId; v.Seat = ride.E.Passengers.IndexOf(e.Id); } }
+                if (e.IsCarried && v.BoardT < 1f)
+                {
+                    if (v.Rig.Root.gameObject.activeSelf) { Board(v); continue; }
+                    // A carried passenger arriving in a snapshot or outside this camera's sight is already inside.
+                    // Retry after its view exists; do not replay a walking avatar from the carrier's centre.
+                    v.BoardT = 1f;
+                }
+                if (!e.IsCarried && v.BoardT > 0f) Unboard(v); // out of its carrier, not out of thin air
                 float vis = Visibility(e, PovTeam);
                 bool show = vis > 0f;
                 v.MainShow = show; v.MainScale = vis;
@@ -480,13 +488,77 @@ namespace Pez.View
         /// <summary>Nothing pops off the map: art-pack models sink or collapse (wrecks linger) before they're destroyed.</summary>
         void Board(EV v)
         {
-            v.BoardT = Mathf.Min(1f, v.BoardT + Time.deltaTime / 0.35f);
             var root = v.Rig.Root;
+            if (Views.TryGetValue(v.E.CarrierId, out var bay) && bay.Drive != null && bay.Drive.HasBay && bay.Rig.Root.gameObject.activeInHierarchy)
+            {
+                // An APC: he walks round to its lowered ramp and up it at a trot, full size, and through the wrapper curtain
+                // at the threshold: he's gone, the strands swing behind him, and his head rises in a roof dome.
+                if (v.BoardT <= 0f) v.WalkFrom = root.position;
+                var path = bay.Drive.BayPath(v.WalkFrom);
+                v.BoardT = Mathf.Min(1f, v.BoardT + Time.deltaTime / Mathf.Clamp(PathLength(path) / 2.2f, 0.45f, 1f));
+                WalkAlong(v, path, v.BoardT);
+                v.MainShow = v.BoardT < 1f; v.MainScale = 1f;
+                if (v.BoardT >= 1f) { root.gameObject.SetActive(false); bay.Drive.Pass(); }
+                return;
+            }
+            v.BoardT = Mathf.Min(1f, v.BoardT + Time.deltaTime / 0.35f);
             if (Views.TryGetValue(v.E.CarrierId, out var carrier) && carrier.Rig.Root.gameObject.activeInHierarchy)
                 root.position = Vector3.Lerp(root.position, carrier.Rig.Root.position, v.BoardT);
             root.localScale = Vector3.one * (1f - v.BoardT * v.BoardT);
             v.MainShow = v.BoardT < 1f; v.MainScale = 1f - v.BoardT * v.BoardT;
             if (v.BoardT >= 1f) root.gameObject.SetActive(false);
+        }
+
+        /// <summary>
+        /// Unloaded: out of its carrier, not out of thin air. From an APC he waits his turn inside, unseen (seat 0 first, 0.12 s
+        /// apart: VehicleWorks.ExitDelay), comes out through the wrapper curtain at the threshold at full size (the strands
+        /// swing), and walks down the ramp and round to where the sim put him, about 0.85 s, so the last of five is where the
+        /// sim says within 1.6 s; from anything else he eases out from where his carrier is drawn.
+        /// </summary>
+        void Unboard(EV v)
+        {
+            v.BoardT = 0f; v.SpawnT = 0f; v.Rig.Root.localScale = Vector3.one;
+            if (Views.TryGetValue(v.Carrier, out var bay) && bay.Drive != null && bay.Drive.HasBay && bay.Rig.Root.gameObject.activeInHierarchy)
+            {
+                v.Walk = bay.Drive.BayPath(W(v.E.Pos));
+                v.Walk.Reverse();
+                v.WalkVia = bay;
+                v.WalkScale = 0f;
+                v.SpawnFrom = null;
+            }
+            else v.SpawnFrom = v.BoardedAt;
+            v.Carrier = 0;
+        }
+
+        /// <summary>A soldier on an APC's bay path (outside first), `t` 0..1 of the way along it toward the bay or out of it.</summary>
+        void WalkAlong(EV v, List<Vector3> path, float t, bool inward = true)
+        {
+            var root = v.Rig.Root;
+            float k = Mathf.SmoothStep(0f, 1f, t), total = PathLength(path), at = k * total;
+            Vector3 p = path[path.Count - 1], dir = path[path.Count - 1] - path[path.Count - 2];
+            for (int i = 1; i < path.Count; i++)
+            {
+                float seg = Vector3.Distance(path[i - 1], path[i]);
+                if (at <= seg || i == path.Count - 1)
+                {
+                    float f = seg > 1e-4f ? Mathf.Clamp01(at / seg) : 1f;
+                    p = Vector3.Lerp(path[i - 1], path[i], f);
+                    dir = path[i] - path[i - 1];
+                    break;
+                }
+                at -= seg;
+            }
+            root.position = p;
+            dir.y = 0f;
+            if (dir.sqrMagnitude > 1e-6f) root.rotation = Quaternion.Slerp(root.rotation, Quaternion.LookRotation(dir), Mathf.Min(1f, Time.deltaTime * 16f));
+            if (inward) v.Rig.Gait?.Tick(root, Time.deltaTime); // carried: UpdateView doesn't tick him (out of it, it does)
+        }
+
+        static float PathLength(List<Vector3> path)
+        {
+            float d = 0f;
+            for (int i = 1; i < path.Count; i++) d += Vector3.Distance(path[i - 1], path[i]);
+            return d;
         }
 
         /// <summary>The structure a deployable unit just turned into (spawned this frame where it stood).</summary>
@@ -502,11 +574,11 @@ namespace Pez.View
         void Retire(EV v)
         {
             var rig = v.Rig;
+            if (v.E.Dead) v.Drive?.Wreck(); // stow an APC boarding screen; nobody emerges
             if (rig.HasModel && rig.Root.gameObject.activeInHierarchy && !v.Destroyed && v.E.Def.DeploysInto != null && DeployedInto(v) is EV into)
             {
                 // The vehicle's own hand-off (VehicleWorks.HandOff: the drill rig drills itself down under its deep mine, the
-                // construction truck stands the command center's mast up on its footing), else the chassis sinks and the
-                // structure rises in its place (the outpost truck).
+                // construction/outpost trucks stand their own carried structure parts up), else the chassis sinks as the structure rises.
                 rig.Model.transform.SetParent(transform, true);
                 into.Rig.Emerge.SetBuildProgress(0f);
                 rig.Emerge.StartCoroutine(v.Drive?.HandOff(this, rig.Model.transform, into) ?? rig.Emerge.PlayDeployInto(into.Rig.Emerge));
@@ -522,7 +594,7 @@ namespace Pez.View
                 rig.Model.transform.SetParent(transform, true);
                 // Vehicles leave a wreck for a while; everything else goes poof (PezEmerge.PlayRemove).
                 bool wreck = v.Destroyed && v.E.Def.Armor != Armor.Infantry;
-                if (wreck) v.Drive?.Show(false); // detached wrecks are shared by every camera: erase private mine-stock cues
+                if (wreck) v.Drive?.Show(false); // detached wrecks are shared by every camera: erase private passenger/mine-stock cues
                 rig.Emerge.StartCoroutine(rig.Emerge.PlayRemove(wreck));
             }
             Destroy(rig.Root.gameObject);
@@ -824,6 +896,7 @@ namespace Pez.View
             // A repair truck parked at its patient turns its crane to it (the sim turns its TurretFacing there).
             bool engaged = Time.time - v.LastFire < 3f || e.Order == Order.Attack || (e.Order == Order.Repair && !e.Moving && !e.Def.Medic);
             if (!engaged) { v.Rig.Motion.ClearAim(); return; }
+            if (v.Drive?.Gun is ArtilleryWorks gun && !gun.Clear) { v.Rig.Motion.ClearAim(); return; }
             var dir = new Vector3(Mathf.Cos(e.TurretFacing), 0, Mathf.Sin(e.TurretFacing));
             v.Rig.Motion.AimAt(v.Rig.Root.position + dir * 5f);
         }
@@ -854,7 +927,7 @@ namespace Pez.View
             float r = e.IsStructure ? Mathf.Max(e.Def.SizeX, e.Def.SizeY) * 0.75f : e.Def.Radius * 2.6f;
             ring.localScale = new Vector3(r, 1f, r);
             ring.gameObject.SetActive(false);
-            var v = new EV { E = e, Rig = rig, Ring = ring, Born = Time.frameCount, Bars = e.IsMine ? null : new Bars(rig.Root, e, 0f), TeamShown = e.Team };
+            var v = new EV { E = e, Rig = rig, Ring = ring, Born = Time.frameCount, Bars = e.IsMine ? null : new Bars(rig.Root, e, 0f), TeamShown = e.Team, BoardT = e.IsCarried ? 1f : 0f };
             if (e.IsStructure) { rig.Root.position = W(e.Center); TurnToBay(v); Plinths.Register(e.Id, rig.Root.position, rig.Plinth, v.BayYaw); }
             if (e.IsStructure && !e.IsComplete && rig.HasModel) v.Site = new SiteView(rig.Root, e.Def.SizeX, e.Def.SizeY);
             if (e.Def.Key == "derrick" && rig.HasModel && JustPlaced(e))
@@ -1017,15 +1090,25 @@ namespace Pez.View
                     rig.Root.position = Vector3.Lerp(v.SpawnFrom.Value, rig.Root.position, k);
                     if (v.SpawnT >= 1f) v.SpawnFrom = null;
                 }
+                if (v.Walk != null)
+                {
+                    // Out of an APC: down its ramp and round to where the sim put him (Unboard).
+                    v.SpawnT += Time.deltaTime;
+                    v.Walk[v.Walk.Count - 1] = rig.Root.position;
+                    float k = Mathf.Clamp01((v.SpawnT - VehicleWorks.ExitDelay(v.Seat)) / 0.85f);
+                    if (k > 0f && v.WalkScale < 1f) { v.WalkScale = 1f; v.WalkVia?.Drive?.Pass(); } // his turn: through the curtain
+                    rig.Root.localScale = Vector3.one * (v.MainScale * v.WalkScale);
+                    WalkAlong(v, v.Walk, k, inward: false);
+                    if (k >= 1f) { v.Walk = null; v.WalkVia = null; }
+                }
                 // Ground units ride up onto a structure's plinth and down its driveway ramp (leaving a producer, docking).
                 if (!e.IsAir) { var rp = rig.Root.position; float py = Plinths.HeightAt(rp); if (py > 0f) { rp.y += py; rig.Root.position = rp; } }
                 // A resync can move it (a command the local sim never saw, a tick of clock skew): the drawn position eases to the new one (~0.2 s), no jump.
                 if (v.EaseFrom is Vector3 was) { v.EaseOff = was - rig.Root.position; v.EaseFrom = null; if (v.EaseOff.sqrMagnitude > 16f) v.EaseOff = Vector3.zero; } // far = a teleport (unloaded, deployed): let it
                 if (v.EaseOff != Vector3.zero) { v.EaseOff *= Mathf.Exp(-Time.deltaTime * 14f); if (v.EaseOff.sqrMagnitude < 1e-4f) v.EaseOff = Vector3.zero; rig.Root.position += v.EaseOff; }
                 var targetRot = Quaternion.Euler(0, Yaw(e.Facing), 0);
-                rig.Root.rotation = Quaternion.Slerp(rig.Root.rotation, targetRot, Time.deltaTime * 14f);
+                if (v.Walk == null) rig.Root.rotation = Quaternion.Slerp(rig.Root.rotation, targetRot, Time.deltaTime * 14f);
                 if (!e.IsAir && !e.IsMine && e.Def.Armor != Armor.Infantry) (v.Drive ??= VehicleWorks.For(rig, e.Def, e.Id)).Tick(this, v, Time.deltaTime);
-                if (Models.IsArtillery(e.Def.Key) && rig.HasModel) Artillery(v);
                 if (rig.HasModel)
                 {
                     if (rig.Turret != null) Aim(v);
@@ -1322,71 +1405,11 @@ namespace Pez.View
             return false;
         }
 
-        /// <summary>
-        /// Artillery's cycle inside its 3.5 s cooldown. Parked or moving it travels: the gun stowed on the bow's travel
-        /// lock (cradle and barrel pitched down 57 deg from the -60 deg firing pose, once the turret faces forward) and the
-        /// spades folded up behind (105 deg). When it is about to stop to fire (attack target within Speed x 0.6 tiles of
-        /// firing range) the gun rises (0.6 s); stopped and engaged, it deploys: the spades slam down in the first 0.25 s
-        /// (ease-in) and bite (dust at each blade), the body squats 0.04 over 0.4 s, then it loads (the barrel rams back
-        /// and returns, 0.4 s, ending before the earliest shot). Moving again, the spades fold (0.25 s) and the gun stows
-        /// (0.8 s). A shot never waits on this: MuzzleOf snaps the gun up before working out where the shell leaves.
-        /// </summary>
-        void Artillery(EV v)
-        {
-            var e = v.E;
-            var rig = v.Rig;
-            bool attacking = e.Order == Order.Attack || (e.Order == Order.AttackMove && e.TargetId != 0);
-            bool engaged = Time.time - v.LastFire < 3f || attacking;
-            bool deploy = !e.Moving && engaged;
-            float was = v.Deploy;
-            v.Deploy = Mathf.MoveTowards(v.Deploy, deploy ? 1f : 0f, Time.deltaTime / (deploy ? 0.4f : 0.25f));
-            // Spades: planted (the model's rest pose) when deployed, folded up 105 deg for travel; they slam down.
-            float k0 = Mathf.Clamp01(was / 0.6f), k = Mathf.Clamp01(v.Deploy / 0.6f);
-            float planted = deploy ? k * k : Mathf.SmoothStep(0f, 1f, k);
-            float up = 105f * (1f - planted);
-            if (rig.SpadeL != null) rig.SpadeL.localRotation = rig.SpadeRestL * Quaternion.Euler(up, 0f, 0f);
-            if (rig.SpadeR != null) rig.SpadeR.localRotation = rig.SpadeRestR * Quaternion.Euler(up, 0f, 0f);
-            if (deploy && k0 < 1f && k >= 1f) SpadesBite(rig);
-            // The gun: up when deployed or about to stop to fire, stowed otherwise (waiting for the turret to face forward).
-            bool raise = deploy;
-            if (!raise && e.Moving && attacking && e.Def.Weapon != null && World.Get(e.TargetId) is Entity t)
-            {
-                float rem = Vec2.Dist(e.Pos, t.Center) - e.Def.Weapon.Range * 0.95f;
-                raise = rem < e.Def.Speed * 0.6f;
-            }
-            bool forward = rig.Turret == null || Quaternion.Angle(rig.Turret.localRotation, rig.TurretRest) < 10f;
-            float goal = raise ? 1f : forward ? 0f : v.Elev;
-            v.Elev = Mathf.MoveTowards(v.Elev, goal, Time.deltaTime / (goal > v.Elev ? 0.6f : 0.8f));
-            ApplyElevation(v);
-            if (engaged && e.Cooldown > 0.2f && e.Cooldown < 0.6f && !v.Rammed) { v.Rig.Motion.Ram(); v.Rammed = true; }
-        }
 
-        /// <summary>Artillery's spades bite: dust kicked back from each blade.</summary>
-        static void SpadesBite(Rig rig)
-        {
-            var r = rig.Root;
-            if (rig.SpadeL != null && rig.SpadeR != null)
-            {
-                Fx.SpadeDust(rig.SpadeL.TransformPoint(rig.SpadeTipL), -r.forward);
-                Fx.SpadeDust(rig.SpadeR.TransformPoint(rig.SpadeTipR), -r.forward);
-            }
-            else
-            {
-                Fx.SpadeDust(r.position - r.forward * 0.42f + r.right * 0.26f, -r.forward);
-                Fx.SpadeDust(r.position - r.forward * 0.42f - r.right * 0.26f, -r.forward);
-            }
-        }
 
-        /// <summary>Artillery: pitch the cradle and barrel from their firing rest pose down toward the travel lock.</summary>
-        static void ApplyElevation(EV v)
-        {
-            var rig = v.Rig;
-            if (rig.Cradle == null || rig.Barrel == null) return;
-            float down = 57f * (1f - Mathf.SmoothStep(0f, 1f, v.Elev));
-            var q = Quaternion.Euler(down, 0f, 0f);
-            rig.Cradle.localRotation = rig.CradleRest * q;
-            rig.Barrel.localRotation = rig.BarrelRestRot * q;
-        }
+
+
+
 
         void SyncProjectiles(float alpha)
         {
@@ -1398,11 +1421,14 @@ namespace Pez.View
                 {
                     // The shell leaves the real barrel tip (art-pack models), not the sim's 2D muzzle at a fixed height.
                     Vector3 from;
-                    if (Views.TryGetValue(p.SourceId, out var sv) && sv.Rig.HasMuzzle && sv.Rig.Root.gameObject.activeInHierarchy) from = MuzzleOf(p.SourceId, p.PrevPos);
+                    if (Views.TryGetValue(p.SourceId, out var sv) && sv.Rig.HasMuzzle && sv.Rig.Root.gameObject.activeInHierarchy) from = MuzzleOf(p.SourceId, p.PrevPos, fired: true); // events play first: the barrel that just fired
                     else from = W(p.PrevPos, sv != null ? sv.Rig.Root.position.y + 0.3f : 0.4f);
-                    var c = p.Weapon.Name == "rocket" ? new Color(1f, 0.55f, 0.2f) : new Color(1f, 0.9f, 0.5f);
+                    // The mammoth's shells at aircraft are its anti-air rounds: white-hot, with a long grey smoke trail
+                    // (its ground shells are the heavy's amber).
+                    bool aa = p.Weapon.Name == "mammoth_cannon" && World.Get(p.TargetId) is Entity air && air.IsAir;
+                    var c = p.Weapon.Name == "rocket" ? new Color(1f, 0.55f, 0.2f) : aa ? new Color(1f, 0.97f, 0.9f) : new Color(1f, 0.9f, 0.5f);
                     bool shell = p.Weapon.Name == "artillery";
-                    t = Models.Part(transform, PrimitiveType.Sphere, from, Vector3.one * (shell ? 0.16f : p.Weapon.Name == "heavy_cannon" ? 0.14f : 0.1f), Mats.Glow(c, shell ? 2.2f : 4f));
+                    t = Models.Part(transform, PrimitiveType.Sphere, from, Vector3.one * (shell ? 0.16f : p.Weapon.Name == "heavy_cannon" || p.Weapon.Name == "mammoth_cannon" ? 0.14f : 0.1f), Mats.Glow(c, shell ? 2.2f : 4f));
                     t.GetComponent<Renderer>().shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
                     var trail = t.gameObject.AddComponent<TrailRenderer>();
                     trail.sharedMaterial = Mats.Unlit(new Color(c.r, c.g, c.b, 0.5f), true);
@@ -1415,6 +1441,7 @@ namespace Pez.View
                         shellShadows[p.Id] = sh;
                     }
                     trail.startWidth = 0.08f; trail.endWidth = 0f;
+                    if (aa) { trail.sharedMaterial = Mats.Unlit(new Color(0.42f, 0.4f, 0.4f, 0.6f), true); trail.time = 0.45f; trail.startWidth = 0.09f; trail.endWidth = 0.02f; }
                     if (p.Weapon.Name == "sam") { trail.sharedMaterial = Mats.Unlit(new Color(0.95f, 0.92f, 0.86f, 0.75f), true); trail.time = 0.8f; trail.startWidth = 0.07f; trail.endWidth = 0.03f; } // a SAM round's cream smoke trail
                     trail.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
                     if (p.Weapon.Name == "rocket") sv?.Troop?.Arm(t); // a candy trooper's rocket flies as its wrapped sweet
@@ -1427,7 +1454,7 @@ namespace Pez.View
                 var ground = Vec2.Lerp(p.PrevPos, p.Pos, alpha);
                 float k = Mathf.Clamp01(1f - Vec2.Dist(ground, p.TargetPos) / total);
                 float endY = Views.TryGetValue(p.TargetId, out var tv) ? tv.Rig.Root.position.y + 0.3f : 0.3f;
-                float arc = p.Weapon.Name == "artillery" ? 4f * k * (1 - k) * Mathf.Min(4f, total * 0.35f) : 0f;
+                float arc = p.Weapon.Name == "artillery" ? 4f * k * (1 - k) * ArtilleryWorks.Apex(total, p.Weapon.ProjectileSpeed) : 0f;
                 var pos = W(ground, Mathf.Lerp(start.y, endY, k) + arc);
                 float off = 1f - Mathf.SmoothStep(0f, 1f, Vec2.Dist(ground, simStart) / MuzzleBlend);
                 if (off > 0f) { pos.x += (start.x - simStart.X) * off; pos.z += (start.z - simStart.Y) * off; }
@@ -1494,6 +1521,7 @@ namespace Pez.View
                 {
                     case "shot":
                         {
+                            ReadyVehicleShot(ev.A, World.Get(ev.B));
                             var from = MuzzleOf(ev.A, ev.Pos);
                             var to = W(ev.Pos2, HeightOf(ev.B, 0.3f));
                             bool beam = ev.Key == "laser" || ev.Key == "beam";
@@ -1522,13 +1550,16 @@ namespace Pez.View
                         }
                     case "fire":
                         {
+                            ReadyVehicleShot(ev.A, World.Get(ev.B));
+                            if (Views.TryGetValue(ev.A, out var gv) && gv.Drive?.Gun != null && gv.E.Def.Weapon != null)
+                                gv.Drive.Gun.LayNow(Vec2.Dist(ev.Pos, ev.Pos2), gv.E.Def.Weapon.ProjectileSpeed);
                             var tip = MuzzleOf(ev.A, ev.Pos);
-                            bool arty = ev.Key == "artillery";
-                            Fx.MuzzleFlash(tip, arty ? 0.3f : ev.Key == "heavy_cannon" ? 0.2f : 0.13f);
+                            bool arty = ev.Key == "artillery", big = ev.Key == "heavy_cannon" || ev.Key == "mammoth_cannon";
+                            Fx.MuzzleFlash(tip, arty ? 0.3f : ev.Key == "mammoth_cannon" ? 0.24f : big ? 0.2f : 0.13f);
                             if (Views.TryGetValue(ev.A, out var sv) && !sv.E.IsStructure)
                             {
                                 // The ground notices: a dust ring under a heavy's shot, a blast ring and lingering smoke for artillery.
-                                if (ev.Key == "heavy_cannon") Fx.GroundRing(sv.Rig.Root.position, 1.4f, 0.5f, 0);
+                                if (big) Fx.GroundRing(sv.Rig.Root.position, ev.Key == "mammoth_cannon" ? 1.7f : 1.4f, 0.5f, 0);
                                 if (arty) { Fx.GroundRing(sv.Rig.Root.position, 2f, 0.6f, 6); Fx.BarrelSmoke(tip); }
                                 sv.Troop?.Fired(Views.TryGetValue(ev.B, out var tgt) ? tgt.Rig.Root.position + Vector3.up * 0.3f : W(ev.Pos2, 0.3f)); // a launcher's backblast and reload
                             }
@@ -1623,23 +1654,23 @@ namespace Pez.View
             }
         }
 
+        /// <summary>Prepare a vehicle's own weapon act before reading its muzzle, including its first automatic shot.</summary>
+        void ReadyVehicleShot(int id, Entity target)
+        {
+            if (!Views.TryGetValue(id, out var v) || !v.Rig.HasModel || v.E.IsStructure || v.E.IsAir || v.E.IsMine || v.E.Def.Armor == Armor.Infantry) return;
+            (v.Drive ??= VehicleWorks.For(v.Rig, v.E.Def, v.E.Id)).Fired(this, v.E, target);
+        }
+
         /// <summary>Where a shot leaves the shooter: the real barrel tip on art-pack models (it follows the turret's yaw,
         /// the barrel's pitch and its recoil), a fixed reach on procedural placeholders.</summary>
-        Vector3 MuzzleOf(int id, Vec2 fallback)
+        Vector3 MuzzleOf(int id, Vec2 fallback, bool fired = false)
         {
             if (Views.TryGetValue(id, out var v) && v.Rig.Barrel != null)
             {
-                // A stowed (or still rising) artillery gun snaps up to fire: the shot never waits on the view.
-                if (v.Rig.Cradle != null && v.Elev < 1f) { v.Elev = 1f; ApplyElevation(v); }
-                // ...and if it hadn't dug in yet, the spades plant in the same frame, so their dust lands with the flash.
-                if (v.Rig.Cradle != null && v.Deploy < 0.6f && !v.E.Moving)
-                {
-                    v.Deploy = 1f;
-                    if (v.Rig.SpadeL != null) v.Rig.SpadeL.localRotation = v.Rig.SpadeRestL;
-                    if (v.Rig.SpadeR != null) v.Rig.SpadeR.localRotation = v.Rig.SpadeRestR;
-                    SpadesBite(v.Rig);
-                }
-                return v.Rig.Twin ? v.Rig.Barrel.TransformPoint((v.Rig.Motion.NextTwin & 1) == 0 ? v.Rig.MuzzleL : v.Rig.MuzzleR)
+                // A stowed (or still rising) artillery gun snaps up to fire, and plants its spades if it hadn't dug in
+                // yet: the shot never waits on the view.
+                v.Drive?.Gun?.Ready(v);
+                return v.Rig.Twin ? v.Rig.Barrel.TransformPoint(((v.Rig.Motion.NextTwin - (fired ? 1 : 0)) & 1) == 0 ? v.Rig.MuzzleL : v.Rig.MuzzleR)
                      : v.Rig.HasMuzzle ? v.Rig.Barrel.TransformPoint(v.Rig.MuzzleLocal) : v.Rig.Barrel.position + v.Rig.Barrel.parent.forward * 0.35f;
             }
             return W(fallback, 0.4f);
@@ -1655,7 +1686,7 @@ namespace Pez.View
             if (!v.E.IsStructure && !v.E.IsAir && v.E.Def.Armor != Armor.Infantry)
             {
                 v.Drive?.Kick(); // the hull kicks back (nose up)
-                v.Rammed = false;
+                v.Drive?.Gun?.Shot();
             }
         }
 

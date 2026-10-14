@@ -220,7 +220,13 @@ namespace Pez.View
             {
                 case "bombs": Shell(pos, 1.5f); break;
                 case "artillery": Shell(pos, 1.05f); break;
-                case "mammoth_cannon": Shell(pos, 0.8f); break;
+                case "mammoth_cannon":
+                    if (ground) { Shell(pos, 0.8f); break; }
+                    // Its anti-air round bursts at the aircraft like flak: a bright pop and black puffs that hang.
+                    Blast(pos, 0.45f, false);
+                    for (int i = 0; i < 4; i++)
+                        Emit(S.Smoke, pos + Random.insideUnitSphere * 0.2f, Random.insideUnitSphere * 0.45f, Random.Range(0.4f, 0.55f), Random.Range(2f, 3f), SmokeColor(0.9f));
+                    break;
                 case "heavy_cannon": Shell(pos, 0.6f); break;
                 case "mine": Mine(pos); break;
                 case "flak":
@@ -268,6 +274,18 @@ namespace Pez.View
             if (size < 0.08f)
                 for (int i = 0; i < 3; i++)
                     Emit(S.Sparks, pos, (Random.onUnitSphere + Up * 0.5f) * Random.Range(1f, 2.5f), 0.02f, Random.Range(0.25f, 0.5f), White);
+        }
+
+        static readonly Color32 WeldCol = new Color32(255, 214, 140, 255);
+
+        /// <summary>A self-repairing hull welds itself: a white-hot flash on the hull and a fountain
+        /// of amber sparks thrown out along `outward` that arc up and fall away.</summary>
+        public static void WeldSparks(Vector3 at, Vector3 outward)
+        {
+            Emit(S.Flash, at, Vector3.zero, 0.34f, 0.07f, FlashCol);
+            for (int i = 0; i < 12; i++)
+                Emit(S.Sparks, at, (outward * Random.Range(0.6f, 1.2f) + Random.insideUnitSphere * 0.6f + Up * 0.9f) * Random.Range(1.4f, 2.8f),
+                    0.042f, Random.Range(0.4f, 0.8f), i < 3 ? White : WeldCol);
         }
 
         /// <summary>A sniper's scope catches the light as its next shot comes ready: a quick cyan-white glint off the lens

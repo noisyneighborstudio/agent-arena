@@ -14,6 +14,7 @@ REMOVE_STRUCTURE = ("Destroyed: shake ±0.03 for 0.4 s, then poof: a soft cream 
     "for 0.06 s and pops to nothing in 0.14 s. A rubble decal fades in under it. Sold: dust at the footprint corners, then the same poof. "
     "Nothing sinks into the ground.")
 EMERGE_FROM = {
+    'command_center': "A newly trained mining truck rolls out of the command center's door using WorldView's shared trained-event hand-off: the door opens on the event and remains open for 1.4 s; the truck begins 0.6 inside it and eases from rest to the simulation's spawn position over 0.9 s (smoothstep), down the plinth's driveway ramp, then follows its harvest order. The free starting truck is placed beside the command center at match creation.",
     'factory': "Rolls out of the factory's door with anticipation, from the sim's production queue. In the last 1.5 s of its build the factory's amber lamps blink at 2 Hz; in the last 0.8 s three steam puffs vent 0.2 s apart; the door rolls up (localScale.y 1→0.05, 0.35 s; slower on low power) so it's fully open 0.1 s before the unit appears, and the flip-top head over it lifts with the door. The unit starts 0.6 inside the door, in the dark bay, and eases out from rest to the position the sim gave it (smoothstep over 0.9 s), down the plinth's driveway ramp: it never pops in at its sim position. The door closes 1.4 s later (the head drops back with a bounce), and the unit takes its rally order.",
     'barracks': "Spawns 0.4 behind the barracks door. The door rolls up (0.25 s) and the soldier walks out along −Z for 1.0 tile, then takes its rally order. The door closes after the last soldier in the batch.",
     'airfield': "Spawns on the airfield lift node, starting at y=−0.6 inside the pad. The lift rises to 0 over 1.2 s (ease-out). The aircraft spins up and climbs to cruise altitude (see its entry). The lift stays up until the aircraft is 1 tile away, then drops back down.",
@@ -60,14 +61,59 @@ CHASSIS_NODES = {
     'crown`, `cheek_l`, `cheek_r': "empty mounts on the head that turn with it",
 }
 
+# The artillery family's act (ArtilleryWorks.cs, ticked by VehicleWorks): what artillery and long-range artillery share.
+ARTILLERY_ACT = ("Travel (the model's rest pose): the head shut, the gun level in a licorice fork on a steel roller at the top of the "
+    "glacis (the travel lock), the spades folded back nearly flat behind the stern (they read from above as a forked tail). The "
+    "dispenser act is the gun's laying: the hollow team head is hinged at its back bottom edge (`cradle`) and tips back like a Pez "
+    "dispenser's to elevate the gun in its mouth, uncovering the dispenser's stem top on the turret: a cream plate with a team cradle "
+    "and the next wrapped candy round (`arty_round`, the same candy as on the rack) lying in it. The elevation is the shell's real "
+    "launch angle: across the ground the shell flies at 8 tiles/s and its arc falls under one gravity (16 tiles/s²), so its apex over D "
+    "tiles is D²/32 (2 at 8 tiles, 3.8 at 11, 4.5 at 12) and the gun lays to atan(D/8 + rise/D): about 45° at 8 tiles, 54° at 11, 56° "
+    "at 12 (at least 14°, at most 62°). The head tips back at 90°/s and settles at 70°/s. It travels with the gun in its lock until it's "
+    "about to stop to fire (its target within Speed × 0.6 tiles of 95% of its range), when the head tips back to lay the gun. Stopped "
+    "and engaged, it deploys: the spades (`spade_l`, `spade_r`, on a bracket under the tail bar) swing down 55° in the first 0.25 s "
+    "(ease-in) and bite, kicking dust off each blade, and the body squats 0.04 over 0.4 s. Each reload (in the last 0.6 s of the 3.5 s "
+    "cooldown) the barrel rams (slides back 0.06 and returns, 0.4 s, ending before the earliest shot) as the candy round is pushed up "
+    "out of the cradle into the open breech (0.3 s); it stays chambered, inside the tube, through the shot, and 0.8 s after the shot "
+    "(the recoil over) the next round rises out of the stem into the cradle (0.35 s). A shot never waits on the view: the frame it fires "
+    "the gun snaps to its lay, the round goes up into the breech at once if it hadn't been rammed, and, if it hadn't dug in yet, the "
+    "spades plant. The head only turns with the gun lifted at least 14° (from there it clears the deck, the rack, the fork and the spades "
+    "all round), and below that the gun only lies forward: it lifts out of the lock before the head turns, and lowers back into it once "
+    "the head faces forward again. Moving again, the spades fold (0.25 s). A radio whip with a team tip stands on the turret beside the "
+    "hinge (sight 7: it fires at full range on what a spotter sees; it turns with the head, never under the gun). ")
+ARTILLERY_NODES = {
+    'cradle': "the team head's hinge at its back bottom edge, under `turret`: ArtilleryWorks tips it back (−x) to the gun's lay; 0 is shut, the gun level in its lock",
+    'cradle_head': "the hollow head itself (four walls open underneath, its loaf crown over a dark ceiling, eyes, mouth, mantlet and recuperators) on the hinge; static in it",
+    'arty_round': "the candy round, under `turret`: rests in the stem's cradle; ArtilleryWorks rams it up into the breech, keeps it chambered inside the tube until the shot is over, and raises the next one out of the stem",
+    'spade_l`, `spade_r': "hinged on the pin under the tail bar, splayed 14° out; rest pose folded back 10° above flat for travel; ArtilleryWorks swings them down 55° to plant",
+}
+
 UNITS = [
- U('mining_truck', 'Harvests ore and returns it to a refinery or outpost.', 'factory', 'tracked', 1.6, 1.2, 110, True,
-   TRACKED.format(t=110) + " The cutter's teeth always turn at 60 rpm while the engine runs. Harvest loop: drive onto an ore tile; while harvesting, ramp the spinner up to 240 rpm over 0.4 s and creep forward at 0.15 tiles/s across the tile. "
-   "Each 1 s tick takes one load, and the bin's ore bricks rise in steps of 1/5. When full, the bin bricks reach max height and the truck drives to the nearest refinery dock. "
-   "It reverses into the dock along +Z, the dock door rolls up, the bin tips 35° about its rear edge for 1.2 s to unload, the bin resets and the door closes.",
+ U('mining_truck', 'Mines ore (150 a trip, one type at a time) and unloads it at the nearest drop-off.', 'command_center', 'tracked', 1.8, 1.4, 286, True,
+   "Candy chassis on tracks, a work truck: the shared work cab up front (a cream cab with a dark windscreen, the team flip-top head as "
+   "its cap, an amber work beacon on the crown), a deep flared hopper riding high on its subframe behind it, and a toothed cutter drum "
+   "on two arms at the bow, exposed ahead of a short cream mudguard. " + CHASSIS_SIM +
+   "The treads, sprockets and idlers run with each side's travel as on the light tank (capped at 1.2 tiles/s). "
+   + CHASSIS_HULL.format(up=2, down=3, period=.3, damp=.5, kick=1.5, roll=1.5) +
+   " Mining: the sim parks it on an ore tile and takes 4 ore every 0.1 s (150 fills it in about 4 s). While it's parked mining, the "
+   "cutter drum (`spinner`, about X) runs up from 60 to 240 rpm over 0.4 s, ore chips spit off the drum about three times a second "
+   "while the cargo rises with a puff of ore-tinted dust every 0.5 s, and the cab's beacon flashes (1.5 Hz, fading in over 0.3 s) and "
+   "throws a small amber pool on the ground. The load (`bin_ore`) rises in steps of a fifth (2/s), heaping above the rim, in the ore's "
+   "colour as an irregular pile of its own shapes (`mt_ore_0`..`3`: iron slabs, copper nuggets, standing crystal shards, crossing uranium rods; "
+   "crystal and uranium glow, with dark crevices between pieces); "
+   "laden, the body squats 0.03. Unloading at a drop-off's bay (DockView, from the sim's dock steps): it turns on the spot at the head "
+   "of the lane (Align), backs in (Reverse), and in Unload's 0.3 s settle the hopper (`bin`) tips 35° about its rear hinge, the "
+   "dock's chute out under its tail spout (Rules 44 chooses the clear bay nearest the ore; the drop-off turns its door toward that side); every 10 ore that leaves "
+   "pours an ore brick off the spout into the bay with a tinted puff every 0.25 s; in PullOut's first 0.25 s the hopper slams down "
+   "(a 1.5° hull bounce) and one last brick pops out. Beside a drop-off whose lane is built over it tips once in place (1.2 s).",
    dict(spinner=dict(axis='X', idle_rpm=60, active_rpm=240, spinup_s=.4),
-        bin=dict(mode='fill_steps', steps=5, tip_deg=35, tip_s=1.2, note='bin visible always; ore bricks inside scale Y 0→1 with load')),
-   "Spinner coasts down 240→60 rpm when harvesting stops, and to a stop when the truck parks; tiny idle hull vibration 0.005 at 12 Hz while the engine runs."),
+        bin=dict(mode='fill_steps', steps=5, tip_deg=35, tip_s=.3, note='the hopper, hinged on its rear bottom edge; bin_ore inside scales Y 0→1 with the load'),
+        **{'mt_ore_0`, `mt_ore_1`, `mt_ore_2`, `mt_ore_3': "the load's heap per ore type under bin_ore: VehicleWorks shows the load's ore's and switches the others off",
+           'wt_beacon': "the work beacon on the cab's cap: dark, flashing amber while the truck cuts ore",
+           'cab_head': "the cab's team cap (fixed)",
+           'tread_l`, `tread_r`, `sprocket_l`, `sprocket_r`, `idler_l`, `idler_r': "the running gear, as the light tank's"}, **CHASSIS_NODES),
+   "With nothing left to mine it parks and powers down: the drum stops and lowers 0.04, the empty hopper lifts 12° (0.6 s); the "
+   "beacon is dark; the stack wisps every 3–5 s."),
  U('repair_truck', 'Repairs friendly vehicles, aircraft and structures (30 HP/s, 1 steel per 10 HP); auto-repairs within 6 tiles when idle.', 'factory', 'wheeled', 2.2, 1.8, 286, True,
    "Candy chassis on wheels, a work truck: the shared work cab (as the mining truck's) behind a short bonnet over the steered front "
    "wheels, and on the rear deck a crane: a smoke post with grip rings on a slewing turntable, a team boom resting forward and up over the cab, "
@@ -91,11 +137,22 @@ UNITS = [
         'wing_l1`, `wing_r1': "the rear wings, on the axle (unsprung)"}, **CHASSIS_NODES),
    "Parked: the crane faces forward, the boom at rest over the cab and the torch hanging dark; now and then the crane glances aside "
    "(every 20–45 s, ±24°, held 2–3 s); the beacon is dark; the stack wisps every 3–5 s."),
- U('outpost_truck', 'Drives to a site and deploys into an outpost.', 'factory', 'wheeled', 1.3, .8, 70, False,
-   WHEELED.format(r=1.0) + " Deploy (2.5 s, all transforms): it must be on a clear 2×2 area. The truck stops and aligns to the grid (rotates to the nearest 90° over 0.4 s). "
-   "Its body lowers 0.08 over 0.3 s as the jacks extend. The folded bunker lifts off the bed while the truck chassis sinks into the ground over 1.0 s. "
-   "The outpost's stage_0 to stage_3 rise from the same spot using the structure build sequence, compressed to 1.8 s. Reverse this to undeploy.",
-   {}, "Engine idle bob 0.004 at 8 Hz."),
+ U('outpost_truck', 'Drives to a site and deploys into an outpost.', 'factory', 'wheeled', 1.4, 1.0, 286, True,
+   "Candy chassis on six wheels (small steered ones at the front, the bow narrowed for their wings at full lock), carrying the "
+   "outpost folded up: the outpost's own dispenser, its smoke stem and team flip-top head, lying forward and rolled onto its solid "
+   "side so the clear window and its pressed-ore bricks face up and the team grip ribs face the right flank, the head over the front "
+   "wheels as the truck's nose. It rests in a cream bed frame (two cream cradles, cream side boards with a team stripe), "
+   "pivoted on the tail's right corner. " + CHASSIS_SIM + "Pivoting it skid-steers, the front wheels at full lock (28°), each side's tyres "
+   "turning opposite ways; curving, the front wheels steer by Ackermann from the yaw rate. The hull heaves on its springs (k 120, damping 10) "
+   "as it drives. " + CHASSIS_HULL.format(up=2, down=3, period=.3, damp=.5, kick=1.5, roll=4) + " " +
+   "Deploy (the sim turns the truck into its structure at once, whole and working; the view hands over in about 2.1 to 2.55 s): it pivots and slides onto the site (0.25 to 0.7 s, a pivot at up to 360°/s and a slide at up to 1.6 tiles/s, its gear running with it and dust scrubbing off it), facing the structure's door side with the dispenser at its tail, so the part's foot is over that part's place in the structure; the hull's springs settle; it stands the dispenser up off its tail about the corner pivot (0.5 s, nodding 3° past upright as it settles), still rolled with its window to the tail, and its turntable turns it a quarter turn on the pivot (0.35 s, smoothstep) to face the way the outpost's stem does, swinging clear behind the tail; then the structure rises (its build sequence over 1 s) while the truck sinks under the ground (smoothstep, gone by 55% of the rise). As the part's foot reaches its spot it stays there, planted (a puff of dust each side), and the structure rises round it: the dispenser is the outpost's own stem and head turned to face the truck's bow, built by the same function and 2% fuller across, so the outpost's stem rises up inside it and it gives way to it as stage_2 lands (75% of the rise), and its head to the outpost's head as stage_3 lands (95%); then the outpost's lookout mast telescopes up. Nothing pops: whatever goes away is underground or inside its twin.",
+   {'ot_stem': "the carried dispenser, pivoted on the tail's right corner at the bed's height: lying (tilted forward 90° about x and rolled a quarter turn about its own axis, window up) on the way; to deploy, stood upright (the tilt taken out), then turned to identity",
+    'ot_stem_body`, `ot_head': "the outpost's stem and head inside it (2% fuller across, turned to face the bow); ot_head gives way last",
+    'ot_anchor': "an empty at the stem's foot: it lands on the outpost's silo axis at the stem's own height",
+    'steer_l0`, `steer_r0': "the front knuckles with their wings: yawed into turns, full lock pivoting",
+    'wheel_l0`, `wheel_r0`, `wheel_l1`, `wheel_r1`, `wheel_l2`, `wheel_r2': "the tyres (axle 0 at the front): turned about x by their side's travel",
+    **CHASSIS_NODES},
+   "Parked: the springs settle and the stack (on the left flank, under the load) wisps every 3–5 s."),
  U('scout_buggy', 'Very fast scout with a machine gun against infantry.', 'factory', 'wheeled', 4.0, 3.0, 286, True,
    "Candy chassis on wheels: big smooth balloon tyres at the back, small steered ones in cycle fenders at the front, and its gun on a "
    "little Pez dispenser (a smoke stem carrying the team head high, so the gun sweeps clear over the engine, the wings and the rear tyres). "
@@ -228,18 +285,130 @@ UNITS = [
         'sprocket_l`, `sprocket_r`, `idler_l`, `idler_r': "turned about x by their side's travel / radius"}, **CHASSIS_NODES),
    "Parked: the turret faces forward, holds its aim 3 s after a fight, and now and then glances aside (every 20–45 s, ±15°, held 2–3 s); "
    "the stack wisps every 3–5 s."),
- U('artillery', 'Long-range indirect fire. Must stop to fire.', 'factory', 'tracked', 1.5, 1.0, 80, True,
-   TRACKED.format(t=80) + " Fire cycle: stop and deploy 0.6 s (hull lowers 0.04; spade_l and spade_r, folded up 105° for travel, slam down in 0.25 s and bite, kicking dust at their blades; the gun, stowed for travel on the bow's travel lock at about −3°, rises to its fixed −60° over 0.6 s as it nears firing range and snaps up if a shot comes first; moving again, the spades fold and the gun stows once the turret faces forward). The turret yaws toward the target and the barrel stays at a fixed 60° elevation. "
-   "On firing, the barrel recoils 0.2 along its own axis over 0.05 s and returns over 0.6 s, and the hull pitches back 3°. "
-   "It must undeploy (0.4 s) before moving. Shells fly a ballistic arc with an apex at 0.35 × range.",
-   dict(**TURRET(60), **BARREL(.2, .05, .6, pitch=-60), **{'spade_l`, `spade_r': "hinged at the hull's rear; rest pose planted (deployed), +105° about local X folded for travel", 'cradle': "the recoil cradle, a child of `turret` on the trunnion, pitched with `barrel` (−60° rest); the view pitches both +57° to stow the gun"}), "Barrel stays elevated; no idle scan."),
- U('long_range_artillery', 'Range-12 indirect fire. Needs a spotter. Must stop to fire.', 'factory', 'tracked', 1.3, 0.9, 70, True,
-   TRACKED.format(t=70) + " Same family as artillery with a longer hull and a far longer gun (range 12). Fire cycle as artillery: stop and deploy (hull lowers 0.04; spade_l and spade_r, folded up 105° for travel, slam down in 0.25 s and bite, kicking dust at their blades; the gun, stowed for travel on the bow's travel lock at about −3°, rises to its fixed −60° over 0.6 s as it nears firing range and snaps up if a shot comes first; moving again, the spades fold and the gun stows once the turret faces forward). On firing, the barrel recoils 0.24 along its own axis over 0.05 s and returns over 0.7 s, and the hull pitches back 3°.",
-   dict(**TURRET(50), **BARREL(.24, .05, .7, pitch=-60), **{'spade_l`, `spade_r': "hinged at the hull's rear; rest pose planted (deployed), +105° about local X folded for travel", 'cradle': "the recoil cradle, a child of `turret` on the trunnion, pitched with `barrel` (−60° rest); the view pitches both +57° to stow the gun"}), "Barrel stays elevated; no idle scan."),
- U('laser_tank', 'Beam tank that keeps a continuous lock on its target.', 'factory', 'tracked', 1.8, 1.4, 100, True,
-   TRACKED.format(t=100) + " Laser: no recoil. Charge 0.4 s (the cyan coils brighten one after another, back to front), then a beam lasts 0.8 s while the turret keeps tracking. "
-   "Cooldown is 1.2 s and the coils fade out. The barrel vibrates 0.004 at 30 Hz while the beam is on.",
-   dict(**TURRET(140), **BARREL(0)), "The coils breathe at 20% emission on a 2 s sine."),
+ U('artillery', 'Range-11 splash shells, lobbed. Fragile: it stops and digs in to fire.', 'factory', 'tracked', 1.3, 1.0, 286, True,
+   "Candy chassis on tracks: a Pez dispenser that lobs. Its hollow team head lays a short, fat howitzer (0.58 long, 0.042 radius) out "
+   "of its mouth under two recuperators; wrapped candy rounds ride on a rack on the rear deck. " + CHASSIS_SIM + ARTILLERY_ACT +
+   "Treads, sprockets and idlers run as on the light tank. " + CHASSIS_HULL.format(up=2, down=3, period=.5, damp=.7, kick=3, roll=1) +
+   " Fires every 3.5 s (range 11, a splash shell at 8 tiles/s): the barrel recoils 0.12 along the head's axis in 0.05 s and returns over "
+   "0.6 s (its breech stays inside the head), the hull kicks back 3°, a big flash, a blast ring on the ground and lingering smoke at the "
+   "`muzzle`.",
+   dict(**TURRET(60), **BARREL(.12, .05, .6), **ARTILLERY_NODES, **CHASSIS_NODES),
+   "Parked: the head shut, the gun in its lock, the spades folded back; it holds the gun's lay 3 s after a fight; no idle glances; the stack wisps every 3–5 s."),
+ U('long_range_artillery', 'Range-12 splash shells. Sight 7: needs a spotter. Fragile: it stops and digs in to fire.', 'factory', 'tracked', 1.3, 0.9, 286, True,
+   "The same dispenser, built bigger to reach a tile further: a longer hull (1.14 against 1.0), a bigger head (0.38 × 0.42 against "
+   "0.34 × 0.36), a far longer, slimmer gun (1.08 against the artillery's stubby 0.58, with a bore evacuator and two team bands) under "
+   "longer recuperators, bigger spades, three rounds on the rack against two, and a taller whip. " + CHASSIS_SIM + ARTILLERY_ACT +
+   "Treads, sprockets and idlers run as on the light tank. " + CHASSIS_HULL.format(up=2, down=3, period=.5, damp=.7, kick=3, roll=1) +
+   " Fires every 3.5 s (range 12, a splash shell at 8 tiles/s): the barrel recoils 0.18 along the head's axis in 0.05 s and returns over "
+   "0.7 s, the hull kicks back 3°, a big flash, a blast ring and lingering smoke at the `muzzle`.",
+   dict(**TURRET(50), **BARREL(.18, .05, .7), **ARTILLERY_NODES, **CHASSIS_NODES),
+   "Parked: the head shut, the gun in its lock, the spades folded back; it holds the gun's lay 3 s after a fight; no idle glances; the stack wisps every 3–5 s."),
+ U('laser_tank', 'Beam tank: hits ground and air.', 'factory', 'tracked', 2.0, 1.6, 286, True,
+   "Candy chassis on tracks with the laser tower on it: the tower's smoke pylon, wound with its cyan coils (coil_0 at the bottom .. "
+   "coil_2), stands on the hull and carries the team head as the turret; the beam projector (barrel: a steel lens barrel with the "
+   "tower's cyan lens and three glowing cyan coil sleeves along it, barrel_coil_0 at the breech .. 2, on a smoke ball mantlet in a round port in the head's face) pitches in the head; the sleeves carry the tower's coils out where the game's high camera sees them; foil heat-sink fins on the "
+   "crown, the rear vent (vent) under the hinge, and the tower's charge bank (three cream capacitor cans with team caps) on the rear "
+   "deck. " + CHASSIS_SIM + "Treads, sprockets and idlers run as the light tank's. " + CHASSIS_HULL.format(up=2, down=3, period=.25, damp=.35, kick=1.5, roll=1.5) +
+   " The beam cannon (LaserTankAct, ticked by VehicleWorks): hitscan, every 2 s, range 6.5, ground and air. The projector pitches toward "
+   "what it's shooting at (the target of its last beam, or its attack order's target before the first), −3° to +45° at up to 200°/s: "
+   "level at tanks, up at aircraft; after a fight it holds 3 s, then levels off at 30°/s. The beam charges in the last 0.5 s before it's "
+   "due (the 2 s cooldown after the last beam, while engaged): the six coils light one after another, up the pylon and out along the barrel, to 1.3, and the "
+   "lens brightens. On the shot the cyan beam leaves the lens (`muzzle`), the lens flashes and fades over 0.3 s, the coils drain "
+   "back from the lens (0.04 s apart, 0.25 s each), the head's rear vent breathes out a wisp of heat 0.12 s later and the hull kicks 1.5°. No recoil. A charge "
+   "that isn't fired bleeds away over 0.4 s. The coils cast light (GlowCaster): a cyan point light (no shadows) halfway up the pylon, "
+   "toward the camera, lights the head, the deck and the ground beside it, with an additive pool on the ground (0.75 tiles); it follows "
+   "the coils' glow, about 0.45 on the idle breath, rising to about 0.8 as they fill and 0.95 in the flash. Only the 3 nearest the middle "
+   "of the view get a real light (shared with every other glow; handed over with 0.35 s fades); every tank keeps its pool.",
+   dict(**TURRET(140), barrel=dict(mode='trunnion_pitch', pitch_min_deg=-3, pitch_max_deg=45, deg_per_s=200, recoil=0),
+        coil=dict(mode='charge_glow', count=6, order='coil_0..2 up the pylon, then barrel_coil_0..2 out to the lens', charge_s=.5, peak=1.3, drain_s=.25, light='GlowCaster cyan, 1.5 x glow, range 1.6, pool 0.75'),
+        **{'tread_l`, `tread_r': "the cleats: slid back along −Z by their side's travel, wrapping every 0.1",
+           'sprocket_l`, `sprocket_r`, `idler_l`, `idler_r': "turned about x by their side's travel / radius",
+           'vent': "an empty behind the head's rear vent: the heat wisp leaves from it",
+           'muzzle': "an empty at the lens: the beam leaves from it"}, **CHASSIS_NODES),
+   "Parked: the turret faces forward and now and then glances aside (every 20–45 s, ±24°, held 2–3 s); the projector is level; the "
+   "coils breathe on a 2.5 s sine (glow 0.25–0.45) and the lens glows at 0.5; the stack wisps every 3–5 s."),
+ U('apc', 'Armoured transport for 5 infantry, with a machine gun. Passengers die with it.', 'factory', 'wheeled', 2.8, 2.0, 286, True,
+   "Candy chassis on six balloon tyres (front pair steered in cycle fenders, the other four under the troop box's sponsons: no wings): "
+   "a dispenser's stem laid on its wheels, carrying soldiers as its candy, a rear ramp, five tinted glass roof domes on team rims and the gunner's team head "
+   "on a short smoke stem at the front of the roof. " + CHASSIS_SIM + "Wheels and steering as the scout buggy's (skid-steer pivots, "
+   "Ackermann curves, 28° at most; the springs heave it up to ±0.025). " + CHASSIS_HULL.format(up=2, down=3, period=.3, damp=.5, kick=1.5, roll=4) +
+   " Fires on the move (machine gun, every 0.5 s, range 5, hits aircraft): a tracer and a small flash from the `muzzle`, the barrel kicks "
+   "0.03 back in 0.03 s and returns over 0.08 s, the hull kicks 1.5°; its gun sweeps clear over the domes. "
+   "Loading ('load': a soldier boards when he's within 1.3 tiles of its middle, and the sim has him aboard at once): the ramp drops "
+   "(127° about its hinge at the deck, 0.35 s; on the move only to level, so its tip never drags) as soon as a boarder is within 2.2 tiles of "
+   "its edge. Each boarder then walks round the hull (if he came from the side or the front) to the ramp's foot and up it at a trot, at full "
+   "size (his path length / 2.2 tiles/s, 0.45 to 1 s, a view delay after the sim's instant boarding), to the full-height wrapper curtain: its telescopic screen rises behind the low roof as the ramp opens, "
+   "then seven strips unroll as the ramp clears (the final 40% of its opening). He passes behind it at the threshold without changing size; the strips sway (up to 18°, settling in about "
+   "0.7 s), and a helmeted head rises into the next roof dome (0.25 s, ease-out back). The ramp shuts (0.5 s) once nobody is on the way. "
+   "Unloading ('unload': the sim puts every passenger on the ground round it at once): the ramp drops in 0.2 s, and the soldiers come out "
+   "seat by seat, seat 0 first, 0.22 s + 0.12 s per seat after the unload (after the screen has risen) (unseen inside until then), each stepping out through the wrapper "
+   "curtain at full size (the strands swing), down the ramp and round to where the sim put him in 0.85 s, facing his way, so all five are where the sim says within 1.6 s; each one's head drops "
+   "out of its dome as he leaves the bay. The heads are its own team's to see: every other team's view shows the domes empty (the sim "
+   "tells nobody else who's aboard). Passengers already carried in a restored snapshot are seated as their views become available, without replaying boarding avatars. Destroyed with soldiers aboard, nobody gets out: the ramp and wrapper curtain shut under the blast. "
+   "When the vehicle view retires, all private occupant heads are hidden before the model becomes a detached wreck shared by every camera; its empty glass dome shells darken with the hull, revealing no occupant count.",
+   dict(**TURRET(240), **BARREL(.03, .03, .08), **{
+        'wheel_l0`, `wheel_r0`, `wheel_l1`, `wheel_r1`, `wheel_l2`, `wheel_r2': "the tyres (axle 0 at the front): turned about x by their side's travel",
+        'steer_l0`, `steer_r0': "the front knuckles with their cycle fenders: yawed into turns, full lock pivoting",
+        'apc_ramp': "the rear ramp, hinged at the deck: VehicleWorks drops it 127° to the ground (0.55 of that on the move) for loading and unloading",
+        'apc_seat_0` … `apc_seat_4': "a seated soldier's head in each roof dome: raised 0.07 into the dome as a soldier sits, dropped as he leaves; hidden from other teams",
+        'apc_bead_0` … `apc_bead_6': "seven wrapper strips: unroll once the ramp clears, sway up to 18° as a soldier passes, then roll back up before the ramp shuts",
+        'apc_screen_0` … `apc_screen_2': "the boarding shelter's top rail and two telescopic rods: rise 0.53 tiles as the ramp opens, stow just above the rear roof when it closes",
+        'apc_bay`, `apc_foot': "empties: the threshold, and the ramp's tip (the soldiers' path)"}, **CHASSIS_NODES),
+   "Parked: the gunner's head faces forward and now and then glances aside (every 20–45 s, ±24°, held 2–3 s); the ramp up; the stack wisps every 3–5 s; "
+   "the springs settle."),
+ U('mammoth_tank', 'Super-heavy twin-cannon tank. Hits ground and air, splash, and repairs itself up to 50% HP.', 'factory', 'tracked', 1.2, .8, 286, True,
+   "Candy chassis on tracks, the biggest of the three (1.52 long, 1.12 wide, for the sim's 0.7 radius): a whole Pez dispenser on tracks, "
+   "its team head riding 0.3 up on the dispenser's body (a rounded smoke stem nearly as wide as the head, with team grip ribs down its "
+   "front, sides and back) over a long, wide hull, twin cannons through a drum mantlet for its mouth, a big amber beacon in a clear dome "
+   "on its crown, and twin stacks either side of the engine cover. " + CHASSIS_SIM +
+   "The treads, sprockets and idlers run as the light tank's (capped at 1.2 tiles/s). The body squats 0.015 as it pulls away. "
+   + CHASSIS_HULL.format(up=1, down=1.8, period=.7, damp=.6, kick=2, roll=.8) + " The stack puffs alternate between its two stacks."
+   " Fires on the move (mammoth cannon, every 2.2 s, range 6, a shell with 1.0 splash, at ground or air): the sim fires one shell a shot, "
+   "so the barrels take turns, left then right: the one that fires recoils 0.1 along −Z in 0.05 s and returns over 0.45 s, and the flash "
+   "and the shell leave its own muzzle; the hull kicks back 2° and a dust ring rolls out under it. At aircraft: the drum (`trunnion`) "
+   "raises both barrels toward the aircraft the sim is fighting (its attack order's target, the enemy aircraft its turret faces while it "
+   "engages, or the one it last shot at, for 2 s), up to 35° at 120°/s, and snaps the rest of the way if the shot comes first; the "
+   "anti-air shell is white-hot with a long grey smoke trail and bursts at the aircraft like flak (a pop and hanging black puffs), where a "
+   "ground shell is the heavy's amber one and throws dirt and scorches. Self-repair: while the sim repairs it (below 50% HP, 6 HP/s, "
+   "not carried) the amber beacon burns bright and turns 1.5 times a second, and its beam turns with it: an audience-aware GlowCaster amber light and its pool, "
+   "0.5 out on the lamp's open side, sweep round over the head, the deck and the ground. Weld sparks fountain off its flanks every "
+   "0.14–0.28 s, each with an audience-scoped white-hot particle flash; at 50% the beacon goes dark and winds down to a stop.",
+   dict(**TURRET(60), **BARREL(.1, .05, .45), **{
+        'barrel_l`, `barrel_r': "the twin cannons under `barrel`: one recoils per shot, left first",
+        'muzzle_l`, `muzzle_r': "empties at each barrel's tip: the shot leaves the one that fired",
+        'trunnion': "the drum mantlet the barrels pass through: pitched up to 35° at aircraft (VehicleWorks)",
+        'beacon': "the amber repair lamp and its reflector, in the crown's clear dome: lit and turning only while self-repairing",
+        'exhaust`, `exhaust_l': "the two stacks' mouths: the puffs alternate",
+        'tread_l`, `tread_r': "the cleats: slid back along −Z by their side's travel, wrapping every 0.1",
+        'sprocket_l`, `sprocket_r`, `idler_l`, `idler_r': "turned about x by their side's travel / radius"}, **CHASSIS_NODES),
+   "Parked: the turret faces forward, holds its aim 3 s after a fight, and now and then glances aside (every 20–45 s, ±24°, held 2–3 s); "
+   "the barrels level, the beacon dark and still unless it's repairing; the stacks wisp every 3–5 s."),
+ U('flak_track', 'Mobile anti-air: splash flak bursts. Can\'t hit ground targets.', 'factory', 'half-track', 2.4, 2.0, 286, True,
+   "Candy chassis as a half-track (candy_chassis gear='halftrack'): small steered tyres up front in cycle fenders, licorice tracks under "
+   "the back, a plain deck (no lamps, no grille, nothing on the flanks) so the mount carries the silhouette. On the rear deck the SAM site's launcher, "
+   "small: a cream drum with its team band and steel slewing ring carries the team head (turret, its dark tracker visor in the mouth); "
+   "the elevation axle (barrel) runs through the head with a gun pod on each end (barrel_l, barrel_r: the SAM's cream pods with their "
+   "foil wrappers and team caps, two steel autocannons with licorice flash hiders each), and a small search radar (flak_radar) stands on "
+   "the head's back. " + CHASSIS_SIM + "Pivoting, the tracks counter-run and the front tyres go to full lock (28°); curving, the tyres "
+   "steer by Ackermann about the belts' middle. It rides as a tracked hull: no springs. " + CHASSIS_HULL.format(up=2, down=3, period=.3, damp=.5, kick=1.5, roll=1.5) +
+   " The flak mount (FlakAct, ticked by VehicleWorks) rests 20° nose-up. When there's an aircraft to shoot (the one it last fired at, its "
+   "attack order's air target, or an enemy aircraft within range in the 45° its turret faces) it snaps up to it, 10° to 80°, fast (a "
+   "0.07 s follow, up to 400°/s), follows it as it flies, holds 3 s after it's gone and settles back over about a second. Each burst (a "
+   "flak shell every 0.8 s, range 8, at 22 tiles/s, splash 1.0, air only) leaves the pod whose turn it is, left then right: that pod "
+   "recoils 0.03 in 0.03 s and returns over 0.12 s, the mount bucks 2° nose-up, the hull kicks 1.5°, and the pod's two spent foil "
+   "wrappers flick out of its outer side; the shell bursts at the aircraft in a flash and a hanging black puff. The search radar turns "
+   "at 20 rpm; while the mount tracks it carries on round to face forward and locks there.",
+   dict(**TURRET(300), barrel=dict(mode='elevation_axle', rest_deg=20, pitch_min_deg=10, pitch_max_deg=80, follow_s=.07, deg_per_s=400, recoil=.03, recoil_out_s=.03, return_s=.12, kick_deg=2),
+        flak_radar=dict(axis='Y', rpm=20, lock='faces forward while tracking'),
+        **{'barrel_l`, `barrel_r': "the gun pods on the axle's ends: PezMotion recoils them in turn along −Z (left first)",
+           'muzzle_l`, `muzzle_r': "empties at each pod's mouths: FlakAct points the rig's muzzle at the next pod's",
+           'eject_l`, `eject_r': "empties on each pod's outer side: the spent wrappers flick out of them",
+           'tread_l`, `tread_r': "the cleats on the rear belts: slid back along −Z by their side's travel, wrapping every 0.1",
+           'sprocket_l`, `sprocket_r`, `idler_l`, `idler_r': "turned about x by their side's travel / radius",
+           'wheel_l0`, `wheel_r0': "the front tyres: turned about x by their side's travel",
+           'steer_l0`, `steer_r0': "the front knuckles with their cycle fenders: yawed into turns, full lock pivoting"}, **CHASSIS_NODES),
+   "Parked: the mount rests 20° nose-up, the radar turns, the turret faces forward and now and then glances aside (every 20–45 s, "
+   "±24°, held 2–3 s); the stack wisps every 3–5 s."),
  U('gunship', 'Attack helicopter. Hovers at 2.4.', 'airfield', 'rotor', 3.0, 2.0, 140, True,
    "Rotorcraft: it can strafe and turn in place. Cruise altitude is 2.4 above the terrain (lerp 2/s). It leans up to 12° into its velocity and 8° into turns. "
    "Takeoff: on the lift, the spinner (rotor) spins up 0→600 rpm over 1.0 s, then the aircraft climbs to 2.4 over 1.5 s. "

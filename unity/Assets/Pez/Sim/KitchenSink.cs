@@ -563,6 +563,7 @@ namespace Pez.Sim
                 }
             for (int c = 0; c < hp.Length; c++) Item($"{state[c][0].ToString().ToUpperInvariant()}{state[c].Substring(1)}", $"power plant, barracks and factory at {MathF.Round(hp[c] * 100)}% health", 4 + 7 * c, 11, 11);
             Item("Wind", "smoke columns and embers lean and drift downwind", 14, 18, 14);
+            MammothRepair(Blue, 14, 25.5f);
         }
 
         static readonly string[] Infantry = { "rifleman", "rocket_soldier", "medic", "laser_trooper", "engineer", "sniper", "commando", "mine" };
@@ -628,22 +629,24 @@ namespace Pez.Sim
                 var (sk, tk, name) = lanes1[j];
                 float b = 2 + 3.5f * j;
                 float range = Defs.Get(sk).Weapon.Range * 0.8f;
-                Lane(sk, tk, 2, b, range, name);
+                if (sk == "laser_tank") BeamLane(2, b, range, name);
+                else Lane(sk, tk, 2, b, range, name);
             }
             // In the gap between the columns, the medic and the repair trucks.
             FieldMedic(10, 14.25f);
+            Lane("mammoth_tank", "gunship", 9, 4, 4f, "Mammoth at aircraft (twin cannons elevate; white-hot flak rounds)");
             FieldRepair(10, 18.5f);
             StructureRepair(10.5f, 26.5f);
             // The long-range gun under column one, its own spotter drone beside it (sight 7, range 12).
-            Lane("long_range_artillery", "power_plant", 2, 30.5f, 10.5f, "Long-range artillery (range 12)", 13);
+            ArtyLane("long_range_artillery", 2, 30.5f, 10.5f, "Long-range artillery (range 12)");
             Unit(Blue, "recon_drone", 7, 32.5f);
             // Column two: indirect fire, specialists, anti-air, aircraft and defences.
             float a0 = 18;
-            Lane("artillery", "power_plant", a0, 2, 9.5f, "Artillery (range 11, lobbed shells)", 13);
+            ArtyLane("artillery", a0, 2, 9.5f, "Artillery (range 11, lobbed shells)");
             Unit(Blue, "recon_drone", a0 + 5, 4); // a spotter: artillery needs someone else to see its target
             SniperLane(a0, 6, 7.2f);
             CommandoLane(a0, 10, 2.3f);
-            Lane("flak_track", "recon_drone", a0, 14, 6.2f, "Flak (air bursts)");
+            FlakLane(a0, 14);
             Lane("gunship", "light_tank", a0, 18, 4.4f, "Gunship rockets");
             Lane("stealth_bomber", "outpost", a0, 22.5f, 0f, "Stealth bomber (bombs)");
             TurretLane(a0 + 13, 24); // out on its own, clear of the bomber's runs and the lanes either side
@@ -750,6 +753,22 @@ namespace Pez.Sim
             Item("Structure repair", "a repair truck welding a damaged power plant: its crane turned to the plant, the boom up and the torch on the weld, the plant's fire fought to steam where the beam lands", a + 1.5f, b, 7);
         }
 
+        /// <summary>A mammoth at (a, b) that repairs itself: every loop it's knocked down to 46% and the sim repairs
+        /// it back to 50% (6 HP/s, about 12 s) while its beacon turns and its hull sparks; 5 s at 50%, dark, then again.</summary>
+        void MammothRepair(int team, float a, float b)
+        {
+            var m = Unit(team, "mammoth_tank", a, b, AlongRight);
+            float healedAt = -1f;
+            holds.Add(() =>
+            {
+                if (m.Dead) return;
+                if (m.Hp < m.Def.MaxHp * m.Def.SelfRepairTo - 0.5f) { healedAt = -1f; return; }
+                if (healedAt < 0f) healedAt = T;
+                else if (T - healedAt > 5f) m.Hp = m.Def.MaxHp * 0.46f;
+            });
+            Item("Mammoth self-repair", "knocked down to 46%, it repairs itself to 50% (about 12 s): the beacon on its crown lights and turns, amber on the ground, weld sparks off its flanks; at 50% it goes dark for 5 s, then again", a, b, 6);
+        }
+
         /// <summary>A Blueberry shooter at (a, b) and a Cherry target `dist` to its right, fired on forever.</summary>
         void Lane(string shooterKey, string targetKey, float a, float b, float dist, string name, float zoom = 8f)
         {
@@ -784,6 +803,26 @@ namespace Pez.Sim
             Item("Commando C4", "Commando walking up to a Barracks, kneeling and planting C4 on its wall (it blinks faster until it blows: the first after the 1.5 s arming, then every 5 s); every 16 s he steps back and comes in again", a + dist / 2, b, 8);
         }
 
+        /// <summary>An artillery lane: it shells a Cherry power plant `dist` to its right from two spots 1.5 tiles apart (both
+        /// inside 95% of its range), 11 s at each (three or four shots), then drives to the other: so every loop it lays its
+        /// gun, digs in, fires, folds its spades, stows its gun on the travel lock and drives both ways (backing off, it pivots
+        /// round, its head turns forward and lowers onto the lock). The caller places its spotter (a drone: sight 7).</summary>
+        void ArtyLane(string key, float a, float b, float dist, string name)
+        {
+            var target = Bldg(Red, "power_plant", a + dist + 1.4f, b);
+            var gun = Unit(Blue, key, a, b, AlongRight, pin: false);
+            var spots = new[] { P(a, b), P(a + 1.5f, b) };
+            holds.Add(() =>
+            {
+                if (gun.Dead || target.Dead) return;
+                int at = (int)(T / 16f) % 2;
+                bool relocate = T % 16f >= 11f && Vec2.Dist(gun.Pos, spots[1 - at]) > 0.3f;
+                if (relocate) { if (gun.Order != Order.Move) w.SetOrder(gun, Order.Move, spots[1 - at]); }
+                else if (gun.Order != Order.Attack || gun.TargetId != target.Id) w.SetOrder(gun, Order.Attack, target.Center, target.Id);
+            });
+            Item(name, $"{Pretty(key)} shelling a Power Plant: its hollow head tips back to lay the gun at the shell's launch angle, showing the candy round on the stem, the spades dig in, the ram pushes the round up into the breech and it fires every 3.5 s, the next round rising out of the stem; every 16 s it folds its spades, lowers its gun onto the travel lock and drives 1.5 tiles to its other spot", a + dist / 2, b, 13);
+        }
+
         /// <summary>The sniper's lane: it shoots at a Cherry rifleman `dist` to its right (it kneels to shoot, the rifle up,
         /// one shot every 3 s); in the last 4 s of every 12 it gets up and walks about a tile back or forward to its other
         /// spot, where it settles and shoots again; forever. In range (9) from both spots.</summary>
@@ -806,6 +845,42 @@ namespace Pez.Sim
 
         /// <summary>The gun turret at (a, b) tracking a Cherry light tank that drives back and forth across its front, 4 to 4.7
         /// tiles out (in range the whole way, its bearing swinging about 64 deg), and firing at it forever.</summary>
+        /// <summary>The laser tank's lane: its beam cannon hits ground and air, so every 8 s it switches between a heavy tank
+        /// `dist` to its right and a gunship hovering over the lane just short of it (the projector pitches up and back down).</summary>
+        void BeamLane(float a, float b, float dist, string name)
+        {
+            var tank = Unit(Red, "heavy_tank", a + dist, b, AlongLeft);
+            var gunship = Unit(Red, "gunship", a + dist - 1.5f, b + 2.9f, AlongLeft); // drawn well up the screen from where it stands: level with the lane
+            var shooter = Unit(Blue, "laser_tank", a, b, AlongRight, pin: false);
+            holds.Add(() =>
+            {
+                if (shooter.Dead || tank.Dead || gunship.Dead) return;
+                var t = T % 16f < 8f ? tank : gunship;
+                if (shooter.Order != Order.Attack || shooter.TargetId != t.Id) w.SetOrder(shooter, Order.Attack, t.Center, t.Id);
+            });
+            Item(name, "Laser tank firing at a heavy tank, then every 8 s at a gunship hovering over the lane (the projector pitches up to it and back down); its coils charge up the pylon and out along the barrel before each beam, their cyan light on the head, deck and ground", a + dist / 2, b, 8);
+        }
+
+        /// <summary>The flak track's lane: a recon drone flies to and fro over it, from 6.5 tiles out to 2, so the quad mount
+        /// snaps up and follows it (about 23 to 55 degrees) while the pods fire in turn and the flak bursts round the drone.</summary>
+        void FlakLane(float a, float b)
+        {
+            var drone = Unit(Red, "recon_drone", a + 6.5f, b, AlongLeft, pin: false);
+            var flak = Unit(Blue, "flak_track", a, b, AlongRight, pin: false);
+            var near = P(a + 2f, b); var far = P(a + 6.5f, b);
+            void Fly() { w.SetOrder(drone, Order.Move, near); drone.Waypoints.Clear(); drone.Waypoints.Add(far); drone.WaypointLoop = true; }
+            Fly();
+            holds.Add(() =>
+            {
+                if (flak.Dead || drone.Dead) return;
+                if (drone.Order != Order.Move) Fly();
+                if (flak.Order != Order.Attack || flak.TargetId != drone.Id) w.SetOrder(flak, Order.Attack, drone.Center, drone.Id);
+            });
+            Item("Flak (air bursts)", "Flak track firing at a recon drone that flies to and fro over the lane: the quad mount snaps up and follows it, the pods fire in turn (spent wrappers flicking out) and the flak bursts round the drone", a + 4f, b, 8);
+        }
+
+        /// <summary>The gun turret at (a, b) tracking a Cherry light tank that drives back and forth across its front, 4 to 4.7
+        /// tiles out (in range the whole way, its bearing swinging about 64 deg), and firing at it forever.</summary>
         void TurretLane(float a, float b)
         {
             var turret = Bldg(Blue, "gun_turret", a, b);
@@ -824,12 +899,13 @@ namespace Pez.Sim
 
         void Motion()
         {
-            Begin("motion", "Units in motion", "Each weight class driving back and forth: accelerate, brake, turn.", 92, 34, 22, 24);
+            Begin("motion", "Units in motion", "Each weight class driving back and forth: accelerate, brake, turn.", 92, 34, 22, 32);
             var lanes = new (string key, string name)[]
             {
                 ("rifleman", "Infantry walk"), ("scout_buggy", "Light and fast (buggy: tyres spin and steer, soft springs)"), ("light_tank", "Light hull (bobs twice; treads run, counter-run pivoting)"),
-                ("heavy_tank", "Heavy hull (one slow rock, start squat)"), ("mammoth_tank", "Super-heavy"), ("artillery", "Artillery"),
+                ("heavy_tank", "Heavy hull (one slow rock, start squat)"), ("mammoth_tank", "Super-heavy"), ("artillery", "Artillery (gun on travel lock, spades up)"), ("long_range_artillery", "Long-range artillery"),
                 ("mining_truck", "Laden mining truck"), ("apc", "APC"),
+                ("laser_tank", "Laser tank (tower on tracks)"), ("flak_track", "Half-track (belts pivot, front tyres steer)"),
             };
             for (int j = 0; j < lanes.Length; j++)
             {
@@ -1007,7 +1083,9 @@ namespace Pez.Sim
                         break;
                 }
             });
-            Item(name, $"a squad ({string.Join(", ", paxKeys.Select(Pretty))}) walk up and board (shrinking into it), ride, step back out of it and walk back; loops", a + 3, b - 1, 8);
+            Item(name, carrierKey == "apc"
+                ? $"a squad ({string.Join(", ", paxKeys.Select(Pretty))}) walk round to the APC's lowered ramp and up it at full size through its wrapper curtain, a helmet rising in a roof dome for each one seated; ride; the ramp drops and they step out seat by seat and walk back; loops"
+                : $"a squad ({string.Join(", ", paxKeys.Select(Pretty))}) walk up and board (shrinking into it), ride, step back out of it and walk back; loops", a + 3, b - 1, 8);
         }
 
         /// <summary>A minelayer lays a row of four mines, waits, the mines are cleared and it drives back; forever.</summary>
@@ -1055,6 +1133,7 @@ namespace Pez.Sim
             {
                 float a = 4 + 5 * i;
                 Entity e = null; float phase = i * 6f;
+                var squad = new List<Entity>();
                 var at = P(a, 10);
                 holds.Add(() =>
                 {
@@ -1063,11 +1142,21 @@ namespace Pez.Sim
                     {
                         int team = kind % 2 == 0 ? Blue : Red;
                         e = w.PlaceUnit(team, kinds[kind++ % kinds.Length], at, Toward);
+                        // The APC takes a squad aboard before it goes: they die with it, and nobody gets out.
+                        if (e.Def.Capacity > 0 && !e.Def.IsAir)
+                            for (int k = 0; k < 3; k++)
+                            {
+                                var p = w.PlaceUnit(team, "rifleman", at + new Vec2(-0.5f + 0.5f * k, 1.1f), Toward);
+                                w.SetOrder(p, Order.Board, e.Pos, e.Id);
+                                squad.Add(p);
+                            }
                     }
                     else if (e != null && c >= 2f && c < 3f)
                     {
                         w.Emit("destroyed", e.Team, e.Id, 0, e.Center, key: e.Def.Key);
                         w.Remove(e);
+                        foreach (var p in squad) if (!p.Dead) w.Remove(p); // one who never made it aboard isn't left standing
+                        squad.Clear();
                         // An enemy kill leaves a quarter of the wreck's cost as ore: the piles grow up out of the ground.
                         w.ShowcaseSalvage(e.Def.Key, at, e.Team == Blue ? Red : Blue, e.Team);
                         e = null;
@@ -1075,7 +1164,7 @@ namespace Pez.Sim
                     else if (e == null && c >= 22f) ClearOre(at, 2); // the slot's salvage is cleared before the next wreck
                 });
             }
-            Item("Wrecks", "destroyed one every 6 s: blast, burning hull, darkening wreck that lingers about 20 s", 11.5f, 10, 9);
+            Item("Wrecks", "destroyed one every 6 s: blast, burning hull, darkening wreck that lingers about 20 s; the APC boards three riflemen first, and they die inside it (private occupants are hidden before the shared empty dome shells darken)", 11.5f, 10, 9);
             Item("Salvage piles", "each wreck leaves a quarter of its cost as ore piles (iron, copper, uranium) that grow up around it; cleared after 20 s", 11.5f, 8, 9);
 
             // Explosion pads: one effect every 2 s, in turn, each on its own pad so its scorch builds up there.
@@ -1187,7 +1276,7 @@ namespace Pez.Sim
                 }
                 else if (opTruck != null && !opTruck.Dead && opTruck.Order == Order.Idle && w.Deploy(opTruck) != null) { w.Remove(opTruck); opTruck = null; opAgain = T + 2f; }
             });
-            Item("Outpost truck deploying", "drives up, stops and deploys: the bunker rises out of the sinking truck, then the lookout's mast telescopes up and the lookout starts its sweep; cleared after 12 s; loops", 21.5f, 11f, 9);
+            Item("Outpost truck deploying", "drives up, stops and deploys: it lines up, stands the outpost's own dispenser up off its tail onto the stem's spot and sinks away as the outpost rises round it; then the lookout's mast telescopes up and the lookout starts its sweep; cleared after 12 s; loops", 21.5f, 11f, 9);
 
             // Decay (the match clock's last half hour): a barracks crumbling, grit falling off it, its health running down
             // from full to 45% over a minute (smoke starts below 50%) and back.
