@@ -14,13 +14,16 @@ REMOVE_STRUCTURE = ("Destroyed: shake ±0.03 for 0.4 s, then poof: a soft cream 
     "for 0.06 s and pops to nothing in 0.14 s. A rubble decal fades in under it. Sold: dust at the footprint corners, then the same poof. "
     "Nothing sinks into the ground.")
 EMERGE_FROM = {
-    'factory': "Spawns inside the factory, 0.6 behind its door node. The door rolls up (localScale.y 1→0.05, 0.35 s), the unit drives out along −Z at 60% speed to a point 1.5 tiles south, then takes its rally order. The door rolls down 0.5 s after the unit clears.",
+    'factory': "Rolls out of the factory's door with anticipation, from the sim's production queue. In the last 1.5 s of its build the factory's amber lamps blink at 2 Hz; in the last 0.8 s three steam puffs vent 0.2 s apart; the door rolls up (localScale.y 1→0.05, 0.35 s; slower on low power) so it's fully open 0.1 s before the unit appears, and the flip-top head over it lifts with the door. The unit starts 0.6 inside the door, in the dark bay, and eases out from rest to the position the sim gave it (smoothstep over 0.9 s), down the plinth's driveway ramp: it never pops in at its sim position. The door closes 1.4 s later (the head drops back with a bounce), and the unit takes its rally order.",
     'barracks': "Spawns 0.4 behind the barracks door. The door rolls up (0.25 s) and the soldier walks out along −Z for 1.0 tile, then takes its rally order. The door closes after the last soldier in the batch.",
     'airfield': "Spawns on the airfield lift node, starting at y=−0.6 inside the pad. The lift rises to 0 over 1.2 s (ease-out). The aircraft spins up and climbs to cruise altitude (see its entry). The lift stays up until the aircraft is 1 tile away, then drops back down.",
     'refinery': "A free mining_truck is dispensed through the refinery dock door when the refinery finishes building. It reverses out along −Z for 1.2 tiles and turns toward the nearest ore.",
 }
-REMOVE_UNIT = ("Destroyed: the flip-top head (turret) is blown off on a ballistic arc (up 2.5, sideways 0.8, spinning 540°/s) and fades out over 0.6 s. "
-    "The hull drops 0.06 and its material darkens to 30% over 0.5 s. The wreck stays 20 s, then goes poof.")
+REMOVE_UNIT = ("Destroyed vehicle: a blast and a cook-off, debris in its colours, a scorch and 12 s of smoke. The flip-top head (turret) is "
+    "blown off on a ballistic arc (up 2.5, about 1 sideways, tumbling 540°/s), bounces once and lands beside the hull, cocked 8–22° on its "
+    "base, and stays with the wreck: it doesn't fade. Every part, head included, darkens to about 30% as seen over 0.5 s while the hull "
+    "settles 0.06. The wreck lies 20 s, then goes poof (it swells 8% for 0.06 s and pops to nothing in 0.14 s inside a cream cloud). "
+    "A soldier goes poof where it falls; an aircraft falls burning and blows up where it hits the ground. Removed any other way, just the poof.")
 
 def U(key, role, built_at, loco, speed, accel, turn, in_place, mech, nodes, idle, extra=None):
     return dict(key=key, kind='unit', role=role, built_at=built_at,
@@ -41,6 +44,22 @@ TRACKED = ("Tracked: pivot-turns in place at {t}°/s. When it has to turn more t
 WHEELED = ("Wheeled: cannot turn in place. Minimum turn radius {r} tiles; steering follows a curve and reverses for tight corners. "
            "Body rolls up to 4° into turns and pitches 2° under acceleration.")
 
+# The candy chassis (build_models.py candy_chassis; VehicleWorks.cs): what every vehicle built on it does with no code of its own.
+CHASSIS_SIM = ("The sim turns every vehicle at 286°/s: more than 34° off its way it pivots on the spot first, otherwise it drives "
+    "where it faces, curving round (Rules 42); it starts and stops at full speed, so the view's springs carry the mass. ")
+CHASSIS_HULL = ("The sprung `hull` (the running gear stays on the ground) pitches nose-up {up}° pulling away and {down}° nose-down braking "
+    "(a spring of period {period} s, damping {damp}; the dip starts 0.3 s before the sim stops it), each shot kicks it {kick}° nose-up, "
+    "and it rolls up to {roll}° out of a curve. The whole vehicle (the rig's body, never the gameplay root) tips to the slope under it "
+    "on a plinth's driveway ramp, eased at 8/s. Dust puffs off the tail on the move (every 0.3 s slow to 0.1 s fast) and scrubs off the bow "
+    "and stern while it pivots. The `exhaust` stack coughs three puffs 0.12 s apart pulling away, and breathes a wisp every 3–5 s parked.")
+CHASSIS_NODES = {
+    'gear': "the unsprung running gear, static on the ground",
+    'hull': "the sprung body: VehicleWorks pitches, rolls (and on wheels heaves) it about its suspension pivot",
+    'exhaust': "an empty at the stack's mouth: the puffs leave from it",
+    'slot_bed`, `slot_crane`, `slot_dish`, `slot_pod`, `slot_stack`, `slot_lights': "empty mounts on the hull for other vehicles' kit (build_models.py candy_chassis)",
+    'crown`, `cheek_l`, `cheek_r': "empty mounts on the head that turn with it",
+}
+
 UNITS = [
  U('mining_truck', 'Harvests ore and returns it to a refinery or outpost.', 'factory', 'tracked', 1.6, 1.2, 110, True,
    TRACKED.format(t=110) + " The cutter's teeth always turn at 60 rpm while the engine runs. Harvest loop: drive onto an ore tile; while harvesting, ramp the spinner up to 240 rpm over 0.4 s and creep forward at 0.15 tiles/s across the tile. "
@@ -58,13 +77,36 @@ UNITS = [
    "Its body lowers 0.08 over 0.3 s as the jacks extend. The folded bunker lifts off the bed while the truck chassis sinks into the ground over 1.0 s. "
    "The outpost's stage_0 to stage_3 rise from the same spot using the structure build sequence, compressed to 1.8 s. Reverse this to undeploy.",
    {}, "Engine idle bob 0.004 at 8 Hz."),
- U('scout_buggy', 'Fast scout, light anti-infantry.', 'factory', 'wheeled', 3.6, 3.0, 160, False,
-   WHEELED.format(r=0.5) + " Suspension bounce is exaggerated: body Y on a spring (k = 120, damping 10) driven by terrain noise when moving. "
-   "It can fire on the move; the turret yaws independently of the body.",
-   dict(**TURRET(300), **BARREL(.03, .03, .08)), "The pintle gun swings slowly ±30° when no target is in range."),
- U('light_tank', 'Fast main battle tank.', 'factory', 'tracked', 2.4, 2.0, 120, True,
-   TRACKED.format(t=120) + " Fires on the move. Each shot: the barrel recoils 0.12 along −Z in 0.05 s and returns over 0.35 s, the hull kicks back 1.5° pitch, and the muzzle flash spawns at the barrel tip.",
-   dict(**TURRET(150), **BARREL(.12)), "Turret scans ±40° every 3–5 s when idle."),
+ U('scout_buggy', 'Very fast scout with a machine gun against infantry.', 'factory', 'wheeled', 4.0, 3.0, 286, True,
+   "Candy chassis on wheels: big smooth balloon tyres at the back, small steered ones in cycle fenders at the front, and its gun on a "
+   "little Pez dispenser (a smoke stem carrying the team head high, so the gun sweeps clear over the engine, the wings and the rear tyres). "
+   + CHASSIS_SIM + "So the buggy has no turning circle either: pivoting, it skid-steers, its front wheels at full lock (28°) and each side's "
+   "tyres turning opposite ways; curving, the front wheels steer by Ackermann from the yaw rate (at most 28°, easing at 220°/s). Every tyre "
+   "turns with its side's travel / its radius (capped at 0.4 of its three-bolt hub's period per 1/30 s, so it never strobes). The springs are "
+   "soft: the hull heaves on a spring (k 120, damping 10) driven by ground noise as it drives, up to ±0.025. One smooth wing over each "
+   "tyre, seated low: the front ones steer with their tyres, the rear ones ride with the axle, so the body's bounce never meets them. " + CHASSIS_HULL.format(up=2, down=3, period=.25, damp=.35, kick=1.5, roll=4) +
+   " Fires on the move (machine gun, every 0.5 s, range 5, hitscan): a tracer and a small flash from the `muzzle`, the barrel kicks 0.03 "
+   "back in 0.03 s and returns over 0.08 s, the hull kicks 1.5°.",
+   dict(**TURRET(300), **BARREL(.03, .03, .08), **{
+        'wheel_l0`, `wheel_r0`, `wheel_l1`, `wheel_r1': "the tyres (axle 0 at the front): turned about x by their side's travel",
+        'steer_l0`, `steer_r0': "the front knuckles with their cycle fenders: yawed into turns, full lock pivoting",
+        'wing_l1`, `wing_r1': "the rear wings, on the axle (unsprung) over the big tyres"}, **CHASSIS_NODES),
+   "Parked: the head faces forward and now and then glances aside (every 20–45 s, ±24°, held 2–3 s); the stack wisps every 3–5 s; "
+   "the springs settle."),
+ U('light_tank', 'Fast all-round tank. Can\'t hit aircraft.', 'factory', 'tracked', 2.6, 2.0, 286, True,
+   "Candy chassis on tracks, the reference: a Pez dispenser on licorice tracks, its team head the turret (hinged at the back like a "
+   "dispenser's, porthole eyes on its face) and the gun coming out of the head's mouth. " + CHASSIS_SIM +
+   "Each side's travel is the forward speed plus or minus the yaw rate times its half gauge, so pivoting the two treads counter-run. "
+   "The treads (`tread_l`, `tread_r`: the cleats on each belt's top run) slide back with their side's travel and wrap every 0.1 (a cleat), "
+   "rounded track guards over the belt ends hiding the wrap, capped at 0.4 of a cleat per 1/30 s (1.2 tiles/s) so a stream never sees them strobe backwards; "
+   "the toothed sprockets and bolted idlers turn with them. " + CHASSIS_HULL.format(up=2, down=3, period=.25, damp=.35, kick=1.5, roll=1.5) +
+   " Fires on the move (cannon, every 1.5 s, range 5): the barrel recoils 0.12 along −Z in 0.05 s and returns over 0.35 s (its breech stays "
+   "inside the head), the hull kicks back 1.5°, and the flash and the shell leave the `muzzle`.",
+   dict(**TURRET(150), **BARREL(.12), **{
+        'tread_l`, `tread_r': "the cleats: slid back along −Z by their side's travel, wrapping every 0.1",
+        'sprocket_l`, `sprocket_r`, `idler_l`, `idler_r': "turned about x by their side's travel / radius"}, **CHASSIS_NODES),
+   "Parked: the turret faces forward, holds its aim 3 s after a fight, and now and then glances aside (every 20–45 s, ±24°, held 2–3 s); "
+   "the stack wisps every 3–5 s."),
  U('heavy_tank', 'Slow armoured tank with twin barrels.', 'factory', 'tracked', 1.4, 1.0, 70, True,
    TRACKED.format(t=70) + " Twin barrels share one barrel node and fire as a pair, alternating left and right muzzles 0.15 s apart. "
    "Recoil is 0.16 with a 0.5 s return. The hull kicks back 2.5°. It must stop to fire when the target is more than 30° off the hull heading.",

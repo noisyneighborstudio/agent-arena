@@ -4,7 +4,8 @@
 #   art-src/tools/kit/icon.sh <key> [structures|units] [out.png]
 #
 # Reads unity/Assets/Pez/Resources/PezModels/<key>.glb; writes unity/Assets/Pez/Resources/PezIcons/<key>.png unless
-# out.png is given. Soldiers turn three-quarters to the camera (render.html; add &turn=<radians> via ICONQ to override).
+# out.png is given. Soldiers and candy-chassis vehicles turn three-quarters to the camera, front on (render.html; add
+# &turn=<radians> via ICONQ to override).
 # Needs `npm ci` in art-src/tools/kit once.
 set -e
 KIT=${0:A:h}; REPO=${KIT:h:h:h}

@@ -90,7 +90,11 @@ window.renderIcon = async (kind, key) => {
   const o = instance(await load(kind, key), 'blue'); scene.add(o);
   // A soldier (build_models.candy_trooper: it has head and arms nodes) turns to face the camera, three-quarters on, so
   // the icon shows its face and its weapon rather than its back.
-  if (o.getObjectByName('head') && o.getObjectByName('arms')) { o.rotation.y = +(new URLSearchParams(location.search).get('turn') ?? -1.9); o.updateMatrixWorld(true); }
+  // So does a vehicle on the candy chassis (build_models.candy_chassis: hull and gear nodes): its front three-quarters
+  // on, the head's face, the gun and the bow toward the viewer, its flank and running gear beside them.
+  const soldier = o.getObjectByName('head') && o.getObjectByName('arms');
+  const vehicle = o.getObjectByName('hull') && o.getObjectByName('gear');
+  if (soldier || vehicle) { o.rotation.y = +(new URLSearchParams(location.search).get('turn') ?? -1.9); o.updateMatrixWorld(true); }
   const box = new THREE.Box3().setFromObject(o), size = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
   const rad = size.length() / 2;
   lights(scene, 1, rad * 2);

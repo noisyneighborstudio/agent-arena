@@ -587,6 +587,13 @@ namespace Pez.View
             Emit(S.Dust, ground + Up * 0.06f + Flat(0.08f), back * Random.Range(0.2f, 0.5f) + FxSystems.Wind * 0.6f + Up * Random.Range(0.1f, 0.3f),
                 Random.Range(0.22f, 0.36f) * size, Random.Range(1.2f, 1.9f), Vary(Color32.Lerp(DustBiscuit, DustPale, 0.4f), 0.06f, 90));
 
+        /// <summary>A breath from a vehicle's exhaust stack (VehicleWorks): a small grey puff that rises out of the mouth and
+        /// drifts downwind for about a second. `k` 1 is a cough as it pulls away, 0 an idling wisp.</summary>
+        public static void Exhaust(Vector3 mouth, float k) =>
+            Emit(S.Dust, mouth + Random.insideUnitSphere * 0.01f, Up * Random.Range(0.35f, 0.6f) + FxSystems.Wind * 0.4f + Flat(0.05f),
+                Random.Range(0.1f, 0.14f) * Mathf.Lerp(0.75f, 1.35f, k), Random.Range(0.7f, 1.1f) * Mathf.Lerp(0.8f, 1.2f, k),
+                Vary(Color32.Lerp(GunSmoke, SmokeAsh, 0.35f), 0.06f, (byte)Mathf.Lerp(90f, 170f, k)));
+
         // ---------------------------------------------------------------- lines
 
         public static void Tracer(Vector3 a, Vector3 b, Color c)

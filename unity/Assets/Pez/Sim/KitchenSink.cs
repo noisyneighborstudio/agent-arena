@@ -784,7 +784,7 @@ namespace Pez.Sim
             Begin("motion", "Units in motion", "Each weight class driving back and forth: accelerate, brake, turn.", 92, 34, 22, 24);
             var lanes = new (string key, string name)[]
             {
-                ("rifleman", "Infantry walk"), ("scout_buggy", "Light and fast (buggy)"), ("light_tank", "Light hull (bobs twice)"),
+                ("rifleman", "Infantry walk"), ("scout_buggy", "Light and fast (buggy: tyres spin and steer, soft springs)"), ("light_tank", "Light hull (bobs twice; treads run, counter-run pivoting)"),
                 ("heavy_tank", "Heavy hull (one slow rock, start squat)"), ("mammoth_tank", "Super-heavy"), ("artillery", "Artillery"),
                 ("mining_truck", "Laden mining truck"), ("apc", "APC"),
             };

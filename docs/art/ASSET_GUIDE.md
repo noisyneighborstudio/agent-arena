@@ -44,11 +44,13 @@ now speaks it; match them before inventing anything.
 
 **Units** share one body: the candy trooper (§5.4). Soldiers are chunky Pez figures with a big cream head, licorice
 eyes, a team helmet or headgear on top (where it reads at full zoom-out), and each unit's kit — rifle, tube, med pack,
-spanner, scoped rifle, charges — doing the identifying at game zoom. Vehicles and aircraft get the same treatment in
-families (a shared chassis or base first, then the variants).
+spanner, scoped rifle, charges — doing the identifying at game zoom. Vehicles share the candy chassis (§5.7): a cream
+hull on licorice tracks or tyres with a team flip-top head as its turret or cab cap. Aircraft get the same treatment in
+a family (a shared base first, then the variants).
 
-**Budgets after rounding:** 1×1 structure ~3–7k triangles, 2×2 ~5–12k, 3×3 ~10–18k; a soldier ≤ ~3.2k. Going over is
-allowed with a reason in the hand-back.
+**Budgets after rounding:** 1×1 structure ~3–7k triangles, 2×2 ~5–12k, 3×3 ~10–18k; a soldier ≤ ~3.2k; a light
+vehicle ~6–7k, a heavy one up to ~10k (the owner's figure for the candy chassis). Going over is allowed with a reason in
+the hand-back.
 
 ---
 
@@ -202,7 +204,8 @@ yourself and iterate on form before touching Unity.
   `Gait.Kneel` with a per-unit `Gait.KneelPose`; SoldierWorks only says when.
 - A soldier must also work as a barracks case figurine (built from the unit being trained, baked dough → finished), in
   the spit-out tuck-and-roll, and boarding/unloading transports.
-- Icons: soldiers turn three-quarters to the camera (render.html); pass `ICONQ=turn=<rad>` to `icon.sh` to override.
+- Icons: soldiers and candy-chassis vehicles turn three-quarters to the camera, front on (render.html); pass
+  `ICONQ=turn=<rad>` to `icon.sh` to override.
 
 ### 5.5 Docks and drop-offs
 
@@ -217,6 +220,25 @@ all), plus a small budget of real point lights (3) handed to the brightest sourc
 between holders. Adopt it in two lines: `caster = GlowCaster.For(model, localPos, color, light:, range:, pool:, …)` once,
 then `caster.Set(glow, Fx.Audience)` every frame with the same glow value that drives the emissive. Keep peaks so the
 pad is tinted, not washed out (the laser tower's shot was cut by a third).
+
+### 5.7 Vehicles: the candy chassis
+
+- Every ground vehicle is `candy_chassis(a, …)` in `build_models.py` plus a team head (`chassis_head`), a weapon
+  (`chassis_cannon`, `chassis_mg`) and its own kit on the hull's slots (`slot_bed`, `slot_crane`, `slot_dish`, `slot_pod`,
+  `slot_stack`, `slot_lights`). Read the API comment above it; the light tank (tracks) and the scout buggy (wheels) are the
+  references. Its nodes (`gear`, `hull`, `tread_*`, `sprocket_*`, `idler_*`, `wheel_*`, `steer_*`, `turret`, `lid`,
+  `barrel`, `muzzle`, `exhaust`) are a contract with `VehicleWorks`.
+- `VehicleWorks` is the one class for running gear and hull feel (treads, wheels, steering, the sprung hull's pitch, roll
+  and bounce, slope, dust, exhaust), with a small per-vehicle branch for a special act; PezMotion keeps the turret and
+  barrel. Don't animate those nodes anywhere else.
+- **The owner's decisions (2026-10):**
+  - Wheeled vehicles keep pivoting on the spot, as the sim turns every vehicle (286°/s, Rules 42), shown as a skid-steer
+    with the front wheels at full lock. No turning circle and no Rules change.
+  - The tread speed stays capped at 1.2 tiles/s (0.4 of a cleat per 1/30 s), so a 30 fps stream never sees the treads
+    strobe backwards, even though a fast tank drives faster than that.
+  - Triangle budget: about 6–7k for a light vehicle, up to about 10k for a heavy one.
+- Prove clearance with a sampled sweep: turret yaw all round, full recoil, the hull's pitch, roll and heave extremes,
+  steering lock, and the treads slid a full cleat (the light tank's and buggy's sweep found 0 clips).
 
 ---
 

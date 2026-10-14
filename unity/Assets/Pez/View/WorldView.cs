@@ -22,14 +22,12 @@ namespace Pez.View
             public Vector3? SpawnFrom;
             public float SpawnT;
             public float LandK;          // aircraft: 0 flying, 1 parked on its pad (eases between)
-            // Hull feel (MOTION.md): nose-up under acceleration, dip when braking, kick back on firing.
-            public float HullSpeed, HullPitch, HullPitchVel;
-            public float TrackDustT;     // ground vehicle: until its next puff of dust off the tracks
+            public VehicleWorks Drive;   // ground vehicle: hull feel and slope, treads, sprockets, wheels and steering, dust and exhaust
             // Drones tilt like quadcopters: the smoothed velocity, and the tilt (a world-space lean vector) on a spring.
             public Vector3 DroneVel, DroneTilt, DroneTiltVel;
             public Vector3? EaseFrom; public Vector3 EaseOff; // a resync moved the entity: where it was drawn, and the offset from where it now is (bleeds off)
-            // Mass in motion: the heavy's start squat, artillery deployed (0..1) and whether it has rammed this cycle.
-            public float StartSquat, Deploy;
+            // Mass in motion: artillery deployed (0..1) and whether it has rammed this cycle.
+            public float Deploy;
             public float Elev;           // artillery: the gun's elevation, 0 stowed on the bow lock .. 1 raised to fire
             public bool Rammed;
             public int OreTint = -1;     // deep mine: the ore its tube is tinted to; mining truck: the ore its load shows
@@ -1032,7 +1030,7 @@ namespace Pez.View
                 if (v.EaseOff != Vector3.zero) { v.EaseOff *= Mathf.Exp(-Time.deltaTime * 14f); if (v.EaseOff.sqrMagnitude < 1e-4f) v.EaseOff = Vector3.zero; rig.Root.position += v.EaseOff; }
                 var targetRot = Quaternion.Euler(0, Yaw(e.Facing), 0);
                 rig.Root.rotation = Quaternion.Slerp(rig.Root.rotation, targetRot, Time.deltaTime * 14f);
-                if (!e.IsAir && e.Def.Armor != Armor.Infantry) { HullFeel(v); TrackDust(v); }
+                if (!e.IsAir && !e.IsMine && e.Def.Armor != Armor.Infantry) (v.Drive ??= VehicleWorks.For(rig, e.Def, e.Id)).Tick(this, v, Time.deltaTime);
                 if (Models.IsArtillery(e.Def.Key) && rig.HasModel) Artillery(v);
                 if (rig.HasModel)
                 {
@@ -1226,8 +1224,7 @@ namespace Pez.View
             var e = v.E;
             var rig = v.Rig;
             float load = e.Cargo / (float)e.Def.HarvestCapacity;
-            v.Squat = Mathf.MoveTowards(v.Squat, load, Time.deltaTime * 2f);
-            var bp = rig.Body.localPosition; bp.y = -0.03f * v.Squat; rig.Body.localPosition = bp;
+            v.Squat = Mathf.MoveTowards(v.Squat, load, Time.deltaTime * 2f);   // VehicleWorks sinks the body by it
             bool bay = e.Order == Order.ReturnOre && (e.Dock == DockStep.Unload || e.Dock < DockStep.Align);
             if (bay && e.Cargo < v.PrevCargo && e.CargoType >= 0 && rig.Bin != null)
             {
@@ -1240,7 +1237,7 @@ namespace Pez.View
             }
             if (e.Dock == DockStep.PullOut && v.PrevDock == DockStep.Unload)
             {
-                v.HullPitchVel -= 18f;                                // the bed slams down: a small hull bounce
+                v.Drive?.Bump(-18f);                                  // the bed slams down: a small hull bounce
                 if (rig.Bin != null && v.OreTint >= 0)
                     Fx.OreBrick(rig.Bin.position + Vector3.up * 0.15f, -rig.Root.forward * 0.4f + Vector3.up * 1.2f, OreColors[v.OreTint], v.OreTint >= 2);
             }
@@ -1263,28 +1260,6 @@ namespace Pez.View
             else if (ph > dv.DockBest) dv.DockBest = ph;
         }
 
-        /// <summary>A hull's spring per weight class (production review rec. 5): period, damping, nose-up and nose-down
-        /// limits (deg), and the kick a shot gives it (deg).</summary>
-        struct HullClass { public float Period, Damping, Up, Down, Kick; }
-        static readonly HullClass LightHull = new HullClass { Period = 0.25f, Damping = 0.35f, Up = 2f, Down = 3f, Kick = 1.5f };   // bobs twice
-        static readonly HullClass HeavyHull = new HullClass { Period = 0.6f, Damping = 0.55f, Up = 1.5f, Down = 2.5f, Kick = 2.5f };  // one slow rock
-        static readonly HullClass ArtyHull = new HullClass { Period = 0.5f, Damping = 0.7f, Up = 2f, Down = 3f, Kick = 3f };
-        static readonly HullClass OtherHull = new HullClass { Period = 0.3f, Damping = 0.5f, Up = 2f, Down = 3f, Kick = 1.5f };
-
-        static HullClass ClassOf(Entity e) => e.Def.Key switch
-        {
-            "light_tank" or "laser_tank" or "scout_buggy" => LightHull,
-            "heavy_tank" or "mammoth_tank" => HeavyHull,
-            "artillery" or "long_range_artillery" => ArtyHull,
-            _ => OtherHull,
-        };
-
-        /// <summary>
-        /// Mass in motion: acceleration pitches the hull nose-up and braking dips it, on an underdamped spring per weight
-        /// class (light bobs twice, heavy rocks once slowly, artillery settles). The braking dip starts about 0.3 s before
-        /// the sim stops the vehicle (it's about to reach its firing range or its move point), so stopping and the first
-        /// shot's kick no longer cancel. The heavy squats a little as it pulls away.
-        /// </summary>
         /// <summary>
         /// The prevailing wind over open ground: faint breaths of dust lifted and blown along it, about 8 a second at
         /// random points across the screen (so the same density at any zoom), drifting downwind for a few seconds.
@@ -1307,49 +1282,6 @@ namespace Pez.View
         float blowDue;
 
         /// <summary>
-        /// A ground vehicle on the move throws dust off its tracks or wheels, from alternate sides of its tail, more often
-        /// the faster it goes, and the wind carries it off. Only where each camera can see the vehicle (Fx.Audience).
-        /// </summary>
-        void TrackDust(EV v)
-        {
-            var e = v.E;
-            if (e.IsStructure || e.IsMine || v.HullSpeed < 0.35f) { v.TrackDustT = 0f; return; }
-            if ((v.TrackDustT -= Time.deltaTime) > 0f) return;
-            v.TrackDustT = Mathf.Lerp(0.3f, 0.1f, Mathf.Clamp01(v.HullSpeed / 3f));
-            var root = v.Rig.Root;
-            float r = e.Def.Radius, side = (Time.frameCount & 1) == 0 ? 1f : -1f;
-            var at = root.position - root.forward * r * 0.8f + root.right * r * 0.5f * side;
-            at.y = 0f;
-            Fx.Audience = AudienceFor(e);
-            Fx.TrackDust(at, -root.forward, Mathf.Clamp(r * 2f, 0.7f, 2f));
-            Fx.Audience = null;
-        }
-
-        void HullFeel(EV v)
-        {
-            float dt = Mathf.Min(Time.deltaTime, 0.03f); // the spring below is explicit: it diverges at ~0.2 s frames and goes NaN (for good) within a minute of them (seen in the 1 fps dev build)
-            if (dt <= 0) return;
-            var e = v.E;
-            var hc = ClassOf(e);
-            float speed = Vec2.Dist(e.PrevPos, e.Pos) / World.Dt;
-            float smoothed = Mathf.Lerp(v.HullSpeed, speed, 1f - Mathf.Exp(-dt * 6f));
-            float accel = (smoothed - v.HullSpeed) / dt;
-            v.HullSpeed = smoothed;
-            float target = Mathf.Clamp(-accel * 1.5f, -hc.Up, hc.Down); // nose-up is negative pitch
-            if (e.Moving && AboutToStop(e)) target = hc.Down;
-            float w = 6.2831853f / hc.Period;
-            v.HullPitchVel += (w * w * (target - v.HullPitch) - 2f * hc.Damping * w * v.HullPitchVel) * dt;
-            v.HullPitch = Mathf.Clamp(v.HullPitch + v.HullPitchVel * dt, -hc.Up * 1.6f, hc.Down * 1.6f);
-            if (!(Mathf.Abs(v.HullPitch) < 30f)) v.HullPitch = v.HullPitchVel = 0f; // NaN / runaway: start over
-            v.Rig.Body.localRotation = Quaternion.Euler(v.HullPitch, 0, 0);
-            if (e.Def.Key == "heavy_tank") v.StartSquat = Mathf.MoveTowards(v.StartSquat, accel > 0.4f ? 1f : 0f, dt / 0.25f);
-            if (e.Def.Key == "heavy_tank" || Models.IsArtillery(e.Def.Key))
-            {
-                var bp = v.Rig.Body.localPosition; bp.y = -0.015f * v.StartSquat - 0.04f * v.Deploy; v.Rig.Body.localPosition = bp;
-            }
-        }
-
-        /// <summary>
         /// A quadcopter has no wings to bank with: it tips its whole body so the fans push toward where it wants to go. The
         /// lean follows the acceleration (it noses down to set off, rolls toward the new heading when it changes direction,
         /// rears back to stop) plus a little forward lean held at cruise against the air. The lean rides an underdamped
@@ -1358,7 +1290,7 @@ namespace Pez.View
         /// </summary>
         void DroneTilt(EV v)
         {
-            float dt = Mathf.Min(Time.deltaTime, 0.03f); // explicit spring: keep the step small (see HullFeel)
+            float dt = Mathf.Min(Time.deltaTime, 0.03f); // explicit spring: keep the step small (see VehicleWorks.Feel)
             if (dt <= 0) return;
             var e = v.E;
             var d = e.Pos - e.PrevPos;
@@ -1385,7 +1317,7 @@ namespace Pez.View
 
         /// <summary>Will the sim stop this vehicle within about 0.3 s? (It stops dead at Range x 0.95 from an attack target,
         /// or on reaching its move point.)</summary>
-        bool AboutToStop(Entity e)
+        internal bool AboutToStop(Entity e)
         {
             float reach = e.Def.Speed * 0.3f;
             if ((e.Order == Order.Attack || e.Order == Order.AttackMove) && e.TargetId != 0 && e.Def.Weapon != null)
@@ -1727,9 +1659,7 @@ namespace Pez.View
             if (v.Rig.HasModel) v.Rig.Motion.Fire(); else v.Recoil = amount;
             if (!v.E.IsStructure && !v.E.IsAir && v.E.Def.Armor != Armor.Infantry)
             {
-                // The hull kicks back (nose up): an impulse on the spring, so it rides on top of any settling dip.
-                var hc = ClassOf(v.E);
-                v.HullPitchVel -= hc.Kick * 6.2831853f / hc.Period;
+                v.Drive?.Kick(); // the hull kicks back (nose up)
                 v.Rammed = false;
             }
         }
