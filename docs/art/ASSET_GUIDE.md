@@ -232,7 +232,8 @@ python art-src/tools/kit/motion_splice.py --check <key> [key ...]   # ok / DIFF 
 ```
 
 Never regenerate the shipped files whole, and never hand-edit `MOTION.md` without putting the same words in `motion.py`
-(hand edits get erased by the next splice). `--check --all` should be all ok before you ship.
+(hand edits get erased by the next splice). `--check --all` must be all ok before you ship: CI (`arena/ci.sh`) runs it
+and won't deploy a commit that fails it.
 
 ---
 
