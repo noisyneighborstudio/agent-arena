@@ -81,6 +81,7 @@ namespace Pez.Sim
         public float QueuedAt;        // truck: when it joined its drop-off's queue (World.QueueAhead orders the line by it)      // soldier: getting out of a vehicle's way until then (its walk and aim wait)
         public float RepathTimer;
         public bool Moving;
+        public bool GuardMotionPaused;
         public int LastAttackerId;
         /// <summary>The team that last hurt it (-1 = nobody yet). Outlives the attacker, so a fire's kill and salvage still go to whoever set it.</summary>
         public int LastAttackerTeam = -1;

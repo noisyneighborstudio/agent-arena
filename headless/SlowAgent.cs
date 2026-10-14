@@ -23,11 +23,12 @@ namespace Pez.Headless
         {
             string Arg(string key, string def) { int i = Array.IndexOf(args, key); return i >= 0 && i + 1 < args.Length ? args[i + 1] : def; }
             string layer = Arg("--slow-agent-layer", "baseline");
-            if (layer != "baseline" && layer != "miners" && layer != "squads") { Console.Error.WriteLine("--slow-agent-layer takes baseline, miners or squads."); return 2; }
+            if (layer != "baseline" && layer != "miners" && layer != "squads" && layer != "guards") { Console.Error.WriteLine("--slow-agent-layer takes baseline, miners, squads or guards."); return 2; }
             int minutes = int.Parse(Arg("--slow-agent-minutes", "12"), CultureInfo.InvariantCulture);
             int[] seeds = Arg("--slow-agent-seeds", "1,2,3").Split(',').Select(int.Parse).ToArray();
             if (minutes < 1 || seeds.Length == 0) { Console.Error.WriteLine("Use positive minutes and at least one seed."); return 2; }
             string output = Arg("--slow-agent-out", null);
+            string fixtureDirectory = Arg("--slow-agent-settle-fixtures", null);
             var rows = new List<object>();
             var sw = Stopwatch.StartNew();
             for (int i = 0; i < seeds.Length; i++)
@@ -35,7 +36,7 @@ namespace Pez.Headless
                     foreach (string opponent in new[] { "simple_ai", "self" })
                         foreach (int seat in opponent == "simple_ai" ? new[] { 0, 1 } : new[] { 0 })
                         {
-                            var match = Match(seeds[i], habits, opponent, seat, minutes * 60, layer);
+                            var match = Match(seeds[i], habits, opponent, seat, minutes * 60, layer, fixtureDirectory);
                             rows.Add(match);
                             Console.WriteLine(Json.Write(match));
                         }
@@ -49,18 +50,25 @@ namespace Pez.Headless
             return 0;
         }
 
-        internal static JObj Match(int seed, bool habits, string opponent, int seat, float seconds, string layer = "baseline")
+        internal static JObj Match(int seed, bool habits, string opponent, int seat, float seconds, string layer = "baseline", string fixtureDirectory = null)
         {
             var controllers = new[] { "llm", "llm" };
             if (opponent == "simple_ai") controllers[1 - seat] = "ai";
             var game = new Game(new GameConfig { Seed = seed, MapSize = 80, Controllers = controllers, MatchHours = 0 });
             var commanders = controllers.Select((c, team) => c == "ai" ? null : new Commander(team, habits, layer)).ToArray();
-            var metrics = commanders.Select(c => c == null ? null : new Metrics(c.Team, layer)).ToArray();
+            var metrics = commanders.Select(c => c == null ? null : new Metrics(c.Team, layer, fixtureDirectory != null)).ToArray();
             var w = game.World;
+            var recentSnapshots = new Queue<(int Tick, string Json)>();
+            bool fixtureWritten = false;
             while (!w.GameOver && w.Time < seconds)
             {
                 for (int team = 0; team < commanders.Length; team++)
                     if (commanders[team] != null) commanders[team].Tick(game, metrics[team]);
+                if (fixtureDirectory != null && !fixtureWritten && w.Tick % World.TickRate == 0)
+                {
+                    recentSnapshots.Enqueue((w.Tick, Json.Write(Snapshot.Write(game))));
+                    while (recentSnapshots.Count > 6) recentSnapshots.Dequeue();
+                }
                 // Own-unit positions immediately before the fatal step: at most one tick (50ms) before a death.
                 var ownBefore = w.Entities.Where(e => !e.Dead && !e.IsStructure && e.IsArmed).Select(e => (e.Id, e.Team, e.Pos)).ToArray();
                 long lastEvent = w.Events.Count == 0 ? 0 : w.Events.Last().Seq;
@@ -68,7 +76,23 @@ namespace Pez.Headless
                 foreach (var metric in metrics.Where(m => m != null))
                 {
                     metric.Sample(w, lastEvent, ownBefore);
-                    if (layer == "miners") metric.SampleExecutor(w);
+                    if (layer == "miners" || layer == "guards" || fixtureDirectory != null)
+                        metric.SampleExecutor(w, (unit, details) =>
+                        {
+                            if (fixtureWritten || recentSnapshots.Count == 0) return;
+                            Directory.CreateDirectory(fixtureDirectory);
+                            string name = $"{layer}-seed{seed}-{opponent}-seat{seat}-{(habits ? "p0" : "plain")}-tick{w.Tick}-unit{unit.Id}";
+                            var files = new List<object>();
+                            foreach (var snapshot in recentSnapshots)
+                            {
+                                string filename = name + $"-before{snapshot.Tick}.json";
+                                File.WriteAllText(Path.Combine(fixtureDirectory, filename), snapshot.Json); files.Add(filename);
+                            }
+                            var replay = w.CommandLog.Where(c => c.Tick >= recentSnapshots.Peek().Tick).Select(c => (object)new JObj()
+                                .Set("seq", c.Seq).Set("tick", c.Tick).Set("team", c.Team).Set("command", c.Cmd)).ToList();
+                            File.WriteAllText(Path.Combine(fixtureDirectory, name + "-meta.json"), Json.Write(new JObj().Set("settle", details).Set("snapshots", files).Set("replay", replay)));
+                            fixtureWritten = true;
+                        });
                 }
             }
             return new JObj().Set("layer", layer).Set("rules_version", StateView.RulesVersion).Set("seed", seed)
@@ -89,9 +113,18 @@ namespace Pez.Headless
             readonly string layer;
             readonly List<object> interventions = new List<object>();
             readonly List<float> hitDelays = new List<float>(), sightDelays = new List<float>();
+            readonly List<object> guardEvents = new List<object>();
+            readonly List<float> guardDelays = new List<float>(), decisionDelays = new List<float>();
+            readonly Dictionary<string, int> guardReasons = new Dictionary<string, int>();
+            readonly Dictionary<int, float> settledUntil = new Dictionary<int, float>();
+            readonly List<object> settleEvents = new List<object>();
+            readonly Dictionary<string, int> observedSettleCounts = new Dictionary<string, int>();
+            readonly bool movementDiagnostics;
             long executorCursor;
             int resumes, unmatched;
-            public Metrics(int team, string layer = "baseline") { Team = team; this.layer = layer; }
+            int guardTriggers, decisionPackets, releases, detached, unmatchedGuards;
+            int ownSettles;
+            public Metrics(int team, string layer = "baseline", bool movementDiagnostics = false) { Team = team; this.layer = layer; this.movementDiagnostics = movementDiagnostics; }
 
             internal void Sample(World w, long after, (int Id, int Team, Vec2 Pos)[] before)
             {
@@ -114,11 +147,62 @@ namespace Pez.Headless
                 pending.Remove(alertSeq);
             }
 
-            internal void SampleExecutor(World w)
+            internal void SampleExecutor(World w, Action<Entity, JObj> onSettle = null)
             {
+                if (layer == "guards" || movementDiagnostics)
+                    foreach (var unit in w.Owned(Team).Where(e => !e.IsStructure && !e.IsMine))
+                    {
+                        float prior = settledUntil.TryGetValue(unit.Id, out var until) ? until : 0;
+                        if (unit.SettledUntil > prior && unit.SettledUntil > w.Time)
+                        {
+                            ownSettles++;
+                            var squad = w.Teams[Team].Squads.Values.FirstOrDefault(s => s.Members.Contains(unit.Id));
+                            GuardUnit guardState = null;
+                            if (squad != null) squad.Guards.Units.TryGetValue(unit.Id, out guardState);
+                            var lastNote = squad?.Guards.Notes.Select(n => (Dictionary<string, object>)Json.Parse(n)).LastOrDefault(n =>
+                                n.In("unit") == unit.Id || n.Arr("units").Any(id => Convert.ToInt32(id) == unit.Id));
+                            var causes = w.SettleCounts.Where(p => p.Key.StartsWith(unit.Def.Key + " " + unit.OrderName + " (", StringComparison.Ordinal) &&
+                                p.Value > (observedSettleCounts.TryGetValue(p.Key, out var count) ? count : 0)).Select(p => (object)p.Key).ToList();
+                            var details = new JObj().Set("tick", w.Tick).Set("t", w.Time).Set("unit", unit.Id).Set("type", unit.Def.Key)
+                                .Set("order", unit.OrderName).Set("order_by", unit.LastOrderBy).Set("pos", new List<object> { unit.Pos.X, unit.Pos.Y })
+                                .Set("causes_observed", causes).Set("last_guard_note", lastNote).Set("guard_action", guardState?.Action.ToString())
+                                .Set("guard_motion_paused", unit.GuardMotionPaused).Set("group", unit.Group).Set("speed_cap", unit.SpeedCap)
+                                .Set("goal", new List<object> { unit.OrderPos.X, unit.OrderPos.Y }).Set("guard_pos", new List<object> { unit.GuardPos.X, unit.GuardPos.Y })
+                                .Set("route_origin", guardState?.Continuation == null ? null : (object)new List<object> { guardState.Continuation.RouteOrigin.X, guardState.Continuation.RouteOrigin.Y });
+                            settleEvents.Add(details);
+                            onSettle?.Invoke(unit, details);
+                        }
+                        settledUntil[unit.Id] = unit.SettledUntil;
+                    }
+                foreach (var pair in w.SettleCounts) observedSettleCounts[pair.Key] = pair.Value;
                 var log = w.Observe.Log(Team);
                 foreach (var observation in log.After(executorCursor))
                 {
+                    if (layer == "guards")
+                    {
+                        if (observation.Kind == "guard_released") releases++;
+                        if (observation.Kind == "detached_by_order") detached++;
+                        if (observation.Kind != "guard_triggered" && observation.Kind != "decision_needed") continue;
+                        var body = observation.Body;
+                        string guardReason = body["reason"] as string ?? "unknown";
+                        string rule = body["rule"] as string ?? "unknown";
+                        float? guardTrigger = body["triggered_at_s"] == null ? null : Convert.ToSingle(body["triggered_at_s"]);
+                        float? guardDelay = guardTrigger.HasValue ? observation.Tick * World.Dt - guardTrigger.Value : null;
+                        if (observation.Kind == "guard_triggered")
+                        {
+                            guardTriggers++;
+                            string key = rule + ":" + guardReason;
+                            guardReasons[key] = guardReasons.TryGetValue(key, out var count) ? count + 1 : 1;
+                            if (guardDelay.HasValue) guardDelays.Add(guardDelay.Value);
+                        }
+                        else { decisionPackets++; if (guardDelay.HasValue) decisionDelays.Add(guardDelay.Value); }
+                        if (!guardDelay.HasValue) unmatchedGuards++;
+                        guardEvents.Add(new JObj().Set("kind", observation.Kind).Set("tick", observation.Tick).Set("rule", rule)
+                            .Set("reason", guardReason).Set("action", body["action"]).Set("triggered_at_s", guardTrigger).Set("trigger_to_order_s", guardDelay)
+                            .Set("trigger_basis", body["trigger_basis"]).Set("last_hit_at_s", body["last_hit_at_s"])
+                            .Set("unit", body["unit"]).Set("units", body["units"]));
+                        continue;
+                    }
                     if (observation.Kind == "miners_resumed") resumes++;
                     if (observation.Kind != "miners_withdrawn") continue;
                     var facts = observation.Body;
@@ -153,6 +237,12 @@ namespace Pez.Headless
                 if (layer == "miners") result.Set("executor", new JObj().Set("withdrawals", interventions.Count).Set("resumes", resumes)
                     .Set("hit_triggered", Latencies(hitDelays)).Set("visible_range_triggered", Latencies(sightDelays))
                     .Set("unmatched", unmatched).Set("interventions", interventions));
+                if (layer == "guards") result.Set("guard_executor", new JObj().Set("guard_triggered", guardTriggers).Set("decision_needed", decisionPackets)
+                    .Set("released", releases).Set("detached_by_order", detached).Set("unmatched", unmatchedGuards)
+                    .Set("own_movement_settles", ownSettles).Set("settle_events", settleEvents)
+                    .Set("guard_trigger_latency", Latencies(guardDelays)).Set("decision_latency", Latencies(decisionDelays))
+                    .Set("reasons", guardReasons.Aggregate(new JObj(), (o, pair) => o.Set(pair.Key, pair.Value))).Set("events", guardEvents));
+                if (movementDiagnostics && layer != "guards") result.Set("movement_diagnostics", new JObj().Set("own_movement_settles", ownSettles).Set("settle_events", settleEvents));
                 return result;
             }
         }
@@ -173,6 +263,8 @@ namespace Pez.Headless
             readonly HashSet<int> armyMembers = new HashSet<int>();
             internal const string ArmySquad = "army";
             bool squadReady;
+            bool guardsConfigured;
+            bool UsesSquad => layer == "squads" || layer == "guards";
             long cursor;
             string stream;
             int nextTurn;
@@ -220,7 +312,7 @@ namespace Pez.Headless
                     Send(game, "type", "harvest", "units", Ids(new[] { truck }), "ore", Id(truck) % 3 == 0 ? "copper_ore" : "iron_ore");
 
                 var army = units.Where(u => Defs.Get((string)u["type"])?.Weapon != null).ToList();
-                if (layer == "squads")
+                if (UsesSquad)
                 {
                     var squad = Rows(state, "squads").FirstOrDefault(s => (string)s["name"] == ArmySquad);
                     armyMembers.Clear();
@@ -233,6 +325,11 @@ namespace Pez.Headless
                         foreach (var u in additions) armyMembers.Add(Id(u));
                     }
                 }
+                if (layer == "guards" && squadReady && !guardsConfigured)
+                    guardsConfigured = Send(game, "type", "guard", "squad", ArmySquad, "retreat_below_pct", 40,
+                        "hold_for_support", new Dictionary<string, object> { ["within"] = 6d },
+                        "screen", new Dictionary<string, object> { ["roles"] = new List<object> { "rifleman" }, ["behind"] = 4d },
+                        "withdraw_below_strength_pct", 50, "to", new List<object> { (double)home.X, (double)home.Y });
                 if (habits)
                 {
                     var fresh = units.Where(u => !retreated.Contains(Id(u))).ToList();
@@ -242,7 +339,7 @@ namespace Pez.Headless
                         if (!rallied.Contains(Id(s)))
                         {
                             var rally = new List<object> { "type", "rally", "structure_id", Id(s), "x", staging.X, "y", staging.Y };
-                            if (layer == "squads") { rally.Add("squad"); rally.Add(ArmySquad); }
+                            if (UsesSquad) { rally.Add("squad"); rally.Add(ArmySquad); }
                             if (Send(game, rally.ToArray())) rallied.Add(Id(s));
                         }
                 }

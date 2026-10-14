@@ -80,8 +80,10 @@ namespace Pez.Headless
             IdleSeatsResign();
             JoinFlow();
             TurnSafety();
+            ExecutorEventPrivacy();
             MinerProtection();
             NamedSquads();
+            SquadGuardBehaviors();
             WaitPacing();
             DeepMining();
             Prospecting();

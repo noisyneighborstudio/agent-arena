@@ -43,6 +43,7 @@ namespace Pez.Sim
   {""type"":""rally"", ""structure_id"":ID, ""x"":X, ""y"":Y} where new units from that building go
       add ""squad"":""west"" to enroll new units in that squad; a later rally without squad clears enrollment (rally applies to your producers of this building's kind)
   {""type"":""squad"", ""name"":""west"", ""add"":[IDS], ""remove"":[IDS]}  name live own units (1-24 chars, one squad each); disband:true clears it. No movement by itself. Unit commands accept ""squad"":""west"" or ""units"":""squad:west"".
+  {""type"":""guard"", ""squad"":""west"", ""retreat_below_pct"":40, ""hold_for_support"":{""within"":6}, ""screen"":{""roles"":[""artillery""],""behind"":4}, ""withdraw_below_strength_pct"":50, ""to"":[X,Y]}  each field optional and off unless supplied; replaces the full guard config. Retreats require to. Guards use bands/cooldowns, explain interventions and never choose targets. An empty guard command disables all guards.
   {""type"":""sell"", ""structure_id"":ID}                 sell for 50% refund (your only one of a tech or production building needs ""confirm"":true)
   {""type"":""reserve"", ""item"":""iron_ore"", ""amount"":300}  converters (refineries, plants) leave this much of an item alone, so raw-ore costs (power_plant, mining_refinery, mining_truck) stay payable; amount 0 clears it
   {""type"":""save_for"", ""unit"":""drill_rig""}           save up for one unit or structure: converters leave its cost alone until you train/build it (no unit: cancel)
@@ -70,6 +71,7 @@ POST /command may wrap commands with ""request_id"":""unique retry key"" and ""a
                     return Err($"you're under newcomer protection for {(int)(w.Teams[team].ProtectedUntil - w.Time)}s more and can't attack yet; use the time to build up");
                 switch (type)
                 {
+                    case "guard": return SquadGuards.Configure(w, team, c);
                     case "squad": return Squads.Configure(w, team, c);
                     case "set_policy": return MinerPolicies.Configure(w, team, c);
                     case "build": return Build(w, team, c);
@@ -118,7 +120,7 @@ POST /command may wrap commands with ""request_id"":""unique retry key"" and ""a
         /// slot has. Units get slots by where they stand, front to back and left to right, so their paths don't cross
         /// (handed out in command order they did, and wedged each other short of their slots).
         /// </summary>
-        internal static Dictionary<Entity, Vec2> FormationSlots(World w, List<Entity> units, Vec2 dest, float gap, IEnumerable<Vec2> reserved = null)
+        internal static Dictionary<Entity, Vec2> FormationSlots(World w, List<Entity> units, Vec2 dest, float gap, IEnumerable<Vec2> reserved = null, Func<Vec2, bool> allowed = null)
         {
             int n = units.Count, cols = (int)MathF.Ceiling(MathF.Sqrt(n)), rows = (n + cols - 1) / cols;
             var centre = new Vec2(units.Average(u => u.Pos.X), units.Average(u => u.Pos.Y));
@@ -137,7 +139,7 @@ POST /command may wrap commands with ""request_id"":""unique retry key"" and ""a
             for (int k = 0; k < slots.Count; k++)
             {
                 var at = slots[k].at;
-                bool Open(Vec2 p) { var t = Int2.Of(p); return w.Map.Passable(t.X, t.Y) && taken.All(q => Vec2.DistSq(q, p) >= gap * gap * 0.81f); }
+                bool Open(Vec2 p) { var t = Int2.Of(p); return w.Map.Passable(t.X, t.Y) && (allowed == null || allowed(p)) && taken.All(q => Vec2.DistSq(q, p) >= gap * gap * 0.81f); }
                 if (!Open(at))
                 {
                     Vec2? found = null;

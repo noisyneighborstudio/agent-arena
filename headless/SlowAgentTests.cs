@@ -67,10 +67,16 @@ namespace Pez.Headless
             var a = SlowAgent.Match(2, false, "self", 0, 60);
             var b = SlowAgent.Match(2, false, "self", 0, 60);
             Check(Json.Write(a) == Json.Write(b), "the same slow-command match is deterministic including response metrics");
+            string diagnosticDirectory = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "pez-slow-diagnostic-" + Guid.NewGuid().ToString("N"));
+            var diagnostic = SlowAgent.Match(2, false, "self", 0, 60, "baseline", diagnosticDirectory);
+            foreach (var seat in ((System.Collections.Generic.List<object>)diagnostic["seats"]).Cast<JObj>()) seat.Remove("movement_diagnostics");
+            Check(Json.Write(a) == Json.Write(diagnostic), "optional snapshot diagnostics preserve every ordinary baseline metric");
+            if (System.IO.Directory.Exists(diagnosticDirectory)) System.IO.Directory.Delete(diagnosticDirectory, true);
             Check(!game.World.Teams[0].Miners.WithdrawOnAttack && !((JObj)((System.Collections.Generic.List<object>)a["seats"])[0]).Contains("executor"),
                 "baseline commander never enables miner policy or adds executor metrics");
             SlowMinerLayerHarness();
             SlowSquadLayerHarness();
+            SlowGuardLayerHarness();
         }
 
         static void SlowMinerLayerHarness()
@@ -128,6 +134,43 @@ namespace Pez.Headless
             commander.Tick(game, metric);
             Check(!game.World.CommandLog.Any(c => c.Tick == game.World.Tick && c.Cmd.Str("type") == "squad") && !metric.Report(game.World, commander).Contains("executor"),
                 "rally enrollment needs no redundant membership command or executor metric schema");
+            Check(!game.World.Teams[0].Squads[SlowAgent.Commander.ArmySquad].Guards.Enabled,
+                "squads layer leaves every guard disabled");
+        }
+
+        static void SlowGuardLayerHarness()
+        {
+            foreach (var layer in new[] { "baseline", "miners", "squads" })
+            {
+                var off = new Game(new GameConfig { Seed = 1, MapSize = 80, Controllers = new[] { "llm", "llm" }, MatchHours = 0 });
+                new SlowAgent.Commander(0, false, layer).Tick(off, new SlowAgent.Metrics(0, layer));
+                Check(off.World.Teams[0].Squads.Values.All(s => !s.Guards.Enabled), $"{layer} layer never enables a squad guard");
+            }
+            var game = new Game(new GameConfig { Seed = 1, MapSize = 80, Controllers = new[] { "llm", "llm" }, MatchHours = 0 });
+            var commander = new SlowAgent.Commander(0, false, "guards");
+            var metric = new SlowAgent.Metrics(0, "guards");
+            commander.Tick(game, metric);
+            var guard = game.World.Teams[0].Squads[SlowAgent.Commander.ArmySquad].Guards;
+            Check(guard.RetreatBelowPct == 40 && guard.SupportWithin == 6 && guard.ScreenRoles.SequenceEqual(new[] { "rifleman" }) &&
+                guard.ScreenBehind == 4 && guard.WithdrawBelowStrengthPct == 50 && guard.HasTo && Vec2.Dist(guard.To, game.World.Teams[0].StartPos) < .1f &&
+                !game.World.Teams[0].Miners.WithdrawOnAttack, "guards layer explicitly supplies its complete fixed profile and home destination, without miner policy");
+            game.World.Tick = SlowAgent.TurnTicks;
+            commander.Tick(game, metric);
+            Check(game.World.CommandLog.Count(c => c.Cmd.Str("type") == "guard") == 1, "guard profile is configured once rather than resetting its latches every turn");
+            var army = ((System.Collections.Generic.List<object>)StateData.Team(game.World, 0)["units"]).Cast<JObj>()
+                .Where(u => Defs.Get((string)u["type"]).Weapon != null).ToList();
+            Check((string)commander.ArmySelector(army) == "squad:army" && commander.ArmySelector(army.Take(1).ToList()) is System.Collections.Generic.List<object>,
+                "guards retain exact full-army versus explicit-subset addressing");
+            game.World.Observe.Note(0, "orders", "guard_triggered", Sev.Notice, "own",
+                new JObj().Set("rule", "retreat_below_pct").Set("reason", "hp_below").Set("action", "move").Set("trigger_basis", "condition_observed").Set("triggered_at_s", 29.9f), "measurement fixture");
+            game.World.Observe.Note(0, "orders", "decision_needed", Sev.Critical, "own",
+                new JObj().Set("rule", "withdraw_below_strength_pct").Set("reason", "strength_below").Set("action", "wake").Set("triggered_at_s", 30f), "measurement fixture");
+            game.World.Observe.Note(0, "orders", "guard_triggered", Sev.Notice, "own", new JObj().Set("rule", "screen"), "measurement fixture");
+            metric.SampleExecutor(game.World); metric.SampleExecutor(game.World);
+            var executor = (JObj)metric.Report(game.World, commander)["guard_executor"];
+            Check(Convert.ToInt32(executor["guard_triggered"]) == 2 && Convert.ToInt32(executor["decision_needed"]) == 1 && Convert.ToInt32(executor["unmatched"]) == 1 &&
+                Convert.ToInt32(((JObj)executor["guard_trigger_latency"])["count"]) == 1 && Convert.ToInt32(((JObj)executor["decision_latency"])["count"]) == 1,
+                "guard events preserve unmatched trigger times and measure decisions separately, without cursor duplicates");
         }
     }
 }

@@ -54,7 +54,7 @@ namespace Pez.Headless
         static readonly Dictionary<Type, string> SavedFields = new Dictionary<Type, string>
         {
             [typeof(Entity)] = "LastOrderTick LastRetreatTick LastOrderBy Id Team Def Pos PrevPos Facing TurretFacing Hp Dead Origin BuildProgress Rally RallySquad Order OrderPos GuardPos TargetId UntilCapturable EngageDerricks Path PathIdx Cooldown " +
-                "SpeedCap Group ProgressPos ProgressAt GhostUntil ProgressDist Waypoints WaypointLoop RetreatBelow Retreating RetreatSpent GivingWay OwnBlockedSince DodgeUntil DanceVel DanceStep DanceHeading DanceSpeed DanceFor DanceFlips SettledUntil QueuedAt RepathTimer Moving LastAttackerId LastHitTime " +
+                "SpeedCap Group ProgressPos ProgressAt GhostUntil ProgressDist Waypoints WaypointLoop RetreatBelow Retreating RetreatSpent GivingWay OwnBlockedSince DodgeUntil DanceVel DanceStep DanceHeading DanceSpeed DanceFor DanceFlips SettledUntil QueuedAt RepathTimer Moving GuardMotionPaused LastAttackerId LastHitTime " +
                 "LastCallForHelp LastAttackerTeam Responding HomePos Cargo CargoType HarvestType HarvestTile WorkTimer Burning Dock DockAt BaySide DepositId Working Output Offline CarrierId Passengers Fuel Landed Stranded " +
                 "GrantedShare CargoSalvage FuelCap AtDepot FuelWarned NoAutoRefuelUntil ResumeOrder ResumePos ResumeGuard ResumeTarget ResumeWaypoints ResumeSpeedCap MineQueue LastFiredAt Arming ArmingTarget " +
                 "Prospecting ProspectCenter ProspectRadius SkipSites SurveyFailure SurveyFailedAt ZoneId | CmdId", // CmdId: the observation feed's command tracking, which restarts (as a new stream) with the process
@@ -76,7 +76,10 @@ namespace Pez.Headless
             [typeof(ProdItem)] = "Key Progress StructureId WorkerId GrantedShare | CmdId",
             [typeof(ZoneFlag)] = "ZoneId FlaggedBy FlaggedAt",
             [typeof(MinerPolicy)] = "WithdrawOnAttack ToBase Destination ResumeAfterS Fields Detached",
-            [typeof(Squad)] = "Name Members FormationHp",
+            [typeof(SquadGuard)] = "RetreatBelowPct SupportWithin ScreenBehind WithdrawBelowStrengthPct ScreenRoles HasTo StrengthWithdrawn To StrengthAt Units Notes",
+            [typeof(GuardUnit)] = "HpRetreated HpSpent SupportHeld ScreenActive StrengthExempt StrengthAssigned PaceApplied PatrolLap LastLoopPhase HpAt SupportAt ScreenAt ScreenGoalAt LastDirectAt HpGoal ScreenGoal StrengthGoal Action Continuation",
+            [typeof(GuardContinuation)] = "Order Pos GuardPos HomePos RouteOrigin Target Group SpeedCap Loop Derricks UntilCapturable Responding Waypoints",
+            [typeof(Squad)] = "Name Members FormationHp Guards",
             [typeof(MinerField)] = "Root Tiles Withdrawn LastWithdrawal ClearSince Trucks Threats",
             [typeof(MinerResume)] = "Target WithdrawalTarget HarvestType HarvestTile",
             [typeof(MinerThreat)] = "Position Range Stealth",

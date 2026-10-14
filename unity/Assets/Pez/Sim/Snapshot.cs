@@ -30,8 +30,8 @@ namespace Pez.Sim
         /// <summary>1: first version. 2: mining zones, prospecting surveyors, drill rigs' zones, arena champion. 3: agent inventions.
         /// 4: economy and endgame (salvage from kills, ore regrowth, construction trucks, the match clock, derricks, defence upkeep).
         /// 5: turn safety (ready seats and preparation clock, retry receipts, own losses and order provenance). 6: opt-in miner policy and withdrawal state.
-        /// 7: named squads, formation HP and rally enrollment.</summary>
-        public const int Schema = 7;
+        /// 7: named squads, formation HP and rally enrollment. 8: squad guards, saved continuations and motion pauses.</summary>
+        public const int Schema = 8;
         public const int MinReader = 1;
         /// <summary>Events kept: the last two minutes, plus recent chat, at most MaxEvents. Alerts: the last minute.</summary>
         const int MaxEvents = 1500;
@@ -208,6 +208,7 @@ namespace Pez.Sim
             o.Put("last_order_tick", e.LastOrderTick, -1).Put("last_retreat_tick", e.LastRetreatTick, -1).Put("last_order_by", e.LastOrderBy);
             o.Put("waypoint_loop", e.WaypointLoop).Put("retreat_below", e.RetreatBelow).Put("retreating", e.Retreating).Put("retreat_spent", e.RetreatSpent).Put("giving_way", e.GivingWay).Put("own_blocked_since", e.OwnBlockedSince).Put("dodge_until", e.DodgeUntil).PutV("dance_vel", e.DanceVel).PutV("dance_step", e.DanceStep).PutV("dance_heading", e.DanceHeading).Put("dance_speed", e.DanceSpeed).Put("dance_for", e.DanceFor).Put("dance_flips", e.DanceFlips).Put("settled_until", e.SettledUntil).Put("queued_at", e.QueuedAt)
              .Put("repath_timer", e.RepathTimer).Put("moving", e.Moving).Put("last_attacker", e.LastAttackerId).Put("last_attacker_team", e.LastAttackerTeam, -1)
+             .Put("guard_motion_paused", e.GuardMotionPaused)
              .Put("last_hit_time", e.LastHitTime, -999f).Put("last_call_for_help", e.LastCallForHelp, -999f)
              .Put("responding", e.Responding).PutV("home_pos", e.HomePos)
              .Put("cargo", e.Cargo).Put("cargo_salvage", e.CargoSalvage).Put("cargo_type", e.CargoType, -1).Put("harvest_type", e.HarvestType, -1);
@@ -250,6 +251,7 @@ namespace Pez.Sim
             d.Load("last_order_tick", ref e.LastOrderTick); d.Load("last_retreat_tick", ref e.LastRetreatTick); d.Load("last_order_by", ref e.LastOrderBy);
             d.Load("waypoint_loop", ref e.WaypointLoop); d.Load("retreat_below", ref e.RetreatBelow); d.Load("retreating", ref e.Retreating); d.Load("retreat_spent", ref e.RetreatSpent); d.Load("giving_way", ref e.GivingWay); d.Load("own_blocked_since", ref e.OwnBlockedSince); d.Load("dodge_until", ref e.DodgeUntil); d.Load("dance_vel", ref e.DanceVel); d.Load("dance_step", ref e.DanceStep); d.Load("dance_heading", ref e.DanceHeading); d.Load("dance_speed", ref e.DanceSpeed); d.Load("dance_for", ref e.DanceFor); d.Load("dance_flips", ref e.DanceFlips); d.Load("settled_until", ref e.SettledUntil); d.Load("queued_at", ref e.QueuedAt);
             d.Load("repath_timer", ref e.RepathTimer); d.Load("moving", ref e.Moving); d.Load("last_attacker", ref e.LastAttackerId); d.Load("last_attacker_team", ref e.LastAttackerTeam);
+            d.Load("guard_motion_paused", ref e.GuardMotionPaused);
             d.Load("last_hit_time", ref e.LastHitTime); d.Load("last_call_for_help", ref e.LastCallForHelp);
             d.Load("responding", ref e.Responding); d.Load("home_pos", ref e.HomePos);
             d.Load("cargo", ref e.Cargo); d.Load("cargo_salvage", ref e.CargoSalvage); d.Load("cargo_type", ref e.CargoType); d.Load("harvest_type", ref e.HarvestType);

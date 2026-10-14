@@ -1164,6 +1164,7 @@ namespace Pez.Sim
 
         public void SetOrder(Entity e, Order o, Vec2 pos, int target = 0)
         {
+            if (CommandActor != null) SquadGuards.DirectOrder(this, e);
             if (CommandActor != null && e.IsHarvester && e.Team >= 0) MinerPolicies.DirectOrder(this, e, o);
             Touched?.Add(e);
             e.LastOrderTick = Tick;
@@ -1207,8 +1208,9 @@ namespace Pez.Sim
 
             Guard("economy", UpdateEconomy);
             Guard("production", UpdateProduction);
-            Guard("groups", MeasureGroups);
             Guard("miner policy", () => { foreach (var team in Teams) MinerPolicies.Step(this, team.Id); });
+            Guard("squad guards", () => { foreach (var team in Teams) SquadGuards.Step(this, team.Id); });
+            Guard("groups", MeasureGroups);
             if (Tick % (TickRate * 10) == 0) Guard("home ore", CheckHomeOre);
             double tu = Profile ? profileClock.Elapsed.TotalSeconds : 0;
             // Units act one after another, and whoever acts later sees the other's move: it fires first as two armies close, and a
@@ -1585,7 +1587,7 @@ namespace Pez.Sim
         /// can't refuel them is just somewhere to hover until the tank runs dry).</summary>
         void CheckRetreat(Entity e)
         {
-            if (e.RetreatBelow <= 0) return;
+            if (e.RetreatBelow <= 0 || SquadGuards.SupersedesNativeRetreat(this, e)) return;
             if (e.Hp >= e.Def.MaxHp * e.RetreatBelow) { e.RetreatSpent = false; return; }
             if (e.RetreatSpent || e.Retreating || (Tick + e.Id) % 5 != 0) return;
             Entity home = null; float bd = float.MaxValue;
@@ -1616,6 +1618,7 @@ namespace Pez.Sim
 
         void IdleCombat(Entity e)
         {
+            if (e.GuardMotionPaused) { e.Moving = false; OpportunisticFire(e); return; }
             var t = AcquireTarget(e, e.Def.Sight);
             if (t == null)
             {
@@ -1656,7 +1659,7 @@ namespace Pez.Sim
             Near(victim.Center, 10f, nearHelp);
             foreach (var u in nearHelp)
             {
-                if (u.Dead || u.Team != victim.Team || u.IsStructure || !u.IsArmed || u.IsCarried || u.Order != Order.Idle || IsProtected(u.Team)) continue; // protected units don't retaliate
+                if (u.Dead || u.Team != victim.Team || u.IsStructure || !u.IsArmed || u.IsCarried || u.Order != Order.Idle || u.GuardMotionPaused || IsProtected(u.Team)) continue; // protected units don't retaliate
                 if (!u.Def.Weapon.CanHit(attacker.Def)) continue;
                 if (Vec2.Dist(u.Pos, victim.Center) > 10f) continue;
                 var home = u.GuardPos;
@@ -2370,7 +2373,7 @@ namespace Pez.Sim
         {
             e.CargoSalvage = 0;
             e.CargoType = -1;
-            if (MinerPolicies.Controls(this, e)) SetOrder(e, Order.Idle, e.Pos);
+            if (MinerPolicies.Controls(this, e) || SquadGuards.Controls(this, e)) SetOrder(e, Order.Idle, e.Pos);
             else e.Order = Order.Harvest;
             e.Path = null;
             e.Dock = DockStep.None;
@@ -3412,7 +3415,7 @@ namespace Pez.Sim
         /// A unit that's stepping aside itself doesn't move anyone else on: two of them would take turns forever.</summary>
         void GiveWay(Entity idle, Entity mover)
         {
-            if (idle.Order != Order.Idle || idle.Moving || idle.IsAir || Time < idle.SettledUntil || idle.Team != mover.Team || Time < idle.GhostUntil - 2.5f || mover.GivingWay) return;
+            if (idle.GuardMotionPaused || idle.Order != Order.Idle || idle.Moving || idle.IsAir || Time < idle.SettledUntil || idle.Team != mover.Team || Time < idle.GhostUntil - 2.5f || mover.GivingWay) return;
             var dir = mover.Path != null && mover.PathIdx < mover.Path.Count ? mover.Path[mover.PathIdx] - mover.Pos : idle.Pos - mover.Pos;
             if (dir.LengthSq < 1e-4f) dir = new Vec2(1, 0);
             // To the side it already stands on (an id's parity decided it: left for one unit, right for the next, so a unit and its

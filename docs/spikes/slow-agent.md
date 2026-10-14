@@ -159,3 +159,73 @@ dotnet run -c Release --no-build -- --slow-agent --slow-agent-layer squads \
   --slow-agent-seeds 1,2,3 --slow-agent-minutes 12 \
   --slow-agent-out ../docs/spikes/slow-agent-squads.jsonl
 ```
+
+## P5 rerun: explicit guards (rules 48)
+
+The `guards` layer retains the stable named `army`, economy, unit types and thirty-second commander decisions. It adds one complete initial guard profile: HP retreat below 40%, support distance 6 tiles, `rifleman` screen 4 tiles behind the commanded front, squad-strength withdrawal below 50%, and an explicit home-coordinate fallback. It enables no miner policy. This profile is a fixed commander's choice; the executor does not select a safer destination, a target, a build or whether to fight.
+
+The comparison criterion is reduced unsupported armed-unit loss or improved plan continuity, with the default floor unchanged and no movement settles in the controlled guard scenarios. Existing P0 retreat/cohesion/rally habits remain a separate same-variant comparison. Both full-army defence selectors and explicit idle/fresh subsets retain the P4 semantics; no stronger plan is substituted into the baseline.
+
+`guard_triggered` and `decision_needed` events are measured separately from ordinary alert-to-commander response. Raw events retain rule, reason, action, tick, trigger time and its basis. `trigger_basis:"condition_observed"` refers to the guard evaluation time, not the unknowable first instant HP or lag crossed the threshold. Missing trigger times remain unmatched/null. The observer also records movement-settle episodes in the slow team's own mobile units; these counts can include existing mining/combat movement issues and do not alone attribute a fault to a guard.
+
+The unchanged scripted commander consumes alert-category observations and does not add a new decision policy for `decision_needed` packets. It still decides every 30 seconds. Packet emission is therefore measured; handling those packets as a new strategy belongs to a separately declared experiment, not a silent change to this comparison.
+
+### Initial P5 result and movement reconsideration
+
+The first frozen rules-48 matrix is retained in [slow-agent-guards-before-fix.jsonl](slow-agent-guards-before-fix.jsonl). All eighteen games had zero sim errors, and the default-off rules-48 matrix reproduced every baseline metric. Guards reduced mean unsupported armed losses versus P0+SimpleAI from 18.33 to 14.33 and in self-play from 25.67 to 1.33 (plain) and 7.50 to 0.17 (P0). Plain versus SimpleAI stayed at 19.67. All twelve slow-vs-SimpleAI seats still lost.
+
+The initial profile nevertheless exposed nine own movement-settle episodes in self-play with P0, despite the isolated guard gates being clean. Shipment and the P6 decision were held for investigation. The diagnostic control [slow-agent-floor-diagnostics-rules48.jsonl](slow-agent-floor-diagnostics-rules48.jsonl) found eight existing baseline episodes in the same three self/P0 seeds; its other metrics remain exactly baseline-equivalent. The diagnostic guard replay [slow-agent-guards-diagnostics-before-fix.jsonl](slow-agent-guards-diagnostics-before-fix.jsonl) preserves all nine unit/tick/order/cause records without changing any gameplay metric.
+
+All nine guard-profile episodes were `rifleman attack_move (nowhere)` after explicit slow-commander orders, rather than observed active guard movement: the first cases occurred at about 242.9 seconds following the 240-second turn, during the guard's five-second direct-order cooldown. Controlled snapshots showed the prior guard retreat's velocity average surviving into a much slower direct movement in the opposite direction. That makes inherited dance-detector history a specific handoff hypothesis; the raw counts alone do not prove nine new guard oscillations. The owner is checking a reset only when a guard relinquishes control to a direct order, preserving the never-configured floor. Separately, the screen's commanded bearing is being anchored to the original route, so frontline combat displacement cannot reverse a direction the commander supplied. Final numbers and a decision follow the corrected-source rerun below.
+
+Diagnostic export is opt-in: add `--slow-agent-settle-fixtures /tmp/pez-guard-spike-fixtures`. It retains the six one-second offline Game snapshots spanning at least five seconds at the first own settle per match, plus unit metadata and future logged commands for `Game.Replay` when a thirty-second turn falls between a saved snapshot and the settle. The newest original frames used in this investigation already contain the last direct turn and need no subsequent command before the first settle. The flag never changes commander decisions; ordinary baseline output keeps its existing schema.
+
+### Corrected P5 results and default-floor control
+
+The corrected rules-48 source resets the detector's stale motion window once when handing guard control to a direct order or a different guard action, anchors screen bearing to the original commanded route, and keeps screen formation slots on the requested side of the line. These corrections were validated before this final paired rerun; they are limited to explicitly enabled guards.
+
+Final raw results: [slow-agent-guards.jsonl](slow-agent-guards.jsonl), eighteen games and zero sim errors. The guard-profile matrix now has **zero own movement-settle episodes across all eighteen games**, including all six self/P0 seats. The final default-off diagnostic [slow-agent-floor-diagnostics-rules48-final.jsonl](slow-agent-floor-diagnostics-rules48-final.jsonl) retains the original eight existing episodes and every prior gameplay/economy/alert/response metric exactly. That is an unchanged floor, not a claim the existing game globally settles nothing. The two diagnostic matrices ran concurrently, taking 31.5 and 23.6 seconds wall time; snapshot export overhead is not a game-mechanic performance result.
+
+For the regression fixture, an isolated offline copy restored the original screen route/slot semantics and disabled the new motion-window resets. Its eighteen-match gameplay results match the archived initial P5 matrix exactly and reproduce nine settles. [Handoff diagnostic records](slow-agent-guards-handoff-diagnostics.jsonl) retain the settled-unit/group/speed/action/route metadata and all match metrics; repeated detailed guard events are available in the earlier complete raw file. The exported fixture before the 240-second handoff starts at 237 seconds and includes six actual logged commands at 240 seconds for `Game.Replay`. A snapshot after the handoff cannot validate the fix: it already contains the stale detector window. Fixture integration and the full gate are owned by the sim phase author.
+
+Final cells are mean / nearest-rank p50 / p95 across six slow seats.
+
+| Opponent | Variant + guards | Undefended miner losses | All miner losses | Unsupported armed losses | All armed losses | Final score |
+|---|---|---:|---:|---:|---:|---:|
+| simple_ai | plain | 7.50 / 7.00 / 9.00 | 8.50 / 8.00 / 10.00 | 19.00 / 17.00 / 22.00 | 28.17 / 27.00 / 32.00 | 0.00 / 0.00 / 0.00 |
+| simple_ai | p0_habits | 6.17 / 7.00 / 8.00 | 8.33 / 8.00 / 9.00 | 13.67 / 12.00 / 17.00 | 28.50 / 26.00 / 33.00 | 0.00 / 0.00 / 0.00 |
+| self | plain | 0.00 / 0.00 / 0.00 | 0.67 / 0.00 / 3.00 | 2.00 / 1.00 / 5.00 | 21.17 / 20.00 / 28.00 | 150.00 / 146.00 / 175.00 |
+| self | p0_habits | 0.00 / 0.00 / 0.00 | 0.17 / 0.00 / 1.00 | 0.17 / 0.00 / 1.00 | 4.33 / 3.00 / 8.00 | 150.00 / 139.00 / 167.00 |
+
+| Opponent | Variant + guards | Alerts | Commander responses | Unresolved | Commander response seconds (mean / p50 / p95) |
+|---|---|---:|---:|---:|---:|
+| simple_ai | plain | 282 | 118 | 164 | 11.68 / 9.80 / 29.05 |
+| simple_ai | p0_habits | 209 | 116 | 93 | 16.76 / 18.20 / 29.50 |
+| self | plain | 235 | 210 | 25 | 24.03 / 26.00 / 29.65 |
+| self | p0_habits | 111 | 91 | 20 | 19.87 / 25.00 / 29.00 |
+
+| Opponent | Variant | Guard triggers | Decision packets | Guard releases | Direct-order detachments | Own settles |
+|---|---|---:|---:|---:|---:|---:|
+| simple_ai | plain | 316 | 6 | 31 | 133 | 0 |
+| simple_ai | p0_habits | 787 | 6 | 65 | 272 | 0 |
+| self | plain | 3083 | 3 | 395 | 1616 | 0 |
+| self | p0_habits | 5314 | 2 | 753 | 2194 | 0 |
+
+Across all groups the trigger reasons are: `hold_for_support:support_behind` 4442, `retreat_below_pct:hp_below_threshold` 417, `screen:commanded_front` 4486, `withdraw_below_strength_pct:strength_below_threshold` 17, `withdraw_below_strength_pct:withdrawal_still_latched` 138. Every observed-condition-to-issued-intent delay is zero game-seconds, with no unmatched trigger timestamps. Those synchronous guard records and decision emissions do not measure first-threshold-crossing time, model wake latency or tactical success. Commander p95 remains near thirty seconds.
+
+### Where corrected P5 did not win and decision before P6
+
+Unsupported armed losses improve 25.5% for P0 against SimpleAI (18.33 → 13.67), 92.2% in plain self-play (25.67 → 2.00), and 97.8% in P0 self-play (7.50 → 0.17). Plain against SimpleAI improves only 3.4% (19.67 → 19.00). All twelve slow-vs-SimpleAI seats are still eliminated after 427–532.30 seconds, and final score stays zero. Symmetric self-play's mean score remains 150 by construction; it cannot establish improved win rate.
+
+The chosen guard profile produces many support/screen adjustments and direct overrides. Its reduction in deaths can include fighting less or spending more time holding; a loss count alone cannot prove faster conquest. The script still does not handle the new critical decision packets, and a latched withdrawal deliberately needs a commander's new decision. No executor strategy was added to compensate for that limitation. Mean ore mined differs little from baseline: plain vs AI −0.4%, P0 vs AI +2.4%, plain self-play +2.9%, P0 self-play −0.9%.
+
+**Go to a controlled P6 objective experiment:** the corrected guards now demonstrate a targeted support-loss benefit with zero observed guard-profile settles while preserving the default floor exactly. Their stronger win-rate claim fails against SimpleAI and remains unproved in self-play. P6 must test explicit intent persistence and decision handling, with its assembly point, counts, budget, destination and wake conditions all chosen by the scripted commander before execution. Do not have the executor choose a stronger plan to improve these numbers.
+
+The dedicated harness has 30 passing checks, including guards staying disabled in every other layer, one-time explicit configuration, exact subset addressing and separate matched/unmatched guard/decision timing. Reproduce the final matrix with:
+
+```sh
+cd headless
+dotnet run -c Release --no-build -- --slow-agent --slow-agent-layer guards \
+  --slow-agent-seeds 1,2,3 --slow-agent-minutes 12 \
+  --slow-agent-out ../docs/spikes/slow-agent-guards.jsonl
+```

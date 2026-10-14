@@ -10,6 +10,7 @@ namespace Pez.Sim
         public string Name;
         public readonly HashSet<int> Members = new HashSet<int>();
         public float FormationHp;
+        public SquadGuard Guards = new SquadGuard();
 
         public List<Entity> Live(World w, int team) => Members.OrderBy(id => id).Select(w.Get)
             .Where(e => e != null && !e.Dead && e.Team == team && !e.IsStructure && !e.IsMine).ToList();
@@ -21,17 +22,23 @@ namespace Pez.Sim
             return new JObj().Set("name", Name).Set("members", live.Select(e => (object)e.Id).ToList())
                 .Set("hp", hp).Set("formation_hp", FormationHp).Set("strength_pct", FormationHp > 0 ? StateView.Pct(hp / FormationHp) : 0)
                 .Set("centre", live.Count == 0 ? null : (object)SnapIO.V(new Vec2(live.Average(e => e.Pos.X), live.Average(e => e.Pos.Y))))
-                .Set("objective", null);
+                .Set("objective", null).Set("guards", Guards.View());
         }
 
-        internal JObj Save() => new JObj().Set("name", Name).Set("members", Members.OrderBy(id => id).Cast<object>().ToList())
-            .Set("formation_hp", SnapIO.X(FormationHp));
+        internal JObj Save()
+        {
+            var saved = new JObj().Set("name", Name).Set("members", Members.OrderBy(id => id).Cast<object>().ToList())
+                .Set("formation_hp", SnapIO.X(FormationHp));
+            if (Guards.Enabled || Guards.HasTo || Guards.Units.Count > 0 || Guards.Notes.Count > 0) saved.Set("guards", Guards.Save());
+            return saved;
+        }
 
         internal static Squad Load(Dictionary<string, object> d)
         {
             if (!Squads.ValidName(d.Str("name"))) return null;
             var squad = new Squad { Name = d.Str("name") };
             d.Load("formation_hp", ref squad.FormationHp);
+            squad.Guards = SquadGuard.Load(d.Obj("guards"));
             foreach (var id in d.Arr("members")) squad.Members.Add(SnapIO.ToI(id));
             return squad;
         }
@@ -93,7 +100,9 @@ namespace Pez.Sim
             var squads = w.Teams[team].Squads;
             if (disband)
             {
-                if (!squads.Remove(name)) return Fail("unknown squad '" + name + "'");
+                if (!squads.TryGetValue(name, out var gone)) return Fail("unknown squad '" + name + "'");
+                SquadGuards.Release(w, gone.Live(w, team));
+                squads.Remove(name);
                 foreach (var building in w.Owned(team).Where(e => e.IsStructure && e.RallySquad == name)) building.RallySquad = null;
                 return new JObj().Set("ok", true).Set("result", "squad '" + name + "' disbanded; existing orders stay in place");
             }
@@ -103,10 +112,16 @@ namespace Pez.Sim
             foreach (int id in add)
             {
                 foreach (var other in squads.Values)
-                    if (other != squad && other.Members.Remove(id)) amended.Add(other);
+                    if (other != squad && other.Members.Remove(id))
+                    {
+                        amended.Add(other); other.Guards.Units.Remove(id); w.Get(id).GuardMotionPaused = false;
+                    }
                 squad.Members.Add(id);
             }
-            foreach (int id in remove) squad.Members.Remove(id);
+            foreach (int id in remove)
+            {
+                squad.Members.Remove(id); squad.Guards.Units.Remove(id); w.Get(id).GuardMotionPaused = false;
+            }
             // Explicit amendments establish a new formation; deaths do not. Rally additions extend its saved baseline.
             foreach (var changed in amended) changed.FormationHp = changed.Live(w, team).Sum(e => e.Hp);
             return new JObj().Set("ok", true).Set("squad", squad.View(w, team)).Set("result", "squad '" + name + "' membership set; existing orders stay in place");
@@ -123,7 +138,8 @@ namespace Pez.Sim
         public static void Remove(World w, Entity unit)
         {
             if (unit.Team < 0 || unit.Team >= w.Teams.Count) return;
-            foreach (var squad in w.Teams[unit.Team].Squads.Values) squad.Members.Remove(unit.Id);
+            foreach (var squad in w.Teams[unit.Team].Squads.Values) { squad.Members.Remove(unit.Id); squad.Guards.Units.Remove(unit.Id); }
+            unit.GuardMotionPaused = false;
         }
 
         static JObj Fail(string error) => new JObj().Set("ok", false).Set("error", error);
