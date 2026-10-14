@@ -10,6 +10,7 @@ namespace Pez.Headless
     {
         static void ExecutorEventPrivacy()
         {
+            StrategyPlanningPrivacy();
             Console.WriteLine("\n-- private executor decisions on visible ground");
             var game = new Game(new GameConfig { Seed = 5, MapSize = 64, Controllers = new[] { "llm", "llm" } });
             var w = game.World;

@@ -651,7 +651,7 @@ namespace Pez.Api
                             var d = Json.Parse(p.Body ?? "{}") as Dictionary<string, object>;
                             w.SetOrders(team, d?.Str("text") ?? "");
                         }
-                        return Json.Write(new JObj().Set("ok", true).Set("team", team).Set("standing_orders", w.Teams[team].StandingOrders).Set("orders_version", w.Teams[team].OrdersVersion));
+                        return Json.Write(new JObj().Set("ok", true).Set("team", team).Set("standing_orders", w.Teams[team].StandingOrders).Set("orders_version", w.Teams[team].OrdersVersion).Set("plan_version", w.Teams[team].PlanVersion));
                     }
                 case "/api/admin/speed":
                     {
@@ -788,6 +788,9 @@ namespace Pez.Api
                     t.Remove("miner_policy"); // only this team's explicit policy executes in its fogged mirror
                     t.Remove("squads"); // rival membership and intentions belong to its commander
                     t.Remove("objectives");
+                    t.Remove("strategy_text");
+                    t.Remove("priorities");
+                    t.Remove("plan_version");
                     if (t["stats"] is JObj st) t["stats"] = new JObj().Set("kills", st["kills"] ?? 0);
                     // Where a rival's base is, is for scouting: their start goes far off the map (not 0,0, a real corner, where
                     // the client's copy would then think a protected rival's reserved ore lay).
@@ -900,6 +903,11 @@ namespace Pez.Api
 
         internal static JObj ViewFrame(World w, int team)
         {
+            JObj Planning(Team t) => new JObj().Set("plan_version", t.PlanVersion)
+                .Set("strategy", new JObj().Set("text", t.StrategyText).Set("priorities", t.Priorities.Cast<object>().ToList()))
+                .Set("objectives", Objectives.View(w, t.Id))
+                .Set("interventions", t.Squads.Values.SelectMany(s => s.Guards.Notes).Select(n => Json.Parse(n))
+                    .OfType<Dictionary<string, object>>().OrderByDescending(n => n.Num("t", 0)).Take(8).Cast<object>().ToList());
             var m = w.Map;
             string shroud = null;
             if (team >= 0)
@@ -948,7 +956,8 @@ namespace Pez.Api
                     .Set("units", team < 0 ? (object)w.Entities.Count(e => !e.Dead && e.Team == t.Id && !e.IsStructure && !e.IsMine) : null)
                     .Set("structures", team < 0 ? (object)w.Entities.Count(e => !e.Dead && e.Team == t.Id && e.IsStructure) : null)
                     .Set("power", team < 0 ? $"{t.PowerUsed}/{t.PowerProduced}" : null)
-                    .Set("steel", team < 0 ? (object)t.Amount("steel") : null)).ToList())
+                    .Set("steel", team < 0 ? (object)t.Amount("steel") : null)
+                    .Set("planning", team < 0 ? Planning(t) : null)).ToList())
                 .Set("entities", ents).Set("effects", shots)
                 .Set("chat", w.Events.Where(e => e.Type == "chat").Reverse().Take(8).Reverse()
                     .Select(e => $"{(e.Team >= 0 ? w.Teams[e.Team].Name : "arena")}: {e.Text}").ToList());
@@ -961,6 +970,7 @@ namespace Pez.Api
             {
                 var t = w.Teams[team];
                 o.Set("you", new JObj().Set("team", team).Set("flavor", t.Name).Set("player", t.PlayerName).Set("stockpile", StateView.Stockpile(t))
+                    .Set("planning", Planning(t))
                     .Set("power", $"{t.PowerUsed}/{t.PowerProduced}").Set("status", t.Resigned ? "resigned" : t.Left ? "left" : t.Defeated ? "eliminated" : "playing")
                     .Set("power_used", t.PowerUsed).Set("power_produced", t.PowerProduced).Set("steel", t.Amount("steel"))
                     .Set("units", w.Entities.Count(e => !e.Dead && e.Team == team && !e.IsStructure && !e.IsMine))

@@ -75,7 +75,17 @@
   /* Layout boxes let clicks through to the map and video; only the panels in them take input. */
   #top, #right, #bottom { pointer-events:none; } #top > *, #right > *, #bottom > * { pointer-events:auto; }
   #mm { padding:12px; } #mm canvas { width:360px; height:360px; display:block; cursor:pointer; }
-  #side { padding:16px; display:flex; flex-direction:column; gap:14px; }
+  #side { padding:16px; display:flex; flex-direction:column; gap:14px; max-height:var(--side-max,600px); overflow:hidden; }
+  #side > .drawerbody { min-height:0; overflow-y:auto; overflow-wrap:anywhere; }
+  #basebody { display:flex; flex-direction:column; gap:14px; }
+  #sidetabs { display:flex; gap:8px; }
+  #sidetabs button { flex:1; min-height:30px; border:1px solid var(--line); border-radius:8px; background:var(--btn); cursor:pointer; }
+  #sidetabs button.on { background:var(--cream); color:#101317; font-weight:600; }
+  #planbody { display:none; flex-direction:column; gap:14px; white-space:pre-wrap; font-size:14px; line-height:1.5; }
+  #planbody .head { margin-bottom:8px; }
+  #planbody .objective, #planbody .intervention { margin-top:10px; }
+  #planbody .paused { color:var(--amber); }
+  #planteam { width:100%; color:var(--ink); background:var(--btn); border:1px solid var(--line); border-radius:8px; padding:8px; font:inherit; }
   /* Drawers: the side panel and the feed/chat collapse to their header; the choice is remembered. */
   .drawerhead { display:flex; align-items:center; justify-content:space-between; gap:10px; }
   .tog { width:32px; height:28px; flex:none; border:1px solid var(--line); border-radius:7px; background:var(--btn); cursor:pointer; padding:0; display:grid; place-items:center; }
@@ -165,6 +175,8 @@
   <div class="panel" id="side">
     <div class="drawerhead"><span class="head" id="sidetitle">Your base</span><button class="tog" data-drawer="side" title="Show or hide this panel" aria-expanded="true"><svg viewBox="0 0 16 16"><path d="M3 6l5 5 5-5" fill="none" stroke="#ECE4D2" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>
     <div class="drawerbody">
+    <div id="sidetabs"><button id="sideBase" class="on" aria-pressed="true">Base</button><button id="sidePlan" aria-pressed="false">Plan</button></div>
+    <div id="basebody">
     <div id="prodbox"><div class="head" style="margin-bottom:10px">Building now</div><div id="prod" style="display:flex;flex-direction:column;gap:10px"></div></div>
     <div><div class="head" style="margin-bottom:8px">Stockpile</div><div id="stock"></div></div>
     <div><div class="head" style="margin-bottom:8px">Standing orders</div><div id="orders"></div>
@@ -178,6 +190,8 @@
         <span id="orderNote" class="note"></span>
       </div>
     </div>
+    </div>
+    <div id="planbody"><label id="planteamlabel" class="note" for="planteam">Team<select id="planteam"></select></label><div id="plancontent"></div></div>
     </div>
   </div>
 </div>
@@ -264,7 +278,13 @@ function fit() {
   const top = document.getElementById("top");
   root.setProperty("--below", `${top.offsetTop + top.offsetHeight + (narrow ? 10 : 16)}px`);
   for (const b of document.querySelectorAll(".tog")) applyDrawer(b.dataset.drawer); // defaults follow the width until someone chooses
+  fitSide();
   liveLabel(); tickerLayout();
+}
+function fitSide() {
+  const side = document.getElementById("side");
+  const bottom = document.body.classList.contains("narrow") ? document.getElementById("bottom").getBoundingClientRect().top : innerHeight - 16 * K;
+  document.documentElement.style.setProperty("--side-max", `${Math.max(64, (bottom - side.getBoundingClientRect().top) / K - 12)}px`);
 }
 addEventListener("resize", fit);
 
@@ -493,6 +513,7 @@ function applyDrawer(name) {
   const el = document.getElementById(name), open = drawerOpen(name);
   el.classList.toggle("collapsed", !open);
   el.querySelector(".tog").setAttribute("aria-expanded", String(open));
+  fitSide();
 }
 for (const b of document.querySelectorAll(".tog")) {
   b.addEventListener("click", () => {
@@ -531,7 +552,60 @@ function sidePanel(you) {
   document.getElementById("orders").innerHTML = SPECTATOR ? `<span class="note">Each commander's human can set standing orders for their agent.</span>`
     : orders ? esc(orders) : `<span class="note">None yet: your agent is using its own judgment.</span>` +
       (you?.protected_for_s ? `<div class="note" style="margin-top:8px">Newcomer protection: ${clock(you.protected_for_s)} left.</div>` : "");
+  planningPanel(you);
 }
+
+// Planning remains a read-only record. Every authored string is escaped; long records scroll inside the side drawer.
+function planningHtml(p) {
+  if (!p) return `<div class="note">No plan record in this picture.</div>`;
+  const strategy = p.strategy ?? {}, priorities = Array.isArray(strategy.priorities) ? strategy.priorities : [];
+  const objectives = Array.isArray(p.objectives) ? p.objectives : [], interventions = Array.isArray(p.interventions) ? p.interventions : [];
+  const position = (v) => Array.isArray(v) ? `(${v.map((n) => esc(String(n))).join(", ")})` : "—";
+  let html = `<div><div class="head">Strategy · Plan ${esc(p.plan_version ?? 0)}</div><div>${strategy.text ? esc(strategy.text) : `<span class="note">No strategy recorded.</span>`}</div>`;
+  if (priorities.length) html += `<div style="margin-top:8px">${priorities.map((v) => `• ${esc(v)}`).join("<br>")}</div>`;
+  html += `</div><div style="margin-top:14px"><div class="head">Objectives</div>`;
+  html += objectives.length ? objectives.map((o) => {
+    const patrolReleased = o.verb === "patrol" && (!o.assemble || o.assemble.released);
+    const place = patrolReleased ? o.anchor : o.at;
+    const target = (o.verb === "escort" ? o.target_squad ? `squad ${esc(o.target_squad)}` : `unit #${esc(o.target_id ?? "—")}`
+      : `${o.verb === "patrol" ? patrolReleased ? `Waypoint ${esc(Number(o.patrol_index ?? 0) + 1)}/${esc(o.waypoints?.length ?? 0)} · ` : "Route starts · " : ""}${position(place)}`) + ` · radius ${esc(o.radius ?? 0)}`;
+    const budget = o.reinforce?.budget;
+    return `<div class="objective"><div${o.paused ? ` class="paused"` : ""}>${esc(o.id)} · ${esc(o.squad)} · ${esc(pretty(o.phase ?? o.verb ?? ""))}</div>` +
+      `<div class="note">${esc(pretty(o.verb ?? ""))} · ${target}</div>` +
+      (o.paused && o.reason ? `<div class="paused">Paused: ${esc(pretty(o.reason))}</div>` : "") +
+      (o.assemble && !o.assemble.released ? `<div class="note">Assembling ${esc(o.assemble.min)} at ${position(o.assemble.at)}</div>` : "") +
+      (budget ? `<div class="note">Budget: ${Object.entries(budget).map(([k, v]) => `${esc(k)} ${esc(o.reinforce.spent?.[k] ?? 0)}/${esc(v)}`).join(", ")}</div>` : "") + `</div>`;
+  }).join("") : `<div class="note">No objectives configured.</div>`;
+  html += `</div><div style="margin-top:14px"><div class="head">Latest guard interventions</div>`;
+  html += interventions.length ? interventions.slice(0, 8).map((n) => `<div class="intervention"><div>${esc(clock(Number(n.t ?? 0)))} · ${esc(n.squad ?? "")} · ${esc(pretty(n.rule ?? "guard"))}</div>` +
+    `<div class="${n.kind === "decision_needed" ? "paused" : "note"}">${esc(n.action ?? "")} · ${esc(pretty(n.reason ?? n.kind ?? ""))}</div></div>`).join("") : `<div class="note">No guard interventions yet.</div>`;
+  return html + `</div>`;
+}
+
+let sidePlan = false, planningTeam = null, lastPlanHtml = "", lastPlanTeams = "";
+function planningPanel(you) {
+  const own = Boolean(you && !SPECTATOR && !frame.results);
+  document.getElementById("basebody").style.display = sidePlan ? "none" : "flex";
+  document.getElementById("planbody").style.display = sidePlan ? "flex" : "none";
+  document.getElementById("planteamlabel").style.display = own ? "none" : "block";
+  let p = own ? you.planning : null;
+  if (!own) {
+    const teams = frame.teams ?? [];
+    if (!teams.some((t) => t.id === planningTeam)) planningTeam = teams[0]?.id ?? null;
+    const options = teams.map((t) => `<option value="${esc(t.id)}">${esc(t.flavor ?? t.player ?? t.id)}</option>`).join("");
+    if (options !== lastPlanTeams) { document.getElementById("planteam").innerHTML = options; lastPlanTeams = options; }
+    document.getElementById("planteam").value = String(planningTeam);
+    p = teams.find((t) => t.id === planningTeam)?.planning;
+  }
+  const html = planningHtml(p);
+  if (html !== lastPlanHtml) { document.getElementById("plancontent").innerHTML = html; lastPlanHtml = html; }
+}
+for (const [id, on] of [["sideBase", false], ["sidePlan", true]]) document.getElementById(id).addEventListener("click", () => {
+  sidePlan = on;
+  for (const [button, selected] of [["sideBase", !on], ["sidePlan", on]]) { const b = document.getElementById(button); b.classList.toggle("on", selected); b.setAttribute("aria-pressed", String(selected)); }
+  if (frame) planningPanel(frame.you);
+});
+document.getElementById("planteam").addEventListener("change", (e) => { planningTeam = Number(e.target.value); if (frame) planningPanel(frame.you); });
 
 let feedItems = [], feedAt = 0;
 async function feedPanel() {

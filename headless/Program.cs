@@ -60,6 +60,7 @@ namespace Pez.Headless
             if (args.Contains("--test-miner-policy")) return Tests.RunMinerPolicy();
             if (args.Contains("--test-guards")) return Tests.RunGuards();
             if (args.Contains("--test-objectives")) return Tests.RunObjectives();
+            if (args.Contains("--test-strategy")) return Tests.RunStrategies();
             if (args.Contains("--test-squads")) return Tests.RunSquads();
             if (args.Contains("--gate")) return Tests.RunGate();
             if (args.Contains("--test-observe")) return Tests.RunObserve();

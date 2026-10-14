@@ -1,0 +1,9 @@
+{
+  "source": "isolated native renderer restored ApiServer.ViewSnapshot(game, -1)",
+  "teams": 2,
+  "all_standing_orders_blank": true,
+  "config_orders_blank": true,
+  "synthetic_private_marker_absent": true,
+  "strategy_visible": true,
+  "api_section_absent": true
+}

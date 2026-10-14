@@ -25,8 +25,10 @@ namespace Pez.Sim
         public static JObj ExecuteBatch(Game game, int team, object parsed, string actor, Action<int, string, string> onCommand = null)
         {
             var w = game.World;
-            if (team < 0 || team >= w.Teams.Count) return Error("bad team");
+            if (team < 0 || team >= w.Teams.Count) return Error("bad team").Set("plan_version", null);
             var t = w.Teams[team];
+            int currentPlan = t.PlanVersion; // one receipt-time comparison, before this batch can record its own strategy
+            JObj Invalid(string message) => Error(message).Set("plan_version", t.PlanVersion);
             var envelope = parsed as Dictionary<string, object>;
             var commands = parsed as List<object>;
             object raw = null;
@@ -34,12 +36,12 @@ namespace Pez.Sim
             if (batch)
             {
                 commands = raw as List<object>;
-                if (commands == null) return Error("commands must be an array");
+                if (commands == null) return Invalid("commands must be an array");
             }
             commands ??= new List<object> { parsed };
             string request = null;
-            int? asOf = null;
-            if (batch && !Metadata(envelope, out request, out asOf, out var error)) return Error(error);
+            int? asOf = null, expectedPlan = null;
+            if (batch && !Metadata(envelope, out request, out asOf, out expectedPlan, out var error)) return Invalid(error);
             var now = game.Now();
             t.CommandReceipts.RemoveAll(r => (now - r.At).TotalSeconds >= ReceiptSeconds);
             var key = request == null ? null : "batch:" + request;
@@ -47,17 +49,17 @@ namespace Pez.Sim
             if (saved != null) return saved;
             // Validate before running any part of a new batch. Existing retry keys always return their first result.
             foreach (var c in commands.OfType<Dictionary<string, object>>())
-                if (!Metadata(c, out _, out _, out var commandError)) return Error(commandError);
+                if (!Metadata(c, out _, out _, out _, out var commandError)) return Invalid(commandError);
             var newKeys = new HashSet<string>();
             if (key != null) newKeys.Add(key);
             foreach (var c in commands.OfType<Dictionary<string, object>>())
                 if (c.TryGetValue("request_id", out var r) && !t.CommandReceipts.Any(x => x.Id == "command:" + r)) newKeys.Add("command:" + r);
-            if (t.CommandReceipts.Count + newKeys.Count > MaxReceipts) return Error("retry receipt capacity reached; retry with a new request after an older receipt expires").Set("code", "receipt_capacity");
+            if (t.CommandReceipts.Count + newKeys.Count > MaxReceipts) return Invalid("retry receipt capacity reached; retry with a new request after an older receipt expires").Set("code", "receipt_capacity");
             var results = new List<object>();
             foreach (var c in commands)
             {
                 if (!(c is Dictionary<string, object> command)) { results.Add(Error("each command must be an object")); continue; }
-                Metadata(command, out var id, out var tick, out _);
+                Metadata(command, out var id, out var tick, out var plan, out _);
                 var commandKey = id == null ? null : "command:" + id;
                 var result = Recall(t, commandKey);
                 if (result == null)
@@ -71,6 +73,7 @@ namespace Pez.Sim
                     }
                     finally { w.CommandActor = previousActor; }
                     if ((tick ?? asOf).HasValue) result.Set("as_of_tick", tick ?? asOf).Set("stale", facts);
+                    PlanAdvice(result, plan ?? expectedPlan, currentPlan);
                     if (id != null) result.Set("request_id", id);
                     if (result["ok"] is bool ok && ok) w.LogCommand(team, command);
                     onCommand?.Invoke(team, Json.Write(command), Json.Write(result));
@@ -78,15 +81,23 @@ namespace Pez.Sim
                 }
                 results.Add(result);
             }
-            var reply = new JObj().Set("results", results).Set("stockpile", StateView.Stockpile(t)).Set("time_s", (float)Math.Round(w.Time, 1));
+            var reply = new JObj().Set("results", results).Set("stockpile", StateView.Stockpile(t)).Set("time_s", (float)Math.Round(w.Time, 1))
+                .Set("plan_version", t.PlanVersion);
+            PlanAdvice(reply, expectedPlan, currentPlan);
             if (request != null) reply.Set("request_id", request);
             Remember(t, key, reply, now);
             return reply;
         }
 
-        static bool Metadata(Dictionary<string, object> d, out string request, out int? tick, out string error)
+        static void PlanAdvice(JObj reply, int? expected, int current)
         {
-            request = null; tick = null; error = null;
+            if (!expected.HasValue) return;
+            reply.Set("expected_plan_version", expected.Value).Set("current_plan_version", current).Set("plan_changed", expected.Value != current);
+        }
+
+        static bool Metadata(Dictionary<string, object> d, out string request, out int? tick, out int? plan, out string error)
+        {
+            request = null; tick = null; plan = null; error = null;
             if (d.TryGetValue("request_id", out var r))
             {
                 if (!(r is string s) || s.Length < 1 || s.Length > 128) { error = "request_id must be a string of 1-128 characters"; return false; }
@@ -97,6 +108,12 @@ namespace Pez.Sim
                 if (!(a is double n) || double.IsNaN(n) || double.IsInfinity(n) || n < 0 || n > int.MaxValue || n != Math.Floor(n))
                 { error = "as_of_tick must be a non-negative integer"; return false; }
                 tick = (int)n;
+            }
+            if (d.TryGetValue("plan_version", out var p))
+            {
+                if (!(p is double n) || double.IsNaN(n) || double.IsInfinity(n) || n < 0 || n > int.MaxValue || n != Math.Floor(n))
+                { error = "plan_version must be a non-negative integer"; return false; }
+                plan = (int)n;
             }
             return true;
         }

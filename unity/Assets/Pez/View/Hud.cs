@@ -813,10 +813,13 @@ namespace Pez.View
             float ordersH = Mathf.Min(TextH(ordersText, fSans, 14, inner) * 1.08f, 110);
             float headH = web ? DrawerHeadH : 0, top = web && !open ? 10 : pad;
             float h = top + headH + tabRows * tabH + (tabRows - 1) * 6 + 14;
+            bool canSeePlan = Team < 0 || tabTeam == Team;
+            h += canSeePlan ? 42 : 0;
             if (showProd) h += 18 + 10 + (prod.Count == 0 ? 20 : prod.Count * 42 + (prod.Count - 1) * 10) + 14;
             h += 18 + 8 + ordersH;
             if (agent && !web) h += 6 + 18 + 8 + 72 + 8 + 44;
             h += pad;
+            if (showPlan && canSeePlan) h = col.height;
             if (web && !open) h = top + 28 + top;
             if (h > col.height) h = col.height;
             var r = new Rect(col.x, col.y, col.width, h);
@@ -848,6 +851,16 @@ namespace Pez.View
                 if (Click(tr)) tabTeam = t.Id;
             }
             y += tabRows * tabH + (tabRows - 1) * 6 + 14;
+
+            if (canSeePlan)
+            {
+                y = PlanTabs(x, y, inner);
+                if (showPlan)
+                {
+                    PlanBody(new Rect(x, y, inner, Mathf.Max(0, r.yMax - pad - y)), team);
+                    return;
+                }
+            }
 
             // Building now
             if (showProd) y = ProductionBlock(prod, x, y, inner);

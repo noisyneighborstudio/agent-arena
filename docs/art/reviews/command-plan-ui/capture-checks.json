@@ -1,0 +1,366 @@
+[
+  {
+    "name": "desktop-before",
+    "check": {
+      "innerWidth": 1920,
+      "screenWidth": 1920,
+      "K": 1,
+      "classes": "",
+      "side": {
+        "x": 1520,
+        "y": 490,
+        "width": 384,
+        "height": 432.90625,
+        "top": 490,
+        "right": 1904,
+        "bottom": 922.90625,
+        "left": 1520
+      },
+      "scrollHeight": 357,
+      "clientHeight": 357,
+      "pwned": false
+    }
+  },
+  {
+    "name": "phone-before",
+    "check": {
+      "innerWidth": 390,
+      "screenWidth": 390,
+      "K": 0.85,
+      "classes": "narrow phone",
+      "side": {
+        "x": 56.8046875,
+        "y": 276.3828125,
+        "width": 326.3984375,
+        "height": 367.2109375,
+        "top": 276.3828125,
+        "right": 383.203125,
+        "bottom": 643.59375,
+        "left": 56.8046875
+      },
+      "scrollHeight": 357,
+      "clientHeight": 357,
+      "pwned": false
+    }
+  },
+  {
+    "name": "desktop-empty",
+    "check": {
+      "innerWidth": 1920,
+      "screenWidth": 1920,
+      "K": 1,
+      "classes": "",
+      "side": {
+        "x": 1520,
+        "y": 490,
+        "width": 384,
+        "height": 290.5,
+        "top": 490,
+        "right": 1904,
+        "bottom": 780.5,
+        "left": 1520
+      },
+      "bottom": {
+        "x": 16,
+        "y": 1014,
+        "width": 560,
+        "height": 50,
+        "top": 1014,
+        "right": 576,
+        "bottom": 1064,
+        "left": 16
+      },
+      "scrollHeight": 215,
+      "clientHeight": 215,
+      "pwned": false
+    }
+  },
+  {
+    "name": "desktop-populated",
+    "check": {
+      "innerWidth": 1920,
+      "screenWidth": 1920,
+      "K": 1,
+      "classes": "",
+      "side": {
+        "x": 1520,
+        "y": 490,
+        "width": 384,
+        "height": 562,
+        "top": 490,
+        "right": 1904,
+        "bottom": 1052,
+        "left": 1520
+      },
+      "bottom": {
+        "x": 16,
+        "y": 1014,
+        "width": 560,
+        "height": 50,
+        "top": 1014,
+        "right": 576,
+        "bottom": 1064,
+        "left": 16
+      },
+      "scrollHeight": 493,
+      "clientHeight": 486,
+      "pwned": false
+    }
+  },
+  {
+    "name": "desktop-paused",
+    "check": {
+      "innerWidth": 1920,
+      "screenWidth": 1920,
+      "K": 1,
+      "classes": "",
+      "side": {
+        "x": 1520,
+        "y": 490,
+        "width": 384,
+        "height": 562,
+        "top": 490,
+        "right": 1904,
+        "bottom": 1052,
+        "left": 1520
+      },
+      "bottom": {
+        "x": 16,
+        "y": 1014,
+        "width": 560,
+        "height": 50,
+        "top": 1014,
+        "right": 576,
+        "bottom": 1064,
+        "left": 16
+      },
+      "scrollHeight": 515,
+      "clientHeight": 486,
+      "pwned": false
+    }
+  },
+  {
+    "name": "desktop-long",
+    "check": {
+      "innerWidth": 1920,
+      "screenWidth": 1920,
+      "K": 1,
+      "classes": "",
+      "side": {
+        "x": 1520,
+        "y": 490,
+        "width": 384,
+        "height": 562,
+        "top": 490,
+        "right": 1904,
+        "bottom": 1052,
+        "left": 1520
+      },
+      "bottom": {
+        "x": 16,
+        "y": 1014,
+        "width": 560,
+        "height": 50,
+        "top": 1014,
+        "right": 576,
+        "bottom": 1064,
+        "left": 16
+      },
+      "scrollHeight": 1270,
+      "clientHeight": 486,
+      "pwned": false
+    }
+  },
+  {
+    "name": "desktop-malicious",
+    "check": {
+      "innerWidth": 1920,
+      "screenWidth": 1920,
+      "K": 1,
+      "classes": "",
+      "side": {
+        "x": 1520,
+        "y": 490,
+        "width": 384,
+        "height": 562,
+        "top": 490,
+        "right": 1904,
+        "bottom": 1052,
+        "left": 1520
+      },
+      "bottom": {
+        "x": 16,
+        "y": 1014,
+        "width": 560,
+        "height": 50,
+        "top": 1014,
+        "right": 576,
+        "bottom": 1064,
+        "left": 16
+      },
+      "scrollHeight": 577,
+      "clientHeight": 486,
+      "pwned": false
+    }
+  },
+  {
+    "name": "phone-empty",
+    "check": {
+      "innerWidth": 390,
+      "screenWidth": 390,
+      "K": 0.85,
+      "classes": "narrow phone",
+      "side": {
+        "x": 56.8046875,
+        "y": 276.3828125,
+        "width": 326.3984375,
+        "height": 246.1640625,
+        "top": 276.3828125,
+        "right": 383.203125,
+        "bottom": 522.546875,
+        "left": 56.8046875
+      },
+      "bottom": {
+        "x": 6.796875,
+        "y": 795.40625,
+        "width": 376.40625,
+        "height": 41.796875,
+        "top": 795.40625,
+        "right": 383.203125,
+        "bottom": 837.203125,
+        "left": 6.796875
+      },
+      "scrollHeight": 214,
+      "clientHeight": 214,
+      "pwned": false
+    }
+  },
+  {
+    "name": "phone-populated",
+    "check": {
+      "innerWidth": 390,
+      "screenWidth": 390,
+      "K": 0.85,
+      "classes": "narrow phone",
+      "side": {
+        "x": 56.8046875,
+        "y": 276.3828125,
+        "width": 326.3984375,
+        "height": 482.3984375,
+        "top": 276.3828125,
+        "right": 383.203125,
+        "bottom": 758.78125,
+        "left": 56.8046875
+      },
+      "bottom": {
+        "x": 6.796875,
+        "y": 795.40625,
+        "width": 376.40625,
+        "height": 41.796875,
+        "top": 795.40625,
+        "right": 383.203125,
+        "bottom": 837.203125,
+        "left": 6.796875
+      },
+      "scrollHeight": 492,
+      "clientHeight": 492,
+      "pwned": false
+    }
+  },
+  {
+    "name": "phone-paused",
+    "check": {
+      "innerWidth": 390,
+      "screenWidth": 390,
+      "K": 0.85,
+      "classes": "narrow phone",
+      "side": {
+        "x": 56.8046875,
+        "y": 276.3828125,
+        "width": 326.3984375,
+        "height": 501.515625,
+        "top": 276.3828125,
+        "right": 383.203125,
+        "bottom": 777.8984375,
+        "left": 56.8046875
+      },
+      "bottom": {
+        "x": 6.796875,
+        "y": 795.40625,
+        "width": 376.40625,
+        "height": 41.796875,
+        "top": 795.40625,
+        "right": 383.203125,
+        "bottom": 837.203125,
+        "left": 6.796875
+      },
+      "scrollHeight": 515,
+      "clientHeight": 515,
+      "pwned": false
+    }
+  },
+  {
+    "name": "phone-long",
+    "check": {
+      "innerWidth": 390,
+      "screenWidth": 390,
+      "K": 0.85,
+      "classes": "narrow phone",
+      "side": {
+        "x": 56.8046875,
+        "y": 276.3828125,
+        "width": 326.3984375,
+        "height": 508.8203125,
+        "top": 276.3828125,
+        "right": 383.203125,
+        "bottom": 785.203125,
+        "left": 56.8046875
+      },
+      "bottom": {
+        "x": 6.796875,
+        "y": 795.40625,
+        "width": 376.40625,
+        "height": 41.796875,
+        "top": 795.40625,
+        "right": 383.203125,
+        "bottom": 837.203125,
+        "left": 6.796875
+      },
+      "scrollHeight": 1269,
+      "clientHeight": 523,
+      "pwned": false
+    }
+  },
+  {
+    "name": "phone-malicious",
+    "check": {
+      "innerWidth": 390,
+      "screenWidth": 390,
+      "K": 0.85,
+      "classes": "narrow phone",
+      "side": {
+        "x": 56.8046875,
+        "y": 276.3828125,
+        "width": 326.3984375,
+        "height": 508.8203125,
+        "top": 276.3828125,
+        "right": 383.203125,
+        "bottom": 785.203125,
+        "left": 56.8046875
+      },
+      "bottom": {
+        "x": 6.796875,
+        "y": 795.40625,
+        "width": 376.40625,
+        "height": 41.796875,
+        "top": 795.40625,
+        "right": 383.203125,
+        "bottom": 837.203125,
+        "left": 6.796875
+      },
+      "scrollHeight": 576,
+      "clientHeight": 523,
+      "pwned": false
+    }
+  }
+]

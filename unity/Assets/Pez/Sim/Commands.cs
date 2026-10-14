@@ -48,6 +48,7 @@ namespace Pez.Sim
   {""type"":""objective"", ""id"":""west-exp"", ""squad"":""west"", ""verb"":""go"", ""at"":[X,Y], ""radius"":6, ""assemble"":{""at"":[X0,Y0],""min"":8}, ""reinforce"":{""keep"":{""rifleman"":6,""light_tank"":2},""budget"":{""steel"":800}}, ""wake"":[""squad_below_50"",""enemy_strength_seen>squad"",""objective_done""]}
       literal go/hold/escort/patrol only; escort uses target_id (or target) OR target_squad, patrol uses waypoints. Radius is required. Nothing starts without this command. Strategy prose never executes.
       {""type"":""objective"",""id"":""west-exp"",""pause"":true} | resume:true (reattach live members, preserve spending) | cancel:true. Direct unit orders detach. Wake/cannot-continue packets are critical; no automatic substitute or resume.
+  {""type"":""set_strategy"",""text"":""Expand east, then defend the crystal field."",""priorities"":[""expand east"",""defend crystal""]}  record your strategy (text up to 2000 characters, up to 16 priorities of 120 characters each). Both fields required; empty text and [] clear it. Identical normalized records keep the same plan_version. Strategy prose never gives orders or enables an executor.
   {""type"":""sell"", ""structure_id"":ID}                 sell for 50% refund (your only one of a tech or production building needs ""confirm"":true)
   {""type"":""reserve"", ""item"":""iron_ore"", ""amount"":300}  converters (refineries, plants) leave this much of an item alone, so raw-ore costs (power_plant, mining_refinery, mining_truck) stay payable; amount 0 clears it
   {""type"":""save_for"", ""unit"":""drill_rig""}           save up for one unit or structure: converters leave its cost alone until you train/build it (no unit: cancel)
@@ -58,6 +59,7 @@ namespace Pez.Sim
   {""type"":""propose_tech"", ""name"":""Lancer"", ""base"":""light_tank"", ""weapon_from"":""rocket_soldier"", ""hp"":360, ""damage"":70, ""dry_run"":true}
       design your own unit from one you can build (see inventions in the rules); dry_run quotes it, without dry_run it's researched, then train its key
 POST /command may wrap commands with ""request_id"":""unique retry key"" and ""as_of_tick"":T. Retries return the first reply for 10 real minutes (512 receipts per team); stale facts are reported without rejecting orders.
+Add ""plan_version"":VERSION from state to report a changed strategy or human standing orders. Results are advisory: expected_plan_version/current_plan_version and plan_changed describe the version at batch start; plan_version gives the version after the batch. Commands still execute, and retries return the original reply.
 'units' may also be the string ""all"" (all your combat units) or ""idle"" (idle combat units).";
 
         public static JObj Execute(World w, int team, Dictionary<string, object> c)
@@ -89,6 +91,7 @@ POST /command may wrap commands with ""request_id"":""unique retry key"" and ""a
                     return Err($"you're under newcomer protection for {(int)(w.Teams[team].ProtectedUntil - w.Time)}s more and can't attack yet; use the time to build up");
                 switch (type)
                 {
+                    case "set_strategy": return StrategyRecords.Configure(w, team, c);
                     case "objective": return Objectives.Configure(w, team, c);
                     case "guard": return SquadGuards.Configure(w, team, c);
                     case "squad": return Squads.Configure(w, team, c);

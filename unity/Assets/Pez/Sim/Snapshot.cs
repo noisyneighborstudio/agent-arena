@@ -30,8 +30,9 @@ namespace Pez.Sim
         /// <summary>1: first version. 2: mining zones, prospecting surveyors, drill rigs' zones, arena champion. 3: agent inventions.
         /// 4: economy and endgame (salvage from kills, ore regrowth, construction trucks, the match clock, derricks, defence upkeep).
         /// 5: turn safety (ready seats and preparation clock, retry receipts, own losses and order provenance). 6: opt-in miner policy and withdrawal state.
-        /// 7: named squads, formation HP and rally enrollment. 8: squad guards, saved continuations and motion pauses. 9: literal objectives, decision baselines and pinned reinforcement.</summary>
-        public const int Schema = 9;
+        /// 7: named squads, formation HP and rally enrollment. 8: squad guards, saved continuations and motion pauses. 9: literal objectives, decision baselines and pinned reinforcement.
+        /// 10: nonexecuting strategy records and shared plan versions.</summary>
+        public const int Schema = 10;
         public const int MinReader = 1;
         /// <summary>Events kept: the last two minutes, plus recent chat, at most MaxEvents. Alerts: the last minute.</summary>
         const int MaxEvents = 1500;
@@ -84,6 +85,7 @@ namespace Pez.Sim
         {
             var o = new JObj().Set("id", t.Id).Set("name", t.Name).Set("controller", t.Controller).Put("player", t.PlayerName)
                 .Put("standing_orders", t.StandingOrders).Put("orders_version", t.OrdersVersion)
+                .Put("strategy_text", t.StrategyText).Put("plan_version", t.PlanVersion)
                 .Set("stock", SnapIO.Floats(t.Stock)).Set("rates", SnapIO.Floats(t.Rates))
                 .Set("power_produced", t.PowerProduced).Set("power_used", t.PowerUsed).Put("plasma_owed", t.PlasmaOwed)
                 .Set("start", SnapIO.V(t.StartPos)).Put("defeated", t.Defeated).Put("left", t.Left).Put("resigned", t.Resigned)
@@ -92,6 +94,7 @@ namespace Pez.Sim
                 .Set("scatter", t.Scatter.State.ToString("x16"));
             if (t.Miners.WithdrawOnAttack || t.Miners.Fields.Count > 0 || t.Miners.Detached.Count > 0 ||
                 t.Miners.ToBase || t.Miners.Destination.LengthSq > 0 || t.Miners.ResumeAfterS != 0) o.Set("miner_policy", t.Miners.Save());
+            if (t.Priorities.Count > 0) o.Set("priorities", t.Priorities.Cast<object>().ToList());
             if (t.CommandReceipts.Count > 0) o.Set("command_receipts", t.CommandReceipts.Select(r => (object)new JObj().Set("id", r.Id).Set("at", r.At.ToString("O", CultureInfo.InvariantCulture)).Set("reply", r.Reply)).ToList());
             if (t.Objectives.Count > 0) o.Set("objectives", t.Objectives.Values.Select(x => (object)x.Save()).ToList());
             if (t.Squads.Count > 0) o.Set("squads", t.Squads.Values.OrderBy(s => s.Name, StringComparer.Ordinal).Select(s => (object)s.Save()).ToList());
@@ -137,6 +140,8 @@ namespace Pez.Sim
             var t = new Team { Id = index, LastActiveAt = now };
             d.Load("name", ref t.Name); d.Load("controller", ref t.Controller); d.Load("player", ref t.PlayerName);
             d.Load("standing_orders", ref t.StandingOrders); d.Load("orders_version", ref t.OrdersVersion);
+            d.Load("strategy_text", ref t.StrategyText); d.Load("plan_version", ref t.PlanVersion);
+            t.Priorities.AddRange(d.Arr("priorities").OfType<string>());
             t.Miners.Load(d.Obj("miner_policy"));
             SnapIO.LoadFloats(d.Obj("stock"), t.Stock); SnapIO.LoadFloats(d.Obj("rates"), t.Rates);
             SnapIO.LoadFloats(d.Obj("granted"), t.Granted); // a save from before gifts counted: nothing is a gift, as before

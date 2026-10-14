@@ -1179,7 +1179,7 @@ namespace Pez.Sim
                 .Set("stock", stock).Set("rates", rateObj).Set("power", new List<object> { t.PowerUsed, t.PowerProduced })
                 .Set("contacts", vis.Count).Set("remembered", contacts.Values.Count(c => !c.Visible)).Set("engagements", fights.Count)
                 .Set("open_cmds", cmds.Keys.OrderBy(k => k).Take(10).Cast<object>().ToList()).Set("stranded", us.Where(e => e.Stranded).Select(e => (object)e.Id).ToList())
-                .Set("orders_version", t.OrdersVersion).Set("rules_version", StateView.RulesVersion), null);
+                .Set("orders_version", t.OrdersVersion).Set("plan_version", t.PlanVersion).Set("rules_version", StateView.RulesVersion), null);
         }
 
         /// <summary>
@@ -1206,6 +1206,7 @@ namespace Pez.Sim
                 .Set("policies", new JObj().Set("miners", t.Miners.View()))
                 .Set("squads", Squads.View(w, Team)).Set("objectives", Objectives.View(w, Team))
                 .Set("standing_orders", new JObj().Set("version", t.OrdersVersion).Set("text", t.StandingOrders).Set("src", "human"))
+                .Set("strategy", StrategyRecords.View(t)).Set("plan_version", t.PlanVersion)
                 .Set("open_cmds", cmds.Values.Select(c => (object)new JObj().Set("cmd", c.Id).Set("type", c.Type).Set("units", c.Units.Where(u => !c.Outcome.ContainsKey(u)).Cast<object>().ToList())).ToList())
                 .Set("match", StateView.MatchJson(w));
         }

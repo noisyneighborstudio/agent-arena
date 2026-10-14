@@ -208,7 +208,8 @@ namespace Pez.View
             float Height()
             {
                 if (!open) return 2 * top + 28;
-                float h = pad + DrawerHeadH + 28 + (prod.Count == 0 ? 20 : 52 * prod.Count) + 4 + 10 + 28 + 2 * 22 + 10 + 24 + 12 + 14 + 26 + ordersH;
+                if (showPlan) return col.height;
+                float h = pad + DrawerHeadH + 42 + 28 + (prod.Count == 0 ? 20 : 52 * prod.Count) + 4 + 10 + 28 + 2 * 22 + 10 + 24 + 12 + 14 + 26 + ordersH;
                 if (prot > 0) h += 8 + 18;
                 if (canCommand) h += 10 + commanderH;
                 return h + pad;
@@ -220,6 +221,12 @@ namespace Pez.View
             DrawerHead(r, "side", "YOUR BASE", null, top);
             if (!open) return;
             float x = r.x + pad, y = r.y + pad + DrawerHeadH;
+            y = PlanTabs(x, y, inner);
+            if (showPlan)
+            {
+                PlanBody(new Rect(x, y, inner, Mathf.Max(0, r.yMax - pad - y)), t);
+                return; // the editor belongs to Base; Layout already cleared its overlay rectangle
+            }
             y = ProductionBlock(prod, x, y, inner) + 10;
             Head(x, y, "STOCKPILE"); y += 28;
             y = StockPower(t, x, y, inner);

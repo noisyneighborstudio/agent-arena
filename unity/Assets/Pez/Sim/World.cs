@@ -53,6 +53,9 @@ namespace Pez.Sim
         /// <summary>Standing instructions from the human commander to whoever (usually an LLM) plays this team.</summary>
         public string StandingOrders = "";
         public int OrdersVersion;
+        public string StrategyText = "";
+        public readonly List<string> Priorities = new List<string>();
+        public int PlanVersion;
         public readonly SortedDictionary<string, Objective> Objectives = new SortedDictionary<string, Objective>(StringComparer.Ordinal);
         public readonly Dictionary<string, Squad> Squads = new Dictionary<string, Squad>(StringComparer.Ordinal);
         public readonly MinerPolicy Miners = new MinerPolicy();
@@ -240,7 +243,7 @@ namespace Pez.Sim
             var type = cmd.Str("type", "").ToLowerInvariant();
             if (type == "say" || type == "propose_tech" || type == "start_match" || type == "ready") return;
             var replay = new Dictionary<string, object>(cmd);
-            replay.Remove("request_id"); replay.Remove("as_of_tick");
+            replay.Remove("request_id"); replay.Remove("as_of_tick"); replay.Remove("plan_version");
             CommandLog.Add(new LoggedCommand { Seq = ++CommandSeq, Tick = Tick, Team = team, Cmd = replay });
             int cut = 0;
             while (cut < CommandLog.Count && (CommandLog[cut].Tick < Tick - CommandLogTicks || CommandLog.Count - cut > 400)) cut++;
@@ -1014,6 +1017,7 @@ namespace Pez.Sim
             if (text == t.StandingOrders) return;
             t.StandingOrders = text;
             t.OrdersVersion++;
+            t.PlanVersion++;
             Emit("orders", team, text: text.Length == 0 ? "(orders cleared)" : text);
         }
 

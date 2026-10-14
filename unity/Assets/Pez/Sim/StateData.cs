@@ -40,6 +40,7 @@ namespace Pez.Sim
             o.Set("last_alert_seq", w.Alerts.LastSeq);
             o.Set("standing_orders", t.StandingOrders.Length == 0 ? null : t.StandingOrders);
             o.Set("orders_version", t.OrdersVersion);
+            o.Set("strategy", StrategyRecords.View(t)).Set("plan_version", t.PlanVersion);
             o.Set("squads", Squads.View(w, team));
             o.Set("objectives", Objectives.View(w, team));
             o.Set("policies", new JObj().Set("miners", t.Miners.View()));
