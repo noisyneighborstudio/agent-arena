@@ -167,8 +167,11 @@ each guard: zero settles, no oscillation between hold and advance.
 | P6 objectives | not started | | |
 | P7 strategy record + view | not started | | |
 
-**Supervision:** the build is delegated to a child agent (GPT, high effort) from the T3 thread that wrote this doc; the
-supervising agent reviews each phase. If the supervisor runs out, any agent continues from this table: read the
+**Supervision:** the build is delegated to a child agent (codex `gpt-6.1-sol`, high effort, started 2026-10-14) from
+the T3 thread that wrote this doc, as T3 task
+`node:delegated-task:command%3Amcp%3A4e640e0d-6108-4b2c-bc48-e821f55989b3%3Adelegate-task%3Apezz-command-build-r1`
+(its brief: implement P1-P7 in order, test, ship each phase to main, update this table). A supervisor checks it with
+`task_status` on that id and reviews each phase's commits against the principle and the architecture rules above. If the supervisor runs out, any agent continues from this table: read the
 latest commits touching the files above, check `ci-work/status.json`, and carry on with the first phase not marked done.
 
 **Open questions:** none yet.
