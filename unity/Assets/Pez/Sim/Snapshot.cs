@@ -204,7 +204,7 @@ namespace Pez.Sim
              .Put("resume_speed_cap", e.ResumeSpeedCap);
             if (e.ResumeWaypoints.Count > 0) o.Set("resume_waypoints", SnapIO.Vs(e.ResumeWaypoints));
             if (e.MineQueue.Count > 0) o.Set("mine_queue", SnapIO.Vs(e.MineQueue));
-            o.Put("last_fired_at", e.LastFiredAt, -999f)
+            o.Put("last_fired_at", e.LastFiredAt, -999f).Put("arming", e.Arming).Put("arming_target", e.ArmingTarget)
              .Put("prospecting", e.Prospecting).PutV("prospect_center", e.ProspectCenter).Put("prospect_radius", e.ProspectRadius)
              .Put("survey_failure", e.SurveyFailure).Put("survey_failed_at", e.SurveyFailedAt).Put("zone", e.ZoneId);
             if (e.SkipSites.Count > 0) o.Set("skip_sites", SnapIO.Vs(e.SkipSites));
@@ -250,7 +250,7 @@ namespace Pez.Sim
             d.Load("resume_speed_cap", ref e.ResumeSpeedCap);
             e.ResumeWaypoints.AddRange(SnapIO.ToVecs(d.Arr("resume_waypoints")));
             e.MineQueue.AddRange(SnapIO.ToVecs(d.Arr("mine_queue")));
-            d.Load("last_fired_at", ref e.LastFiredAt);
+            d.Load("last_fired_at", ref e.LastFiredAt); d.Load("arming", ref e.Arming); d.Load("arming_target", ref e.ArmingTarget);
             d.Load("prospecting", ref e.Prospecting); d.Load("prospect_center", ref e.ProspectCenter); d.Load("prospect_radius", ref e.ProspectRadius);
             d.Load("survey_failure", ref e.SurveyFailure); d.Load("survey_failed_at", ref e.SurveyFailedAt); d.Load("zone", ref e.ZoneId);
             e.SkipSites.AddRange(SnapIO.ToVecs(d.Arr("skip_sites")));
@@ -399,6 +399,7 @@ namespace Pez.Sim
             .Set("next_prospect", SnapIO.X(nextProspect)).Set("prospect_radius", prospectRadius)
             .Set("want_copper", wantCopper).Put("want_crystal", wantCrystal).Put("want_uranium", wantUranium).Put("went_deep", wentDeep)
             .Set("ore_rate", SnapIO.X(oreRate)).Set("rated_at", SnapIO.X(ratedAt)).Set("rated_mined", ratedMined)
+            .Set("copper_starved_since", SnapIO.X(copperStarvedSince))
             .Set("stuck_since", stuckSince.OrderBy(kv => kv.Key).Select(kv => (object)new List<object> { kv.Key, SnapIO.X(kv.Value) }).ToList())
             .Set("outpost_targets", outpostTargets.Select(kv => (object)new List<object> { kv.Key, SnapIO.X(kv.Value.X), SnapIO.X(kv.Value.Y) }).ToList());
 
@@ -411,6 +412,7 @@ namespace Pez.Sim
             d.Load("next_prospect", ref ai.nextProspect); d.Load("prospect_radius", ref ai.prospectRadius);
             d.Load("want_copper", ref ai.wantCopper); d.Load("want_crystal", ref ai.wantCrystal); d.Load("want_uranium", ref ai.wantUranium); d.Load("went_deep", ref ai.wentDeep);
             d.Load("ore_rate", ref ai.oreRate); d.Load("rated_at", ref ai.ratedAt); d.Load("rated_mined", ref ai.ratedMined);
+            d.Load("copper_starved_since", ref ai.copperStarvedSince);
             foreach (var x in d.Arr("stuck_since"))
                 if (x is List<object> s && s.Count >= 2) ai.stuckSince[SnapIO.ToI(s[0])] = SnapIO.ToF(s[1]);
             foreach (var x in d.Arr("outpost_targets"))

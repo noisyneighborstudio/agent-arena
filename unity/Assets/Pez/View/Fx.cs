@@ -270,6 +270,15 @@ namespace Pez.View
                     Emit(S.Sparks, pos, (Random.onUnitSphere + Up * 0.5f) * Random.Range(1f, 2.5f), 0.02f, Random.Range(0.25f, 0.5f), White);
         }
 
+        /// <summary>A sniper's scope catches the light as its next shot comes ready: a quick cyan-white glint off the lens
+        /// (a soft flare round a hard white point), no smoke, no light cast.</summary>
+        public static void ScopeGlint(Vector3 lens, Vector3 facing)
+        {
+            var at = lens + facing * 0.02f;
+            Emit(S.Flash, at, Vector3.zero, 0.34f, 0.16f, new Color32(150, 240, 255, 255));
+            Emit(S.Flash, at, Vector3.zero, 0.13f, 0.22f, White);
+        }
+
         /// <summary>A vehicle blows up: blast, a secondary cook-off, its hull in pieces, and a wreck that smokes for 12 s
         /// (flames for the first few seconds). The wreck itself darkens and stays 20 s, then goes poof (PezEmerge.PlayRemove).</summary>
         public static void VehicleDestroyed(Vector3 pos, Color team)
@@ -459,6 +468,26 @@ namespace Pez.View
                     Random.Range(0.22f, 0.32f), Random.Range(1.8f, 2.6f), Alpha(GunSmoke, 0.55f));
         }
 
+        /// <summary>A shoulder launcher fires (SoldierWorks): the backblast out of the tube's open breech. A hot flash and its light, a cone
+        /// of pale smoke thrown back hard (dust drag stops it within a tile) and, where the blast reaches the ground behind
+        /// the soldier, biscuit dust kicked up. `s` scales it with the soldier (1 at the drawn size).</summary>
+        public static void Backblast(Vector3 breech, Vector3 back, float s = 1f)
+        {
+            Emit(S.Flash, breech + back * 0.06f * s, Vector3.zero, 0.55f * s, 0.08f, FlashCol);
+            S.Lamp(breech + back * 0.2f * s, FlashLight, 1.6f, 1.8f * s, 0.1f);
+            // Pale sugar smoke (it has to read over the biscuit ground from the high camera), thrown back in a tight cone.
+            for (int i = 0; i < 8; i++)
+            {
+                var v = (back + Random.insideUnitSphere * 0.28f).normalized * Random.Range(2.2f, 4.2f) * s + Up * Random.Range(0.1f, 0.4f);
+                Emit(S.Dust, breech + back * (0.04f + 0.035f * i) * s, v, Random.Range(0.24f, 0.36f) * s, Random.Range(0.7f, 1.1f),
+                    Vary(Color32.Lerp(Cream, GunSmoke, Random.value * 0.5f), 0.04f, 220));
+            }
+            var g = Ground(breech + back * 0.55f * s);
+            for (int i = 0; i < 3; i++)
+                Emit(S.Dust, g + Up * 0.05f, Ground(back) * Random.Range(0.9f, 1.6f) + Flat(0.4f) + Up * Random.Range(0.1f, 0.3f),
+                    Random.Range(0.26f, 0.38f) * s, Random.Range(0.9f, 1.4f), Vary(DustBiscuit, 0.06f, 210));
+        }
+
         /// <summary>Artillery deploys: its spades bite, kicking dust back from a blade.</summary>
         public static void SpadeDust(Vector3 at, Vector3 back)
         {
@@ -503,6 +532,22 @@ namespace Pez.View
             for (int i = 0; i < 2; i++)
                 Emit(S.Dust, pos + Random.insideUnitSphere * 0.1f, Flat(0.35f) + Up * Random.Range(0.6f, 1.0f),
                     Random.Range(0.5f, 0.7f), Random.Range(1.2f, 1.8f), Vary(c, 0.06f, 220));
+        }
+
+        static readonly Color32 HealCol = new Color32(250, 246, 232, 255);  // the heal beam's cream-white (team-neutral)
+
+        /// <summary>A heal pulse lands on a soldier: a few cream-white motes lift off it and wink out over about a second, and
+        /// a faint glow plays at its feet (each pulse, every 0.4 s, while its medic tends it).</summary>
+        public static void Healed(Vector3 at)
+        {
+            // Around the soldier rather than inside it (the body would hide them), rising past its helmet.
+            for (int i = 0; i < 3; i++)
+            {
+                var side = Flat(1f);
+                var p = at + side * Random.Range(0.16f, 0.22f) + Up * Random.Range(0.05f, 0.3f);
+                Emit(S.Motes, p, side * 0.05f + Up * Random.Range(0.45f, 0.7f), Random.Range(0.22f, 0.3f), Random.Range(0.9f, 1.3f), Vary(HealCol, 0.03f));
+            }
+            Emit(S.Pool, Ground(at) + Up * 0.02f, Vector3.zero, 1.1f, 0.45f, Alpha(HealCol, 0.45f));
         }
 
         static readonly Color32 SteamCol = new Color32(236, 228, 210, 175); // cream plastic, translucent

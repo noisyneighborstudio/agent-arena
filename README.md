@@ -15,6 +15,8 @@ This is an MVP spike. All the art is procedural, built from primitives, so the g
 
 ## Art
 
+How to make or change any asset (art and motion), and what the owner expects: [docs/art/ASSET_GUIDE.md](docs/art/ASSET_GUIDE.md).
+
 The look comes from the v0.2 art handoff, "The Dispenser War". The handoff is in [docs/art/](docs/art/): `HANDOFF.md`, `BRIEF_v2.md`, the motion spec and the boards.
 
 - **Models:** 34 glTF blockout models (16 structures, 14 units, 4 ore tiles) in `unity/Assets/Pez/Resources/PezModels/`, imported with glTFast.

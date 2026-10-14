@@ -1,5 +1,7 @@
 # Pez asset design brief, v2 (The Dispenser War)
 
+> **Process has moved on.** For how to make, refine, verify and ship an asset today, follow [`ASSET_GUIDE.md`](ASSET_GUIDE.md). This document is kept for its setting, palette and readability rules; where it disagrees with the guide about process, the guide wins.
+
 This replaces the original brief. It folds in every decision made since then: the candy-dispenser setting, the readability fixes, the off-axis orthographic camera, the "nothing pops" rule, the motion spec and the production budgets. Paste it into Claude Design (or hand it to an artist) as-is.
 
 ---

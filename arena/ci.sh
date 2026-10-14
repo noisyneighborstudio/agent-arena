@@ -88,6 +88,11 @@ pass() {
   if [ -f "$WT/mcp/site.test.js" ] && ! (cd "$WT" && node --test mcp/site.test.js $([ -f "$WT/mcp/watcher.test.js" ] && echo mcp/watcher.test.js)) >> "$CI/test.log" 2>&1; then
     log "landing page or watcher tests failed at ${target[1,7]} (see .ci/test.log)"; echo "$target" > "$CI/failed"; status failed "$target" "landing page tests"; return 1
   fi
+  # The motion docs say what art-src/tools/motion.py says (docs/art/ASSET_GUIDE.md §6): a hand edit to MOTION.md,
+  # motion.json or PezMotionProfiles.cs that motion.py doesn't carry would be erased by the next splice. Stdlib only.
+  if [ -f "$WT/art-src/tools/kit/motion_splice.py" ] && ! (cd "$WT" && python3 art-src/tools/kit/motion_splice.py --check --all) >> "$CI/test.log" 2>&1; then
+    log "motion docs out of step with motion.py at ${target[1,7]} (see .ci/test.log; fix with art-src/tools/kit/motion_splice.py)"; echo "$target" > "$CI/failed"; status failed "$target" "motion docs"; return 1
+  fi
 
   # 2. Unity: build only when the game changed.
   local changed_unity=1 changed_mcp=1

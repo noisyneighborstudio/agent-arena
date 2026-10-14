@@ -1,0 +1,29 @@
+<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#8f7b5c}canvas{display:block}</style>
+<script type="importmap">{"imports":{"three":"./node_modules/three/build/three.module.js","three/addons/":"./node_modules/three/examples/jsm/"}}</script></head><body>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+const q = new URLSearchParams(location.search);
+const file = q.get('f') || 'model.glb', yaw = +(q.get('yaw') ?? 45), pitch = +(q.get('pitch') ?? 50), zoom = +(q.get('zoom') ?? 2.4);
+const W = 1000, H = 1000;
+const r = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+r.setSize(W, H); r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFSoftShadowMap; r.toneMapping = THREE.ACESFilmicToneMapping;
+document.body.appendChild(r.domElement);
+const s = new THREE.Scene(); s.background = new THREE.Color(0xA58E68);
+s.environment = new THREE.PMREMGenerator(r).fromScene(new RoomEnvironment(), 0.04).texture; s.environmentIntensity = +(q.get("env") ?? 0.35);
+s.add(new THREE.HemisphereLight(0xFFF4E0, 0x6A5638, 0.8));
+const sun = new THREE.DirectionalLight(0xFFE6C4, 2.4); sun.position.set(-5, 9, 3); sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048); Object.assign(sun.shadow.camera, { left: -4, right: 4, top: 4, bottom: -4 }); sun.shadow.bias = -0.0005;
+s.add(sun);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), new THREE.MeshStandardMaterial({ color: 0xA58E68, roughness: 1 }));
+ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; s.add(ground);
+const cam = new THREE.OrthographicCamera(-zoom, zoom, zoom, -zoom, 0.1, 100);
+const yr = yaw * Math.PI / 180, pr = pitch * Math.PI / 180, cy = +(q.get('cy') ?? 0.9);
+cam.position.set(Math.sin(yr) * Math.cos(pr) * 20, cy + Math.sin(pr) * 20, -Math.cos(yr) * Math.cos(pr) * 20);
+cam.lookAt(0, cy, 0);
+new GLTFLoader().load(file, g => {
+  g.scene.traverse(n => { if (n.isMesh) { n.castShadow = n.receiveShadow = true; if (n.material.name === 'M_Team') n.material.color.setHex(0xD94A2B); if (q.get('dbg')) { const C={M_Licorice:0x00ff00,M_Dark:0x0000ff,M_CreamPlastic:0xffffff}; n.material = new THREE.MeshBasicMaterial({color: C[n.material.name] ?? 0x888888}); } } });
+  s.add(g.scene); r.render(s, cam); window.ready = true; document.title = 'ready';
+});
+</script></body></html>

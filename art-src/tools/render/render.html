@@ -303,5 +303,8 @@ window.renderTerrain = async (w = 1536, h = 1820, viewH = 30) => {
   return r.domElement.toDataURL('image/png');
 };
 window.ready = true;
+// ?icon=<key>&kind=<structures|units>: render that one icon into the page (art-src/tools/kit/icon.sh screenshots it).
+{ const q = new URLSearchParams(location.search);
+  if (q.get('icon')) { const d = await renderIcon(q.get('kind') || 'structures', q.get('icon')); document.body.innerHTML = `<img src="${d}" style="display:block">`; document.title = 'done'; } }
 </script>
 </body></html>
