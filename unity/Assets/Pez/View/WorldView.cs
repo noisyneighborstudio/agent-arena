@@ -23,6 +23,9 @@ namespace Pez.View
             public float SpawnT;
             public float LandK;          // aircraft: 0 flying, 1 parked on its pad (eases between)
             public VehicleWorks Drive;   // ground vehicle: hull feel and slope, treads, sprockets, wheels and steering, dust and exhaust
+            public ScoutAircraftWorks ScoutAir; // guarded fans and the unarmed survey head
+            public RotorcraftWorks Rotorcraft; // full-size troop hoist and guided candy-rocket cartridges
+            public StrikeAircraftWorks AirStrike; // fixed-wing payload, propeller and sensor hardware
             // Drones tilt like quadcopters: the smoothed velocity, and the tilt (a world-space lean vector) on a spring.
             public Vector3 DroneVel, DroneTilt, DroneTiltVel;
             public Vector3? EaseFrom; public Vector3 EaseOff; // a resync moved the entity: where it was drawn, and the offset from where it now is (bleeds off)
@@ -31,7 +34,7 @@ namespace Pez.View
             public int TeamShown;        // the team colour its model wears (a captured building changes hands)
             public float TintAt;         // ... and when it takes the new one: an engineer on screen lands his last blow first
             public int Born;             // frame the view was made (deploys pair a unit with the structure it became)
-            public float BoardT;         // boarding: full-size APC path or other carrier shrink
+            public float BoardT;         // boarding: full-size APC ramp or aircraft hoist path
             public Vector3 BoardedAt;    // ... and where its carrier is drawn (unloaded, it steps back out from there)
             public int Carrier, Seat;    // ... the transport it rode in and its seat (an APC: its dome, and its turn to step out)
             public List<Vector3> Walk;   // a soldier walking down an APC's ramp after an unload (VehicleWorks.BayPath, reversed)
@@ -218,12 +221,14 @@ namespace Pez.View
             {
                 bool main = team == PovTeam;
                 float vis = main ? (v.MainShow ? v.MainScale : 0f) : v.E.Dead ? 0f
-                          : v.E.IsCarried && v.BoardT > 0f && v.BoardT < 1f && Views.TryGetValue(v.E.CarrierId, out var cv) ? Visibility(cv.E, team) : Visibility(v.E, team);
+                          : v.E.IsCarried && v.BoardT > 0f && v.BoardT < 1f && Views.TryGetValue(v.E.CarrierId, out var cv)
+                            ? cv.Rotorcraft != null && team >= 0 && team != v.E.Team ? 0f : Visibility(cv.E, team) : Visibility(v.E, team);
                 bool show = vis > 0f;
                 var go = v.Rig.Root.gameObject;
                 if (go.activeSelf != show) go.SetActive(show);
                 if (show && v.BoardT <= 0f) v.Rig.Root.localScale = Vector3.one * vis * v.WalkScale;
                 if (v.Drive != null && show) v.Drive.Show(team < 0 || v.E.Team == team); // its private act: its own team's to see
+                if (v.Rotorcraft != null && show) v.Rotorcraft.Show(team < 0 || v.E.Team == team);
                 bool ring = team == PovTeam && Selected.Contains(v.E.Id) && !v.E.IsStructure;
                 if (v.Ring.gameObject.activeSelf != ring) v.Ring.gameObject.SetActive(ring);
                 v.Bars?.ForView(v.E, team); // a player's stream shows only their own units' fuel
@@ -249,6 +254,7 @@ namespace Pez.View
             Deposits?.SetPov(team, PovTeam);
             FireSim.SetPovLayer(team == PovTeam ? TerrainView.MainFogLayer : TerrainView.TeamFogLayerBase + team);
             GlowCasters.SetPovLayer(team == PovTeam ? TerrainView.MainFogLayer : team < 0 ? -1 : TerrainView.TeamFogLayerBase + team);
+            FxSystems.SetPovLayer(team == PovTeam ? TerrainView.MainFogLayer : team < 0 ? -1 : TerrainView.TeamFogLayerBase + team);
             foreach (var v in Views.Values)
             {
                 if (v.Shade == null || !v.Rig.Root.gameObject.activeSelf) continue;
@@ -501,6 +507,19 @@ namespace Pez.View
                 if (v.BoardT >= 1f) { root.gameObject.SetActive(false); bay.Drive.Pass(); }
                 return;
             }
+            if (Views.TryGetValue(v.E.CarrierId, out var airBay) && airBay.Rotorcraft is { HasBay: true } && airBay.Rig.Root.gameObject.activeInHierarchy)
+            {
+                if (v.BoardT <= 0f) v.WalkFrom = root.position;
+                float duration = RotorcraftWorks.BoardDuration(v.Seat);
+                v.BoardT = Mathf.Min(1f, v.BoardT + Time.deltaTime / duration);
+                float phase = RotorcraftWorks.BoardPhase(v.BoardT * duration, v.Seat);
+                root.localScale = Vector3.one;
+                WalkAlong(v, airBay.Rotorcraft.BayPath(v.WalkFrom), phase, smooth: false);
+                v.MainShow = v.BoardT < 1f && (PovTeam < 0 || v.E.Team == PovTeam); v.MainScale = 1f;
+                if (!v.MainShow) root.gameObject.SetActive(false);
+                if (v.BoardT >= 1f) airBay.Rotorcraft.Pass();
+                return;
+            }
             v.BoardT = Mathf.Min(1f, v.BoardT + Time.deltaTime / 0.35f);
             if (Views.TryGetValue(v.E.CarrierId, out var carrier) && carrier.Rig.Root.gameObject.activeInHierarchy)
                 root.position = Vector3.Lerp(root.position, carrier.Rig.Root.position, v.BoardT);
@@ -518,6 +537,7 @@ namespace Pez.View
         void Unboard(EV v)
         {
             v.BoardT = 0f; v.SpawnT = 0f; v.Rig.Root.localScale = Vector3.one;
+            v.Walk = null; v.WalkVia = null; v.WalkScale = 1f;
             if (Views.TryGetValue(v.Carrier, out var bay) && bay.Drive != null && bay.Drive.HasBay && bay.Rig.Root.gameObject.activeInHierarchy)
             {
                 v.Walk = bay.Drive.BayPath(W(v.E.Pos));
@@ -526,15 +546,20 @@ namespace Pez.View
                 v.WalkScale = 0f;
                 v.SpawnFrom = null;
             }
-            else v.SpawnFrom = v.BoardedAt;
+            else if (Views.TryGetValue(v.Carrier, out var aircraft) && aircraft.Rotorcraft is { HasBay: true } && aircraft.Rig.Root.gameObject.activeInHierarchy)
+            {
+                v.Walk = aircraft.Rotorcraft.BayPath(W(v.E.Pos));
+                v.Walk.Reverse(); v.WalkVia = aircraft; v.WalkScale = 0f; v.SpawnFrom = null;
+            }
+            else { v.SpawnFrom = null; v.Rig.Root.position = W(v.E.Pos); }
             v.Carrier = 0;
         }
 
         /// <summary>A soldier on an APC's bay path (outside first), `t` 0..1 of the way along it toward the bay or out of it.</summary>
-        void WalkAlong(EV v, List<Vector3> path, float t, bool inward = true)
+        void WalkAlong(EV v, List<Vector3> path, float t, bool inward = true, bool smooth = true)
         {
             var root = v.Rig.Root;
-            float k = Mathf.SmoothStep(0f, 1f, t), total = PathLength(path), at = k * total;
+            float k = smooth ? Mathf.SmoothStep(0f, 1f, t) : t, total = PathLength(path), at = k * total;
             Vector3 p = path[path.Count - 1], dir = path[path.Count - 1] - path[path.Count - 2];
             for (int i = 1; i < path.Count; i++)
             {
@@ -575,6 +600,7 @@ namespace Pez.View
         {
             var rig = v.Rig;
             if (v.E.Dead) v.Drive?.Wreck(); // stow an APC boarding screen; nobody emerges
+            if (v.E.Dead) v.Rotorcraft?.Wreck();
             if (rig.HasModel && rig.Root.gameObject.activeInHierarchy && !v.Destroyed && v.E.Def.DeploysInto != null && DeployedInto(v) is EV into)
             {
                 // The vehicle's own hand-off (VehicleWorks.HandOff: the drill rig drills itself down under its deep mine, the
@@ -928,6 +954,8 @@ namespace Pez.View
             ring.localScale = new Vector3(r, 1f, r);
             ring.gameObject.SetActive(false);
             var v = new EV { E = e, Rig = rig, Ring = ring, Born = Time.frameCount, Bars = e.IsMine ? null : new Bars(rig.Root, e, 0f), TeamShown = e.Team, BoardT = e.IsCarried ? 1f : 0f };
+            if (rig.HasModel && (e.Def.ModelKey == "transport_chopper" || e.Def.ModelKey == "gunship"))
+                v.Rotorcraft = RotorcraftWorks.For(rig, e.Def);
             if (e.IsStructure) { rig.Root.position = W(e.Center); TurnToBay(v); Plinths.Register(e.Id, rig.Root.position, rig.Plinth, v.BayYaw); }
             if (e.IsStructure && !e.IsComplete && rig.HasModel) v.Site = new SiteView(rig.Root, e.Def.SizeX, e.Def.SizeY);
             if (e.Def.Key == "derrick" && rig.HasModel && JustPlaced(e))
@@ -1094,11 +1122,19 @@ namespace Pez.View
                 {
                     // Out of an APC: down its ramp and round to where the sim put him (Unboard).
                     v.SpawnT += Time.deltaTime;
+                    bool hoist = v.WalkVia?.Rotorcraft != null;
+                    if (hoist && v.WalkVia.Rotorcraft.HasBay && v.WalkVia.Rig.Root != null)
+                    {
+                        // The sim permits unloading in flight: each soldier still waiting inside follows the moving stern.
+                        v.Walk = v.WalkVia.Rotorcraft.BayPath(rig.Root.position);
+                        v.Walk.Reverse();
+                    }
                     v.Walk[v.Walk.Count - 1] = rig.Root.position;
-                    float k = Mathf.Clamp01((v.SpawnT - VehicleWorks.ExitDelay(v.Seat)) / 0.85f);
-                    if (k > 0f && v.WalkScale < 1f) { v.WalkScale = 1f; v.WalkVia?.Drive?.Pass(); } // his turn: through the curtain
+                    float delay = hoist ? RotorcraftWorks.ExitDelay(v.Seat) : VehicleWorks.ExitDelay(v.Seat);
+                    float k = Mathf.Clamp01((v.SpawnT - delay) / (hoist ? RotorcraftWorks.HoistSeconds : 0.85f));
+                    if (k > 0f && v.WalkScale < 1f) { v.WalkScale = 1f; v.WalkVia?.Drive?.Pass(); v.WalkVia?.Rotorcraft?.Pass(); } // his turn: through the curtain
                     rig.Root.localScale = Vector3.one * (v.MainScale * v.WalkScale);
-                    WalkAlong(v, v.Walk, k, inward: false);
+                    WalkAlong(v, v.Walk, k, inward: false, smooth: !hoist);
                     if (k >= 1f) { v.Walk = null; v.WalkVia = null; }
                 }
                 // Ground units ride up onto a structure's plinth and down its driveway ramp (leaving a producer, docking).
@@ -1112,7 +1148,7 @@ namespace Pez.View
                 if (rig.HasModel)
                 {
                     if (rig.Turret != null) Aim(v);
-                    if (e.IsAir) rig.Motion.SetWorking(true);
+                    if (e.IsAir) rig.Motion.SetWorking(v.Rotorcraft == null || !e.Landed);
                     if (e.IsHarvester)
                     {
                         rig.Motion.SetBinLoad(e.Cargo / (float)e.Def.HarvestCapacity);
@@ -1155,8 +1191,13 @@ namespace Pez.View
                     }
                 }
                 // Aircraft bank into turns; drones tilt toward where they're accelerating, as quadcopters do.
-                if (e.Def.ModelKey == "recon_drone") DroneTilt(v);
+                if (e.Def.ModelKey == "recon_drone" || e.Def.ModelKey == "long_range_drone") DroneTilt(v);
                 else if (e.IsAir) rig.Body.localRotation = Quaternion.Slerp(rig.Body.localRotation, Quaternion.Euler(e.Moving ? 6f : 0, 0, Mathf.Clamp(Mathf.DeltaAngle(rig.Root.eulerAngles.y, Yaw(e.Facing)) * 0.6f, -25f, 25f)), 1f - Mathf.Exp(-Time.deltaTime * 5f)); // eased: a stop or a turn tips it over a fifth of a second, never in one frame
+                if (rig.HasModel && (e.Def.ModelKey == "recon_drone" || e.Def.ModelKey == "long_range_drone") && SeesState(e, PovTeam))
+                    (v.ScoutAir ??= ScoutAircraftWorks.For(rig.Model, e.Def.ModelKey, e.Id)).Tick(e, World.Time, Time.deltaTime);
+                v.Rotorcraft?.Tick(this, v, Time.deltaTime);
+                if (rig.HasModel && (e.Def.ModelKey == "stealth_bomber" || e.Def.ModelKey == "reaper_drone"))
+                    (v.AirStrike ??= StrikeAircraftWorks.For(rig, e.Def.ModelKey, e.Id)).Tick(this, e, SeesState(e, PovTeam), Time.deltaTime);
                 // Infantry walk: the stride follows the ground actually covered this frame, and they settle when they stop.
                 if (rig.Gait != null) rig.Gait.Tick(rig.Root, Time.deltaTime);
                 if (rig.Gait != null && rig.HasModel) (v.Troop ??= SoldierWorks.For(rig.Model, e.Id, rig.Gait, this)).Tick(e, World.Time, v.LastFire, Time.deltaTime);
@@ -1445,6 +1486,7 @@ namespace Pez.View
                     if (p.Weapon.Name == "sam") { trail.sharedMaterial = Mats.Unlit(new Color(0.95f, 0.92f, 0.86f, 0.75f), true); trail.time = 0.8f; trail.startWidth = 0.07f; trail.endWidth = 0.03f; } // a SAM round's cream smoke trail
                     trail.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
                     if (p.Weapon.Name == "rocket") sv?.Troop?.Arm(t); // a candy trooper's rocket flies as its wrapped sweet
+                    if (p.Weapon.Name == "bombs" || p.Weapon.Name == "hellfire") sv?.AirStrike?.ArmProjectile(t);
                     projectiles[p.Id] = t;
                     projectileStart[p.Id] = (from, p.PrevPos, Mathf.Max(0.1f, Vec2.Dist(p.PrevPos, p.TargetPos)));
                 }
@@ -1553,11 +1595,13 @@ namespace Pez.View
                             ReadyVehicleShot(ev.A, World.Get(ev.B));
                             if (Views.TryGetValue(ev.A, out var gv) && gv.Drive?.Gun != null && gv.E.Def.Weapon != null)
                                 gv.Drive.Gun.LayNow(Vec2.Dist(ev.Pos, ev.Pos2), gv.E.Def.Weapon.ProjectileSpeed);
-                            var tip = MuzzleOf(ev.A, ev.Pos);
+                            var tip = Views.TryGetValue(ev.A, out var aircraftShot) && aircraftShot.AirStrike != null
+                                ? aircraftShot.AirStrike.Muzzle(true) : MuzzleOf(ev.A, ev.Pos);
                             bool arty = ev.Key == "artillery", big = ev.Key == "heavy_cannon" || ev.Key == "mammoth_cannon";
-                            Fx.MuzzleFlash(tip, arty ? 0.3f : ev.Key == "mammoth_cannon" ? 0.24f : big ? 0.2f : 0.13f);
+                            if (ev.Key != "bombs") Fx.MuzzleFlash(tip, arty ? 0.3f : ev.Key == "mammoth_cannon" ? 0.24f : big ? 0.2f : 0.13f);
                             if (Views.TryGetValue(ev.A, out var sv) && !sv.E.IsStructure)
                             {
+                                sv.Rotorcraft?.Fired(this, sv);
                                 // The ground notices: a dust ring under a heavy's shot, a blast ring and lingering smoke for artillery.
                                 if (big) Fx.GroundRing(sv.Rig.Root.position, ev.Key == "mammoth_cannon" ? 1.7f : 1.4f, 0.5f, 0);
                                 if (arty) { Fx.GroundRing(sv.Rig.Root.position, 2f, 0.6f, 6); Fx.BarrelSmoke(tip); }
@@ -1644,7 +1688,12 @@ namespace Pez.View
                                 // The airframe falls burning and blows up where it hits the ground; Fx takes the model.
                                 var root = dead.Rig.Root;
                                 Transform hulk = null;
-                                if (dead.Rig.HasModel && root.gameObject.activeInHierarchy) { hulk = dead.Rig.Model.transform; hulk.SetParent(null, true); root.gameObject.SetActive(false); }
+                                if (dead.Rig.HasModel && root.gameObject.activeInHierarchy)
+                                {
+                                    dead.Rotorcraft?.Wreck();
+                                    StrikeAircraftWorks.Rest(dead.Rig.Model);
+                                    hulk = dead.Rig.Model.transform; hulk.SetParent(null, true); root.gameObject.SetActive(false);
+                                }
                                 Fx.AircraftDestroyed(hulk, root.position, root.forward * def.Speed * 0.6f, team);
                             }
                             else Fx.VehicleDestroyed(W(ev.Pos, dead != null ? Mathf.Max(0.3f, dead.Rig.Root.position.y) : 0.3f), team);
@@ -1657,7 +1706,14 @@ namespace Pez.View
         /// <summary>Prepare a vehicle's own weapon act before reading its muzzle, including its first automatic shot.</summary>
         void ReadyVehicleShot(int id, Entity target)
         {
-            if (!Views.TryGetValue(id, out var v) || !v.Rig.HasModel || v.E.IsStructure || v.E.IsAir || v.E.IsMine || v.E.Def.Armor == Armor.Infantry) return;
+            if (!Views.TryGetValue(id, out var v) || !v.Rig.HasModel || v.E.IsStructure || v.E.IsMine || v.E.Def.Armor == Armor.Infantry) return;
+            if (v.E.IsAir)
+            {
+                if (v.E.Def.ModelKey == "gunship") (v.Rotorcraft ??= RotorcraftWorks.For(v.Rig, v.E.Def)).ReadyShot(v.Rig);
+                else if (v.E.Def.ModelKey == "stealth_bomber" || v.E.Def.ModelKey == "reaper_drone")
+                    (v.AirStrike ??= StrikeAircraftWorks.For(v.Rig, v.E.Def.ModelKey, v.E.Id)).ReadyShot(World, v.E, target);
+                return;
+            }
             (v.Drive ??= VehicleWorks.For(v.Rig, v.E.Def, v.E.Id)).Fired(this, v.E, target);
         }
 
@@ -1665,6 +1721,7 @@ namespace Pez.View
         /// the barrel's pitch and its recoil), a fixed reach on procedural placeholders.</summary>
         Vector3 MuzzleOf(int id, Vec2 fallback, bool fired = false)
         {
+            if (Views.TryGetValue(id, out var aircraft) && aircraft.AirStrike != null) return aircraft.AirStrike.Muzzle(fired);
             if (Views.TryGetValue(id, out var v) && v.Rig.Barrel != null)
             {
                 // A stowed (or still rising) artillery gun snaps up to fire, and plants its spades if it hadn't dug in

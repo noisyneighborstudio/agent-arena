@@ -2035,32 +2035,390 @@ def V_construction_truck():
     chassis_stack(a, ch['slot_stack'], h=.12, r=.022)
     return a
 
+# ---------------------------------------------------------------- aircraft: the candy airframe
+# Shared family contract: +Y up, +Z bow. Pivot is landing-pad height, no baked altitude.
+# airframe and air_crown are static shell groups. Root/Body belong to WorldView;
+# prefixed rotor/sensor/door nodes belong only to each asset's Works class.
+# All lengths are model units, not sim gameplay dimensions. Existing helper defaults never change.
+def candy_airframe(a, L, W, H=.24, belly=.16, z=0, parent=None):
+    """Cream candy shell, smoke belly seam, broad team wrapper. Returns absolute shell mounts.
+    The shell has deliberately clean rest surfaces; role hardware is attached by the caller.
+    `belly` is underside Y above the landing pad; skids attach below it without touching terrain.
+    """
+    parent = parent or a.key
+    hu = a.node('airframe', parent)
+    a.box('smoke', W * .82, H * .28, L * .88, y=belly + H * .14, z=z, node=hu)
+    a.box('cream', W, H * .84, L, y=belly + H * .58, z=z, node=hu)
+    # One substantial wrapper band over the waist, carried over the visible top and both flanks.
+    a.box('team', W + .012, H * .70, L * .22, y=belly + H * .65, z=z - L * .10, node=hu)
+    return dict(hull=hu, deck=belly + H, belly=belly, L=L, W=W, z=z,
+                crown=(0, belly + H - .012, z + L * .20),
+                tail=(0, belly + H * .55, z - L / 2),
+                fuel=(W / 2 + .009, belly + H * .44, z - L * .22))
+
+
+def air_crown(a, frame, w=None, d=None, h=.17, at=None, name='air_crown', visor=True):
+    """A substantial team Pez head on a smoke-plastic collar; no unearned flip action.
+    Caller may animate this unique group only if it replaces static placement deliberately.
+    Optional visor is licorice optic glass, never an emissive decorative strip.
+    """
+    w, d = w or frame['W'] * .86, d or frame['L'] * .48
+    at = at or frame['crown']
+    n = a.node(name, frame['hull'], at)
+    a.box('smoke', w * .82, .04, d * .76, y=.01, node=n)
+    a.box('team', w, h, d, y=.04 + h / 2, node=n)
+    if visor:
+        a.box('licorice', w * .66, h * .30, .024, y=.055 + h * .48, z=d / 2 + .004, node=n)
+        # A cream lower lip is the same molded-plastic language as the vehicle family.
+        a.box('cream', w * .54, .025, .032, y=.033, z=d / 2 + .004, node=n)
+    return dict(node=n, top=at[1] + .04 + h, at=at, w=w, d=d, h=h)
+
+
+def air_duct_fan(a, parent, name, at, radius=.18, h=.07, blades=3):
+    """Guarded lift fan: real open cream duct, visible steel hub, licorice blades.
+    A uniquely named rotor turns only about local Y; all blade points stay inside the duct.
+    The annular profile costs less than a decorative torus and shows its open centre at game zoom.
+    """
+    n = a.node(name, parent, at)
+    r0, r1 = radius * .76, radius
+    a.rev('cream', [(r0, -h / 2), (r1, -h / 2), (r1, h / 2), (r0, h / 2)], node=n, sections=20)
+    # Top ring is a physical team wrapper; it doesn't cover the spinning rotor.
+    a.rev('team', [(r0, h / 2 - .007), (r1, h / 2 - .007), (r1, h / 2 + .009), (r0, h / 2 + .009)], node=n, sections=20)
+    a.strut('smoke', (-r0, -h * .28, 0), (r0, -h * .28, 0), .014, node=n)
+    rotor = a.node(name + '_rotor', n, (0, h * .14, 0))
+    a.cyl('steel', radius * .15, .035, y=.006, node=rotor, sections=12)
+    # Three radial blades: convex planforms, not crossing bars that leave the duct.
+    for i in range(blades):
+        angle = i * 360 / blades
+        pts = [(radius * .12, -.016), (radius * .68, -.035),
+               (radius * .66, .025), (radius * .18, .024)]
+        air_wing(a, rotor, 'licorice', pts, .014, y=0, rot=ry(angle))
+    a.node(name + '_thrust', n, (0, -h / 2, 0))
+    return rotor
+
+
+def air_wing(a, parent, material, points, thickness=.055, y=0, rot=None):
+    """Rounded-ready convex wing or fin in XZ, using existing trimesh hull support.
+    points is ordered convex outline [(x,z), ...]; thickness measured in Y. No boolean dependency.
+    Caller adds wrapper panels with the same helper using an inset polygon above the wing.
+    """
+    vertices = [(x, y + side * thickness / 2, z) for side in (-1, 1) for x, z in points]
+    mesh = trimesh.Trimesh(vertices=np.asarray(vertices), process=False).convex_hull
+    if rot is not None: mesh.apply_transform(rot)
+    a.add(parent, material, mesh)
+
+
+def air_skids(a, frame, width=None, length=None, name='air_skid'):
+    """Licorice landing runners and spring-steel legs. Keep model pivot at pad, not flight altitude."""
+    width, length = width or frame['W'] * .72, length or frame['L'] * .82
+    for side in (-1, 1):
+        n = a.node(f'{name}_{"l" if side > 0 else "r"}', frame['hull'])
+        for z in (-length * .28, length * .28):
+            a.strut('steel', (side * width / 2, .055, z + frame['z']),
+                    (side * frame['W'] * .32, frame['belly'] + .008, z + frame['z']), .018, node=n)
+        a.box('licorice', .042, .045, length, x=side * width / 2, y=.033, z=frame['z'], node=n)
+
+
+def scout_pod(a, rx, ry_, rz, y):
+    """The original recon's rounded team shell over a smoke belly, with a cream spine trim for the candy family.
+    Returns the static hull node; fans, sensor and skids attach to it."""
+    hu = a.node('airframe', a.key)
+    a.sphere('smoke', 1, y=y - ry_ * .12, node=hu, scale=(rx * .93, ry_ * .82, rz * .95))
+    a.sphere('team', 1, y=y + ry_ * .14, node=hu, scale=(rx, ry_ * .86, rz))
+    a.box('cream', rx * .42, .016, rz * 1.15, y=y + ry_ * .98, node=hu)
+    return hu
+
+
+def scout_skids(a, hu, x, z0, z1, top, name):
+    """Short licorice runners on spring-steel legs, pivot at pad height."""
+    for side in (-1, 1):
+        n = a.node(f'{name}_{"l" if side > 0 else "r"}', hu)
+        a.box('licorice', .03, .03, z1 - z0, x=side * x, y=.02, z=(z0 + z1) / 2, node=n)
+        for z in (z0 + (z1 - z0) * .25, z0 + (z1 - z0) * .75):
+            a.strut('steel', (side * x, .03, z), (side * x * .7, top, z), .013, node=n)
+
+
+def scout_sensor(a, hu, p, at, r):
+    """Curious gimballed eye under the nose: cream ball, licorice bezel, big frosted lens. Yaw then pitch."""
+    sy = a.node(p + '_sensor_yaw', hu, at)
+    a.strut('steel', (0, 0, -r * .3), (0, r * .4, -r * 1.25), .016, node=sy)
+    a.sphere('cream', r, node=sy, sub=2)
+    sp = a.node(p + '_sensor_pitch', sy, (0, 0, r * .72))
+    a.cyl('licorice', r * .74, r * .42, axis='z', node=sp, sections=18)
+    a.cyl('glass', r * .58, .008, z=r * .22, axis='z', node=sp, sections=18)
+    a.node(p + '_sensor_sight', sp, (0, 0, r * .26))
+
+
+def V_recon_drone():
+    """Light unarmed scout: the original rounded team pod and big curious eye, on four guarded candy fans."""
+    a = Asset('recon_drone', 'units', .9)
+    y = .20
+    hu = scout_pod(a, .14, .075, .22, y)
+    a.cyl('steel', .033, .016, y=y + .085, z=-.08, node=hu, sections=14)      # nav puck on the spine
+    a.strut('steel', (0, y + .05, -.17), (0, y + .15, -.25), .010, node=hu)    # whip antenna
+    for side in (-1, 1):
+        for end in (-1, 1):
+            x, z = side * .29, end * .26
+            a.strut('smoke', (side * .07, y, end * .08), (x, .22, z), .026, node=hu)
+            air_duct_fan(a, hu, f'rd_fan_{"l" if side > 0 else "r"}_{"f" if end > 0 else "b"}',
+                         (x, .235, z), radius=.135, h=.055)
+    scout_sensor(a, hu, 'rd', (0, .115, .275), .072)
+    scout_skids(a, hu, .09, -.13, .10, y - .05, 'air_skid')
+    # A service connector matches the airfield's fuel saddle, with no implied extra capability.
+    a.cyl('dark', .02, .012, x=.142, y=y - .01, z=-.06, axis='x', node=hu, sections=12)
+    return a
+
+
+def V_long_range_drone():
+    """The endurance scout: the recon's rounded pod stretched, wider fan stance and paired serviceable fuel saddles.
+    Four larger ducts keep the hovering scout silhouette honest; no wings imply a minimum-speed capability."""
+    a = Asset('long_range_drone', 'units', 1.2)
+    y = .22
+    hu = scout_pod(a, .16, .085, .31, y)
+    a.cyl('steel', .036, .016, y=y + .095, z=-.12, node=hu, sections=14)
+    a.strut('steel', (0, y + .06, -.24), (0, y + .17, -.33), .010, node=hu)
+    # Balanced fuel saddles below the fan plane. Team cuffs are physical straps, dark endcaps carry service plugs.
+    for side in (-1, 1):
+        fuel = a.node(f'lrd_fuel_{"l" if side > 0 else "r"}', hu, (side * .215, .17, -.04))
+        a.cyl('cream', .055, .42, axis='z', node=fuel, sections=16)
+        a.cyl('team', .058, .07, z=-.09, axis='z', node=fuel, sections=16)
+        a.cyl('dark', .024, .015, z=-.215, axis='z', node=fuel, sections=12)
+        for end in (-1, 1):
+            x, z = side * .36, end * .33
+            a.strut('smoke', (side * .08, y + .01, end * .12), (x, .26, z), .028, node=hu)
+            air_duct_fan(a, hu, f'lrd_fan_{"l" if side > 0 else "r"}_{"f" if end > 0 else "b"}',
+                         (x, .275, z), radius=.16, h=.065)
+    scout_sensor(a, hu, 'lrd', (0, .13, .375), .078)
+    scout_skids(a, hu, .11, -.20, .16, y - .06, 'lrd_skid')
+    return a
+
+def strike_candy_round(a, parent, name, at, length=.27, width=.12, fins=True):
+    """Physical cream candy ordnance with a kraft wrapper and licorice nose; never a glowing ammo ornament."""
+    n = a.node(name, parent, at)
+    a.box('cream', width, width * .72, length, node=n)
+    a.box('kraft', width + .008, width * .75, length * .25, z=-length * .12, node=n)
+    a.box('licorice', width * .8, width * .60, .045, z=length / 2 - .008, node=n)
+    if fins:
+        a.box('steel', width * 1.4, .014, .055, z=-length / 2 + .025, node=n)
+        a.box('steel', .014, width * .90, .055, z=-length / 2 + .025, node=n)
+    return n
+
+def V_reaper_drone():
+    """High-altitude hunter: slender candy stem, long straight wings, pusher propeller, sensor chin and paired hellfires."""
+    a = Asset('reaper_drone', 'units', 1.5)
+    frame = candy_airframe(a, 1.12, .29, H=.21, belly=.18, z=.03)
+    air_crown(a, frame, w=.28, d=.37, h=.12, at=(0, .375, .34), name='rp_crown')
+    for side in (-1, 1):
+        points = [(side * .12, .17), (side * .72, .04), (side * .68, -.16), (side * .12, -.14)]
+        air_wing(a, frame['hull'], 'cream', points, .065, y=.31)
+        panel = [(side * .24, .075), (side * .67, -.015), (side * .64, -.12), (side * .24, -.085)]
+        air_wing(a, frame['hull'], 'team', panel, .014, y=.351)
+        # Quiet paired tail surfaces keep the hunter distinct from the bomber's swept wing.
+        air_wing(a, frame['hull'], 'cream', [(side * .09, -.40), (side * .33, -.55), (side * .30, -.66), (side * .08, -.57)], .044, y=.32)
+        a.box('team', .19, .016, .055, x=side * .22, y=.35, z=-.56, node=frame['hull'], rot=ry(side * 18))
+        # Underwing steel rail and its single wrapped candy missile. One sim event uses one alternating rail.
+        a.box('cream', .16, .12, .40, x=side * .32, y=.23, z=.10, node=frame['hull'])
+        a.box('team', .165, .018, .12, x=side * .32, y=.298, z=.10, node=frame['hull'])
+        a.box('steel', .12, .025, .34, x=side * .32, y=.19, z=.045, node=frame['hull'])
+        rd = strike_candy_round(a, frame['hull'], 'rp_round_' + ('l' if side > 0 else 'r'), (side * .32, .12, .10), length=.34, width=.095)
+        a.node('rp_muzzle_' + ('l' if side > 0 else 'r'), frame['hull'], (side * .32, .12, .27))
+    # Pusher hardware behind the candy shell. Unique Z-axis propeller owner, no generic Y spinner.
+    a.box('smoke', .13, .12, .19, y=.29, z=-.565, node=frame['hull'])
+    prop = a.node('rp_prop', frame['hull'], (0, .29, -.685))
+    a.cyl('steel', .036, .035, axis='z', node=prop, sections=12)
+    for i, angle in enumerate((0, 120, 240)):
+        blade = a.node('rp_prop_blade_' + str(i), prop, rot=rz(angle))
+        a.box('licorice', .043, .23, .025, y=.105, node=blade)
+    # The gimbal under its nose earns the sight-12 role. Lens is unlit frosted glass, not decorative cyan.
+    sy = a.node('rp_sensor_yaw', frame['hull'], (0, .12, .40))
+    a.sphere('cream', .078, node=sy, sub=2)
+    sp = a.node('rp_sensor_pitch', sy, (0, 0, .068))
+    a.cyl('licorice', .042, .026, axis='z', node=sp, sections=16)
+    a.cyl('glass', .032, .006, z=.017, axis='z', node=sp, sections=16)
+    br = a.node('barrel', frame['hull'], (.32, .12, .27))
+    a.node('muzzle', br)
+    air_skids(a, frame, width=.27, length=.68, name='rp_skid')
+    a.cyl('dark', .022, .01, x=frame['fuel'][0], y=frame['fuel'][1], z=frame['fuel'][2], axis='x', node=frame['hull'], sections=12)
+    return a
+
+def rotorcraft_main_rotor(a, parent, name, at, radius, blades=3, counter=False):
+    """Open rotor: foil root, licorice blades, cream candy tips. No glowing rotor blur."""
+    node = a.node(name, parent, at, rot=rz(180) if counter else None)
+    a.cyl('steel', .09, .07, node=node, sections=12)
+    for i in range(blades):
+        q=ry(i*360/blades)
+        air_wing(a,node,'licorice',[(.085,-.035),(radius-.09,-.055),(radius-.055,.025),(.12,.038)],.021,rot=q)
+        air_wing(a,node,'cream',[(radius-.09,-.055),(radius,-.055),(radius,.025),(radius-.055,.025)],.021,rot=q)
+        air_wing(a,node,'foil',[(.08,-.024),(.18,-.024),(.18,.024),(.08,.024)],.025,rot=q)
+    return node
+
+def rotorcraft_occupant(a,nd):
+    """Full-size seated upper body, not a reduced soldier. Lower limbs are hidden by opaque cabin sill."""
+    a.box('smoke',.135,.16,.095,y=.065,node=nd)
+    a.box('team',.20,.026,.08,y=.12,node=nd)
+    a.sphere('cream',.095,y=.235,node=nd,sub=1)
+    cap=trimesh.creation.icosphere(subdivisions=1,radius=.10)
+    cap.apply_scale((1,.78,1));cap.apply_translation((0,.264,0))
+    cap=cap.slice_plane([0,.264,0],[0,1,0],cap=False)
+    a.add(nd,'team',cap)
+    a.cyl('team',.108,.014,y=.266,node=nd,sections=12)
+    for side in (-1,1):a.box('licorice',.02,.015,.01,x=side*.033,y=.228,z=.087,node=nd)
+
+def V_transport_chopper():
+    """Compact flying candy case: six actual-sized seated hints; full-size airborne hoist aperture.
+    All rigid shell/rotor sweeps fit R=.735, so neighbouring 1.5-tile airfield slots clear at any yaw.
+    """
+    a=Asset('transport_chopper','units',1.4)
+    fr=candy_airframe(a,1.18,.76,H=.14,belly=.19)
+    hu=fr['hull'];floor=.33;top=1.21
+    air_skids(a,fr,width=.78,length=1.08)
+    # Crown stays above the roof where team identity remains visible at strategic zoom.
+    air_crown(a,fr,w=.64,d=.37,h=.15,at=(0,1.17,.27))
+    a.box('cream',.76,.18,1.10,y=floor+.09,z=-.01,node=hu)
+    a.box('cream',.77,.065,1.17,y=top,z=-.01,node=hu)
+    a.box('team',.772,.05,.64,y=top+.055,z=-.14,node=hu)
+    # Real hollow cabin. .64-wide aperture; .8375 vertical clearance above the actual trooper floor.
+    for side in (-1,1):
+        x=side*.35
+        a.box('cream',.06,.68,.065,x=x,y=.835,z=-.55,node=hu)
+        a.box('cream',.06,.68,.065,x=x,y=.835,z=.48,node=hu)
+        for z in (-.31,0,.31):
+            a.box('clear',.010,.44,.27,x=side*.371,y=.835,z=z,node=hu)
+            a.box('smoke',.031,.59,.026,x=x,y=.835,z=z+.145,node=hu)
+        a.box('team',.021,.09,1.07,x=side*.388,y=.53,z=-.01,node=hu)
+    a.box('cream',.64,.66,.05,y=.84,z=.51,node=hu)
+    a.box('cream',.065,.84,.045,x=-.3525,y=.755,z=-.57,node=hu)
+    a.box('cream',.065,.84,.045,x=.3525,y=.755,z=-.57,node=hu)
+    # Two independently named sections of a roll-up wrapper door. Opening never exceeds the landing envelope.
+    for i,side in enumerate((-1,1)):
+        door=a.node(f'tc_door_{i}',hu,(side*.16,1.175,-.615))
+        a.box('team',.318,.84,.024,y=-.42,node=door)
+        a.box('cream',.30,.07,.028,y=-.735,node=door)
+    a.node('tc_bay',hu,(0,floor+.008,-.29))
+    # This opaque inner wrapper hides the full-size handoff, never a disappearing miniature.
+    a.box('licorice',.64,.81,.012,y=.755,z=-.56,node=hu)
+    for i in range(6):
+        sx=1 if i<3 else -1;z=-.31+(i%3)*.31
+        st=a.node(f'tc_seat_{i}',hu,(sx*.16,.52,z),scale=(1.35,1.35,1.35))
+        rotorcraft_occupant(a,st)
+    a.box('smoke',.18,.07,.12,y=1.245,z=-.56,node=hu)
+    a.cyl('steel',.055,.16,y=1.25,z=-.62,axis='x',node=hu,sections=12)
+    a.node('tc_hoist_top',hu,(0,1.19,-.65))
+    cb=a.node('tc_hoist_line',hu,(0,1.19,-.65),scale=(1,.001,1))
+    a.cyl('steel',.006,1,y=-.5,node=cb,sections=6)
+    # Compact tandem rotors: full horizontal sweep R=.69; rear disc raised .20 to clear front disc.
+    for i,(z,y) in enumerate(((.31,1.50),(-.31,1.70))):
+        a.box('smoke',.16,.11,.18,y=y-.16,z=z,node=hu)
+        a.cyl('steel',.032,.14,y=y-.07,z=z,node=hu,sections=12)
+        rotorcraft_main_rotor(a,hu,'spinner' if i==0 else 'spinner_1',(0,y,z),.38,counter=i==1)
+    for side in (-1,1):
+        a.box('licorice',.021,.065,.15,x=side*.103,y=1.51,z=-.31,node=hu)
+    a.cyl('dark',.025,.014,x=.40,y=.41,z=-.31,axis='x',node=hu,sections=12)
+    return a
+
 def V_gunship():
-    L = 1.2; a = Asset('gunship', 'units', L)
-    a.box('smoke', .24, .22, .6, y=.2)
-    a.box('team', .26, .24, .26, y=.22, z=.38)
-    a.box('glass', .2, .1, .14, y=.3, z=.47)
-    a.box('smoke', .08, .08, .55, y=.24, z=-.55)
-    a.box('team', .02, .2, .14, y=.32, z=-.78)
-    a.box('steel', .7, .04, .1, y=.16)
-    for sx in (-1, 1): a.cyl('dark', .05, .22, x=sx * .35, y=.12, axis='z')
-    for sx in (-1, 1): a.box('steel', .02, .1, .5, x=sx * .1, y=.04, z=0)
-    sp = a.node('spinner', a.key, (0, .38, 0))
-    a.cyl('steel', .03, .08, y=.04, node=sp)
-    for r in (0, 90): a.box('licorice', 1.4, .015, .06, y=.08, node=sp, rot=ry(r))
-    tu = a.node('turret', a.key, (0, .07, .42))
-    a.sphere('dark', .06, node=tu, sub=1)
-    br = a.node('barrel', tu, (0, -.01, .05))
-    a.cyl('steel', .015, .18, z=.09, axis='z', node=br)
+    """Slim tandem attack rotorcraft: the original smoke fuselage, team nose and boom fin, stepped canopy,
+    carrying the two candy rocket cartridges on cream stub wings. One real rocket per 1.2-second cooldown."""
+    a = Asset('gunship', 'units', 1.6)
+    hu = a.node('airframe', a.key)
+    chassis_prism(a, 'smoke', [(.56, .34), (.48, .30), (-.28, .30), (-.36, .40), (-.30, .60), (.10, .64), (.40, .56), (.56, .44)],
+                  -.15, .15, node=hu)
+    chassis_prism(a, 'team', [(.62, .35), (.40, .31), (.40, .57), (.62, .46)], -.155, .155, node=hu)
+    # Stepped tandem canopy: gunner low in front, pilot raised behind, a smoke frame between.
+    a.box('glass', .22, .09, .18, y=.625, z=.30, node=hu)
+    a.box('glass', .22, .10, .19, y=.70, z=.11, node=hu)
+    a.box('smoke', .23, .11, .03, y=.665, z=.205, node=hu)
+    a.box('cream', .31, .03, .62, y=.315, z=.10, node=hu)                         # cream belly keel
+    # Engine cowl in team, mast stays clear of the canopy; only the spinner is driven by PezMotion.
+    a.box('team', .25, .10, .30, y=.66, z=-.12, node=hu)
+    a.box('smoke', .14, .09, .15, y=.75, z=-.08, node=hu)
+    a.cyl('steel', .032, .14, y=.86, z=-.08, node=hu, sections=12)
+    rotorcraft_main_rotor(a, hu, 'spinner', (0, .93, -.08), .64, blades=3)
+    # Slender boom and the original's team fin; real anti-torque rotor.
+    chassis_prism(a, 'smoke', [(-.30, .42), (-.30, .58), (-.64, .56), (-.64, .50)], -.055, .055, node=hu)
+    fin = a.node('gs_tail', hu, (0, .56, -.61))
+    a.box('team', .04, .24, .14, y=.10, node=fin)
+    a.box('cream', .12, .03, .10, y=-.01, node=fin)
+    a.cyl('steel', .010, .08, x=.05, y=.62, z=-.62, axis='x', node=hu, sections=8)
+    tr = a.node('gs_tail_rotor', hu, (.095, .62, -.62), rot=rz(90))
+    a.cyl('steel', .03, .03, node=tr, sections=10)
+    for r in (0, 90, 180, 270):
+        air_wing(a, tr, 'licorice', [(.03, -.011), (.09, -.013), (.09, .013), (.03, .011)], .018, rot=ry(r))
+    # Cream stub wings with team tips. The rigid rack under them is the generic barrel (recoil only).
+    for side in (-1, 1):
+        air_wing(a, hu, 'cream', [(side * .14, .20), (side * .44, .15), (side * .44, .00), (side * .14, -.04)], .04, y=.38)
+        air_wing(a, hu, 'team', [(side * .40, .155), (side * .45, .15), (side * .45, .00), (side * .40, .005)], .046, y=.38)
+    rack = a.node('gs_rack', hu, (0, .38, .05))
+    br = a.node('barrel', rack)
+    for i, side in enumerate((-1, 1)):
+        # A genuinely open candy cartridge at .6 scale, hung under the wing; the round never clips a solid block.
+        pod = a.node(f'gs_pod_{i}', br, (side * .35, -.085, .06), scale=(.6, .6, .6))
+        for vertical in (-1, 1):
+            a.box('cream', .24, .035, .38, y=vertical * .1025, z=.06, node=pod)
+            a.box('team', .252, .024, .16, y=vertical * .132, z=-.12, node=pod)
+            a.box('licorice', .224, .026, .025, y=vertical * .086, z=.255, node=pod)
+            a.box('steel', .224, .026, .026, y=vertical * .086, z=.28, node=pod)
+        for horizontal in (-1, 1):
+            a.box('cream', .035, .17, .38, x=horizontal * .1025, z=.06, node=pod)
+            a.box('team', .024, .252, .16, x=horizontal * .114, z=-.12, node=pod)
+            a.box('licorice', .026, .146, .025, x=horizontal * .099, z=.255, node=pod)
+            a.box('steel', .026, .146, .026, x=horizontal * .099, z=.28, node=pod)
+        a.box('smoke', .20, .16, .025, z=-.225, node=pod)
+        candy = a.node(f'gs_round_{i}', pod, (0, 0, .29))
+        a.box('team', .115, .105, .15, z=.012, node=candy)
+        a.box('foil', .118, .109, .018, z=-.042, node=candy)
+        a.node(f'gs_muzzle_{i}', pod, (0, 0, .398))
+        a.cyl('steel', .079, .028, z=-.25, axis='z', node=pod, sections=12)
+        a.cyl('licorice', .055, .03, z=-.267, axis='z', node=pod, sections=12)
+        a.node(f'gs_backblast_{i}', pod, (0, 0, -.285))
+    # Skids inside the pods' span.
+    for side in (-1, 1):
+        n = a.node(f'air_skid_{"l" if side > 0 else "r"}', hu)
+        a.box('licorice', .04, .04, .70, x=side * .20, y=.03, z=.04, node=n)
+        for z in (-.18, .26):
+            a.strut('steel', (side * .20, .045, z), (side * .12, .305, z), .016, node=n)
+    # Service socket shares the family moulding with the drones.
+    a.cyl('dark', .024, .014, x=.155, y=.40, z=-.20, axis='x', node=hu, sections=12)
     return a
 
 def V_stealth_bomber():
-    a = Asset('stealth_bomber', 'units', 1.0)
-    for s in (-1, 1):
-        a.box('licorice', .75, .06, .32, x=s * .3, y=.1, z=-.05, rot=ry(-s * 32))
-        a.box('team', .75, .02, .03, x=s * .34, y=.12, z=.08, rot=ry(-s * 32))
-    a.box('licorice', .3, .1, .7, y=.12, z=.05)
-    a.box('dark', .16, .04, .2, y=.18, z=.2)
+    """A dark faceted flying wing, as the original, with team leading edges and elevons. Its single real candy bomb
+    drops from a framed belly throat."""
+    a = Asset('stealth_bomber', 'units', 1.4)
+    hu = a.node('airframe', a.key)
+    # Faceted centre body and one uninterrupted swept wing: licorice is the silhouette.
+    air_wing(a, hu, 'licorice', [(0, .58), (.22, .20), (.22, -.36), (0, -.46), (-.22, -.36), (-.22, .20)], .16, y=.36)
+    air_wing(a, hu, 'smoke', [(0, .50), (.12, .30), (.12, .06), (0, .0), (-.12, .06), (-.12, .30)], .07, y=.455)
+    air_wing(a, hu, 'glass', [(0, .49), (.075, .35), (.06, .28), (-.06, .28), (-.075, .35)], .02, y=.49)
+    for side in (-1, 1):
+        air_wing(a, hu, 'licorice', [(side * .15, .37), (side * .68, -.26), (side * .60, -.41), (side * .17, -.35)], .07, y=.37)
+        # Team leading-edge strip, the original's identity line, carried the full span.
+        air_wing(a, hu, 'team', [(side * .15, .385), (side * .68, -.25), (side * .66, -.29), (side * .15, .325)], .03, y=.39)
+        # Licorice trailing-edge elevons physically hinge around the span; Works owns these unique nodes.
+        el = a.node('sb_elevon_' + ('l' if side > 0 else 'r'), hu, (side * .35, .37, -.38))
+        a.box('team', .30, .03, .06, z=-.055, node=el, rot=ry(side * 8))
+        # Paired turbine throats, recessed in the rear body, cream candy lips, no decorative exhaust glow.
+        a.box('smoke', .13, .09, .26, x=side * .11, y=.40, z=-.30, node=hu)
+        a.box('cream', .12, .02, .03, x=side * .11, y=.448, z=-.42, node=hu)
+        a.box('dark', .095, .055, .02, x=side * .11, y=.40, z=-.435, node=hu)
+    # Cavity is BELOW the body floor (.28): sides and end walls make an actual empty belly.
+    for side in (-1, 1):
+        a.box('smoke', .045, .18, .58, x=side * .20, y=.19, z=.015, node=hu)
+        # Closed shutters leave the bomb-sized central release throat clear, including first-frame surprise shots.
+        d = a.node('sb_bay_' + ('l' if side > 0 else 'r'), hu, (side * .18, .10, .015))
+        a.box('team', .09, .025, .55, x=-side * .045, y=0, node=d)
+        a.cyl('steel', .016, .50, z=0, axis='z', node=d, sections=8)
+    for z in (-.285, .315): a.box('smoke', .40, .17, .035, y=.19, z=z, node=hu)
+    a.box('licorice', .32, .022, .52, y=.267, z=.015, node=hu)
+    strike_candy_round(a, hu, 'sb_payload', (0, .19, .015), length=.27, width=.11)
+    # Generic barrel is a static attachment ONLY: no yaw/recoil profile, muzzle lives at the bomb's belly release point.
+    br = a.node('barrel', hu, (0, .12, .015))
+    a.node('muzzle', br)
+    for side in (-1, 1):
+        n = a.node(f'sb_skid_{"l" if side > 0 else "r"}', hu)
+        a.box('licorice', .04, .04, .60, x=side * .27, y=.03, z=.03, node=n)
+        for z in (-.13, .19):
+            a.strut('steel', (side * .27, .045, z), (side * .25, .335, z), .016, node=n)
     return a
 
 # ---------------------------------------------------------------- vehicles: the candy chassis
@@ -3729,7 +4087,7 @@ BUILDERS = [S_command_center, S_outpost, S_power_plant, S_mining_refinery, S_bar
             V_mining_truck, V_repair_truck, V_outpost_truck, V_construction_truck, V_scout_buggy,
             V_light_tank, V_heavy_tank, V_geological_surveyor, V_drill_rig, V_minelayer, V_mine,
             V_apc, V_mammoth_tank, V_artillery, V_long_range_artillery, V_laser_tank, V_flak_track,
-            V_gunship, V_stealth_bomber,
+            V_gunship, V_stealth_bomber, V_recon_drone, V_long_range_drone, V_transport_chopper, V_reaper_drone,
             V_rifleman, V_rocket_soldier, V_laser_trooper, V_medic, V_engineer, V_sniper, V_commando,
             lambda: O_ore('iron_ore'), lambda: O_ore('copper_ore'), lambda: O_ore('crystal'), lambda: O_ore('uranium')]
 

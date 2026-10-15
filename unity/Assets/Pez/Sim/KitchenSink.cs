@@ -594,6 +594,11 @@ namespace Pez.Sim
             Row(Heavy, 10f, "Heavy armour");
             Item("Invented units (Hornet, Lancer)", "agent-invented designs: their chassis model plus the amber badge", 2 + 3 * Heavy.Length, 11.3f, 8);
             Row(Aircraft, 0.5f, "Aircraft (hovering)", 3.6f);
+            // The same physical scene proves the air family fits the shipped trooper, candy chassis and dispenser.
+            Bldg(Blue, "barracks", 25f, 3f);
+            Unit(Blue, "rifleman", 21f, 3f);
+            Unit(Blue, "light_tank", 21f, 6f);
+            Item("Aircraft family and shipped siblings", "all six aircraft beside a full-size rifleman, light tank and barracks; unchanged game lighting, team palette and camera scale", 14f, 4.5f, 12f);
         }
 
         /// <summary>An agent-invented design, already researched: a chassis carrying a donor's weapon.</summary>
@@ -999,7 +1004,7 @@ namespace Pez.Sim
 
         void Air()
         {
-            Begin("air", "Air and logistics", "Aircraft flying, landing and refuelling; transports loading; a stranded tank.", 0, 0, 46, 22);
+            Begin("air", "Air and logistics", "Aircraft flying, landing and refuelling; six-seat transport loading; each airframe falling when destroyed.", 0, 0, 56, 32);
             // A patrol circuit with four aircraft spaced around it.
             Vec2[] box = { P(3, 11), P(20, 11), P(20, 18), P(3, 18) };
             string[] flyers = { "recon_drone", "gunship", "transport_chopper", "stealth_bomber", "long_range_drone", "reaper_drone" };
@@ -1043,13 +1048,78 @@ namespace Pez.Sim
 
             // Mixed squads, so every soldier is seen boarding and stepping back out.
             Transport("apc", new[] { "rifleman", "medic", "engineer", "sniper" }, 4, 4, "APC loading");
-            Transport("transport_chopper", new[] { "rocket_soldier", "laser_trooper", "commando", "rifleman" }, 18, 4, "Transport chopper loading");
+            Transport("transport_chopper", new[] { "rocket_soldier", "laser_trooper", "commando", "rifleman", "medic", "sniper" }, 18, 4, "Transport chopper loading");
             MineLaying(29, 4);
 
             var stranded = Unit(Blue, "light_tank", 42, 2);
             fuelExempt.Add(stranded.Id);
             holds.Add(() => { stranded.Fuel = 0; stranded.Stranded = true; });
             Item("Stranded vehicle", "out of fuel: hazard-striped fuel bar, can't move", 42, 2);
+            AircraftService();
+        }
+
+        /// <summary>Each airframe makes its own real refuel trip; the crash slot cycles the six aircraft.</summary>
+        void AircraftService()
+        {
+            // Four plants cover the six additional airfields' 360 power without changing Lime's brownout exhibit.
+            foreach (float a in new[] { 46f, 50f })
+                foreach (float b in new[] { 25f, 29f }) Bldg(Blue, "power_plant", a, b);
+            for (int i = 0; i < Aircraft.Length; i++)
+            {
+                string key = Aircraft[i];
+                float a = 4f + 7f * i;
+                var field = Bldg(Blue, "airfield", a, 25f);
+                var home = P(a, 20f);
+                var away = P(a + 1.5f, 21.5f);
+                var aircraft = w.PlaceUnit(Blue, key, home, AlongRight);
+                fuelExempt.Add(aircraft.Id);
+                float lastTrip = -24f + i * 2f;
+                void Beat() { w.SetOrder(aircraft, Order.Move, away); aircraft.Waypoints.Add(home); aircraft.WaypointLoop = true; }
+                Beat();
+                holds.Add(() =>
+                {
+                    if (aircraft.Dead) return;
+                    if (aircraft.Order == Order.Idle) Beat();
+                    if (aircraft.Order == Order.Move && T - lastTrip > 24f)
+                    {
+                        aircraft.Fuel = aircraft.FuelMax * 0.15f;
+                        w.BeginRefuel(aircraft, field);
+                        lastTrip = T;
+                    }
+                    if (aircraft.Order == Order.Move && aircraft.Fuel < aircraft.FuelMax * 0.6f) aircraft.Fuel = aircraft.FuelMax * 0.6f;
+                });
+                Item(Pretty(key) + " service", "flies a short beat, lands on its airfield, refuels, and lifts off again; a real refuel trip every 24 s", a, 25f, 6);
+            }
+            var crashAt = P(53f, 19f);
+            Entity crashing = null;
+            var squad = new List<Entity>();
+            int next = 0;
+            float born = -24f;
+            holds.Add(() =>
+            {
+                if (crashing == null && T - born >= 24f)
+                {
+                    crashing = w.PlaceUnit(Blue, Aircraft[next++ % Aircraft.Length], crashAt, Toward);
+                    crashing.NoAutoRefuelUntil = T + 30f;
+                    born = T;
+                    if (crashing.Def.Capacity > 0)
+                        for (int seat = 0; seat < crashing.Def.Capacity; seat++)
+                        {
+                            var passenger = w.PlaceUnit(Blue, Infantry[seat % Infantry.Length], crashAt, Toward);
+                            w.SetOrder(passenger, Order.Board, crashAt, crashing.Id);
+                            squad.Add(passenger);
+                        }
+                }
+                else if (crashing != null && T - born >= 6f)
+                {
+                    w.Emit("destroyed", crashing.Team, crashing.Id, 0, crashing.Center, key: crashing.Def.Key);
+                    w.Remove(crashing);
+                    foreach (var passenger in squad) if (!passenger.Dead) w.Remove(passenger);
+                    squad.Clear();
+                    crashing = null;
+                }
+            });
+            Item("Aircraft wrecks", "each of the six airframes falls and burns on its actual destroyed event; the chopper boards six troops first, then hides its private occupants in the shared hulk", 53f, 22f, 7);
         }
 
         /// <summary>A squad of infantry (one of each of `paxKeys`) walk up and board a transport, ride 3 s, get out, walk back; forever.</summary>
@@ -1085,7 +1155,7 @@ namespace Pez.Sim
             });
             Item(name, carrierKey == "apc"
                 ? $"a squad ({string.Join(", ", paxKeys.Select(Pretty))}) walk round to the APC's lowered ramp and up it at full size through its wrapper curtain, a helmet rising in a roof dome for each one seated; ride; the ramp drops and they step out seat by seat and walk back; loops"
-                : $"a squad ({string.Join(", ", paxKeys.Select(Pretty))}) walk up and board (shrinking into it), ride, step back out of it and walk back; loops", a + 3, b - 1, 8);
+                : $"a squad ({string.Join(", ", paxKeys.Select(Pretty))}) walk to the stern, are hoisted at full size through the wrapper curtain, ride with private seated heads, then lower out seat by seat and walk back; loops", a + 3, b - 1, 8);
         }
 
         /// <summary>A minelayer lays a row of four mines, waits, the mines are cleared and it drives back; forever.</summary>

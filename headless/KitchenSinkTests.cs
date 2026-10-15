@@ -40,6 +40,10 @@ namespace Pez.Headless
             var galleryAt = gallery.Pos;
             var oreDocked = new HashSet<int>();
             var drilledOres = new HashSet<int>();
+            var landedAircraft = new HashSet<string>();
+            var crashedAircraft = new HashSet<string>();
+            bool chopperFull = false;
+            long aircraftEventSeq = 0;
             bool queued = false, landed = false, siteRising = false;
             int liveAt60 = 0, maxLive = 0;
             var sw = Stopwatch.StartNew();
@@ -52,9 +56,13 @@ namespace Pez.Headless
                     if (e.Def.Key == "deep_mine" && e.Team == KitchenSink.Red && w.Map.DepositById(e.DepositId) is DeepDeposit deposit) drilledOres.Add(deposit.Type);
                     if (e.IsHarvester && e.Order == Order.ReturnOre && e.Dock == DockStep.Unload && e.CargoType >= 0) oreDocked.Add(e.CargoType);
                     if (e.IsHarvester && e.Dock == DockStep.Queue) queued = true;
-                    if (e.IsAir && e.Landed) landed = true;
+                    if (e.IsAir && e.Landed) { landed = true; landedAircraft.Add(e.Def.Key); }
+                    if (e.Def.Key == "transport_chopper" && e.Passengers.Count == e.Def.Capacity) chopperFull = true;
                     if (e.IsStructure && e.Team == KitchenSink.Yellow && !e.IsComplete && e.BuildProgress > 0.5f && e.Def.Key == "barracks") siteRising = true;
                 }
+                foreach (var ev in w.Events)
+                    if (ev.Seq > aircraftEventSeq && ev.Type == "destroyed" && Defs.Get(ev.Key)?.IsAir == true) crashedAircraft.Add(ev.Key);
+                if (w.Events.Count > 0) aircraftEventSeq = w.Events[w.Events.Count - 1].Seq;
                 if (i % World.TickRate == 0)
                 {
                     int live = w.Entities.Count(e => !e.Dead);
@@ -72,6 +80,10 @@ namespace Pez.Headless
                   $"the damage rows hold their health ({fires.Count} burning buildings)");
             Check(oreDocked.Count == 4, $"trucks back in and unload every ore type ({string.Join(", ", oreDocked.Select(o => Defs.Ores[o]))})");
             Check(queued, "trucks queue for a busy bay");
+            var aircraftKeys = new[] { "recon_drone", "long_range_drone", "reaper_drone", "transport_chopper", "gunship", "stealth_bomber" };
+            Check(landedAircraft.IsSupersetOf(aircraftKeys), $"all six aircraft land and refuel ({string.Join(", ", landedAircraft)})");
+            Check(crashedAircraft.IsSupersetOf(aircraftKeys), $"all six aircraft show their falling-hulk event ({string.Join(", ", crashedAircraft)})");
+            Check(chopperFull, "the chopper exhibits all six occupied seats");
             int Count(string type) => w.EventCounts.TryGetValue(type, out var n) ? n : 0;
             Check(Count("trained") >= 100, $"the works keep rolling units out ({Count("trained")} trained)");
             Check(siteRising, "the construction site rises");

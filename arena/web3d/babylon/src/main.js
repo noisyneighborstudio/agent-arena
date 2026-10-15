@@ -60,7 +60,7 @@ const G = (r, g, b) => new Color3(r / 255, g / 255, b / 255).toLinearSpace(); //
 const GROUND_A = G(150, 133, 104), GROUND_B = G(165, 148, 116), DIRT = G(126, 110, 84), WATER = G(58, 34, 24), ROCK = G(84, 68, 60);
 const ORE = { i: C(138, 58, 36), c: C(200, 116, 47), x: C(143, 228, 255), u: C(182, 255, 59) };
 const OREV = { i: G(138, 58, 36), c: G(200, 116, 47), x: G(143, 228, 255), u: G(182, 255, 59) };
-const MODEL_AS = { long_range_drone: "gunship", reaper_drone: "stealth_bomber", recon_drone: "gunship", transport_chopper: "gunship", commando: "rifleman", sniper: "rifleman", engineer: "medic" };
+const MODEL_AS = { commando: "rifleman", sniper: "rifleman", engineer: "medic" };
 // A deep mine is drawn as the machine for the ore it pumps, found from the deposit under it in the frame's `deposits`
 // ([x, y, type, % left]; a player's frame has only the ones they surveyed). Unknown, or its model missing: the shared deep_mine.
 const MINE_MODELS = ["deep_mine_iron", "deep_mine_copper", "deep_mine_crystal", "deep_mine_uranium"];

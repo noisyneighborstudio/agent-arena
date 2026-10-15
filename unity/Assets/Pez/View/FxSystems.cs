@@ -381,7 +381,8 @@ namespace Pez.View
                 angularVelocity3D = Random.onUnitSphere * Random.Range(180f, 720f),
                 meshIndex = Random.Range(0, 4),
             };
-            Shards.Emit(e, 1);
+            if (Fx.Audience == null) Shards.Emit(e, 1);
+            else foreach (var layer in Fx.Audience) OnLayer(Shards, layer).Emit(e, 1);
         }
 
         // ---------------------------------------------------------------- lights
@@ -389,47 +390,75 @@ namespace Pez.View
         const int LightCount = 12;
         readonly Light[] lights = new Light[LightCount];
         readonly float[] lightStart = new float[LightCount], lightLife = new float[LightCount], lightPeak = new float[LightCount];
+        readonly int[] lightAudience = new int[LightCount];
+        static int povLayer = TerrainView.MainFogLayer;
         int lightNext;
+
+        /// <summary>Show transient lights and falling hulks only to their launch audience; never allocate on a camera switch.</summary>
+        public static void SetPovLayer(int layer)
+        {
+            povLayer = layer;
+            if (inst != null) inst.ApplyAudience();
+        }
+
+        void ApplyAudience()
+        {
+            float now = Time.time;
+            for (int i = 0; i < LightCount; i++)
+                lights[i].enabled = lightLife[i] > 0f && now < lightStart[i] + lightLife[i] &&
+                    lightAudience[i] != 0 && (povLayer < 0 || (lightAudience[i] & (1 << povLayer)) != 0);
+            for (int i = 0; i < fallerCount; i++) ShowHulk(fallers[i]);
+        }
+
+        static void ShowHulk(Faller f)
+        {
+            if (f.Hulk != null) f.Hulk.gameObject.SetActive(f.Audience == null ||
+                f.Audience.Count > 0 && (povLayer < 0 || f.Audience.Contains(povLayer)));
+        }
 
         public void Lamp(Vector3 pos, Color c, float intensity, float range, float life)
         {
             int i = -1;
-            for (int k = 0; k < LightCount; k++) { int j = (lightNext + k) % LightCount; if (!lights[j].enabled) { i = j; break; } }
+            for (int k = 0; k < LightCount; k++) { int j = (lightNext + k) % LightCount; if (lightLife[j] <= 0f || Time.time >= lightStart[j] + lightLife[j]) { i = j; break; } }
             if (i < 0) i = lightNext; // all busy: take the oldest
             lightNext = (i + 1) % LightCount;
             var l = lights[i];
             l.transform.position = pos;
-            l.color = c; l.range = range; l.intensity = intensity; l.enabled = true;
+            l.color = c; l.range = range; l.intensity = intensity;
             lightStart[i] = Time.time; lightLife[i] = life; lightPeak[i] = intensity;
+            int mask = Fx.Audience == null ? -1 : 0;
+            if (Fx.Audience != null) foreach (var layer in Fx.Audience) mask |= 1 << layer;
+            lightAudience[i] = mask;
+            l.enabled = life > 0f && mask != 0 && (povLayer < 0 || (mask & (1 << povLayer)) != 0);
             // The ground splash under it, weaker the higher the light is (an air burst lights the ground less).
             float a = Mathf.Clamp01(intensity / 4.5f) * Mathf.Clamp01(1f - pos.y / (range * 1.1f));
             if (a > 0.03f)
-                Emit(Pool, new Vector3(pos.x, 0.05f, pos.z), Vector3.zero, range * 1.25f, Mathf.Max(0.12f, life * 1.8f),
+                Route(Pool, new Vector3(pos.x, 0.05f, pos.z), Vector3.zero, range * 1.25f, Mathf.Max(0.12f, life * 1.8f),
                     new Color32((byte)(Mathf.Clamp01(c.r) * 255), (byte)(Mathf.Clamp01(c.g) * 255), (byte)(Mathf.Clamp01(c.b) * 255), (byte)(a * 255)));
         }
 
         // ---------------------------------------------------------------- delayed bursts, smoulder, falling hulks
 
-        public struct Pending { public float At; public Vector3 Pos; public float Size; public bool Ground; }
+        public struct Pending { public float At; public Vector3 Pos; public float Size; public bool Ground; public List<int> Audience; }
         readonly Pending[] pending = new Pending[256];
         int pendingCount;
         public void Later(float delay, Vector3 pos, float size, bool ground)
         {
             if (pendingCount >= pending.Length) return;
-            pending[pendingCount++] = new Pending { At = Time.time + delay, Pos = pos, Size = size, Ground = ground };
+            pending[pendingCount++] = new Pending { At = Time.time + delay, Pos = pos, Size = size, Ground = ground, Audience = CaptureAudience() };
         }
 
-        struct Burner { public Vector3 Pos; public float Start, End, Rate, Acc, Size; }
+        struct Burner { public Vector3 Pos; public float Start, End, Rate, Acc, Size; public List<int> Audience; }
         readonly Burner[] smoulders = new Burner[160];
         int smoulderCount;
         /// <summary>A wreck that keeps burning: a column of smoke (and early flames) for `seconds`.</summary>
         public void Smoulder(Vector3 pos, float size, float seconds, float rate)
         {
             if (smoulderCount >= smoulders.Length) return;
-            smoulders[smoulderCount++] = new Burner { Pos = pos, Start = Time.time, End = Time.time + seconds, Rate = rate, Size = size };
+            smoulders[smoulderCount++] = new Burner { Pos = pos, Start = Time.time, End = Time.time + seconds, Rate = rate, Size = size, Audience = CaptureAudience() };
         }
 
-        struct Faller { public Transform Hulk; public Vector3 Pos, Vel, Spin; public float Acc, Born; public Color32 Team; }
+        struct Faller { public Transform Hulk; public Vector3 Pos, Vel, Spin; public float Acc, Born; public Color32 Team; public List<int> Audience; }
         readonly Faller[] fallers = new Faller[48];
         int fallerCount;
         public void Fall(Transform hulk, Vector3 pos, Vector3 vel, Color32 team)
@@ -438,8 +467,19 @@ namespace Pez.View
             fallers[fallerCount++] = new Faller
             {
                 Hulk = hulk, Pos = pos, Vel = vel, Born = Time.time, Team = team,
+                // WorldView reuses its audience list for later events: retain this crash's launch audience privately.
+                Audience = CaptureAudience(),
                 Spin = new Vector3(Random.Range(-60f, 60f), Random.Range(-160f, 160f), Random.Range(140f, 320f) * (Random.value < 0.5f ? -1 : 1)),
             };
+            ShowHulk(fallers[fallerCount - 1]); // no first-frame leak before the next camera switch
+        }
+
+        static List<int> CaptureAudience() => Fx.Audience == null ? null : new List<int>(Fx.Audience);
+
+        void Route(ParticleSystem ps, Vector3 pos, Vector3 vel, float size, float life, Color32 color)
+        {
+            if (Fx.Audience == null) Emit(ps, pos, vel, size, life, color);
+            else foreach (var layer in Fx.Audience) Emit(OnLayer(ps, layer), pos, vel, size, life, color);
         }
 
         // ---------------------------------------------------------------- per frame
@@ -462,9 +502,9 @@ namespace Pez.View
             for (int i = 0; i < LightCount; i++)
             {
                 var l = lights[i];
-                if (!l.enabled) continue;
+                if (lightLife[i] <= 0f) continue;
                 float t = (now - lightStart[i]) / lightLife[i];
-                if (t >= 1f) { l.enabled = false; continue; }
+                if (t >= 1f) { l.enabled = false; lightLife[i] = 0f; continue; }
                 float k = 1f - t;
                 l.intensity = lightPeak[i] * k * k;
             }
@@ -474,62 +514,78 @@ namespace Pez.View
                 if (now < pending[i].At) continue;
                 var p = pending[i];
                 pending[i] = pending[--pendingCount];
-                Fx.Blast(p.Pos, p.Size, p.Ground);
+                var previousAudience = Fx.Audience;
+                Fx.Audience = p.Audience;
+                try { Fx.Blast(p.Pos, p.Size, p.Ground); }
+                finally { Fx.Audience = previousAudience; }
             }
 
             for (int i = smoulderCount - 1; i >= 0; i--)
             {
                 ref var s = ref smoulders[i];
                 if (now >= s.End) { smoulders[i] = smoulders[--smoulderCount]; continue; }
-                float t = (now - s.Start) / (s.End - s.Start);
-                s.Acc += s.Rate * (1f - 0.75f * t) * dt;
-                while (s.Acc >= 1f)
+                var previousAudience = Fx.Audience;
+                Fx.Audience = s.Audience;
+                try
                 {
-                    s.Acc -= 1f;
-                    float sq = Mathf.Sqrt(s.Size);
-                    var at = s.Pos + new Vector3(Random.Range(-0.25f, 0.25f), 0f, Random.Range(-0.25f, 0.25f)) * s.Size;
-                    Emit(Smoke, at + Vector3.up * 0.15f, new Vector3(Random.Range(-0.15f, 0.15f), Random.Range(0.7f, 1.3f) * sq, Random.Range(-0.15f, 0.15f)),
-                        Random.Range(0.35f, 0.6f) * s.Size, Random.Range(2.6f, 4.2f), Fx.SmokeColor(0.9f));
-                    if (t < 0.45f && Random.value < 0.6f)
-                        Emit(Fire, at + Vector3.up * 0.1f, new Vector3(0f, Random.Range(0.6f, 1.4f), 0f), Random.Range(0.18f, 0.32f) * s.Size, Random.Range(0.3f, 0.55f), Fx.White);
+                    float t = (now - s.Start) / (s.End - s.Start);
+                    s.Acc += s.Rate * (1f - 0.75f * t) * dt;
+                    while (s.Acc >= 1f)
+                    {
+                        s.Acc -= 1f;
+                        float sq = Mathf.Sqrt(s.Size);
+                        var at = s.Pos + new Vector3(Random.Range(-0.25f, 0.25f), 0f, Random.Range(-0.25f, 0.25f)) * s.Size;
+                        Route(Smoke, at + Vector3.up * 0.15f, new Vector3(Random.Range(-0.15f, 0.15f), Random.Range(0.7f, 1.3f) * sq, Random.Range(-0.15f, 0.15f)),
+                            Random.Range(0.35f, 0.6f) * s.Size, Random.Range(2.6f, 4.2f), Fx.SmokeColor(0.9f));
+                        if (t < 0.45f && Random.value < 0.6f)
+                            Route(Fire, at + Vector3.up * 0.1f, new Vector3(0f, Random.Range(0.6f, 1.4f), 0f), Random.Range(0.18f, 0.32f) * s.Size, Random.Range(0.3f, 0.55f), Fx.White);
+                    }
                 }
+                finally { Fx.Audience = previousAudience; }
             }
 
             for (int i = fallerCount - 1; i >= 0; i--)
             {
                 ref var f = ref fallers[i];
-                f.Vel.y -= 9.81f * 0.8f * dt;
-                f.Vel.x -= f.Vel.x * 0.25f * dt; f.Vel.z -= f.Vel.z * 0.25f * dt;
-                f.Pos += f.Vel * dt;
-                if (f.Hulk != null) { f.Hulk.position = f.Pos; f.Hulk.Rotate(f.Spin * dt, Space.Self); }
-                f.Acc += 50f * dt;
-                while (f.Acc >= 1f)
+                var previousAudience = Fx.Audience;
+                Fx.Audience = f.Audience;
+                try
                 {
-                    f.Acc -= 1f;
-                    Emit(Fire, f.Pos + Random.insideUnitSphere * 0.12f, -f.Vel * 0.1f + Random.insideUnitSphere * 0.4f, Random.Range(0.25f, 0.4f), Random.Range(0.25f, 0.45f), Fx.White);
-                    if (Random.value < 0.6f)
-                        Emit(Smoke, f.Pos, -f.Vel * 0.05f + Vector3.up * 0.2f, Random.Range(0.3f, 0.5f), Random.Range(1.8f, 3f), Fx.SmokeColor(0.8f));
+                    f.Vel.y -= 9.81f * 0.8f * dt;
+                    f.Vel.x -= f.Vel.x * 0.25f * dt; f.Vel.z -= f.Vel.z * 0.25f * dt;
+                    f.Pos += f.Vel * dt;
+                    if (f.Hulk != null) { f.Hulk.position = f.Pos; f.Hulk.Rotate(f.Spin * dt, Space.Self); }
+                    f.Acc += 50f * dt;
+                    while (f.Acc >= 1f)
+                    {
+                        f.Acc -= 1f;
+                        Route(Fire, f.Pos + Random.insideUnitSphere * 0.12f, -f.Vel * 0.1f + Random.insideUnitSphere * 0.4f, Random.Range(0.25f, 0.4f), Random.Range(0.25f, 0.45f), Fx.White);
+                        if (Random.value < 0.6f)
+                            Route(Smoke, f.Pos, -f.Vel * 0.05f + Vector3.up * 0.2f, Random.Range(0.3f, 0.5f), Random.Range(1.8f, 3f), Fx.SmokeColor(0.8f));
+                    }
+                    if (f.Pos.y <= 0.12f || now - f.Born > 6f)
+                    {
+                        Fx.VehicleDestroyed(new Vector3(f.Pos.x, 0.2f, f.Pos.z), f.Team);
+                        if (f.Hulk != null) Destroy(f.Hulk.gameObject);
+                        fallers[i] = fallers[--fallerCount];
+                    }
                 }
-                if (f.Pos.y <= 0.12f || now - f.Born > 6f)
-                {
-                    Fx.VehicleDestroyed(new Vector3(f.Pos.x, 0.2f, f.Pos.z), f.Team);
-                    if (f.Hulk != null) Destroy(f.Hulk.gameObject);
-                    fallers[i] = fallers[--fallerCount];
-                }
+                finally { Fx.Audience = previousAudience; }
             }
 
-            StepShards(dt);
+            StepShards(Shards, dt);
+            foreach (var copy in audiences) if (copy.Key.Item1 == Shards) StepShards(copy.Value, dt);
         }
 
         /// <summary>
         /// Debris as little rigid bodies: gravity and air drag, a lossy bounce off the ground that bleeds spin, then
         /// sliding friction until the shard settles and lies still. The particle system integrates position and rotation.
         /// </summary>
-        void StepShards(float dt)
+        void StepShards(ParticleSystem system, float dt)
         {
-            int n = Shards.particleCount;
+            int n = system.particleCount;
             if (n == 0) return;
-            n = Shards.GetParticles(shardBuf);
+            n = system.GetParticles(shardBuf);
             float drag = 1f - 0.35f * dt, friction = Mathf.Max(0f, 1f - 7f * dt), spinStop = Mathf.Max(0f, 1f - 9f * dt);
             for (int i = 0; i < n; i++)
             {
@@ -558,7 +614,7 @@ namespace Pez.View
                 }
                 p.velocity = v;
             }
-            Shards.SetParticles(shardBuf, n);
+            system.SetParticles(shardBuf, n);
         }
     }
 }

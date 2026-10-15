@@ -1393,44 +1393,47 @@
  {
   "key": "gunship",
   "kind": "unit",
-  "role": "Attack helicopter. Hovers at 2.4.",
+  "role": "Candy rocket rotorcraft; speed 3.2, HP 500, sight 8. Hovers at 2.4.",
   "built_at": "airfield",
   "locomotion": {
    "type": "rotor",
-   "max_speed": 3.0,
+   "max_speed": 3.2,
    "accel": 2.0,
    "decel": 3.0,
-   "turn_rate_deg": 140,
+   "turn_rate_deg": 286,
    "turn_in_place": true
   },
   "emerge": "Spawns on the airfield lift node, starting at y=\u22120.6 inside the pad. The lift rises to 0 over 1.2 s (ease-out). The aircraft spins up and climbs to cruise altitude (see its entry). The lift stays up until the aircraft is 1 tile away, then drops back down.",
   "remove": "Destroyed vehicle: a blast and a cook-off, debris in its colours, a scorch and 12 s of smoke. The flip-top head (turret) is blown off on a ballistic arc (up 2.5, about 1 sideways, tumbling 540\u00b0/s), bounces once and lands beside the hull, cocked 8\u201322\u00b0 on its base, and stays with the wreck: it doesn't fade. Every part, head included, darkens to about 30% as seen over 0.5 s while the hull settles 0.06. The wreck lies 20 s, then goes poof (it swells 8% for 0.06 s and pops to nothing in 0.14 s inside a cream cloud). A soldier goes poof where it falls; an aircraft falls burning and blows up where it hits the ground. Removed any other way, just the poof.",
-  "mechanics": "Rotorcraft: it can strafe and turn in place. Cruise altitude is 2.4 above the terrain (lerp 2/s). It leans up to 12\u00b0 into its velocity and 8\u00b0 into turns. Takeoff: on the lift, the spinner (rotor) spins up 0\u2192600 rpm over 1.0 s, then the aircraft climbs to 2.4 over 1.5 s. The turret is a chin gun (\u00b1120\u00b0). Rocket pods fire as salvos of 4, alternating sides 0.1 s apart. Landing reverses this.",
+  "mechanics": "The sim flies it at 3.2 tiles/s over terrain and can stop/turn in place. WorldView owns the root altitude (2.4), Body cruise pitch (6 degrees) and turn bank (up to 25 degrees), eased at 5/s; altitude bobs 0.08 at 1.7 rad/s. Production is the airfield lift and existing 0.9 s release ease. Landing approaches the 0.55 pad-height offset over 1.25 s, from the sim Landed flag. Every static part and rotor phase fits radius .733, clearing adjacent 1.5-tile parked slots. The three-blade main rotor spins only while airborne, 220 rpm (44 degrees/frame at 30 fps, below its 120-degree blade period); the separate gs_tail_rotor turns about its local Y axis (authored vertical), capped 36 degrees/frame. Slim smoke tandem fuselage with team nose, stepped canopy and boom fin. The two fixed candy rocket cartridges hang under cream stub wings. The sim fires ONE guided rocket per 1.2 s cooldown, damage 45, range 5.5, projectile speed 12, against ground or air. There is no chin gun and no four-shot salvo. Before the actual fire event reads the muzzle, RotorcraftWorks.ReadyShot selects the next cartridge mouth; Fired consumes one candy and alternates sides for the next event, with audience-gated backblast. The chosen candy is hidden then fed forward over the final 36% of the actual cooldown. Generic barrel recoil moves the rigid rack 0.012 along -Z and returns in 0.16 s. Enemy POV sees a neutral full cartridge state; detached wrecks clear all private round state.",
   "nodes": {
    "spinner": {
     "axis": "Y",
-    "idle_rpm": 600,
-    "active_rpm": 600,
-    "spinup_s": 1.0
-   },
-   "turret": {
-    "yaw_speed_deg": 220,
-    "yaw_limit_deg": 120,
-    "idle_scan": true
+    "idle_rpm": 0,
+    "active_rpm": 220,
+    "spinup_s": 0.7
    },
    "barrel": {
-    "recoil": 0.02,
-    "recoil_out_s": 0.02,
-    "return_s": 0.06,
+    "recoil": 0.012,
+    "recoil_out_s": 0.025,
+    "return_s": 0.16,
     "pitch_deg": 0
-   }
+   },
+   "gs_tail_rotor": {
+    "axis": "local Y (vertical plane)",
+    "deg_per_s": 900,
+    "max_step_deg": 36
+   },
+   "gs_round_0`, `gs_round_1": "RotorcraftWorks owns hidden/feed state per actual 1.2 s weapon cooldown",
+   "gs_muzzle_0`, `gs_muzzle_1": "fixed real cartridge mouths, selected before muzzle read",
+   "gs_backblast_0`, `gs_backblast_1": "audience-gated exhaust launch points"
   },
-  "idle": "Hovering: altitude bob \u00b10.05 on a 2.2 s sine and yaw drift \u00b13\u00b0."
+  "idle": "Hovering remains at the authoritative sim position with existing altitude bob and eased Body attitude; no invented loiter or yaw drift."
  },
  {
   "key": "recon_drone",
   "kind": "unit",
-  "role": "Unarmed flying scout (sight 12). Hovers at 2.8. The long-range drone is the same model at 1.35x.",
+  "role": "Unarmed factory scout, sight 12, fuel for 1.5 map widths. Hovers at 2.8.",
   "built_at": "factory",
   "locomotion": {
    "type": "rotor",
@@ -1442,66 +1445,118 @@
   },
   "emerge": "Rolls out of the factory's door with anticipation, from the sim's production queue. In the last 1.5 s of its build the factory's amber lamps blink at 2 Hz; in the last 0.8 s three steam puffs vent 0.2 s apart; the door rolls up (localScale.y 1\u21920.05, 0.35 s; slower on low power) so it's fully open 0.1 s before the unit appears, and the flip-top head over it lifts with the door. The unit starts 0.6 inside the door, in the dark bay, and eases out from rest to the position the sim gave it (smoothstep over 0.9 s), down the plinth's driveway ramp: it never pops in at its sim position. The door closes 1.4 s later (the head drops back with a bounce), and the unit takes its rally order.",
   "remove": "Destroyed vehicle: a blast and a cook-off, debris in its colours, a scorch and 12 s of smoke. The flip-top head (turret) is blown off on a ballistic arc (up 2.5, about 1 sideways, tumbling 540\u00b0/s), bounces once and lands beside the hull, cocked 8\u201322\u00b0 on its base, and stays with the wreck: it doesn't fade. Every part, head included, darkens to about 30% as seen over 0.5 s while the hull settles 0.06. The wreck lies 20 s, then goes poof (it swells 8% for 0.06 s and pops to nothing in 0.14 s inside a cream cloud). A soldier goes poof where it falls; an aircraft falls burning and blows up where it hits the ground. Removed any other way, just the poof.",
-  "mechanics": "Quadcopter: four ducted fans (spinner front left, spinner_1 front right, spinner_2 rear right, spinner_3 rear left); the diagonal pairs counter-rotate (spinner_1 and spinner_3 are authored upside down). Fans spin up 0\u2192700 rpm over 0.6 s before it lifts off. It flies like a quadcopter, with no wings to bank with: the whole body tips toward its acceleration (nose down to set off, a roll toward the new heading when it changes direction, a rear-back to stop that ends in a small rock back to level, up to 30\u00b0), holding about 10\u00b0 of forward lean at cruise. Hovering, it makes tiny \u00b11.5\u00b0 corrections. The turret is its camera: a gimbal ball with a cyan lens, unarmed, so it only ever looks around.",
+  "mechanics": "Rounded team pod over a smoke belly with a big chin eye, on four protected candy ducted fans. WorldView owns root altitude, yaw and visual Body tilt: acceleration/cruise lean and braking spring capped at 30 degrees, levelling as LandK settles. ScoutAircraftWorks alone spins rd_fan_*_rotor about Y at 540 rpm with diagonal counterrotation; actual Landed eases to zero over 0.8 s, takeoff resumes with no gameplay delay. The unarmed sensor surveys ground: rd_sensor_yaw smoothly sweeps +/-42 degrees while hovering, +/-9 moving; rd_sensor_pitch looks down 9-25 degrees hovering, 26 moving, level parked. No target lookup, generic turret or spinner, decorative emission, or invented fire act.",
   "nodes": {
-   "spinner": {
-    "axis": "Y",
-    "idle_rpm": 700,
-    "active_rpm": 700,
-    "spinup_s": 0.6
-   },
-   "turret": {
-    "yaw_speed_deg": 240,
-    "yaw_limit_deg": 360,
-    "idle_scan": true
-   }
+   "rd_fan_*_rotor": "ScoutAircraftWorks Y rotation only, protected inside fixed open ducts",
+   "rd_sensor_yaw": "ScoutAircraftWorks yaw +/-42 degrees airborne, zero landed",
+   "rd_sensor_pitch": "ScoutAircraftWorks pitch 0-26 degrees, rest attached to forward sensor bearing"
   },
-  "idle": "Hovering: altitude bob \u00b10.08 on a 3.7 s sine. The camera holds forward, then glances up to \u00b172\u00b0 and back now and then (curious)."
+  "idle": "Hover bob +/-0.08 remains WorldView; existing damage/fire/crash and factory SpawnFrom ease remain authoritative."
+ },
+ {
+  "key": "long_range_drone",
+  "kind": "unit",
+  "role": "Dedicated endurance quad scout, sight 12, fuel for 2 map widths. Hovers at 2.8.",
+  "built_at": "airfield",
+  "locomotion": {
+   "type": "rotor",
+   "max_speed": 4.0,
+   "accel": 4.0,
+   "decel": 6.0,
+   "turn_rate_deg": 220,
+   "turn_in_place": true
+  },
+  "emerge": "Spawns on the airfield lift node, starting at y=\u22120.6 inside the pad. The lift rises to 0 over 1.2 s (ease-out). The aircraft spins up and climbs to cruise altitude (see its entry). The lift stays up until the aircraft is 1 tile away, then drops back down.",
+  "remove": "Destroyed vehicle: a blast and a cook-off, debris in its colours, a scorch and 12 s of smoke. The flip-top head (turret) is blown off on a ballistic arc (up 2.5, about 1 sideways, tumbling 540\u00b0/s), bounces once and lands beside the hull, cocked 8\u201322\u00b0 on its base, and stays with the wreck: it doesn't fade. Every part, head included, darkens to about 30% as seen over 0.5 s while the hull settles 0.06. The wreck lies 20 s, then goes poof (it swells 8% for 0.06 s and pops to nothing in 0.14 s inside a cream cloud). A soldier goes poof where it falls; an aircraft falls burning and blows up where it hits the ground. Removed any other way, just the poof.",
+  "mechanics": "The same pod/sensor engineering as recon, with its own stretched pod, broader separated fan stance and paired cream fuel saddles in team retaining straps. Does not imply extra sight or fixed-wing minimum speed. WorldView owns root and Body with the same drone tilt and landing ease. ScoutAircraftWorks owns lrd_fan_*_rotor at 450 rpm with diagonal counterrotation and 0.8 s landed spool; sensor sweep/pitch matches recon (hover yaw +/-42, moving +/-9, pitch9-25 hover/26 moving/0 parked). No generic turret/spinner owner or private state.",
+  "nodes": {
+   "lrd_fan_*_rotor": "ScoutAircraftWorks protected Y rotation, 450 rpm airborne, zero parked",
+   "lrd_sensor_yaw": "ScoutAircraftWorks smooth survey sweep, settles forward landed",
+   "lrd_sensor_pitch": "ScoutAircraftWorks ground survey pitch 0-26 degrees",
+   "lrd_fuel_l`, `lrd_fuel_r": "Static cream fuel saddles; capacity remains existing sim RangeMaps2"
+  },
+  "idle": "The airfield lift and existing SpawnFrom handoff supply emergence; actual Landed drives parked service posture."
  },
  {
   "key": "transport_chopper",
   "kind": "unit",
-  "role": "Tandem-rotor transport for 6 infantry. Hovers at 2.6.",
+  "role": "Tandem-rotor carrier for six full-size infantry. Hovers at 2.6.",
   "built_at": "airfield",
   "locomotion": {
    "type": "rotor",
    "max_speed": 3.5,
    "accel": 2.0,
    "decel": 3.0,
-   "turn_rate_deg": 120,
+   "turn_rate_deg": 286,
    "turn_in_place": true
   },
   "emerge": "Spawns on the airfield lift node, starting at y=\u22120.6 inside the pad. The lift rises to 0 over 1.2 s (ease-out). The aircraft spins up and climbs to cruise altitude (see its entry). The lift stays up until the aircraft is 1 tile away, then drops back down.",
   "remove": "Destroyed vehicle: a blast and a cook-off, debris in its colours, a scorch and 12 s of smoke. The flip-top head (turret) is blown off on a ballistic arc (up 2.5, about 1 sideways, tumbling 540\u00b0/s), bounces once and lands beside the hull, cocked 8\u201322\u00b0 on its base, and stays with the wreck: it doesn't fade. Every part, head included, darkens to about 30% as seen over 0.5 s while the hull settles 0.06. The wreck lies 20 s, then goes poof (it swells 8% for 0.06 s and pops to nothing in 0.14 s inside a cream cloud). A soldier goes poof where it falls; an aircraft falls burning and blows up where it hits the ground. Removed any other way, just the poof.",
-  "mechanics": "Rotorcraft: it can strafe and turn in place. Two three-blade rotors (spinner front, spinner_1 rear on the raised pylon) counter-rotate (spinner_1 is authored upside down); cream blade tips trace each disc. Takeoff: spins up 0\u2192260 rpm over 1.2 s, then climbs to 2.6. Loading and unloading happen landed (the rear ramp faces the squad).",
+  "mechanics": "Six seats, speed 3.5, HP 600, sight 7; unarmed. The simulation boards infantry instantly when within radius + 0.8 and unloads all six immediately onto nearest passable ground. It does NOT land to load or unload. WorldView keeps altitude 2.6, existing spawn/refuel easing and the Body pitch/bank. Compact tandem rotors sweep radius .694; the rigid hull stays within radius .710 so all headings clear 1.5-tile parked slots. Two three-blade rotors turn at 260 rpm while airborne and coast down when Landed; the rear spinner is authored upside down to counter-rotate and its disc sits 0.20 above the front one. RotorcraftWorks rolls the two stern wrapper-door panels upward in 0.22 s and shows a physical winch cable down to the ground. Actual infantry stay at Models.DrawScale (1.35), approach the hoist on the ground, rise outside the stern, then pass through an opaque wrapper curtain at the real 0.65-wide aperture. They never shrink or emerge through the roof. The six full-size seated head/shoulder hints appear only after each actual passenger completes the hidden handoff, and only to the owner/spectator. Unloading reverses the path; one second of travel, starts staggered 0.22 s, first delay 0.08 s, so the last of six resolves within 2.18 s without delaying any sim command or protection. Missing-carrier snapshots use the passenger sim position directly. Doors close after the last handoff. Enemy POV sees the doors shut, no private occupants or cable; private state is normalized before the falling wreck is shared. Lower seated limbs are occluded behind the cream sill.",
   "nodes": {
    "spinner": {
     "axis": "Y",
-    "idle_rpm": 260,
+    "idle_rpm": 0,
     "active_rpm": 260,
-    "spinup_s": 1.2
-   }
+    "spinup_s": 1.0
+   },
+   "tc_door_0`, `tc_door_1": "RotorcraftWorks scales only the rolled wrapper vertically from its top pivot, 1 to .02",
+   "tc_hoist_top`, `tc_hoist_line": "real attachment; line orients toward the ground and extends only for the private handoff",
+   "tc_bay": "full-size hidden handoff behind the opaque wrapper curtain",
+   "tc_seat_0`..`tc_seat_5": "six actual-sized seated upper-body hints, owner/spectator only, no individual rig scaling"
   },
-  "idle": "Hovering: altitude bob \u00b10.08 on a 3.7 s sine."
+  "idle": "Two separate rotor discs and the shared candy cockpit identify the carrier at stream scale; parked rotors coast down."
  },
  {
   "key": "stealth_bomber",
   "kind": "unit",
-  "role": "High-altitude bomber. Never stops.",
+  "role": "Stealth structure bomber: 3.8 tiles/s, bombs range 0.9, one projectile every 4 s; visible cruise height 3.2.",
   "built_at": "airfield",
   "locomotion": {
    "type": "fixed_wing",
-   "max_speed": 4.5,
+   "max_speed": 3.8,
    "accel": 1.5,
    "decel": 2.25,
-   "turn_rate_deg": 45,
-   "turn_in_place": false
+   "turn_rate_deg": 229,
+   "turn_in_place": true
   },
   "emerge": "Spawns on the airfield lift node, starting at y=\u22120.6 inside the pad. The lift rises to 0 over 1.2 s (ease-out). The aircraft spins up and climbs to cruise altitude (see its entry). The lift stays up until the aircraft is 1 tile away, then drops back down.",
   "remove": "Destroyed vehicle: a blast and a cook-off, debris in its colours, a scorch and 12 s of smoke. The flip-top head (turret) is blown off on a ballistic arc (up 2.5, about 1 sideways, tumbling 540\u00b0/s), bounces once and lands beside the hull, cocked 8\u201322\u00b0 on its base, and stays with the wreck: it doesn't fade. Every part, head included, darkens to about 30% as seen over 0.5 s while the hull settles 0.06. The wreck lies 20 s, then goes poof (it swells 8% for 0.06 s and pops to nothing in 0.14 s inside a cream cloud). A soldier goes poof where it falls; an aircraft falls burning and blows up where it hits the ground. Removed any other way, just the poof.",
-  "mechanics": "Fixed wing: it must keep moving, with a minimum speed of 2.5. Its turn radius comes from the turn rate and its current speed. It banks up to 35\u00b0 in turns. Takeoff: it rises on the lift, then accelerates along \u2212Z and climbs to 3.2 over 2.5 tiles. Bombing run: it flies straight over the target and drops 6 bombs spaced 0.2 s apart, then circles back to the airfield to rearm. The team-colour edge strip pulses 0.6\u21921.0 emission while it is cloaked.",
-  "nodes": {},
-  "idle": "When it has no orders it loiters in a 3-tile circle at 3.2."
+  "mechanics": "Dark faceted licorice flying wing with a low smoke canopy, team leading edges and team elevons; no emissive cloak strip. The sim starts/stops at its real speed, turns at 4 rad/s, may idle, land and refuel normally; it has no minimum speed, forced loiter, six-bomb salvo or rearm requirement. WorldView owns position, 3.2-tile cruise altitude with +/-0.08 bob, 0.9 s trained hand-off from the airfield lift, the eased landed descent to 0.55, and body banking (6 degrees nose-down moving, up to 25 degrees roll; exponential follow 5/s). StrikeAircraftWorks owns only its named hardware. The belly cavity sits below the solid shell. Two team shutters frame a permanent 0.18-wide release throat, wider than the actual 0.154-wide finned candy: even a surprise first-frame fire is physically clear without a door snap or delaying the sim. With a team-visible in-range target and cooldown <=0.45 s the shutters open outward/down to 70 degrees at 240 degrees/s, hold 0.42 s after the real fire event, and close at 150 degrees/s. One real bombs fire event releases one copied candy projectile from the belly marker, travelling on the existing authoritative projectile path at 6 tiles/s. The next candy returns from inside the opaque ceiling over 0.2-1.05 s after the event, never changing its size. The licorice trailing elevons follow the actual drawn bank at 0.32 gain, up to +/-8 degrees, and level while landed. Detached wreck hardware is reset to a common loaded closed rest pose.",
+  "nodes": {
+   "sb_bay_l`, `sb_bay_r": "the two outer shutter pivots: mirrored Z rotations 0-70 degrees; permanent centre throat remains clear",
+   "sb_payload": "the single finned candy; hidden inside the ceiling immediately after fire, lowered 0.15 to loaded height during refill",
+   "sb_elevon_l`, `sb_elevon_r": "the real trailing-edge controls, hinged behind the wing: mirrored X rotation up to 8 degrees from drawn bank",
+   "barrel`, `muzzle": "static belly release marker: no generic yaw or recoil; real projectile begins here",
+   "airframe`, `sb_crown": "the same family shell and team Pez cap as the scouts/rotorcraft; fixed"
+  },
+  "idle": "Idle may hover in place because the sim permits it; closed shutters, loaded candy, level elevons. Stealth is visibility, never a decorative glow."
+ },
+ {
+  "key": "reaper_drone",
+  "kind": "unit",
+  "role": "High-altitude armed endurance drone: sight 12, 24 map widths of fuel, hellfire range 7, one projectile every 5 s; drawn at height 5.",
+  "built_at": "airfield",
+  "locomotion": {
+   "type": "fixed_wing",
+   "max_speed": 2.8,
+   "accel": 1.5,
+   "decel": 2.25,
+   "turn_rate_deg": 229,
+   "turn_in_place": true
+  },
+  "emerge": "Spawns on the airfield lift node, starting at y=\u22120.6 inside the pad. The lift rises to 0 over 1.2 s (ease-out). The aircraft spins up and climbs to cruise altitude (see its entry). The lift stays up until the aircraft is 1 tile away, then drops back down.",
+  "remove": "Destroyed vehicle: a blast and a cook-off, debris in its colours, a scorch and 12 s of smoke. The flip-top head (turret) is blown off on a ballistic arc (up 2.5, about 1 sideways, tumbling 540\u00b0/s), bounces once and lands beside the hull, cocked 8\u201322\u00b0 on its base, and stays with the wreck: it doesn't fade. Every part, head included, darkens to about 30% as seen over 0.5 s while the hull settles 0.06. The wreck lies 20 s, then goes poof (it swells 8% for 0.06 s and pops to nothing in 0.14 s inside a cream cloud). A soldier goes poof where it falls; an aircraft falls burning and blows up where it hits the ground. Removed any other way, just the poof.",
+  "mechanics": "Own long straight-wing candy airframe, smaller team Pez sensor crown, paired wrapped hellfire candies and a real rear pusher propeller; not a scaled bomber. Existing HighAltitude remains unchanged: only SAM sites, flak tracks and laser towers can hit it. WorldView owns its 5-tile altitude, position, 0.9 s trained lift hand-off, landed descent to 0.55, altitude bob and shared body banking; the sim starts/stops normally at speed 2.8 and turns at 4 rad/s. StrikeAircraftWorks exclusively owns rp_prop, the sensor gimbal and ready candies. Pusher spins about local Z at a stream-friendly 210 rpm, approaching that speed at 1800 degrees/s squared while airborne; stops on the actual landed state. The cream chin sensor looks around +/-28 degrees at rest, 20 degrees down; a target visible to the shooter team within range makes it follow up to +/-60 degrees yaw and -10 to 55 degrees pitch, exponentially at 5/s, holding a real last-fire target up to 3 s only while it remains visible. Each authoritative hellfire event uses ONE alternating left/right rail; custom muzzle selection happens before flashes and projectile creation. The same candy is copied onto that real projectile at full size, with the existing speed 14 and splash/cooldown unchanged. Its replacement begins inside the opaque cream pylon and lowers 0.11 over 0.15-0.9 s after fire; this is a ready-state illustration, not a new finite ammo rule. No light/effect or sensor target reads hidden enemy state. Shared detached wrecks reset both candies and the sensor to one common rest state.",
+  "nodes": {
+   "rp_prop": "three physical pusher blades on a rear Z-axis axle; unique owner, no generic spinner",
+   "rp_sensor_yaw`, `rp_sensor_pitch": "chin gimbal: bounded team-visible target follow or restrained airborne scan",
+   "rp_round_l`, `rp_round_r": "one ready candy per wing pylon; spent side refills from inside its opaque cover",
+   "rp_muzzle_l`, `rp_muzzle_r": "physical rail mouth markers; one independent alternating port per sim event",
+   "barrel`, `muzzle": "static fallback attachment; no recoil/yaw profile; StrikeAircraftWorks selects current/last actual rail",
+   "airframe`, `rp_crown": "same family cream shell and team crown; fixed"
+  },
+  "idle": "Airborne scan and running pusher; landed/refuelling propeller eases to a stop and sensor faces forward. Fuel is existing sim fuel, not invented payload stock."
  },
  {
   "key": "rifleman",

@@ -64,7 +64,7 @@ namespace Pez.View
 
         static readonly Dictionary<string, GameObject> modelCache = new Dictionary<string, GameObject>();
         static readonly Dictionary<(Material, int), Material> tinted = new Dictionary<(Material, int), Material>();
-        static readonly Dictionary<string, float> Altitudes = new Dictionary<string, float> { { "gunship", 2.4f }, { "stealth_bomber", 3.2f }, { "recon_drone", 2.8f }, { "transport_chopper", 2.6f } };
+        static readonly Dictionary<string, float> Altitudes = new Dictionary<string, float> { { "gunship", 2.4f }, { "stealth_bomber", 3.2f }, { "recon_drone", 2.8f }, { "long_range_drone", 2.8f }, { "reaper_drone", 5f }, { "transport_chopper", 2.6f } };
 
         /// <summary>The art pack's model for a key (Resources/PezModels/<key>.glb), or null if there isn't one yet.</summary>
         public static GameObject ModelFor(string key)
